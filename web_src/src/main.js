@@ -22,11 +22,13 @@ import { compareGpuCpuSkinning } from './skinCheck.js';
 import { AnimationClip } from './animation.js';
 import { RigEvaluator } from './rig.js';
 import { Timeline } from './timeline.js';
+import { CurveOverlay } from './curveOverlay.js';
 
 const VERSION = '1.0.0';
 const D2R = Math.PI / 180;
 const DEFAULTS = {
   shading: 'smooth', wire: false, skin: true, joints: false, xray: true, grid: true,   // 骨は初期状態で非表示（J で切り替え）
+  curves: true,                  // NURBS カーブ（コントローラーの形など）
   axes: 'selected', jointSize: 1, weightMode: 'off',
   textures: true, alpha: 'material', alphaStyle: 'cutout',
   poseSource: 'bind',
@@ -138,6 +140,7 @@ class ViewerApp {
     this.scene.add(this.gizmo);
 
     this.overlay = new JointOverlay();
+    this.curves = new CurveOverlay();
     this.scene.add(this.overlay.group);
 
     const mg = new BufferGeometry();
@@ -313,6 +316,7 @@ class ViewerApp {
       applyPoseSource(built, this.settings.poseSource);
       this.pose.reapplyAll();
       built.root.updateMatrixWorld(true);
+      this.curves.build(built, data.curves);
       this.initVisibility();
       mark('姿勢');
       const bounds = computeBounds(built, true);
@@ -346,7 +350,9 @@ class ViewerApp {
       this.ui.setFile(name || '（名前なし）');
       const tris = built.meshes.reduce((s, e) => s + e.triCount, 0);
       const verts = built.meshes.reduce((s, e) => s + e.vertexCount, 0);
-      this.ui.setStats(`メッシュ ${num(built.meshes.length)} ・ 頂点 ${num(verts)} ・ 三角形 ${num(tris)} ・ ジョイント ${num(built.jointIndices.length)}`);
+      const nCurves = this.curves.items.filter(Boolean).length;
+      this.ui.setStats(`メッシュ ${num(built.meshes.length)} ・ 頂点 ${num(verts)} ・ 三角形 ${num(tris)} ・ ジョイント ${num(built.jointIndices.length)}`
+        + (nCurves ? ` ・ カーブ ${num(nCurves)}` : ''));
       this.ui.setEmpty(false);
       this.ui.hideError();
       this.ui.hideLoading();
@@ -393,6 +399,7 @@ class ViewerApp {
     this.built = null;
     this.data = null;
     this.overlay.clear();
+    this.curves.clear();
     if (this.gizmo) this.gizmo.detach();
     this.pose = null;
     this.edit = null;
@@ -403,6 +410,7 @@ class ViewerApp {
     this.pause();
     this.clip = null;
     this.rig = null;
+    this.rigCurves = null;
     this.timeline.setClip(null);
   }
 
@@ -468,6 +476,7 @@ class ViewerApp {
         if (this.picked) this.ui.showVertexInfo(this.vertexInfo());
         break;
       case 'joints': this.overlay.setVisible(value); break;
+      case 'curves': this.curves.setVisible(value); break;
       case 'xray': this.overlay.setXray(value); break;
       case 'axes': this.overlay.setAxesMode(value); break;
       case 'jointSize': this.overlay.setSize(value); break;
@@ -495,6 +504,7 @@ class ViewerApp {
   applyAll() {
     const st = this.settings;
     this.overlay.setVisible(st.joints);
+    this.curves.setVisible(st.curves);
     this.overlay.setXray(st.xray);
     this.overlay.setAxesMode(st.axes);
     this.overlay.setSize(st.jointSize);
@@ -686,6 +696,7 @@ class ViewerApp {
     if (!this.built) return;
     this.computeVisibility();
     this.overlay.setHiddenNodes(this.hiddenEff);
+    this.curves.setHiddenNodes(this.hiddenEff);
     this.ui.updateVisibilityMarks(this.hidden, this.hiddenEff, this.built.meshes);
     if (this.picked && !this.built.meshes[this.picked.mesh].visible) {
       this.picked = null;
@@ -757,8 +768,11 @@ class ViewerApp {
     this.overlay.setStatus(this.rig.fallback.size || this.rig.tainted.size ? (ni) => this.rig.statusOf(ni) : null);
     // コントローラー（ジョイント・メッシュ以外でリグを動かすノード）の目印
     const meshNodes = new Set(this.built.meshes.map((e) => e.transform));
+    // （カーブの形を持つコントローラーは、カーブそのものが見えるので目印を出さない）
     this.overlay.setControllers([...this.rig.directDrivers].filter((ni) => this.data.nodes[ni].type !== 'joint'
-      && !meshNodes.has(ni)).sort((a, b) => a - b));
+      && !meshNodes.has(ni) && !this.curves.hasCurve(ni)).sort((a, b) => a - b));
+    // リグで形が変わるカーブ（skinCluster・制御点の接続）: 共通 JSON の curves の番号 → グラフの id
+    this.rigCurves = (anim.graph || []).filter((g) => g.type === 'nurbsCurve' && g.shape >= 0).map((g) => [g.shape, g.id]);
     // キーがなくリグだけのときは、タイムラインは出さずに評価だけする（ポーズ確認でコントローラーを動かせる）
     if (!this.hasTimeline) this.timeline.setStatus('');
     this.timeline.setClip(this.hasTimeline ? clip : null);
@@ -777,8 +791,8 @@ class ViewerApp {
     return c ? { t: c.t.slice(), r: c.r.slice(), s: c.s.slice() } : null;
   }
 
-  /** タイムラインを出すか（キーのあるカーブがあるとき） */
-  get hasTimeline() { return !!(this.clip && this.clip.curves.length); }
+  /** タイムラインを出すか（キーのあるカーブか、frame・time を使う expression があるとき） */
+  get hasTimeline() { return !!(this.clip && (this.clip.curves.length || (this.rig && this.rig.usesTime))); }
 
   /** フレーム f の姿勢にする（ポーズ確認の追加分はそのまま上に重ねる。リグはポーズ確認の結果も使って評価する） */
   applyFrame(f, light = this.playing) {
@@ -794,6 +808,9 @@ class ViewerApp {
       ud.baseMatrix.copy(poseBaseMatrix(ud, mode, sceneHasBind));     // バインドポーズではフレームによらない
     }
     for (const ni of this.animTouched) this.pose.apply(ni);
+    // カーブの形（バインドポーズの表示では変形前の形）
+    const bindView = mode === 'bind' && sceneHasBind;
+    for (const [ci, gid] of this.rigCurves || []) this.curves.setShape(ci, bindView ? null : this.rig.plug(gid, 'local'));
     this.timeline.setFrame(f);
     this.rigBusy = true;
     try { this.afterPoseChange(light); } finally { this.rigBusy = false; }
@@ -889,6 +906,7 @@ class ViewerApp {
     if (!this.built || ni < 0 || ni >= this.data.nodes.length) return;
     this.selected = ni;
     this.overlay.setSelected(ni);
+    this.curves.setSelected(ni);
     this.ui.highlightNode(ni, this.data.nodes);
     this.ui.showNodeInfo(this.nodeInfo(ni));
     this.ui.showPoseFor(ni, this.pose.get(ni));
@@ -924,6 +942,7 @@ class ViewerApp {
     this.picked = null;
     this.marker.visible = false;
     this.overlay.setSelected(-1);
+    this.curves.setSelected(-1);
     this.ui.highlightNode(-1, this.data.nodes);
     this.ui.showNodeInfo(null);
     this.ui.showVertexInfo(null);
@@ -973,6 +992,9 @@ class ViewerApp {
       const ni = this.overlay.pick(this.raycaster);
       if (ni >= 0) { this.select(ni, { notify: true }); return; }
     }
+    // カーブ: 画面上で約 5 ピクセル以内を通る線（メッシュより手前なら優先）
+    const perPx = 2 * this.camera.position.distanceTo(this.controls.target) * Math.tan(this.camera.fov * D2R / 2) / Math.max(rect.height, 1);
+    const curveHit = this.curves.pick(this.raycaster, perPx * 5);
     const useSkin = this.settings.skin;
     if (this.poseDirty) {
       for (const e of this.built.meshes) if (e.skinned) { e.skinned.boundingSphere = null; e.skinned.boundingBox = null; }
@@ -984,6 +1006,10 @@ class ViewerApp {
       targets.push(useSkin && e.skinned ? e.skinned : e.staticMesh);
     }
     const hits = this.raycaster.intersectObjects(targets, false);
+    if (curveHit.node >= 0 && (!hits.length || curveHit.distance <= hits[0].distance)) {
+      this.select(curveHit.node, { notify: true });
+      return;
+    }
     if (!hits.length) { this.clearSelection(); return; }
     const h = hits[0];
     const e = this.built.meshes[h.object.userData.meshIndex];
@@ -1218,6 +1244,7 @@ class ViewerApp {
       for (let v = 0; v < e.vertexCount; v += step) box.expandByPoint(vertexWorldPosition(e, v, this.settings.skin, _v2));
     }
     for (const ni of sub) box.expandByPoint(_v2.setFromMatrixPosition(this.built.nodeObjects[ni].matrixWorld));
+    this.curves.expandBox(box, sub);
     const r = Math.max(box.getSize(_v).length() / 2, this.overlay.radius() * 12, this.sceneRadius * 0.05);
     this.fit(box.getCenter(new Vector3()), r);
   }
@@ -1245,6 +1272,7 @@ class ViewerApp {
       vertices: this.built.meshes.reduce((s, e) => s + e.vertexCount, 0),
       triangles: this.built.meshes.reduce((s, e) => s + e.triCount, 0),
       joints: this.built.jointIndices.length,
+      curves: this.curves.items.filter(Boolean).length,
       selected: this.selected >= 0 ? this.data.nodes[this.selected].path : null,
       posedNodes: this.pose ? this.pose.size : 0,
       textures: this.textureStatusList().map((t, i) => ({ node: this.data.textures[i].node, status: t.status,

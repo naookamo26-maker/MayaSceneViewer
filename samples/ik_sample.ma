@@ -284,7 +284,7 @@ createNode animCurveTL -n "spB_loc3_translateY";
 createNode animCurveTA -n "spB_upE_rotateX";
 	rename -uid "00000000-0000-0000-0004-004223865261";
 	setAttr ".tan" 2;
-	setAttr -s 2 ".ktv[0:1]"  1 0 48 90;
+	setAttr -s 2 ".ktv[0:1]"  1 0 48 150;
 createNode script -n "sceneConfigurationScriptNode";
 	rename -uid "00000000-0000-0000-0004-000086746734";
 	setAttr ".b" -type "string" "playbackOptions -min 1 -max 48 -ast 1 -aet 48 ";

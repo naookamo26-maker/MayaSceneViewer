@@ -142,7 +142,7 @@ def main():
     node("joint", "expr_jnt", t=(0, 0, -20))
     node("expression", "expression1")
     A('\tsetAttr -k on ".nds";')
-    A('\tsetAttr ".ixp" -type "string" ".O[0] = frame;";')
+    A('\tsetAttr ".ixp" -type "string" ".O[0] = rand(360);";')
     curve("UA", "drv_key", [(0, 0), (1, 45)])
 
     # --- キー -----------------------------------------------------------------------

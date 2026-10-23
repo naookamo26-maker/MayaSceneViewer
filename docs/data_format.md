@@ -12,6 +12,7 @@
               "linearUnit": "cm", "angularUnit": "deg", "upAxis": "y" },
   "nodes":  [ ... ],
   "meshes": [ ... ],
+  "curves": [ ... ],
   "materials": [ ... ],
   "textures": [ ... ],
   "warnings": [ "..." ],
@@ -20,7 +21,7 @@
 }
 ```
 
-`animation` は省略できます（アニメーションがない場合や、読み込まない設定の場合）。
+`animation` は省略できます（アニメーションがない場合や、読み込まない設定の場合）。`curves` も省略できます（Maya 内からの抽出では出力しません）。
 
 `source.kind` は `"ma"`（.ma から）か `"maya"`（Maya 内から）です。
 
@@ -76,6 +77,22 @@ transform・joint などの変換ノードです。**親は必ず子より前に
 | `counts` | 頂点ごとのインフルエンス数（頂点数と同じ長さ） |
 | `indices` | スロット番号を連結したもの |
 | `weights` | ウェイト値を連結したもの。合計が 0 の頂点だけは、記録されているジョイントを値 0 で含む |
+
+## curves
+
+NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く）です。省略可。カーブを持つ transform は nodes に出力します。
+
+| キー | 内容 |
+|---|---|
+| `name` / `path` | シェイプの名前とフルパス |
+| `transform` | 親 transform の nodes 番号。線はこの transform の空間に描く |
+| `visible` / `visibleSelf` | 親を含めた実際の表示状態 / シェイプ自身の表示状態（.v・.lodv・描画のオーバーライドの .ovv・ディスプレイレイヤー） |
+| `cc` | .ma の `.cc`（`-type "nurbsCurve"`）の値: 次数, スパン数, 形（0 開・1 閉・2 周期的）, 有理（0/1）, 次元, ノット数, ノット…, CV 数, CV…（有理なら各 CV に重み）。Maya はノットの両端を 1 つずつ省いて書くので、評価のときに補う。シェイプに形が保存されていない（skinCluster などで変形している）ときは、入力（create ← 変形ノード ← …）をたどった変形前の形で、`fromInput` が true |
+| `tweaks` | `.cp` の調整 `[[CV 番号, x, y, z], …]`（cc の CV に足す。0 でないものだけ。省略可） |
+| `color` | 表示色 `[r, g, b]`（0〜1）。シェイプ → 親 → その祖先の順に、ディスプレイレイヤー（有効なもの）の色か、描画のオーバーライド（.ove が on）の色（.ovrgbf なら .ovrgb、そうでなければ色番号 .ovc）を探す。見つからなければ null（ビューアの既定の色） |
+| `display` | 表示の種類（.ovdt・レイヤーの .dt）: 0 通常・1 テンプレート（灰色で描く）・2 リファレンス |
+
+リグで形が変わるカーブ（skinCluster・制御点の接続）は、animation.graph の nurbsCurve の `shape` がこの番号を指し、ビューアは毎フレーム変形した形に差し替えます。
 
 ## materials
 
@@ -164,6 +181,8 @@ transform・joint などの変換ノードです。**親は必ず子より前に
 | `pivot` | poleVectorConstraint の開始ジョイント（nodes の番号） |
 | `ik` | IK ハンドルのソルバー（ikRPsolver・ikSCsolver・ikSplineSolver）と、開始から終端までのジョイント（nodes の番号）。スプライン IK のカーブは `inputs` の `ic` |
 | `parent` | nurbsCurve・locator（シェイプ）の親のトランスフォーム（nodes の番号）。ワールド空間（ws・worldPosition）の計算に使う |
+| `shape` | nurbsCurve が表示するカーブのとき、そのトップレベルの curves の番号（inputs の `curve` が指す animation.curves とは別） |
+| `expr` | expression の式（.ixp。.I[n]・.O[n] で入出力を参照する）。出力は `out[n]`、入力は `inputs` の `in[n]`。時間（.tim）はつながず、ビューアのフレームから求める。解釈できない書き方（MEL コマンド・文字列・ベクトル・未対応の関数・.I/.O 以外の属性）を含む式は graph に入れず、未対応のノードとして警告し、つながるノードを fallback・tainted に回す（判定は `ma_viewer/expression.py`、評価は `web_src/src/expression.js`） |
 | `skin` | カーブを動かす skinCluster のウェイト `[[CV の番号, インフルエンスの論理番号, 値], …]`、`pm`（論理番号 → 16 要素）、`gm`。インフルエンスは `inputs` の `ma[i]` |
 
 ### animation.fallback・animation.tainted

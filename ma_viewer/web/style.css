@@ -385,7 +385,13 @@ table.kv td.l { text-align: left; }
 #timeline .tl-btns .icon-btn { width: 26px; height: 24px; border-radius: 0; margin-left: -1px; background: var(--panel); }
 #timeline .tl-btns .icon-btn:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
 #timeline .tl-btns .icon-btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
-#timeline #tl-play[aria-pressed="true"] { background: #33404a; border-color: #4f6676; color: #f2f6f9; position: relative; z-index: 1; }
+/* 再生は 1 つだけ独立させ、大きく明るくしてコマ送りと見分けやすくする */
+#timeline #tl-play {
+  width: 40px; height: 28px; margin: 0 -2px; border-radius: 14px;
+  background: #3b4651; border-color: #566572; color: #f2f6f9;
+}
+#timeline #tl-play:hover { background: #46535f; }
+#timeline #tl-play[aria-pressed="true"] { background: #5a4a2c; border-color: #8a6d3b; color: var(--select); }
 #timeline .tl-num {
   flex: none; width: 58px; height: 24px; padding: 0 6px;
   border: 1px solid var(--line); border-radius: var(--radius);
@@ -398,7 +404,7 @@ table.kv td.l { text-align: left; }
 #timeline .tl-info { flex: none; color: var(--text-dim); }
 #timeline .tl-status { flex: none; color: var(--text-dim); max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #timeline .tl-status:empty { display: none; }
-#timeline.loading .tl-btns, #timeline.loading .tl-num, #timeline.loading .tl-track, #timeline.loading .tl-info { opacity: 0.35; }
+#timeline.loading .tl-btns, #timeline.loading #tl-play, #timeline.loading .tl-num, #timeline.loading .tl-track, #timeline.loading .tl-info { opacity: 0.35; }
 @media (max-width: 720px) {
   #timeline { flex-wrap: wrap; }
   #timeline .tl-track { flex-basis: 100%; order: 10; }

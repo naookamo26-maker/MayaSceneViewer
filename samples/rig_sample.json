@@ -1264,6 +1264,7 @@
    "skin":null
   }
  ],
+ "curves":[],
  "materials":[],
  "textures":[],
  "warnings":[
@@ -1273,6 +1274,7 @@
   "nodes":17,
   "joints":9,
   "meshes":1,
+  "curves":0,
   "vertices":8,
   "polygons":6,
   "skinnedMeshes":0,
@@ -2526,8 +2528,9 @@
    "data":""
   },
   "warnings":[
-   "アニメーション: expression（expression1 など）は未対応のため、これにつながる expr_jnt の値は再生されません。",
+   "アニメーション: 解釈できない expression（expression1 など）につながる expr_jnt の値は再生されません。",
    "アニメーション: animCurveUA（drv_key など）は未対応のため、これにつながる expr_jnt の値は再生されません。",
+   "アニメーション: expression expression1 を解釈できません（未対応の関数・コマンド rand を使っています）。",
    "アニメーション: 値を求められないノードのうち 0 個はバインドポーズの形で推定して表示し、1 個は推定できないためファイルの値（既定値）のまま表示します。"
   ],
   "stats":{
@@ -2536,7 +2539,7 @@
    "channels":4,
    "nodes":10,
    "graphNodes":29,
-   "seconds":0.0013
+   "seconds":0.0015
   }
  }
 }

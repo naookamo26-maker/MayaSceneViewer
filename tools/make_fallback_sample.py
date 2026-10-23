@@ -36,7 +36,7 @@ def main():
         'createNode parentConstraint -n "shoulder_parentConstraint1" -p "shoulder";',
         '\tsetAttr -k on ".w0";',
         'createNode expression -n "grp_expr";',
-        '\tsetAttr ".ixp" -type "string" ".O[0] = 10;";',
+        '\tsetAttr ".ixp" -type "string" ".O[0] = rand(10);";',
         'createNode expression -n "box_expr";',
         'createNode animCurveUA -n "elbow_drivenKey";',
         '\tsetAttr -s 2 ".ktv[0:1]"  0 0 1 90;',

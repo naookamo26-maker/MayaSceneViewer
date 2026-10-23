@@ -13,7 +13,7 @@
   * spA_0〜spA_4（+Y 方向、骨の長さ 2）のスプライン IK。カーブは drv_bot・drv_top の skinCluster で変形（drv_top にキー）。
     rootOnCurve。len_jnt.tx = curveInfo(カーブ).arcLength
   * spB_0〜spB_4（+X 方向）のスプライン IK。カーブの制御点はロケーター（worldPosition）で動かす（spB_loc3 にキー）。
-    上級ツイスト: オブジェクトの回転（始点 spB_upS・終点 spB_upE。spB_upE の rx にキー 0 → 90）
+    上級ツイスト: オブジェクトの回転（始点 spB_upS・終点 spB_upE。spB_upE の rx にキー 0 → 150。ひねりの角度を均等に配る）
 保存時のフレーム（1）の各ノードの値は、リグの計算結果と一致するように書く（カーブはまっすぐで、ジョイントはその上）。
 """
 from __future__ import annotations
@@ -179,7 +179,7 @@ def main():
     anim("TL", "drv_top_translateX", [(1, -30), (48, -26)])
     anim("TL", "drv_top_translateZ", [(1, 0), (48, 2)])
     anim("TL", "spB_loc3_translateY", [(1, 0), (48, 3)])
-    anim("TA", "spB_upE_rotateX", [(1, 0), (48, 90)])
+    anim("TA", "spB_upE_rotateX", [(1, 0), (48, 150)])
     node("script", "sceneConfigurationScriptNode")
     A('\tsetAttr ".b" -type "string" "playbackOptions -min 1 -max 48 -ast 1 -aet 48 ";')
     for s in ("ikRPsolver", "ikSCsolver", "ikSplineSolver"):

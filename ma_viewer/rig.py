@@ -32,7 +32,7 @@ CONSTRAINT_TYPES = {"pointConstraint", "orientConstraint", "parentConstraint", "
 UTILITY_TYPES = {"unitConversion", "pairBlend", "blendColors", "multiplyDivide", "plusMinusAverage", "reverse",
                  "condition", "multMatrix", "decomposeMatrix", "composeMatrix", "inverseMatrix",
                  "quatToEuler", "eulerToQuat", "quatProd", "quatInvert", "quatNormalize", "quatSlerp", "curveInfo",
-                 "displayLayer"}
+                 "displayLayer", "expression"}
 # 入力をたどらない（値を読むだけの）ノード
 _NO_INPUT_TYPES = {"displayLayer"}
 # カーブと、それを動かすノード（必要な入力だけをたどる）
@@ -72,8 +72,10 @@ def _dag_like(n: MaNode) -> bool:
     return n.is_dag and not n.is_shape and n.type not in SUPPORTED_DG
 
 
-def _evaluable(n: MaNode) -> bool:
-    """接続元として評価できるか（コンストレイントはターゲットがあるときだけ）"""
+def _evaluable(n: MaNode, info: Optional["GraphInfo"] = None) -> bool:
+    """接続元として評価できるか（コンストレイントはターゲットがあるときだけ。expression は式を解釈できるときだけ）"""
+    if n.type == "expression":
+        return info is not None and id(n) in info.expressions
     if n.type in CURVE_TYPES or n.type in UTILITY_TYPES or _dag_like(n):
         return True                                   # DAG ノードからの直接の接続（ctrl.t → joint.t など）も評価できる
     if n.type in CONSTRAINT_TYPES:
@@ -92,6 +94,8 @@ class GraphInfo:
         self.ik: List[dict] = []                       # {"handle", "solver", "chain": [joint...], "problem"}
         self.unsupported: Dict[str, List[Tuple[str, str, str]]] = {}   # 型 → [(ノード名, 使う側, 属性)]
         self.graph_driven: Set[int] = set()            # チャンネルの接続元がすべて評価できるノード
+        self.expressions: Dict[int, str] = {}          # 解釈できる expression の式
+        self.expression_problems: Dict[str, str] = {}  # 解釈できない expression の名前 → 理由
 
     @property
     def empty(self) -> bool:
@@ -99,8 +103,8 @@ class GraphInfo:
             src.type not in CURVE_TYPES for e in self.edges.values() for src, _ in e.values())
 
 
-def discover(ms: MaScene, keep: Set[int]) -> GraphInfo:
-    """表示するノード（keep）を動かす接続を上流へたどる。"""
+def discover(ms: MaScene, keep: Set[int], geometry=()) -> GraphInfo:
+    """表示するノード（keep）と、表示するカーブ（geometry。変形の入力を持つもの）を動かす接続を上流へたどる。"""
     info = GraphInfo()
     world_done: Set[int] = set()
     plug_done: Set[Tuple[int, str]] = set()
@@ -133,11 +137,21 @@ def discover(ms: MaScene, keep: Set[int]) -> GraphInfo:
         if n.type in CURVE_TYPES:
             info.curves[id(n)] = n
             return
+        if n.type == "expression" and id(n) not in info.dg:
+            from .expression import read_expression
+            text, problem = read_expression(ms, n)
+            if problem:
+                info.unsupported.setdefault("expression", []).append((n.name, consumer.name, ckey))
+                info.expression_problems[n.name] = problem
+                return
+            info.expressions[id(n)] = text
         if n.type in SUPPORTED_DG:
             if id(n) not in info.dg:
                 info.dg[id(n)] = n
                 if n.type not in _NO_INPUT_TYPES:
                     for key in list(n.inputs):
+                        if n.type == "expression" and key in ("tim", "time"):
+                            continue                     # 時間はビューアのフレームから求める
                         add_edge(n, key)
             return
         if n.type in GEOMETRY_TYPES:
@@ -167,8 +181,14 @@ def discover(ms: MaScene, keep: Set[int]) -> GraphInfo:
         if id(n) in keep and _dag_like(n) and n.inputs:
             need_channels(n)
             srcs = [src for key, (src, _sa) in n.inputs.items() if _base(key) in _CHANNEL_KEYS]
-            if srcs and all(_evaluable(s) for s in srcs):
+            if srcs and all(_evaluable(s, info) for s in srcs):
                 info.graph_driven.add(id(n))
+
+    # 表示するカーブの形を決める入力（skinCluster・制御点の接続など）
+    for n in geometry:
+        cr = n.inputs.get("cr")
+        if any(k.startswith("cp[") for k in n.inputs) or (cr is not None and cr[0].type in GEOMETRY_TYPES):
+            need_plug(n, "local", n, "")             # makeNurbCircle などの作成ノードは、保存された形（.cc）を使う
 
     # IK ハンドル（開始ジョイントが表示するノードのもの）
     for src, sattr, dst, dattr in ms.connections:
@@ -262,8 +282,10 @@ def parse_attrs(text: str, node: MaNode, skip=()) -> Dict[str, object]:
     return out
 
 
-def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_index: Dict[int, int]):
+def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_index: Dict[int, int],
+                shape_index: Optional[Dict[int, int]] = None):
     """animation.graph（ノードの一覧）と、評価で動く DAG ノード（出力の番号）の集合を返す。"""
+    shape_index = shape_index or {}
     gid: Dict[int, int] = {}
     order: List[MaNode] = []
     for n in sorted(list(info.dag.values()) + list(info.dg.values()), key=lambda x: x.order):
@@ -310,6 +332,10 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
             moving.update(out_index[id(j)] for j in e["chain"][:-1])
         if n.type in ("nurbsCurve", "locator"):
             entry["parent"] = out_index.get(id(n.parent), -1) if n.parent is not None else -1
+            if id(n) in shape_index:
+                entry["shape"] = shape_index[id(n)]     # 表示するカーブ（共通 JSON の curves の番号）
+        if n.type == "expression" and id(n) in info.expressions:
+            entry["expr"] = info.expressions[id(n)]       # 式（ビューアの expression.js で解釈する）
         if n.type == "skinCluster" and n.skin is not None:
             sk = n.skin
             entry["skin"] = {
@@ -366,6 +392,8 @@ def analyze_fallback(info: GraphInfo, kept: List[MaNode], bind_ids: Set[int], ou
         if src.type in SUPPORTED_DG or src.type in GEOMETRY_TYPES:
             if src.type in CONSTRAINT_TYPES and not _evaluable(src):
                 return True
+            if src.type == "expression" and id(src) not in info.expressions:
+                return True
             if src.type in ("nurbsCurve", "locator") and tainted(src.parent):
                 return True
             return guarded("dg", src, lambda: any(bad_source(s, a) for s, a in info.edges.get(id(src), {}).values()),
@@ -419,9 +447,15 @@ def graph_warnings(info: GraphInfo) -> List[str]:
     out = []
     for t, items in sorted(info.unsupported.items(), key=lambda kv: -len(kv[1])):
         names = sorted({c for _n, c, _a in items})
+        if t == "expression":
+            out.append("アニメーション: 解釈できない expression（%s など）につながる %s の値は再生されません。"
+                       % (items[0][0], "、".join(names[:4]) + (" ほか" if len(names) > 4 else "")))
+            continue
         out.append("アニメーション: %s（%s など）は未対応のため、これにつながる %s の値は再生されません。"
                    % (t, items[0][0], "、".join(names[:4]) + (" ほか" if len(names) > 4 else "")))
     for e in info.ik:
         if e["problem"]:
             out.append("アニメーション: IK ハンドル %s は再生されません（%s）。" % (e["handle"].name, e["problem"]))
+    for name, problem in sorted(info.expression_problems.items()):
+        out.append("アニメーション: expression %s を解釈できません（%s）。" % (name, problem))
     return out

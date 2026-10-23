@@ -6796,6 +6796,7 @@
    "skin":null
   }
  ],
+ "curves":[],
  "materials":[],
  "textures":[],
  "warnings":[
@@ -6809,6 +6810,7 @@
   "nodes":12,
   "joints":5,
   "meshes":3,
+  "curves":0,
   "vertices":316,
   "polygons":302,
   "skinnedMeshes":1,
@@ -7209,8 +7211,10 @@
    "data":""
   },
   "warnings":[
-   "アニメーション: expression（grp_expr など）は未対応のため、これにつながる box、ctrl_grp の値は再生されません。",
+   "アニメーション: 解釈できない expression（grp_expr など）につながる box、ctrl_grp の値は再生されません。",
    "アニメーション: animCurveUA（elbow_drivenKey など）は未対応のため、これにつながる elbow の値は再生されません。",
+   "アニメーション: expression box_expr を解釈できません（式（.ixp）が見つかりません）。",
+   "アニメーション: expression grp_expr を解釈できません（未対応の関数・コマンド rand を使っています）。",
    "アニメーション: 値を求められないノードのうち 2 個はバインドポーズの形で推定して表示し、3 個は推定できないためファイルの値（既定値）のまま表示します。"
   ],
   "stats":{
@@ -7219,7 +7223,7 @@
    "channels":1,
    "nodes":2,
    "graphNodes":7,
-   "seconds":0.0006
+   "seconds":0.0007
   }
  }
 }

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import tempfile
@@ -23,6 +24,7 @@ sys.path.insert(0, ROOT)
 RIG = os.path.join(ROOT, "samples", "rig_sample.ma")
 RIG3 = os.path.join(ROOT, "samples", "rig3_sample.ma")
 IK4 = os.path.join(ROOT, "samples", "ik_sample.ma")
+CTRL5 = os.path.join(ROOT, "samples", "ctrl_sample.ma")
 
 STATE_JS = """JSON.stringify((() => {
   const s = window.mayaViewer.getStats();
@@ -219,13 +221,45 @@ def main() -> int:
         wait_idle(lambda: wait_state(lambda s: s["loaded"] and s["name"] == "ik_sample.ma" and s["animation"],
                                      lambda _s: js(code, got)))
 
+    def s_stage5(nxt):
+        """第 5 段階: NURBS カーブの表示・expression・スプライン IK の上級ツイスト"""
+        win.open_file(CTRL5)
+        code = """JSON.stringify((() => {
+          const app = window.mayaViewer.debug.app;
+          const i = (n) => app.data.nodes.findIndex((x) => x.name === n);
+          window.mayaViewer.setFrame(24);
+          const ci = app.data.curves.findIndex((c) => c.name === 'ctrl_circleShape');
+          const line = app.curves.items[ci].line;
+          app.select(i('ctrl_circle'));
+          const selColor = line.material.color.getHex();
+          app.clearSelection();
+          const st = window.mayaViewer.getStats();
+          return { curves: st.curves, timeline: !document.getElementById('timeline').hidden,
+                   lineParent: line.parent === app.built.nodeObjects[i('ctrl_circle')], lineColor: line.material.color.getHex(),
+                   selColor, e1: +app.built.nodeObjects[i('e_jnt1')].matrix.elements[13].toFixed(4),
+                   hiddenLine: app.curves.items[app.data.curves.findIndex((c) => c.name === 'ctrl_hiddenShape')].line.visible,
+                   problems: st.animation.rigProblems };
+        })())"""
+
+        def got(r):
+            check(r["curves"] == 11, "カーブを 11 本表示する（コントローラー 8・スプライン IK 3）: %s" % r["curves"])
+            check(r["timeline"], "タイムラインを表示する")
+            check(r["lineParent"], "カーブの線は transform の子")
+            check(r["lineColor"] == 0xffff00 and r["selColor"] != r["lineColor"], "描画のオーバーライドの色と選択の色")
+            check(r["hiddenLine"] is False, "非表示のシェイプのカーブは描かない")
+            check(abs(r["e1"] - 3 * math.sin(24 * 0.2)) < 1e-3, "expression で動く: %s" % r["e1"])
+            check(r["problems"] == [], "評価の問題なし: %s" % r["problems"])
+            nxt()
+        wait_idle(lambda: wait_state(lambda s: s["loaded"] and s["name"] == "ctrl_sample.ma" and s["animation"],
+                                     lambda _s: js(code, got)))
+
     def finish(_=None):
         win.a_anim.setChecked(load_setting)
         print("結果:", "OK" if ok["v"] else "NG")
         app.exit(0 if ok["v"] else 1)
 
     win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(300, lambda: run(
-        [s_open, s_frame, s_pose, s_static, s_stage3, s_stage4, finish])))
+        [s_open, s_frame, s_pose, s_static, s_stage3, s_stage4, s_stage5, finish])))
     QtCore.QTimer.singleShot(120000, lambda: (print("タイムアウト"), app.exit(2)))
     return app.exec()
 

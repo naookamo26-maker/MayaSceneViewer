@@ -322,7 +322,7 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
     graph_nodes, moving = [], set()
     if has_graph:
         from .rig import build_graph, graph_warnings
-        graph_nodes, moving = build_graph(ms, info, out_index, curve_index)
+        graph_nodes, moving = build_graph(ms, info, out_index, curve_index, getattr(ms, "curve_shapes", {}))
         warnings.extend(graph_warnings(info))
         for g in graph_nodes:
             if g["type"].endswith("Constraint") and not g.get("targets"):

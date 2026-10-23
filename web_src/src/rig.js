@@ -9,6 +9,7 @@
 // 完全な再現は目指さず、Maya と同じ考え方の近似にする（docs/data_format.md「animation.graph」）。
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { composeLocalMatrix, evaluateCurve } from './animation.js';
+import { compileExpression } from './expression.js';
 import { arcLength, parseNurbsCurve, pointAtDistance, pointAtLength, polyline, withCvs } from './curve.js';
 
 const D2R = Math.PI / 180;
@@ -57,7 +58,7 @@ const OUTPUTS = {
   quatToEuler: /^ort[xyz]?$/, eulerToQuat: /^oq[xyzw]?$/, quatProd: /^oq[xyzw]?$/, quatInvert: /^oq[xyzw]?$/,
   quatNormalize: /^oq[xyzw]?$/, quatSlerp: /^oq[xyzw]?$/, curveInfo: /^(al|arcLength)$/,
   nurbsCurve: /^(ws|worldSpace|l|local)(\[\d+\])?$/, skinCluster: /^og(\[\d+\])?$/, tweak: /^og(\[\d+\])?$/,
-  groupParts: /^og$/, locator: /^(wp|worldPosition)(\[\d+\])?$/,
+  groupParts: /^og$/, locator: /^(wp|worldPosition)(\[\d+\])?$/, expression: /^(out|output)\[\d+\]$/,
   multMatrix: /^o$/, decomposeMatrix: /^o(t|r|s|sh)[xyz]?$|^oq[xyzw]?$/, composeMatrix: /^omat$/, inverseMatrix: /^omat$/,
 };
 // DAG ノードの、値が決まると行列が変わる属性
@@ -178,6 +179,8 @@ export class RigEvaluator {
     // スプライン IK で、開始ジョイントの位置もカーブに合わせるもの（rootOnCurve）
     this.splineRoots = new Set(this.graph.filter((g) => g.ik && g.ik.solver === 'ikSplineSolver'
       && ((g.attrs || {}).roc ?? 0) >= 0.5).map((g) => g.ik.chain[0]));
+    // 時間で変わる expression（frame・time を使う式）があるか（キーがなくてもタイムラインを出す）
+    this.usesTime = this.graph.some((g) => g.type === 'expression' && /\b(frame|time)\b/.test(g.expr || ''));
     this.problems = new Set();               // 評価中に見つかった問題（循環など）
     this.frame = 0;
     this.poseOf = () => null;
@@ -581,6 +584,7 @@ export class RigEvaluator {
         break;
       }
       case 'skinCluster': o = this.skinCurve(g); break;
+      case 'expression': o = this.expression(g); break;
       case 'tweak': {                                       // 頂点の調整は反映しない（形はそのまま通す）
         const c = this.plug(id, 'ip[0].ig');
         o = c && c.isCurve ? { og: c } : null;
@@ -593,6 +597,36 @@ export class RigEvaluator {
       }
       default: break;
     }
+    return o;
+  }
+
+  /** expression: 式を（最初の 1 回だけ）関数にして、このフレームの値で評価する。出力は out[n] */
+  expression(g) {
+    if (g.program === undefined) {
+      try {
+        g.program = compileExpression(g.expr || '');
+      } catch (err) {
+        g.program = null;
+        g.problem = err.message;
+      }
+    }
+    if (!g.program) {
+      this.problems.add(`expression ${g.name} を解釈できません: ${g.problem}`);
+      return null;
+    }
+    let res;
+    try {
+      res = g.program.run({
+        input: (k) => this.num(g.id, `in[${k}]`, 0),
+        frame: this.frame,
+        time: this.frame / (this.clip.fps || 24),
+      });
+    } catch (err) {
+      this.problems.add(`expression ${g.name}: ${err.message}`);
+      return null;
+    }
+    const o = {};
+    for (const [k, v] of res.out) if (Number.isFinite(v)) o[`out[${k}]`] = v;
     return o;
   }
 
@@ -1145,12 +1179,19 @@ export class RigEvaluator {
     return out;
   }
 
-  /** 上級ツイスト: 骨の向き（forward 軸）と、world up（始点と終点の間で補間）に up 軸を向ける */
+  /**
+   * 上級ツイスト: 骨の向きに forward 軸（.dfa）を、world up に up 軸（.dwua）を向ける。
+   * 始点・終点の 2 つを使う種類（.dwut 2・4・6）は、始点と終点の up のなす角（ひねり）をチェーンに沿って均等に配る
+   * （up のベクトルを直線で補間すると、向きの差が大きいときに途中で潰れて反転するため）。
+   * up 軸の Closest は、＋と−のうち world up に近い方を使う（最小の回転で並べたときの向きで決める）
+   */
   splineAdvancedTwist(id, fk, q, bones) {
     const AXES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
     const UP = [[0, 1, 0], [0, -1, 0], [0, 1, 0], [0, 0, 1], [0, 0, -1], [0, 0, 1], [1, 0, 0], [-1, 0, 0], [1, 0, 0]];
+    const upAxis = Math.round(this.num(id, 'dwua', 0));
+    const closest = upAxis === 2 || upAxis === 5 || upAxis === 8;
     const fa = new Vector3(...(AXES[Math.round(this.num(id, 'dfa', 0))] || AXES[0]));
-    const ua = new Vector3(...(UP[Math.round(this.num(id, 'dwua', 0))] || UP[0]));
+    const ua = new Vector3(...(UP[upAxis] || UP[0]));
     const type = Math.round(this.num(id, 'dwut', 0));
     const vecIn = (attr, mat) => {
       const v = new Vector3(...this.vec(id, attr, [0, 1, 0]));
@@ -1158,29 +1199,61 @@ export class RigEvaluator {
     };
     const objPos = (mat) => positionOf(this.mat(id, mat));
     const sceneUp = (this.clip.raw.upAxis || 'y') === 'z' ? new Vector3(0, 0, 1) : new Vector3(0, 1, 0);
-    const upAt = (i, p) => {
-      const t = bones > 1 ? i / (bones - 1) : 0;
+    const dirs = [];
+    for (let i = 0; i < bones; i++) dirs.push(new Vector3().subVectors(q[i + 1], q[i]).normalize());
+    // ジョイントごとの world up（始点・終点を使う種類は両端だけ）
+    const upOf = (i, start) => {
+      const p = q[i];
       switch (type) {
         case 1: return objPos('dwum').sub(p);
-        case 2: return objPos('dwum').sub(p).lerp(objPos('dwue').sub(p), t);
+        case 2: return objPos(start ? 'dwum' : 'dwue').sub(p);
         case 3: return vecIn('dwuv', 'dwum');
-        case 4: return vecIn('dwuv', 'dwum').lerp(vecIn('dwve', 'dwue'), t);
+        case 4: return start ? vecIn('dwuv', 'dwum') : vecIn('dwve', 'dwue');
         case 5: return vecIn('dwuv');
-        case 6: return vecIn('dwuv').lerp(vecIn('dwve'), t);
+        case 6: return vecIn(start ? 'dwuv' : 'dwve');
         default: return sceneUp.clone();
       }
     };
+    const perp = (v, dir) => {
+      v.addScaledVector(dir, -v.dot(dir));
+      return v.lengthSq() < EPS ? null : v.normalize();
+    };
+    const ups = new Array(bones).fill(null);
+    if ((type === 2 || type === 4 || type === 6) && bones > 1) {
+      // 始点の up を骨に沿って最小の回転で運び、終点の up とのずれの角度を、始点からの長さに比例して配る
+      const u0 = perp(upOf(0, true), dirs[0]);
+      const u1 = perp(upOf(bones - 1, false), dirs[bones - 1]);
+      if (u0) {
+        const carried = [u0.clone()];
+        for (let i = 1; i < bones; i++) {
+          carried.push(perp(carried[i - 1].clone().applyQuaternion(new Quaternion().setFromUnitVectors(dirs[i - 1], dirs[i])), dirs[i])
+            || carried[i - 1].clone());
+        }
+        const last = carried[bones - 1];
+        const total = u1 ? Math.atan2(dirs[bones - 1].dot(last.clone().cross(u1)), last.dot(u1)) : 0;
+        const along = [0];
+        for (let i = 1; i < bones; i++) along.push(along[i - 1] + q[i].distanceTo(q[i - 1]));
+        const span = along[bones - 1] || 1;
+        for (let i = 0; i < bones; i++) {
+          ups[i] = carried[i].clone().applyQuaternion(new Quaternion().setFromAxisAngle(dirs[i], total * along[i] / span));
+        }
+      }
+    } else {
+      for (let i = 0; i < bones; i++) ups[i] = perp(upOf(i, true), dirs[i]);
+    }
     const frame = (x, y) => new Matrix4().makeBasis(x, y, x.clone().cross(y));
     const faN = fa.clone().normalize();
     const uaP = ua.clone().addScaledVector(faN, -ua.dot(faN)).normalize();
+    const flipped = uaP.clone().negate();
+    const minimal = closest ? this.rotateAlong(fk, q, new Quaternion()) : null;
     const out = [];
     for (let i = 0; i < bones; i++) {
-      const dir = new Vector3().subVectors(q[i + 1], q[i]).normalize();
-      const up = upAt(i, q[i]);
-      up.addScaledVector(dir, -up.dot(dir));
-      if (up.lengthSq() < EPS) { out.push(new Quaternion().setFromUnitVectors(faN, dir)); continue; }
-      up.normalize();
-      out.push(new Quaternion().setFromRotationMatrix(frame(dir, up).multiply(frame(faN, uaP).transpose())));
+      const dir = dirs[i];
+      const up = ups[i];
+      if (!up) { out.push(new Quaternion().setFromUnitVectors(faN, dir)); continue; }
+      // Closest: 最小の回転で並べたときの up 軸が world up と逆向きなら、− の軸を world up に向ける
+      const axis = closest && uaP.clone().applyQuaternion(minimal[i]).dot(up) < 0 ? flipped : uaP;
+      out.push(new Quaternion().setFromRotationMatrix(frame(dir, up).multiply(frame(faN, axis).transpose())));
     }
     return out;
   }

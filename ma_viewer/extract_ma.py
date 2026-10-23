@@ -109,6 +109,163 @@ def _visible_effective(n: Optional[MaNode]) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# NURBS カーブ（コントローラーなど）
+# ---------------------------------------------------------------------------
+
+# Maya の色番号（描画のオーバーライド・ディスプレイレイヤーの color。0 は既定の色）
+INDEX_COLORS = [
+    None, (0, 0, 0), (0.25, 0.25, 0.25), (0.6, 0.6, 0.6), (0.608, 0, 0.157), (0, 0.016, 0.376), (0, 0, 1),
+    (0, 0.275, 0.098), (0.149, 0, 0.263), (0.784, 0, 0.784), (0.541, 0.282, 0.2), (0.247, 0.137, 0.122),
+    (0.6, 0.149, 0), (1, 0, 0), (0, 1, 0), (0, 0.255, 0.6), (1, 1, 1), (1, 1, 0), (0.392, 0.863, 1),
+    (0.263, 1, 0.639), (1, 0.69, 0.69), (0.894, 0.675, 0.475), (1, 1, 0.388), (0, 0.6, 0.329),
+    (0.631, 0.416, 0.188), (0.62, 0.631, 0.188), (0.408, 0.631, 0.188), (0.188, 0.631, 0.365),
+    (0.188, 0.631, 0.631), (0.188, 0.404, 0.631), (0.435, 0.188, 0.631), (0.631, 0.188, 0.416),
+]
+_CURVE_DEFORM_INPUT = re.compile(r"^ip\[\d+\]\.ig$")
+
+
+def _num(v, default=0.0) -> float:
+    if isinstance(v, list):
+        v = v[0] if v else default
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _shape_attrs(ms: MaScene, n: MaNode) -> dict:
+    """属性を読み飛ばしたノード（カーブのシェイプ）の setAttr を、覚えておいた範囲から読む"""
+    from .rig import parse_attrs
+    return parse_attrs(ms.text, n)
+
+
+def _layer_override(n: MaNode):
+    """ディスプレイレイヤー（有効なもの）の (色, 表示の種類)。レイヤーがなければ None"""
+    src = n.inputs.get("do")
+    if src is None or src[0].type != "displayLayer" or src[0].raw is None:
+        return None
+    raw = src[0].raw
+
+    def get(*keys):
+        for k in keys:
+            if raw.get(k):
+                return raw[k]
+        return None
+    e = get("e")
+    if e and not R.to_bool(e[0]):
+        return None
+    color = None
+    rgbf, rgb = get("ovrgbf"), get("ovrgb", "crgb", "clr")
+    if rgbf and R.to_bool(rgbf[0]) and rgb and len(rgb) >= 3:
+        color = R.to_floats(rgb[:3])
+    else:
+        c = get("c")
+        k = int(R.to_float(c[0])) if c else 0
+        color = list(INDEX_COLORS[k]) if 0 < k < len(INDEX_COLORS) else None
+    dt = get("dt")
+    return color, int(R.to_float(dt[0])) if dt else 0
+
+
+def _own_override(get):
+    """描画のオーバーライド（ove が有効なもの）の (色, 表示の種類)。get(属性名) で値を読む"""
+    if _num(get("ove")) < 0.5:
+        return None
+    if _num(get("ovrgbf")) >= 0.5 and isinstance(get("ovrgb"), list) and len(get("ovrgb")) >= 3:
+        color = [float(x) for x in get("ovrgb")[:3]]
+    else:
+        k = int(_num(get("ovc")))
+        color = list(INDEX_COLORS[k]) if 0 < k < len(INDEX_COLORS) else None
+    return color, int(_num(get("ovdt")))
+
+
+def curve_display(shape: MaNode, attrs: dict):
+    """カーブの表示色と表示の種類（0 通常・1 テンプレート・2 リファレンス）。
+
+    Maya と同じく、シェイプ → 親 transform → その祖先の順に、ディスプレイレイヤーか描画のオーバーライドを探す
+    （レイヤーに入っているノードはレイヤーの設定、そうでなければ自分のオーバーライド）。
+    """
+    x: Optional[MaNode] = shape
+    while x is not None:
+        o = _layer_override(x)
+        if o is None:
+            o = _own_override(attrs.get if x is shape else (lambda k, x=x: x.xattrs.get(k)))
+        if o is not None:
+            return o
+        x = x.parent
+    return None, 0
+
+
+def curve_shape_source(ms: MaScene, shape: MaNode, attrs: dict):
+    """カーブの形（.cc の値）。保存されていなければ、変形の入力（create ← skinCluster など）をたどって元の形を使う"""
+    cc = attrs.get("cc")
+    if isinstance(cc, list) and len(cc) > 6:
+        return cc, False
+    seen = set()
+    src = shape.inputs.get("cr")
+    x = src[0] if src else None
+    while x is not None and id(x) not in seen:
+        seen.add(id(x))
+        if x.type == "nurbsCurve":
+            cc = _shape_attrs(ms, x).get("cc")
+            if isinstance(cc, list) and len(cc) > 6:
+                return cc, True
+            nxt = x.inputs.get("cr")
+        elif x.type == "groupParts":
+            nxt = x.inputs.get("ig")
+        else:
+            keys = sorted(k for k in x.inputs if _CURVE_DEFORM_INPUT.match(k))
+            nxt = x.inputs.get(keys[0]) if keys else None
+        x = nxt[0] if nxt else None
+    return None, False
+
+
+def collect_curves(ms: MaScene) -> List[Tuple[MaNode, dict]]:
+    """表示する nurbsCurve（中間オブジェクトを除く）と、その属性"""
+    out = []
+    for n in ms.nodes:
+        if n.type != "nurbsCurve" or n.parent is None or n.span is None:
+            continue
+        a = _shape_attrs(ms, n)
+        if _num(a.get("io")) >= 0.5:
+            continue
+        out.append((n, a))
+    return out
+
+
+def curve_entry(ms: MaScene, n: MaNode, a: dict, t_idx: int) -> Optional[dict]:
+    cc, from_input = curve_shape_source(ms, n, a)
+    if cc is None:
+        ms.warn("%s: カーブの形（.cc）が見つからないため表示しません（ヒストリを削除して保存してください）" % n.name,
+                key="#カーブの形なし", limit=10)
+        return None
+    if _num(cc[0]) < 1:
+        return None
+    visible_self = (_num(a.get("v"), 1) >= 0.5 and _num(a.get("lodv"), 1) >= 0.5
+                    and not (_num(a.get("ove")) >= 0.5 and _num(a.get("ovv"), 1) < 0.5) and not _hidden_by_layer(n))
+    color, display = curve_display(n, a)
+    tweaks = []
+    for k, v in a.items():
+        m = re.match(r"^cp\[(\d+)\]$", k)
+        if m and isinstance(v, list) and len(v) >= 3 and any(abs(x) > 0 for x in v[:3]):
+            tweaks.append([int(m.group(1))] + [float(x) for x in v[:3]])
+    entry = {
+        "name": n.name,
+        "path": n.path,
+        "transform": t_idx,
+        "visible": visible_self and _visible_effective(n.parent),
+        "visibleSelf": visible_self,
+        "cc": schema.round_list([float(x) for x in cc]),
+        "color": schema.round_list(color) if color else None,
+        "display": display,
+    }
+    if tweaks:
+        entry["tweaks"] = sorted(tweaks)
+    if from_input:
+        entry["fromInput"] = True             # 変形前の形（アニメーションを読み込むと変形した形にする）
+    return entry
+
+
+# ---------------------------------------------------------------------------
 # メッシュ
 # ---------------------------------------------------------------------------
 
@@ -712,9 +869,13 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         if inf.is_shape:
             inf = inf.parent
         keep_chain(inf)
+    # NURBS カーブ（コントローラーの形など）とその transform
+    curve_shapes = collect_curves(ms)
+    for n, _a in curve_shapes:
+        keep_chain(n.parent)
     # リグ（コンストレイント・IK・計算ノード）の評価に必要なコントローラーなども出力する
     from .rig import discover
-    graph_info = discover(ms, keep)
+    graph_info = discover(ms, keep, [n for n, _a in curve_shapes])
     for n in list(graph_info.dag.values()):
         keep_chain(n)
     ms.graph_info = graph_info
@@ -926,6 +1087,18 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             lap("スキン")
         out_meshes.append(entry)
 
+    # --- カーブの出力 -----------------------------------------------------
+    out_curves = []
+    curve_out: Dict[int, int] = {}
+    for n, a in curve_shapes:
+        t_idx = index_of.get(id(n.parent))
+        entry = curve_entry(ms, n, a, t_idx) if t_idx is not None else None
+        if entry is not None:
+            curve_out[id(n)] = len(out_curves)
+            out_curves.append(entry)
+    ms.curve_shapes = curve_out
+    lap("カーブ")
+
     ms.finalize_warnings()
     nverts = sum(len(m["positions"]) // 3 for m in out_meshes)
     npolys = sum(len(m["counts"]) for m in out_meshes)
@@ -943,6 +1116,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         },
         "nodes": out_nodes,
         "meshes": out_meshes,
+        "curves": out_curves,
         "materials": mb.materials,
         "textures": mb.textures,
         "warnings": list(ms.warnings),
@@ -950,6 +1124,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             "nodes": len(out_nodes),
             "joints": sum(1 for x in out_nodes if x["type"] == "joint"),
             "meshes": len(out_meshes),
+            "curves": len(out_curves),
             "vertices": nverts,
             "polygons": npolys,
             "skinnedMeshes": sum(1 for m in out_meshes if m["skin"]),

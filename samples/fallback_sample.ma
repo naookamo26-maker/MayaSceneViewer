@@ -2046,7 +2046,7 @@ createNode transform -n "arm_ctrl" -p "ctrl_grp";
 createNode parentConstraint -n "shoulder_parentConstraint1" -p "shoulder";
 	setAttr -k on ".w0";
 createNode expression -n "grp_expr";
-	setAttr ".ixp" -type "string" ".O[0] = 10;";
+	setAttr ".ixp" -type "string" ".O[0] = rand(10);";
 createNode expression -n "box_expr";
 createNode animCurveUA -n "elbow_drivenKey";
 	setAttr -s 2 ".ktv[0:1]"  0 0 1 90;

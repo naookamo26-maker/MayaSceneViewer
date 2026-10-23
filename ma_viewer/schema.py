@@ -36,6 +36,14 @@
         "indices": [influences のスロット番号を連結],
         "weights": [値を連結]}}
   ],
+  "curves": [                     # NURBS カーブ（nurbsCurve。省略可）
+    {"name": str, "path": str, "transform": int (nodes の番号),
+     "visible": bool, "visibleSelf": bool,
+     "cc": [次数, スパン数, 形, 有理, 次元, ノット数, ノット..., CV 数, CV...],  # .ma の .cc の値（オブジェクト空間）
+     "tweaks": [[CV 番号, x, y, z], ...],       # .cp の調整（cc に足す。省略可）
+     "color": [r, g, b] | null,   # 描画のオーバーライド・ディスプレイレイヤーの色（null は既定の色）
+     "display": int}              # 0 通常・1 テンプレート・2 リファレンス
+  ],
   "warnings": [str],
   "stats": {...}
 }
@@ -122,6 +130,11 @@ def validate(scene: dict) -> List[str]:
     for i, mat in enumerate(scene.get("materials") or []):
         if not (-1 <= mat.get("texture", -1) < ntex):
             raise SchemaError("materials[%d] の texture が範囲外です" % i)
+    for i, c in enumerate(scene.get("curves") or []):
+        if not (0 <= c.get("transform", -1) < nn):
+            raise SchemaError("curves[%d] の transform が不正です" % i)
+        if not isinstance(c.get("cc"), list) or len(c["cc"]) < 7:
+            raise SchemaError("curves[%d] の cc が不正です" % i)
     anim = scene.get("animation")
     if anim:
         validate_animation(anim, nn)

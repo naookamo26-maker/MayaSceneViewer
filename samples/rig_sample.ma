@@ -166,7 +166,7 @@ createNode joint -n "expr_jnt";
 createNode expression -n "expression1";
 	rename -uid "00000000-0000-0000-0001-004093898615";
 	setAttr -k on ".nds";
-	setAttr ".ixp" -type "string" ".O[0] = frame;";
+	setAttr ".ixp" -type "string" ".O[0] = rand(360);";
 createNode animCurveUA -n "drv_key";
 	rename -uid "00000000-0000-0000-0001-000877814626";
 	setAttr ".tan" 2;

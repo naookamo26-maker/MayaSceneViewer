@@ -2901,6 +2901,81 @@
    "skin":null
   }
  ],
+ "curves":[
+  {
+   "name":"spA_curveShape",
+   "path":"|spA_curve|spA_curveShape",
+   "transform":25,
+   "visible":true,
+   "visibleSelf":true,
+   "cc":[
+    3.0,
+    1.0,
+    0.0,
+    0.0,
+    3.0,
+    6.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    1.0,
+    1.0,
+    4.0,
+    -30.0,
+    0.0,
+    0.0,
+    -30.0,
+    2.666667,
+    0.0,
+    -30.0,
+    5.333333,
+    0.0,
+    -30.0,
+    8.0,
+    0.0
+   ],
+   "color":null,
+   "display":0,
+   "fromInput":true
+  },
+  {
+   "name":"spB_curveShape",
+   "path":"|spB_curve|spB_curveShape",
+   "transform":35,
+   "visible":true,
+   "visibleSelf":true,
+   "cc":[
+    3.0,
+    1.0,
+    0.0,
+    0.0,
+    3.0,
+    6.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    1.0,
+    1.0,
+    4.0,
+    0.0,
+    0.0,
+    10.0,
+    2.666667,
+    0.0,
+    10.0,
+    5.333333,
+    0.0,
+    10.0,
+    8.0,
+    0.0,
+    10.0
+   ],
+   "color":null,
+   "display":0
+  }
+ ],
  "materials":[],
  "textures":[],
  "warnings":[],
@@ -2908,6 +2983,7 @@
   "nodes":42,
   "joints":25,
   "meshes":1,
+  "curves":2,
   "vertices":8,
   "polygons":6,
   "skinnedMeshes":0,
@@ -4661,7 +4737,8 @@
       "attr":"og[0]"
      }
     },
-    "parent":25
+    "parent":25,
+    "shape":0
    },
    {
     "id":38,
@@ -4979,7 +5056,8 @@
       "attr":"wp"
      }
     },
-    "parent":35
+    "parent":35,
+    "shape":1
    },
    {
     "id":52,
@@ -5066,7 +5144,7 @@
   "values":{
    "dtype":"float32",
    "count":18,
-   "data":"AAAAAAAAtEIAABBBAADAQAAAAAAAAABAAADoQQAA0EEAAKDBAACQwQAA8MEAANDBAAAAAAAAAEAAAAAAAABAQAAAAAAAALRC"
+   "data":"AAAAAAAAtEIAABBBAADAQAAAAAAAAABAAADoQQAA0EEAAKDBAACQwQAA8MEAANDBAAAAAAAAAEAAAAAAAABAQAAAAAAAABZD"
   },
   "tangentTypes":{
    "dtype":"uint8",
@@ -5085,7 +5163,7 @@
    "channels":9,
    "nodes":25,
    "graphNodes":62,
-   "seconds":0.0016
+   "seconds":0.0022
   }
  }
 }

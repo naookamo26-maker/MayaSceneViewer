@@ -1695,6 +1695,7 @@
   }
  ],
  "meshes":[],
+ "curves":[],
  "materials":[],
  "textures":[],
  "warnings":[],
@@ -1702,6 +1703,7 @@
   "nodes":25,
   "joints":15,
   "meshes":0,
+  "curves":0,
   "vertices":0,
   "polygons":0,
   "skinnedMeshes":0,

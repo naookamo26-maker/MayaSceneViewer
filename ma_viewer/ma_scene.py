@@ -56,11 +56,11 @@ for _base in ("t", "r", "s", "jo", "ra", "rp", "sp", "rpt", "spt"):
     for _i, _ax in enumerate("xyz"):
         _COMPONENT_ATTRS[_base + _ax] = (_base, _i)
 _COMPONENT_ATTRS.update({"shxy": ("sh", 0), "shxz": ("sh", 1), "shyz": ("sh", 2)})
-_BOOL_ATTRS = {"v", "io", "it", "ssc", "ove", "ovv", "lodv"}
-_INT_ATTRS = {"ro"}
+_BOOL_ATTRS = {"v", "io", "it", "ssc", "ove", "ovv", "lodv", "ovrgbf"}
+_INT_ATTRS = {"ro", "ovc", "ovdt"}    # ovc・ovdt: 描画のオーバーライドの色番号・表示の種類
 _FLOAT_ATTRS = {"radi"}
 # ノードの種類ごとに使う属性（これ以外の setAttr は値を解析せずに読み飛ばす）
-_XFORM_NAMES = _VEC3_ATTRS | set(_COMPONENT_ATTRS) | _BOOL_ATTRS | _INT_ATTRS | _FLOAT_ATTRS | {"bps", "opm"}
+_XFORM_NAMES = _VEC3_ATTRS | set(_COMPONENT_ATTRS) | _BOOL_ATTRS | _INT_ATTRS | _FLOAT_ATTRS | {"bps", "opm", "ovrgb"}
 _MESH_NAMES = _XFORM_NAMES | {"vt", "pt", "ed", "fc", "cuvs", "uvst", "iog"}
 _SKIN_NAMES = _XFORM_NAMES | {"wl", "pm", "gm", "skm", "mi", "nw", "wd"}
 _PLUG_RE = re.compile(r'"([^"]*)"')
@@ -500,6 +500,10 @@ class MaScene:
             vals = sa.values()
             if vals:
                 node.xattrs[name] = R.to_float(vals[0])
+        elif name == "ovrgb":
+            vals = sa.values()                 # 描画のオーバーライドの RGB 色（カーブの色に使う）
+            if len(vals) >= 3:
+                node.xattrs["ovrgb"] = R.to_floats(vals[:3])
         elif name in ("opm", "offsetParentMatrix"):
             mats = parse_matrices(sa)          # offsetParentMatrix（Maya 2020 以降。ローカル行列のあとに掛ける）
             if mats:
@@ -920,8 +924,8 @@ def read_ma_text(path: str) -> str:
 
 
 _BLOCK_END_RE = re.compile(r"\n(?=[^\t \n])")
-# 後から中身を読むために、属性の範囲（span）を覚えておくノード（アニメーションカーブと、再生範囲を持つ script）
-_SPAN_TYPES = ("animCurveTL", "animCurveTA", "animCurveTU", "script", "displayLayer")
+# 後から中身を読むために、属性の範囲（span）を覚えておくノード（アニメーションカーブ・再生範囲を持つ script・カーブの形）
+_SPAN_TYPES = ("animCurveTL", "animCurveTA", "animCurveTU", "script", "displayLayer", "nurbsCurve")
 _NO_SKIP = os.environ.get("MA_VIEWER_NO_SKIP") == "1"
 
 

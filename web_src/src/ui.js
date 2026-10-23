@@ -121,7 +121,7 @@ export class UI {
     });
     $('opt-alpha-style').addEventListener('change', (e) => s('alphaStyle', e.target.value));
     $('opt-jsize').addEventListener('input', (e) => s('jointSize', parseFloat(e.target.value)));
-    const toggles = { 'opt-wire': 'wire', 'opt-skin': 'skin', 'opt-joints': 'joints', 'opt-xray': 'xray', 'opt-tex': 'textures', 'opt-grid': 'grid' };
+    const toggles = { 'opt-wire': 'wire', 'opt-skin': 'skin', 'opt-joints': 'joints', 'opt-curves': 'curves', 'opt-xray': 'xray', 'opt-tex': 'textures', 'opt-grid': 'grid' };
     for (const [id, key] of Object.entries(toggles)) {
       $(id).addEventListener('click', (e) => {
         const on = e.currentTarget.getAttribute('aria-pressed') !== 'true';
@@ -159,6 +159,7 @@ export class UI {
     $('opt-wire').setAttribute('aria-pressed', String(st.wire));
     $('opt-skin').setAttribute('aria-pressed', String(st.skin));
     $('opt-joints').setAttribute('aria-pressed', String(st.joints));
+    $('opt-curves').setAttribute('aria-pressed', String(st.curves !== false));
     $('opt-xray').setAttribute('aria-pressed', String(st.xray));
     $('opt-grid').setAttribute('aria-pressed', String(!!st.grid));
     $('opt-tex').setAttribute('aria-pressed', String(st.textures));

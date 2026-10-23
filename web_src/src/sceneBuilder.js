@@ -509,7 +509,7 @@ export function writeVertexColors(entry, origColors) {
   attr.needsUpdate = true;
 }
 
-/** 表示中のメッシュとジョイントを包む箱（大きいメッシュは間引いて計算） */
+/** 表示中のメッシュ・ジョイント・カーブを包む箱（大きいメッシュは間引いて計算） */
 export function computeBounds(built, useSkin, includeHidden = false) {
   const box = new Box3();
   for (const e of built.meshes) {
@@ -519,6 +519,12 @@ export function computeBounds(built, useSkin, includeHidden = false) {
   }
   for (const ji of built.jointIndices) {
     box.expandByPoint(_v.setFromMatrixPosition(built.nodeObjects[ji].matrixWorld));
+  }
+  for (const it of built.curveItems || []) {          // NURBS カーブ（CurveOverlay が作った線）
+    if (!it || (!includeHidden && !it.line.visible)) continue;
+    const pos = it.line.geometry.getAttribute('position');
+    const step = Math.max(1, Math.floor(pos.count / 16));
+    for (let k = 0; k < pos.count; k += step) box.expandByPoint(_v.fromBufferAttribute(pos, k).applyMatrix4(it.line.matrixWorld));
   }
   if (box.isEmpty()) box.set(new Vector3(-50, -50, -50), new Vector3(50, 50, 50));
   return box;

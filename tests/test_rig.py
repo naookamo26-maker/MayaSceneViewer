@@ -51,7 +51,7 @@ class TestDiscovery(unittest.TestCase):
                   "multiplyDivide", "plusMinusAverage", "reverse", "unitConversion", "condition", "blendColors",
                   "pairBlend", "ikHandle"):
             self.assertIn(t, types)
-        self.assertNotIn("expression", types)
+        self.assertNotIn("expression", types)          # rand() を使う式は解釈できない
 
     def test_ik(self):
         ik = self.graph["arm_ik"]["ik"]
@@ -340,6 +340,76 @@ class TestStage4(unittest.TestCase):
         srcs = [self.anim["graph"][shape["inputs"]["cp[%d]" % i]["node"]] for i in range(4)]
         self.assertEqual([s["type"] for s in srcs], ["locator"] * 4)
         self.assertEqual([self.names[s["parent"]] for s in srcs], ["spB_loc%d" % i for i in range(4)])
+
+
+class TestStage5(unittest.TestCase):
+    """第 5 段階: NURBS カーブの出力・expression の判定"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.scene = load_ma(os.path.join(ROOT, "samples", "ctrl_sample.ma"), animation=True)
+        cls.names = [n["name"] for n in cls.scene["nodes"]]
+        cls.curves = {c["name"]: c for c in cls.scene["curves"]}
+        cls.graph = {g["name"]: g for g in cls.scene["animation"]["graph"]}
+
+    def test_curves(self):
+        c = self.curves["ctrl_circleShape"]
+        self.assertEqual(self.names[c["transform"]], "ctrl_circle")
+        self.assertEqual(c["cc"][:6], [3.0, 8.0, 2.0, 0.0, 3.0, 13.0])     # 次数・スパン・周期的・非有理・3 次元・ノット数
+        self.assertEqual(c["color"], [1.0, 1.0, 0.0])                       # シェイプのオーバーライド（色番号 17）
+        self.assertEqual(self.curves["ctrl_squareShape"]["color"], [0.2, 0.9, 0.5])   # transform の RGB
+        self.assertEqual(self.curves["ctrl_layerShape"]["color"], [1.0, 0.0, 0.0])   # ディスプレイレイヤー（13）
+        self.assertEqual(self.curves["ctrl_tmplShape"]["display"], 1)
+        self.assertFalse(self.curves["ctrl_hiddenShape"]["visible"])
+        self.assertEqual(self.curves["ctrl_tweakShape"]["tweaks"], [[1, 0.0, 2.0, 0.0]])
+        self.assertNotIn("ctrl_ioonlyShape", self.curves)
+        self.assertNotIn("ctrl_ioonly", self.names)
+        self.assertEqual(self.scene["stats"]["curves"], len(self.scene["curves"]))
+
+    def test_curve_from_history(self):
+        """形が保存されていないカーブ（skinCluster で変形）は、入力をたどって変形前の形を使い、グラフと対応づける"""
+        sc = load_ma(os.path.join(ROOT, "samples", "ik_sample.ma"), animation=True)
+        curves = {c["name"]: (i, c) for i, c in enumerate(sc["curves"])}
+        i, c = curves["spA_curveShape"]
+        self.assertTrue(c.get("fromInput"))
+        g = next(g for g in sc["animation"]["graph"] if g["name"] == "spA_curveShape")
+        self.assertEqual(g["shape"], i)
+        self.assertNotIn("spA_curveShapeOrig", curves)                     # 中間オブジェクトは表示しない
+
+    def test_curve_attrs_without_skip(self):
+        """カーブの属性は、読み飛ばし（span）からも、ふつうの解析からも同じに読める"""
+        sc, _anim = from_text('createNode transform -n "c";\ncreateNode nurbsCurve -n "cShape" -p "c";\n'
+                              '\tsetAttr ".ove" yes;\n\tsetAttr ".ovc" 13;\n'
+                              '\tsetAttr ".cc" -type "nurbsCurve" 1 1 0 no 3 2 0 1 2 0 0 0 1 0 0;\n')
+        self.assertEqual(len(sc["curves"]), 1)
+        self.assertEqual(sc["curves"][0]["color"], [1.0, 0.0, 0.0])
+        self.assertEqual(sc["nodes"][0]["name"], "c")
+
+    def test_expressions(self):
+        self.assertEqual(self.graph["expr_wave"]["expr"], ".O[0] = sin(frame * 0.2) * 3;")
+        self.assertIn("if ($h > 2.5)", self.graph["expr_logic"]["expr"])
+        self.assertNotIn("tim", self.graph["expr_wave"].get("inputs", {}))     # 時間はビューアのフレームから
+        self.assertNotIn("expr_mel", self.graph)
+        w = "\n".join(self.scene["animation"]["warnings"])
+        self.assertIn("expression expr_mel を解釈できません", w)
+        # 解釈できる expression で動くノードには「ファイルに値がありません」の警告を出さない
+        sw = "\n".join(self.scene["warnings"])
+        self.assertNotIn("e_jnt2:", sw)
+        self.assertIn("e_jnt3:", sw)
+
+    def test_check_expression(self):
+        from ma_viewer.expression import check_expression
+        ok = ["float $a = .I[0] * 2;\nif ($a > 1) .O[0] = $a; else .O[0] = clamp(0, 1, frame);",
+              "int $i; for ($i = 0; $i < 3; $i++) .O[0] += time; // comment", ".O[0] = (int)(.I[1] / 2);"]
+        for text in ok:
+            self.assertIsNone(check_expression(text), text)
+        bad = {".O[0] = rand(1);": "rand", '.O[0] = `getAttr "a.tx"`;': "MEL", "pCube1.tx = 1;": "pCube1.tx",
+               ".tx = 1;": ".tx", '.O[0] = size("abc");': "size", '$s = "abc";': "文字列", "vector $v = <<1, 0, 0>>;": "vector", "$v = <<1, 0, 0>>;": "ベクトル",
+               "print(1);": "print"}
+        for text, word in bad.items():
+            problem = check_expression(text)
+            self.assertIsNotNone(problem, text)
+            self.assertIn(word, problem, text)
 
 
 if __name__ == "__main__":

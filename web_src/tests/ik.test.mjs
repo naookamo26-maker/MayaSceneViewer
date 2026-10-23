@@ -126,24 +126,40 @@ test('curveInfo: カーブの長さ', () => {
   }
 });
 
-test('スプライン IK（ロケーターで動くカーブ・上級ツイスト）: カーブの上に並び、up 軸が world up の補間に沿う', () => {
+/** 骨の向き dirs と各ジョイントの up 軸 ys から、隣の骨へ最小の回転で運んだときの、ひねりの角度の列 */
+function twistSteps(dirs, ys) {
+  const steps = [];
+  for (let i = 1; i < dirs.length; i++) {
+    const carried = ys[i - 1].clone().applyQuaternion(new Quaternion().setFromUnitVectors(dirs[i - 1], dirs[i]));
+    steps.push(Math.atan2(dirs[i].dot(carried.clone().cross(ys[i])), carried.dot(ys[i])));
+  }
+  return steps;
+}
+
+test('スプライン IK（ロケーターで動くカーブ・上級ツイスト）: 両端の up 軸が world up に合い、ひねりが均等に配られる', () => {
   for (const f of FRAMES) {
     const { rig, pos, W } = at(f);
     const curve = rig.plug(gid('spB_curveShape'), 'ws');
     const P = [0, 1, 2, 3, 4].map((i) => pos(`spB_${i}`));
     for (let i = 0; i < 5; i++) assert.ok(distToCurve(curve, P[i]) < 2e-3, `フレーム ${f}: spB_${i}`);
     assert.ok(nearVec(pointAt(curve, 1), pos('spB_loc3')), 'カーブの終点はロケーター');
-    const rx = (f - 1) / 47 * Math.PI / 2;
+    const rx = (f - 1) / 47 * 150 * Math.PI / 180;
     const upS = new Vector3(0, 1, 0), upE = new Vector3(0, Math.cos(rx), Math.sin(rx));
+    const dirs = [], ys = [];
     for (let i = 0; i < 4; i++) {
       const dir = P[i + 1].clone().sub(P[i]).normalize();
       const x = new Vector3().setFromMatrixColumn(W(`spB_${i}`), 0).normalize();
       const y = new Vector3().setFromMatrixColumn(W(`spB_${i}`), 1).normalize();
       assert.ok(nearVec(x, dir, 1e-4), `フレーム ${f}: spB_${i} の X 軸が骨の向き`);
-      const up = upS.clone().lerp(upE, i / 3);
-      up.addScaledVector(dir, -up.dot(dir)).normalize();
-      assert.ok(nearVec(y, up, 1e-4), `フレーム ${f}: spB_${i} の Y 軸 ${y.toArray()} != ${up.toArray()}`);
+      assert.ok(Math.abs(x.dot(y)) < 1e-6);
+      dirs.push(dir); ys.push(y);
     }
+    const proj = (u, d) => u.clone().addScaledVector(d, -u.dot(d)).normalize();
+    assert.ok(nearVec(ys[0], proj(upS, dirs[0]), 1e-4), `フレーム ${f}: 始点の Y 軸 ${ys[0].toArray()}`);
+    assert.ok(nearVec(ys[3], proj(upE, dirs[3]), 1e-4), `フレーム ${f}: 終点の Y 軸 ${ys[3].toArray()}`);
+    const steps = twistSteps(dirs, ys);
+    for (const s of steps) assert.ok(near(s, steps[0], 1e-4), `フレーム ${f}: ひねりが均等でない ${steps}`);
+    if (f === 48) assert.ok(steps[0] > 0.6, `150° のひねりが途中で反転しない ${steps}`);
   }
 });
 
