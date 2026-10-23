@@ -215,6 +215,10 @@ def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
     out.append("（✓ 評価できる / ★ 評価できない。★ から先の値はファイルに保存された値のまま）")
     out.append("")
     out.append("■ プラグイン（requires）: %s" % ("、".join(ms.plugins) if ms.plugins else "なし"))
+    custom = getattr(ms, "custom_transforms", {}) or {}
+    if custom:
+        out.append("■ transform として扱った自作ノード: %s" % "、".join(
+            "%s（%s）" % (t, "、".join(names[:5]) + (" ほか" if len(names) > 5 else "")) for t, names in sorted(custom.items())))
     out.append("")
     out.append("■ 評価できないノード")
     if info is None or (not info.unsupported and not any(e["problem"] for e in info.ik)):

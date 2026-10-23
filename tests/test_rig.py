@@ -509,6 +509,35 @@ class TestStage6(unittest.TestCase):
         self.assertIn("にすると一致する IK: 1 個（leg_ik）", text2)
         self.assertIn("確認できません", format_verification(None))
 
+    def test_no_false_warning_for_rig_nodes(self):
+        """リグの探索で見つかったノード（コンストレイントで動くコントローラー）には「ファイルに値がありません」を出さない"""
+        body = ('createNode transform -n "tgt";\n\tsetAttr ".t" -type "double3" 1 2 3 ;\n'
+                'createNode transform -n "ctrl";\n'
+                'createNode pointConstraint -n "pc" -p "ctrl";\n'
+                '\taddAttr -dcb 0 -ci true -k true -sn "w0" -ln "tgtW0" -dv 1 -min 0 -at "double";\n'
+                'createNode joint -n "j";\n'
+                'connectAttr "tgt.t" "pc.tg[0].tt";\nconnectAttr "tgt.pm" "pc.tg[0].tpm";\n'
+                'connectAttr "pc.w0" "pc.tg[0].tw";\nconnectAttr "ctrl.pim" "pc.cpim";\n'
+                'connectAttr "pc.ctx" "ctrl.tx";\nconnectAttr "pc.cty" "ctrl.ty";\nconnectAttr "pc.ctz" "ctrl.tz";\n'
+                'connectAttr "ctrl.t" "j.t";\n')
+        sc, _anim = from_text(body)
+        w = "\n".join(sc["warnings"])
+        self.assertNotIn("ctrl:", w)
+        self.assertNotIn("j:", w)
+        self.assertIn("ctrl", [n["name"] for n in sc["nodes"]])
+        # 評価できないノードで動くものは、これまでどおり警告する（rig6 の knee_pv）
+        self.assertIn("knee_pv: tx ← my_pv_driver", "\n".join(self.scene["warnings"]))
+
+    def test_custom_transform(self):
+        """親も子もない自作ノード（transform らしいもの）は transform として扱い、リグで評価する"""
+        self.assertIn("cx_ctrl", self.names)
+        self.assertIn(self.graph["cx_ctrl"]["id"], [v["node"] for v in self.graph["cx_dec"]["inputs"].values()])
+        self.assertTrue(any("myCtrlTransform（cx_ctrl）を transform として扱います" in w for w in self.scene["warnings"]))
+        self.assertFalse(any("myCtrlTransform" in w and "未対応" in w for w in self.scene["animation"]["warnings"]))
+        self.assertNotIn("my_pv_driver", self.names)          # transform らしくない自作ノードは、これまでどおり
+        from ma_viewer.rig_report import rig_report_file
+        self.assertIn("■ transform として扱った自作ノード: myCtrlTransform（cx_ctrl）", rig_report_file(self.path))
+
     def test_cli(self):
         import io
         from contextlib import redirect_stdout

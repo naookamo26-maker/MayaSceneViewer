@@ -29,6 +29,11 @@
     poc_jnt2.t = パラメータ 1（終点）の接線の向き（normalizedTangent）
   * 腕 arm2_a → arm2_b → arm2_c（+X 方向、肘は +Z 側に曲がる）の ikRPsolver。極ベクトルは書かない
     （Maya の既定値 (0, 0, 1) のまま）。ハンドル arm2_ik.tx にキー 46 → 43
+  * 腕 arm3_a → arm3_b → arm3_c: arm3_a の回転は ry 20°（保存時の IK の答え）、移動は arm3_root への pointConstraint、
+    バインドポーズ（.bps）はまっすぐ（回転 0）。移動が接続で決まるので、表示用の行列はバインドポーズに置き換わるが、
+    再現チェックはファイルに書かれた回転（20°）と比べる
+  * 自作のトランスフォームノード cx_ctrl（未知の型 myCtrlTransform。親も子もない）の ty にキー 0 → 2。
+    cx_jnt.t = decomposeMatrix(cx_ctrl.wm).ot → transform として扱って評価する
 保存時のフレーム（1）の各ノードの値は、リグの計算結果と一致するように書く。
 """
 from __future__ import annotations
@@ -216,6 +221,32 @@ def main():
     node("ikEffector", "arm2_eff", "arm2_b", t=(3, 0, -1), v="no")
     node("ikHandle", "arm2_ik", t=(46, 0, 10))
     anim("TL", "arm2_ik_translateX", [(1, 46), (48, 43)])
+    import math as _m
+    c3, s3 = _m.cos(_m.radians(20)), _m.sin(_m.radians(20))
+    roty = lambda x, y, z: (x * c3 + z * s3, y, -x * s3 + z * c3)  # noqa: E731
+    e = roty(3, 0, 1)
+    w = roty(3, 0, -1)
+    wrist = (40 + e[0] + w[0], 0, 30 + e[2] + w[2])
+    node("transform", "arm3_root", t=(40, 0, 30))
+    node("joint", "arm3_a", t=(40, 0, 30), r=(0, 20, 0))
+    A('\tsetAttr ".bps" -type "matrix" 1 0 0 0 0 1 0 0 0 0 1 0 40 0 30 1;')
+    A('createNode pointConstraint -n "arm3_pc" -p "arm3_a";')
+    uid("arm3_pc")
+    A('\taddAttr -dcb 0 -ci true -k true -sn "w0" -ln "arm3_rootW0" -dv 1 -min 0 -at "double";')
+    A('\tsetAttr -k on ".w0";')
+    node("joint", "arm3_b", "arm3_a", t=(3, 0, 1))
+    node("joint", "arm3_c", "arm3_b", t=(3, 0, -1))
+    node("ikEffector", "arm3_eff", "arm3_b", t=(3, 0, -1), v="no")
+    node("ikHandle", "arm3_ik", t=wrist)
+    anim("TL", "arm3_ik_translateX", [(1, wrist[0]), (48, wrist[0] - 2)])
+
+    # --- 自作のトランスフォームノード -------------------------------------------------------
+    A('createNode myCtrlTransform -n "cx_ctrl";')
+    uid("cx_ctrl")
+    A('\tsetAttr ".t" -type "double3" 0 0 50 ;')
+    node("joint", "cx_jnt", t=(0, 0, 50))
+    node("decomposeMatrix", "cx_dec")
+    anim("TL", "cx_ctrl_translateY", [(1, 0), (48, 2)])
 
     node("script", "sceneConfigurationScriptNode")
     A('\tsetAttr ".b" -type "string" "playbackOptions -min 1 -max 48 -ast 1 -aet 48 ";')
@@ -311,6 +342,22 @@ def main():
     for ax in "xyz":
         C("arm2_c.t%s" % ax, "arm2_eff.t%s" % ax)
     C("arm2_ik_translateX.o", "arm2_ik.tx")
+    C("cx_ctrl_translateY.o", "cx_ctrl.ty")
+    C("cx_ctrl.wm", "cx_dec.imat")
+    C("cx_dec.ot", "cx_jnt.t")
+    C("arm3_a.msg", "arm3_ik.hsj")
+    C("arm3_eff.hp", "arm3_ik.hee")
+    C("ikRPsolver.msg", "arm3_ik.hsv")
+    for ax in "xyz":
+        C("arm3_c.t%s" % ax, "arm3_eff.t%s" % ax)
+        C("arm3_pc.ct%s" % ax, "arm3_a.t%s" % ax)
+    C("arm3_ik_translateX.o", "arm3_ik.tx")
+    C("arm3_a.pim", "arm3_pc.cpim")
+    C("arm3_a.rp", "arm3_pc.crp")
+    C("arm3_a.rpt", "arm3_pc.crt")
+    for src, dst in (("t", "tt"), ("rp", "trp"), ("rpt", "trt"), ("pm", "tpm")):
+        C("arm3_root.%s" % src, "arm3_pc.tg[0].%s" % dst)
+    C("arm3_pc.w0", "arm3_pc.tg[0].tw")
     C("layerManager.dli[1]", "rig_layer.id")
     for n in ("leg_ik", "leg_pvc", "knee_pv", "foot_ctrl"):
         C("rig_layer.di", "%s.do" % n)

@@ -934,6 +934,12 @@ _SPAN_TYPES = ("animCurveTL", "animCurveTA", "animCurveTU", "script", "displayLa
 _NO_SKIP = os.environ.get("MA_VIEWER_NO_SKIP") == "1"
 
 
+def _span_for_unknown(n: MaNode) -> bool:
+    """そのほかの（大きなデータを持たない）ノードも範囲を覚える（自作ノードの独自の属性を後から読むため）"""
+    return (n.mesh is None and n.skin is None and n.tweak is None and n.raw is None and n.type not in SHAPE_TYPES
+            and not n.type.startswith("poly") and n.type not in ("groupId", "groupParts"))
+
+
 def parse_ma_text(text: str, source_path: str = "", progress: ProgressFn = None) -> MaScene:
     """.ma の文を順に処理する。
 
@@ -974,7 +980,8 @@ def parse_ma_text(text: str, source_path: str = "", progress: ProgressFn = None)
         c[1] += 1
         c[2] += len(stmt)
         if cmd == "createNode" and scene.current is not None and (
-                scene.current.skip_attrs or scene.current.type in _SPAN_TYPES or scene.current.type in TRANSFORM_TYPES):
+                scene.current.skip_attrs or scene.current.type in _SPAN_TYPES or scene.current.type in TRANSFORM_TYPES
+                or _span_for_unknown(scene.current)):
             m = _BLOCK_END_RE.search(text, pos)
             skip_to = m.start() + 1 if m else n
             # 範囲を覚えておく（アニメーションカーブ・リグの計算ノード・コントローラーの独自の属性を後から読むため）

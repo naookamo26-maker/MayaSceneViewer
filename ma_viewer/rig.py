@@ -275,6 +275,12 @@ def discover(ms: MaScene, keep: Set[int], geometry=()) -> GraphInfo:
         for key in list(handle.inputs):
             if _base(key) in keys:
                 add_edge(handle, key)
+    # リグの探索で見つかった DAG ノード（コントローラー・極ベクトルの目印など）も、チャンネルの接続元がすべて
+    # 評価できれば「リグで値が決まる」扱いにする（「ファイルに値がありません」の警告を出さない）
+    for n in list(info.dag.values()):
+        srcs = [src for key, (src, _sa) in n.inputs.items() if _base(key) in _CHANNEL_KEYS]
+        if srcs and all(_evaluable(s, info) for s in srcs):
+            info.graph_driven.add(id(n))
     return info
 
 

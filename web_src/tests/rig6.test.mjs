@@ -30,7 +30,9 @@ test('保存時のフレームでは、動くノードがファイルの値を�
   const rig = at(1);
   for (const [ni, m] of rig.matrices) {
     if (rig.tainted.has(ni)) continue;                 // 自作ノードの影響を受ける脚（ファイルの値のまま）
-    const file = data.nodes[ni].matrix;
+    // ファイルに書かれた値（表示用の行列は、移動が接続で決まるジョイントではバインドポーズに置き換わっている）
+    const fr = rig.fileRestLocal(ni);
+    const file = fr ? fr.elements : data.nodes[ni].matrix;
     m.elements.forEach((v, k) => assert.ok(near(v, file[k], 1e-4), `${names[ni]}[${k}] ${v} != ${file[k]}`));
   }
   assert.equal(rig.problems.size, 0, [...rig.problems].join());
@@ -155,4 +157,23 @@ test('再現チェックの候補探し: Maya の答えが「ひねり逆向き�
   assert.equal(h.best.variant.twistSign, -1, h.best.label);
   assert.ok(h.best.error < 1e-3, `${h.best.error}`);
   assert.equal(rig.ikVariant, null, '試したあとは元の解き方に戻す');
+});
+
+test('再現チェック: 移動がコンストレイントで決まる（表示用の行列がバインドポーズに置き換わる）ジョイントも、ファイルの回転と比べる', () => {
+  const rig = at(data.animation.current);
+  const ni = idx('arm3_a');
+  assert.ok(Math.abs(data.nodes[ni].matrix[2]) < 1e-9, '表示用の行列はバインドポーズ（回転 0）');
+  const res = rig.verifySaved((n) => rig.fileRestLocal(n));
+  const h = res.find((x) => x.handle === 'arm3_ik');
+  assert.ok(h.ok, JSON.stringify(h.joints));
+  // 表示用の行列と比べると（以前のやり方）、20° ずれていると誤って判定してしまう
+  const wrong = rig.verifySaved((n) => new Matrix4().fromArray(data.nodes[n].matrix)).find((x) => x.handle === 'arm3_ik');
+  assert.ok(!wrong.ok && near(wrong.joints[0].angle, 20, 0.01), `${wrong.joints[0].angle}`);
+});
+
+test('自作のトランスフォームノード（未知の型）を transform として評価する', () => {
+  for (const f of FRAMES) {
+    const t = at(f).chan(idx('cx_jnt')).t;
+    assert.ok(near(t[1], lin(f, 0, 2)) && near(t[2], 50), `フレーム ${f}: ${t}`);
+  }
 });

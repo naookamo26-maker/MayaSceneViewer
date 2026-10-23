@@ -1560,6 +1560,22 @@ export class RigEvaluator {
     return typeof t === 'number' ? t : 1;
   }
 
+  /**
+   * ファイルに書かれた値で組み立てたローカル行列（保存したときの Maya の答え。再現チェックに使う）。
+   * 移動・スケールが接続で決まる（ファイルに値がない）ときは評価した値を使う。回転が接続で決まるときは比べられないので null
+   */
+  fileRestLocal(ni) {
+    const rest = this.rest(ni);
+    if (!rest) return null;
+    const g = this.dagGraph.get(ni);
+    const keys = g && g.inputs ? Object.keys(g.inputs) : [];
+    if (keys.some((k) => /^r[xyz]?$/.test(k))) return null;
+    const c = { ...rest };
+    if (keys.some((k) => /^t[xyz]?$/.test(k))) c.t = this.chan(ni, 't').t;
+    if (keys.some((k) => /^s[xyz]?$/.test(k))) c.s = this.chan(ni).s;
+    return composeLocalMatrix(c, this.isScaleOf(ni), new Matrix4());
+  }
+
   /** IK のチェーンの、評価した回転とファイルの回転の比較（verifySaved の 1 ハンドル分） */
   compareChain(g, fileLocal, tol) {
     const chain = g.ik.chain;

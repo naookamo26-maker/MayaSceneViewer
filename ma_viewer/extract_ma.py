@@ -786,10 +786,50 @@ class _Lap:
         self.t = t
 
 
+_XFORM_SOURCE_PLUGS = {"wm", "worldMatrix", "pm", "parentMatrix", "wim", "worldInverseMatrix", "pim",
+                       "parentInverseMatrix", "xm", "xformMatrix"}
+_XFORM_DEST_KEYS = {"t", "tx", "ty", "tz", "r", "rx", "ry", "rz", "s", "sx", "sy", "sz"}
+
+
+def promote_custom_transforms(ms: MaScene) -> Dict[str, List[str]]:
+    """型を知らないノード（プラグインの自作ノード）のうち、transform らしいものを transform として扱う。
+
+    証拠: 親や子がある・移動 / 回転 / スケールの値がある・ワールド行列などを出力している・移動などに接続がある。
+    戻り値: 型 → ノード名の一覧（警告と診断に使う）
+    """
+    from .ma_scene import RAW_TYPES, SHAPE_TYPES, TRANSFORM_TYPES, _SKIP_ATTR_TYPES
+    from .rig import GEOMETRY_TYPES, SUPPORTED_DG
+    known = TRANSFORM_TYPES | SHAPE_TYPES | SUPPORTED_DG | GEOMETRY_TYPES | _SKIP_ATTR_TYPES | RAW_TYPES | {
+        "mesh", "skinCluster", "tweak", "groupParts", "groupId", "script", "dagPose", "time", "ikRPsolver",
+        "ikSCsolver", "ikSplineSolver", "ikSystem", "materialInfo", "shadingEngine", "objectSet"}
+    evidence = set()
+    for src, sattr, dst, dattr in ms.connections:
+        if R.normalize_attr(sattr).split("[")[0] in _XFORM_SOURCE_PLUGS:
+            evidence.add(id(src))
+        if dattr.split("[")[0] in _XFORM_DEST_KEYS:
+            evidence.add(id(dst))
+    out: Dict[str, List[str]] = {}
+    for n in ms.nodes:
+        t = n.type
+        if t in known or t.startswith("animCurve") or t.startswith("poly") or t.endswith("Constraint") or n.is_shape:
+            continue
+        if not (n.parent is not None or n.children or id(n) in evidence or any(k in n.xattrs for k in ("t", "r", "s"))):
+            continue
+        n.is_dag = True
+        out.setdefault(t, []).append(n.name)
+    return out
+
+
 def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     CONVERT_TIMING.clear()
     lap = _Lap()
     ctx = _Ctx(ms)
+    # 自作のトランスフォームノード（プラグイン）は transform として扱う
+    ms.custom_transforms = promote_custom_transforms(ms)
+    for t, names in sorted(ms.custom_transforms.items()):
+        ms.warn("自作ノードの型 %s（%s%s）を transform として扱います（移動・回転・スケールで位置を決めます）。"
+                % (t, "、".join(names[:5]), " ほか %d 個" % (len(names) - 5) if len(names) > 5 else ""),
+                key="#自作の transform " + t)
     if ms.linear_unit != "cm":
         ms.warn("作業単位が %s です。値はファイルに書かれたまま表示します（cm 以外は未検証）。" % ms.linear_unit)
     if ms.angular_unit not in ("deg", "rad"):

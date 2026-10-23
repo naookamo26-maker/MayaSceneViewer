@@ -797,12 +797,10 @@ class ViewerApp {
    */
   verifyRig() {
     if (!this.rig || !this.clip) return null;
-    const nodes = this.data.nodes;
     this.rig.evaluate(this.clip.current, () => null, new Map());
-    const list = this.rig.verifySaved((ni) => {
-      const driven = (nodes[ni].drivenBy || []).some((d) => /^r/.test(d));
-      return driven ? null : new Matrix4().fromArray(nodes[ni].matrix);   // 回転が接続で決まるジョイントは比べられない
-    });
+    // ファイルに書かれた回転（Maya の答え）と比べる。表示用の行列（nodes の matrix）は、移動などが接続で決まる
+    // ノードではバインドポーズ・既定値に置き換えてあるので使わない
+    const list = this.rig.verifySaved((ni) => this.rig.fileRestLocal(ni));
     this.applyFrame(this.frame);                       // 表示中のフレームの評価に戻す
     return { frame: this.clip.current, handles: list };
   }
