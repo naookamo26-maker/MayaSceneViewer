@@ -500,6 +500,13 @@ class TestStage6(unittest.TestCase):
         self.assertIn("★ arm_ik（ikRPsolver）・極ベクトル（ワールド）(0.000, 0.000, 1.000)", text)
         self.assertIn("★ shoulder: ずれ 30.00°（ねじれ -30.00°・曲がり 0.00°）", text)
         self.assertIn("ずれのある IK: arm_ik", text)
+        text2 = format_verification({"frame": 1, "handles": [
+            {"handle": "leg_ik", "solver": "ikRPsolver", "pv": [0, 0, 1], "twist": 30, "ok": False, "chain": [],
+             "reach": 0.0, "error": 60.0, "best": {"label": "ひねり 逆向き・極ベクトル ハンドルの親の空間・肘 極ベクトルの側",
+                                                   "error": 0.01, "variant": {}},
+             "joints": [{"name": "hip", "angle": 60, "roll": 50, "bend": 30, "position": 0, "ok": False}]}]})
+        self.assertIn("→ 一番合う解き方: ひねり 逆向き・極ベクトル ハンドルの親の空間・肘 極ベクトルの側（ずれ 0.01°。今の解き方は 60.00°）", text2)
+        self.assertIn("にすると一致する IK: 1 個（leg_ik）", text2)
         self.assertIn("確認できません", format_verification(None))
 
     def test_cli(self):

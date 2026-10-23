@@ -135,3 +135,24 @@ test('保存時のフレームの再現チェック: 一致する IK は ✓、�
   const j = r2.find((h) => h.handle === 'arm2_ik').joints[0];
   assert.ok(!j.ok && near(Math.abs(j.roll), 30, 1e-3) && j.bend < 1e-3, JSON.stringify(j));
 });
+
+test('再現チェックの候補探し: Maya の答えが「ひねり逆向き」なら、それを一番合う解き方として見つける', () => {
+  const d = JSON.parse(JSON.stringify(data));
+  const g = d.animation.graph.find((x) => x.name === 'arm2_ik');
+  g.attrs = { ...(g.attrs || {}), twi: 30 };                     // ひねり 30°
+  const mk = () => new RigEvaluator(new AnimationClip(d.animation), d.nodes, (ni) => new Matrix4().fromArray(d.nodes[ni].matrix));
+  // 「Maya の答え」: ひねりを逆向きに解いたときのローカル行列
+  const maya = mk();
+  maya.ikVariant = { twistSign: -1, pvSpace: 'handle', side: 1 };
+  maya.evaluate(d.animation.current);
+  const answer = new Map(g.ik.chain.map((ni) => [ni, maya.localFile(ni).clone()]));
+  const rig = mk();
+  rig.evaluate(d.animation.current);
+  const res = rig.verifySaved((ni) => answer.get(ni) || new Matrix4().fromArray(d.nodes[ni].matrix));
+  const h = res.find((x) => x.handle === 'arm2_ik');
+  assert.ok(!h.ok && h.error > 50, `今の解き方では 60° 近くずれる: ${h.error}`);
+  assert.ok(h.reach < 1e-6, 'ハンドルには届いている');
+  assert.equal(h.best.variant.twistSign, -1, h.best.label);
+  assert.ok(h.best.error < 1e-3, `${h.best.error}`);
+  assert.equal(rig.ikVariant, null, '試したあとは元の解き方に戻す');
+});

@@ -140,6 +140,24 @@ function averageQuat(list) {
   return out.normalize();
 }
 
+// 再現チェックで試す IK の解き方の候補（Maya の細部の解釈が分からない点の組み合わせ）
+const RP_VARIANTS = [];
+for (const twistSign of [1, -1, 0]) {
+  for (const pvSpace of ['handle', 'world', 'start']) {
+    for (const side of [1, -1]) RP_VARIANTS.push({ twistSign, pvSpace, side });
+  }
+}
+const IK_VARIANTS = {
+  ikRPsolver: RP_VARIANTS,
+  ikSplineSolver: [{ splineInterp: 'angle' }, { splineInterp: 'lerp' }],
+};
+function variantLabel(v) {
+  if (v.splineInterp) return v.splineInterp === 'lerp' ? 'ひねり: up ベクトルを直線で補間' : 'ひねり: 角度で配る（今の解き方）';
+  const tw = { 1: 'ひねり 今の向き', '-1': 'ひねり 逆向き', 0: 'ひねり 使わない' }[v.twistSign];
+  const sp = { handle: '極ベクトル ハンドルの親の空間', world: '極ベクトル ワールド空間', start: '極ベクトル 開始ジョイントの親の空間' }[v.pvSpace];
+  return `${tw}・${sp}・肘 ${v.side === 1 ? '極ベクトルの側' : '反対側'}`;
+}
+
 export class RigEvaluator {
   /**
    * @param clip AnimationClip（カーブとノードの材料）
@@ -207,6 +225,7 @@ export class RigEvaluator {
     // 時間で変わる expression（frame・time を使う式）があるか（キーがなくてもタイムラインを出す）
     this.usesTime = this.graph.some((g) => g.type === 'expression' && /\b(frame|time)\b/.test(g.expr || ''));
     this.problems = new Set();               // 評価中に見つかった問題（循環など）
+    this.ikVariant = null;                   // 再現チェックで試す IK の解き方の候補（ふだんは null）
     this.frame = 0;
     this.poseOf = () => null;
     this.reset();
@@ -1204,13 +1223,14 @@ export class RigEvaluator {
     // 極ベクトル（ハンドルの親の空間）→ ワールド。ひねり（twist）で u のまわりに回す。
     // シングルチェーン（SC）は極ベクトルを持たないので、FK の形の中間ジョイントの側に曲げる（面を保つ）
     const pvLocal = sc ? [0, 0, 0] : this.vec(id, 'pv', [0, 0, 1]);
-    const pvRot = new Matrix4().extractRotation(this.parentWorld(hni));
+    const pvRot = new Matrix4().extractRotation(this.pvSpace(hni, s));
     const pv = new Vector3(pvLocal[0], pvLocal[1], pvLocal[2]).applyMatrix4(pvRot);
     let v = pv.clone().addScaledVector(u, -pv.dot(u));
     if (v.lengthSq() < EPS) v = new Vector3().subVectors(B, A).addScaledVector(u, -new Vector3().subVectors(B, A).dot(u));
     if (v.lengthSq() < EPS) v = new Vector3(0, 1, 0).cross(u).lengthSq() > EPS ? new Vector3(0, 1, 0).cross(u) : new Vector3(1, 0, 0).cross(u);
     v.normalize();
-    const twist = sc ? 0 : this.num(id, 'twi', 0);
+    if (!sc && this.ikVariant && this.ikVariant.side === -1) v.negate();
+    const twist = sc ? 0 : this.num(id, 'twi', 0) * this.twistSign();
     if (Math.abs(twist) > EPS) v.applyQuaternion(new Quaternion().setFromAxisAngle(u, twist));
     // 余弦定理で中間ジョイントの位置
     const dc = Math.min(Math.max(d, Math.abs(l1 - l2)), l1 + l2);
@@ -1359,14 +1379,15 @@ export class RigEvaluator {
     let v = null;
     if (g.ik.solver === 'ikRPsolver') {
       const pvL = this.vec(id, 'pv', [0, 0, 1]);
-      const pv = new Vector3(pvL[0], pvL[1], pvL[2]).applyMatrix4(new Matrix4().extractRotation(this.parentWorld(g.dag)));
+      const pv = new Vector3(pvL[0], pvL[1], pvL[2]).applyMatrix4(new Matrix4().extractRotation(this.pvSpace(g.dag, chain[0])));
       v = pv.addScaledVector(u, -pv.dot(u));
+      if (this.ikVariant && this.ikVariant.side === -1) v.negate();
     }
     if (!v || v.lengthSq() < EPS) v = side0.clone().addScaledVector(u, -side0.dot(u));
     if (v.lengthSq() < EPS) v = new Vector3(0, 1, 0).cross(u).lengthSq() > EPS ? new Vector3(0, 1, 0).cross(u) : new Vector3(1, 0, 0).cross(u);
     v.normalize();
     if (g.ik.solver === 'ikRPsolver') {
-      const twist = this.num(id, 'twi', 0);
+      const twist = this.num(id, 'twi', 0) * this.twistSign();
       if (Math.abs(twist) > EPS) v.applyQuaternion(new Quaternion().setFromAxisAngle(u, twist));
     }
     // FK の形を、軸がハンドルへ、曲がる側が v へ向くように丸ごと回す
@@ -1482,7 +1503,11 @@ export class RigEvaluator {
       return v.lengthSq() < EPS ? null : v.normalize();
     };
     const ups = new Array(bones).fill(null);
-    if ((type === 2 || type === 4 || type === 6) && bones > 1) {
+    if ((type === 2 || type === 4 || type === 6) && bones > 1 && this.ikVariant && this.ikVariant.splineInterp === 'lerp') {
+      // （再現チェックの候補）始点と終点の up のベクトルを直線で補間する
+      const a = upOf(0, true), b = upOf(bones - 1, false);
+      for (let i = 0; i < bones; i++) ups[i] = perp(a.clone().lerp(b, i / (bones - 1)), dirs[i]);
+    } else if ((type === 2 || type === 4 || type === 6) && bones > 1) {
       // 始点の up を骨に沿って最小の回転で運び、終点の up とのずれの角度を、始点からの長さに比例して配る
       const u0 = perp(upOf(0, true), dirs[0]);
       const u1 = perp(upOf(bones - 1, false), dirs[bones - 1]);
@@ -1521,53 +1546,88 @@ export class RigEvaluator {
     return out;
   }
 
+  /** 極ベクトルを解釈する空間（ふだんはハンドルの親。再現チェックでは候補を切り替える） */
+  pvSpace(handleNi, startNi) {
+    const sp = this.ikVariant ? this.ikVariant.pvSpace : null;
+    if (sp === 'world') return IDENTITY;
+    if (sp === 'start') return this.parentWorld(startNi);
+    return this.parentWorld(handleNi);
+  }
+
+  /** ひねりの向き（ふだんは 1。再現チェックでは −1・0 も試す） */
+  twistSign() {
+    const t = this.ikVariant ? this.ikVariant.twistSign : undefined;
+    return typeof t === 'number' ? t : 1;
+  }
+
+  /** IK のチェーンの、評価した回転とファイルの回転の比較（verifySaved の 1 ハンドル分） */
+  compareChain(g, fileLocal, tol) {
+    const chain = g.ik.chain;
+    const joints = [];
+    let parentFile = this.parentWorld(chain[0]);
+    let endFile = null;
+    for (let k = 0; k < chain.length; k++) {
+      const ni = chain[k];
+      const file = fileLocal(ni);
+      if (!file) break;
+      const Wf = parentFile.clone().multiply(file);
+      if (k === chain.length - 1) { endFile = Wf; break; }
+      const We = this.world(ni);
+      const qf = rotationOf(Wf), qe = rotationOf(We);
+      const d = qe.clone().multiply(qf.clone().invert());                      // ファイル → 評価 の回転
+      if (d.w < 0) { d.x = -d.x; d.y = -d.y; d.z = -d.z; d.w = -d.w; }
+      const angle = 2 * Math.acos(Math.min(1, d.w)) * R2D;
+      // 骨の向き（次のジョイントへ）のまわりの成分（ねじれ）と、それ以外（曲がり）に分ける
+      const nextLocal = fileLocal(chain[k + 1]);
+      const bone = nextLocal ? new Vector3().setFromMatrixPosition(nextLocal).applyQuaternion(qf).normalize() : null;
+      let roll = 0, bend = angle;
+      if (bone && bone.lengthSq() > EPS) {
+        const proj = bone.clone().multiplyScalar(new Vector3(d.x, d.y, d.z).dot(bone));
+        const twist = new Quaternion(proj.x, proj.y, proj.z, d.w).normalize();
+        roll = 2 * Math.atan2(new Vector3(twist.x, twist.y, twist.z).dot(bone), twist.w) * R2D;
+        if (roll > 180) roll -= 360;
+        if (roll < -180) roll += 360;
+        const swing = d.clone().multiply(twist.clone().invert());
+        bend = 2 * Math.acos(Math.min(1, Math.abs(swing.w))) * R2D;
+      }
+      const position = positionOf(Wf).distanceTo(positionOf(We));
+      joints.push({ node: ni, name: this.sceneNodes[ni].name, angle, roll, bend, position, ok: angle <= tol });
+      parentFile = Wf;
+    }
+    // ファイルの値の終端と、評価したハンドルの位置の距離（大きければ、ハンドルを動かすリグの側の問題）
+    const reach = endFile ? positionOf(endFile).distanceTo(positionOf(this.world(g.dag))) : null;
+    return { joints, reach, error: joints.reduce((m, j) => Math.max(m, j.angle), 0) };
+  }
+
   /**
    * 保存時のフレームの再現チェック: IK で回転が決まるジョイントについて、評価した回転とファイルに保存された回転
    * （保存したときに Maya が IK を解いた結果）を比べる。evaluate(clip.current) のあとに呼ぶ。
-   * 戻り値: IK ハンドルごとに { handle, solver, chain, pv（ワールド）, twist（度）, joints: [{ name, angle（度）,
-   *   roll（骨の軸まわりの成分。度）, bend（それ以外の成分。度）, position（位置のずれ） }] }
+   * ずれがあれば、解き方の候補（ひねりの向き・極ベクトルの空間・肘の側・スプライン IK のひねりの配り方）を
+   * 総当たりで試して、ファイルの値に一番合うものを best に入れる。
+   * 戻り値: IK ハンドルごとに { handle, solver, chain, pv（ワールド）, twist（度）, joints, reach, error, best, ok }
    */
   verifySaved(fileLocal, tol = 0.5) {
     const out = [];
     for (const g of this.graph) {
       if (!g.ik) continue;
-      const chain = g.ik.chain;
-      const joints = [];
-      // ファイルの値で組み立てたワールド行列（開始ジョイントの親は評価した値）
-      let parentFile = this.parentWorld(chain[0]);
-      for (let k = 0; k < chain.length - 1; k++) {
-        const ni = chain[k];
-        const file = fileLocal(ni);
-        if (!file) break;
-        const Wf = parentFile.clone().multiply(file);
-        const We = this.world(ni);
-        const qf = rotationOf(Wf), qe = rotationOf(We);
-        const d = qe.clone().multiply(qf.clone().invert());                      // ファイル → 評価 の回転
-        if (d.w < 0) { d.x = -d.x; d.y = -d.y; d.z = -d.z; d.w = -d.w; }
-        const angle = 2 * Math.acos(Math.min(1, d.w)) * R2D;
-        // 骨の向き（次のジョイントへ）のまわりの成分（twist）と、それ以外（swing）に分ける
-        const next = chain[k + 1];
-        const nextLocal = fileLocal(next);
-        const bone = nextLocal ? new Vector3().setFromMatrixPosition(nextLocal).applyQuaternion(qf).normalize() : null;
-        let roll = 0, bend = angle;
-        if (bone && bone.lengthSq() > EPS) {
-          const proj = bone.clone().multiplyScalar(new Vector3(d.x, d.y, d.z).dot(bone));
-          const twist = new Quaternion(proj.x, proj.y, proj.z, d.w).normalize();
-          roll = 2 * Math.atan2(new Vector3(twist.x, twist.y, twist.z).dot(bone), twist.w) * R2D;
-          if (roll > 180) roll -= 360;
-          if (roll < -180) roll += 360;
-          const swing = d.clone().multiply(twist.clone().invert());
-          bend = 2 * Math.acos(Math.min(1, Math.abs(swing.w))) * R2D;
+      const base = this.compareChain(g, fileLocal, tol);
+      let best = null;
+      if (base.error > tol && base.joints.length) {
+        for (const v of IK_VARIANTS[g.ik.solver] || []) {
+          this.ikVariant = v;
+          this.reset();
+          const r = this.compareChain(g, fileLocal, tol);
+          if (!best || r.error < best.error - 1e-6) best = { variant: v, label: variantLabel(v), error: r.error };
         }
-        const position = positionOf(Wf).distanceTo(positionOf(We));
-        joints.push({ node: ni, name: this.sceneNodes[ni].name, angle, roll, bend, position, ok: angle <= tol });
-        parentFile = Wf;
+        this.ikVariant = null;
+        this.reset();
       }
       const pv = g.ik.solver === 'ikRPsolver'
         ? new Vector3(...this.vec(g.id, 'pv', [0, 0, 1])).applyMatrix4(new Matrix4().extractRotation(this.parentWorld(g.dag))).toArray()
         : null;
-      out.push({ handle: g.name, solver: g.ik.solver, chain: chain.map((ni) => this.sceneNodes[ni].name), pv,
-        twist: this.num(g.id, 'twi', 0) * R2D, joints, ok: joints.every((j) => j.ok) });
+      out.push({ handle: g.name, solver: g.ik.solver, chain: g.ik.chain.map((ni) => this.sceneNodes[ni].name), pv,
+        twist: this.num(g.id, 'twi', 0) * R2D, joints: base.joints, reach: base.reach, error: base.error, best,
+        ok: base.joints.every((j) => j.ok) });
     }
     return out;
   }

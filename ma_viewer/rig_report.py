@@ -299,9 +299,26 @@ def format_verification(result: Optional[dict]) -> str:
             jm = "✓" if j["ok"] else "★"
             out.append("    %s %s: ずれ %.2f°（ねじれ %+.2f°・曲がり %.2f°）・位置 %.4f"
                        % (jm, j["name"], j["angle"], j["roll"], j["bend"], j["position"]))
+        if h.get("reach") is not None and h["reach"] > 1e-3:
+            out.append("    ★ ファイルの値の終端が、評価したハンドルの位置から %.4f 離れている"
+                       "（ハンドルを動かすリグの側がずれているか、Maya でも届いていなかった）" % h["reach"])
+        best = h.get("best")
+        if best:
+            out.append("    → 一番合う解き方: %s（ずれ %.2f°。今の解き方は %.2f°）" % (best["label"], best["error"], h["error"]))
     bad = [h["handle"] for h in handles if not h["ok"]]
     out.append("")
     out.append("  → ずれのある IK: %s" % ("、".join(bad) if bad else "なし（保存時のフレームでは Maya と一致）"))
+    # 一番合う解き方の集計（ずれが 0.5° 以下に収まったもの）。多くの IK で同じものが合えば、それが Maya の解き方
+    fits = {}
+    for h in handles:
+        b = h.get("best")
+        if b and b["error"] <= 0.5:
+            fits.setdefault(b["label"], []).append(h["handle"])
+    for label, names in sorted(fits.items(), key=lambda kv: -len(kv[1])):
+        out.append("  → 「%s」にすると一致する IK: %d 個（%s）" % (label, len(names), "、".join(names[:8])))
+    unfit = [h["handle"] for h in handles if not h["ok"] and not (h.get("best") and h["best"]["error"] <= 0.5)]
+    if unfit:
+        out.append("  → どの解き方でも一致しない IK: %s（ハンドルや極ベクトルを動かすリグの側か、ほかの原因）" % "、".join(unfit))
     return "\n".join(out)
 
 
