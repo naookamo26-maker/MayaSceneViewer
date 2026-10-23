@@ -477,6 +477,11 @@ class TestStage6(unittest.TestCase):
         self.assertIn("★ tx ← my_pv_driver.out（myRigNode・未対応）", text)
         self.assertIn("✓ ma ← cl_tipHandle.wm（transform）", text)
         self.assertIn("推定できない（ファイルの値のまま）: leg_hip", text)
+        # 読み込まないカーブ: 表示するノードへ届く経路があれば ★ と経路を出す
+        self.assertIn("★ pv_src（transform）: 表示するノード・リグに影響しているのに、たどれていない", text)
+        self.assertIn("my_pv_driver.out → knee_pv.tx（transform）", text)
+        anim_text = rig_report_file(os.path.join(ROOT, "samples", "anim_sample.ma"))
+        self.assertIn("✓ 表示するノードに影響しない: 1 個（persp（tx））", anim_text)
         # ディスプレイレイヤー（.do）とレイヤーマネージャーは値の計算に関係しないので、たどらない・未対応にしない
         self.assertNotIn("displayLayerManager", text)
         self.assertNotIn("do", self.graph["leg_pvc"]["inputs"])

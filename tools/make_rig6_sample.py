@@ -22,6 +22,7 @@
     レイヤー layer1 のウェイト 0.5)
   * 脚 leg_hip → leg_knee → leg_ankle の ikRPsolver。極ベクトルは knee_pv への poleVectorConstraint で、
     knee_pv.tx は自作ノード（未知の型 myRigNode）の出力 → 再生できない（リグの診断で見つける）。
+    自作ノードの入力 pv_src.tx にはキーがある（表示しないノードのカーブ。診断で、表示するノードへ届く経路を出す）。
     脚の IK まわり（ハンドル・poleVectorConstraint・knee_pv）はディスプレイレイヤー rig_layer に入っている
     （layerManager（displayLayerManager）→ rig_layer.id、rig_layer.di → 各ノードの .do。値の計算には関係しない）
   * pointOnCurveInfo: poc_jnt.t = ワイヤー t2_wireShape の長さの半分の点（turnOnPercentage）、
@@ -193,6 +194,8 @@ def main():
     A('createNode myRigNode -n "my_pv_driver";')
     uid("my_pv_driver")
     A('\tsetAttr ".amount" 3;')
+    node("transform", "pv_src")                           # 自作ノードの入力（キーあり）。表示するノードではない
+    anim("TL", "pv_src_translateX", [(1, 0), (48, 5)])
 
     A('createNode displayLayerManager -n "layerManager";')
     uid("layerManager")
@@ -296,6 +299,8 @@ def main():
         C("knee_pv.%s" % src, "leg_pvc.tg[0].%s" % dst)
     C("leg_pvc.w0", "leg_pvc.tg[0].tw")
     C("my_pv_driver.out", "knee_pv.tx")
+    C("pv_src_translateX.o", "pv_src.tx")
+    C("pv_src.tx", "my_pv_driver.input")
     C("t2_wireShape.ws", "poc_half.ic")
     C("poc_half.p", "poc_jnt.t")
     C("t2_wireShape.ws", "poc_end.ic")

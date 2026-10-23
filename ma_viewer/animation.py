@@ -376,7 +376,8 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         warnings.append("アニメーション: 移動・回転・スケール以外の属性（%s）のカーブは再生しません。"
                         % "・".join(sorted(skipped_attr)[:8]))
     if hidden_targets:
-        warnings.append("アニメーション: 表示していないノード（コントローラーなど）を動かすカーブ %d 本は読み込みません。"
+        warnings.append("アニメーション: 表示していないノード（コントローラーなど）を動かすカーブ %d 本は読み込みません"
+                        "（表示するノードへの影響の有無は、リグの診断の「読み込まないカーブ」で確認できます）。"
                         % hidden_targets)
 
     times_all = _concat(times_chunks)

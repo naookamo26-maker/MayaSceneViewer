@@ -143,6 +143,70 @@ def _ik_section(ms: MaScene, entry: dict) -> List[str]:
     return out
 
 
+# 下流をたどるときに無視する接続先のノード（表示・管理用。値の計算に関係しない）
+_MANAGER_TYPES = {"displayLayer", "displayLayerManager", "renderLayer", "renderLayerManager", "objectSet", "shadingEngine",
+                  "nodeGraphEditorInfo", "hyperLayout", "hyperView", "hyperGraphInfo", "animLayer", "character",
+                  "lightLinker", "partition", "controller"}
+_MAX_VISIT = 20000
+
+
+def hidden_curve_targets(ms: MaScene):
+    """読み込まないカーブ（表示するノード・リグの入力でないノードを動かすもの）と、動かすノードの下流の行き先。
+
+    戻り値: [(ノード, [(カーブ名, 属性)], 結果)]。結果は ("reach", 経路の文字列) か ("mesh", 経路) か ("none", 行き先の型の一覧)
+    経路が見つかったら、表示するノードに影響しているのに、こちらがたどれていない（診断で ★ にする）。
+    """
+    from .animation import CURVE_TYPES as TIME_CURVES
+    info = ms.graph_info
+    out_index = getattr(ms, "out_index", {}) or {}
+    graph_ids = set(info.dg) | set(info.dag) if info is not None else set()
+    targets = {}
+    for src, sattr, dst, dattr in ms.connections:
+        if src.type not in TIME_CURVES or id(dst) in out_index or (info is not None and id(src) in info.curves):
+            continue
+        targets.setdefault(id(dst), (dst, []))[1].append((src.name, dattr))
+    if not targets:
+        return []
+    down = {}
+    for src, sattr, dst, dattr in ms.connections:
+        if _base(sattr) in _DISPLAY_KEYS or _base(dattr) in _DISPLAY_KEYS or dst.type in _MANAGER_TYPES:
+            continue
+        down.setdefault(id(src), []).append((sattr, dst, dattr))
+    result = []
+    for nid, (node, curves) in targets.items():
+        prev = {nid: None}
+        queue = [node]
+        found = None
+        seen_types = set()
+        while queue and len(prev) < _MAX_VISIT:
+            x = queue.pop(0)
+            if x is not node and (id(x) in out_index or id(x) in graph_ids):
+                found = ("reach", x)
+                break
+            if x is not node and x.type == "mesh":
+                found = found or ("mesh", x)
+                continue
+            nexts = [(sa, d, da) for sa, d, da in down.get(id(x), ())]
+            nexts += [("（子）", c, "") for c in x.children]           # DAG の子は親の動きについていく
+            for sa, d, da in nexts:
+                if id(d) in prev:
+                    continue
+                prev[id(d)] = (x, sa, da)
+                seen_types.add(d.type)
+                queue.append(d)
+        if found is None:
+            result.append((node, curves, ("none", sorted(seen_types))))
+            continue
+        # 経路を組み立てる（動かすノード → … → 届いたノード）
+        steps, y = [], found[1]
+        while prev.get(id(y)) is not None:
+            px, sa, da = prev[id(y)]
+            steps.append("%s.%s → %s.%s（%s）" % (px.name, sa, y.name, da, y.type) if da else "%s の子 %s" % (px.name, y.name))
+            y = px
+        result.append((node, curves, (found[0], "、".join(reversed(steps)))))
+    return result
+
+
 def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
     """scene_to_dict（と build_animation）を済ませた MaScene から、診断の文章を作る"""
     info = ms.graph_info
@@ -171,6 +235,25 @@ def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
     else:
         for e in info.ik:
             out.extend(_ik_section(ms, e))
+    out.append("")
+    out.append("■ 読み込まないカーブ（表示していないノードを動かすもの）")
+    hidden = hidden_curve_targets(ms)
+    if not hidden:
+        out.append("  なし")
+    reach = [h for h in hidden if h[2][0] == "reach"]
+    mesh = [h for h in hidden if h[2][0] == "mesh"]
+    none = [h for h in hidden if h[2][0] == "none"]
+    for node, curves, (_k, path) in reach:
+        out.append("★ %s（%s）: 表示するノード・リグに影響しているのに、たどれていない（カーブ %d 本: %s）"
+                   % (node.name, node.type, len(curves), "、".join("%s→%s" % c for c in curves[:4])))
+        out.append("    経路: %s" % path)
+    for node, curves, (_k, path) in mesh:
+        out.append("- %s（%s）: メッシュの変形（blendShape など。未対応）に使われている（カーブ %d 本）。経路: %s"
+                   % (node.name, node.type, len(curves), path))
+    if none:
+        out.append("✓ 表示するノードに影響しない: %d 個（%s）" % (
+            len(none), "、".join("%s（%s）" % (n.name, "・".join(sorted({a for _c, a in c}))[:40]) for n, c, _r in none[:12])
+            + (" ほか" if len(none) > 12 else "")))
     out.append("")
     out.append("■ 値を求められないノード")
     fb = (anim or {}).get("fallback") or []
