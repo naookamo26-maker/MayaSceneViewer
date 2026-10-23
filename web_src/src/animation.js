@@ -294,12 +294,6 @@ export class AnimationClip {
     return this.matrices;
   }
 
-  /** 選択ノードの現在の値（表示用）: { t, r, s }（アニメーションしていない成分はファイルの値） */
-  valuesOf(ni) {
-    const e = this.byNode.get(ni);
-    return e ? { t: e.cur.t.slice(), r: e.cur.r.slice(), s: e.cur.s.slice() } : null;
-  }
-
   /** 再生範囲の中に収めたフレーム（繰り返し再生用） */
   wrap(x) {
     const len = this.end - this.start + 1;

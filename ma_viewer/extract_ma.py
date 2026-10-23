@@ -698,6 +698,12 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         if inf.is_shape:
             inf = inf.parent
         keep_chain(inf)
+    # リグ（コンストレイント・IK・計算ノード）の評価に必要なコントローラーなども出力する
+    from .rig import discover
+    graph_info = discover(ms, keep)
+    for n in list(graph_info.dag.values()):
+        keep_chain(n)
+    ms.graph_info = graph_info
 
     lap("出力するノードの決定")
     # --- バインドポーズ（.pm → dagPose → .bps の優先順）---------------------------
@@ -745,7 +751,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
 
     # 接続で値が決まる（.ma に値が残っていない）属性
     driven: Dict[int, List[str]] = {}
-    curve_driven = set()                # 接続元がすべてアニメーションカーブ（animCurveTL / TA / TU）のノード
+    curve_driven = set()                # 接続元がすべてカーブか、評価できるノード（アニメーションで評価する）
     for n in ms.nodes:
         if id(n) not in keep or n.is_shape:
             continue
@@ -754,8 +760,8 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             if key.split("[")[0].split(".")[0] in _CHANNEL_ATTRS:
                 driven.setdefault(id(n), []).append("%s ← %s（%s）" % (key, src.name, src.type))
                 by_curve = by_curve and key in _CURVE_CHANNELS and src.type in ("animCurveTL", "animCurveTA", "animCurveTU")
-        if by_curve and id(n) in driven:
-            curve_driven.add(id(n))
+        if (by_curve or id(n) in graph_info.graph_driven) and id(n) in driven:
+            curve_driven.add(id(n))     # アニメーションを読み込むと評価される（カーブ・コンストレイント・計算ノード）
 
     # バインド時のワールド行列（情報源のないノードはファイル上のローカル値のまま親についていく）
     bind_local: Dict[int, List[float]] = {}
@@ -1163,8 +1169,9 @@ def load_ma_staged(path: str, progress: ProgressFn = None):
                        statements=sum(v for k, v in ms.stats.items() if k != "読み飛ばし"),
                        skipped=ms.stats.get("読み飛ばし", 0), numpy=numpy_enabled())
 
-    # アニメーションカーブがなければ、本文（.ma の全文）をすぐに手放す（大きなファイルでメモリを抱えないため）
-    if not any(n.span is not None and n.type.startswith("animCurve") for n in ms.nodes):
+    # アニメーションカーブもリグもなければ、本文（.ma の全文）をすぐに手放す（大きなファイルでメモリを抱えないため）
+    has_rig = ms.graph_info is not None and not ms.graph_info.empty
+    if not has_rig and not any(n.span is not None and n.type.startswith("animCurve") for n in ms.nodes):
         ms.text = ""
 
     def load_animation(progress2: ProgressFn = None) -> Optional[dict]:

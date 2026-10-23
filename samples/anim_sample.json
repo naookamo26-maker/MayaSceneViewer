@@ -6885,6 +6885,42 @@
     ]
    },
    {
+    "node":4,
+    "joint":true,
+    "ro":0,
+    "t":[
+     3.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     60.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.1,
+     1.1
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "isNode":3,
+    "isScale":[
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   {
     "node":5,
     "joint":true,
     "ro":1,
@@ -6966,6 +7002,80 @@
     ]
    }
   ],
+  "graph":[
+   {
+    "id":0,
+    "name":"rig_grp",
+    "type":"transform",
+    "dag":1,
+    "inputs":{
+     "ty":{
+      "curve":5
+     }
+    }
+   },
+   {
+    "id":1,
+    "name":"shoulder",
+    "type":"joint",
+    "dag":2,
+    "inputs":{
+     "rz":{
+      "curve":0
+     },
+     "sx":{
+      "curve":3
+     }
+    }
+   },
+   {
+    "id":2,
+    "name":"elbow",
+    "type":"joint",
+    "dag":3,
+    "inputs":{
+     "ry":{
+      "curve":1
+     }
+    }
+   },
+   {
+    "id":3,
+    "name":"forearm_twist",
+    "type":"joint",
+    "dag":4
+   },
+   {
+    "id":4,
+    "name":"wrist",
+    "type":"joint",
+    "dag":5,
+    "inputs":{
+     "rx":{
+      "curve":2
+     }
+    }
+   },
+   {
+    "id":5,
+    "name":"box",
+    "type":"transform",
+    "dag":8,
+    "inputs":{
+     "tx":{
+      "curve":4
+     }
+    }
+   },
+   {
+    "id":6,
+    "name":"forearm_twist_pointConstraint1",
+    "type":"pointConstraint",
+    "dag":-1,
+    "driven":4,
+    "targets":[]
+   }
+  ],
   "times":{
    "dtype":"float32",
    "count":14,
@@ -6987,7 +7097,7 @@
    "data":"AAAgQQAAQEEAAAAAAAAQQgAAAAAAADBBAABAQQAAAAAAAEBBAAAAAA=="
   },
   "warnings":[
-   "アニメーション: 1 個のノードは、カーブ以外（pointConstraint（1））で動くため再生されません（例: forearm_twist）。",
+   "アニメーション: forearm_twist_pointConstraint1 にターゲットがないため、評価しません。",
    "アニメーション: 移動・回転・スケール以外の属性（v）のカーブは再生しません。",
    "アニメーション: 表示していないノード（コントローラーなど）を動かすカーブ 1 本は読み込みません。"
   ],
@@ -6996,7 +7106,8 @@
    "keys":14,
    "channels":6,
    "nodes":5,
-   "seconds":0.0006
+   "graphNodes":7,
+   "seconds":0.0009
   }
  }
 }

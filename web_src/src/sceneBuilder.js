@@ -184,9 +184,12 @@ export function applySkinNormalization(built, mode) {
   return changed;
 }
 
-/** 姿勢の基準 mode でのノードの行列。バインドポーズの情報がないノードは、バインドポーズでも保存時の値にする */
-export function poseBaseMatrix(ud, mode) {
-  if (mode !== 'bind') return ud.fileMatrix;
+/**
+ * 姿勢の基準 mode でのノードの行列。バインドポーズの情報がないノードは、バインドポーズでも保存時の値にする。
+ * sceneHasBind が false（シーンにバインドポーズの情報が 1 つもない）なら、バインドポーズもファイルの値と同じ
+ */
+export function poseBaseMatrix(ud, mode, sceneHasBind = true) {
+  if (mode !== 'bind' || !sceneHasBind) return ud.fileMatrix;
   return ud.bindMatrix || ud.savedMatrix || ud.fileMatrix;
 }
 
@@ -196,16 +199,18 @@ export function poseBaseMatrix(ud, mode) {
  * ポーズ確認の追加分は PoseState.reapplyAll() で掛け直すこと。
  */
 export function applyPoseSource(built, mode) {
+  const sceneHasBind = hasBindPose(built);
   for (const o of built.nodeObjects) {
     const ud = o.userData;
-    ud.baseMatrix.copy(poseBaseMatrix(ud, mode));
+    ud.baseMatrix.copy(poseBaseMatrix(ud, mode, sceneHasBind));
     o.matrix.copy(ud.baseMatrix);
   }
   built.root.updateMatrixWorld(true);
 }
 
 export function hasBindPose(built) {
-  return built.nodeObjects.some((o) => o.userData.bindMatrix);
+  if (built.hasBind === undefined) built.hasBind = built.nodeObjects.some((o) => o.userData.bindMatrix);
+  return built.hasBind;
 }
 
 export const MAP_KINDS = ['baseColor', 'normal', 'roughness', 'metalness', 'ao', 'emissive', 'opacity'];

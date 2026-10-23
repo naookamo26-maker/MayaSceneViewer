@@ -1,12 +1,12 @@
 // ビューア本体。window.mayaViewer を通じて Python（Qt）から操作される。
 import {
   BufferGeometry, DirectionalLight, Float32BufferAttribute, GridHelper, HemisphereLight, MOUSE,
-  Object3D, PerspectiveCamera, Points, PointsMaterial, Raycaster, SRGBColorSpace, Scene, Vector2, Vector3, WebGLRenderer,
+  Matrix4, Object3D, PerspectiveCamera, Points, PointsMaterial, Raycaster, SRGBColorSpace, Scene, Vector2, Vector3, WebGLRenderer,
   Box3,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
-import { PoseState, identityPose, poseFromTransform, poseQuaternion } from './pose.js';
+import { PoseState, identityPose, poseFromTransform, poseMatrix, poseQuaternion } from './pose.js';
 import {
   applyPoseSource, hasBindPose, poseBaseMatrix, BASE_COLOR, buildScene, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
   vertexWorldPosition, writeVertexColors,
@@ -20,6 +20,7 @@ import { connectBridge, isQtHost } from './bridge.js';
 import { History, sameChanges } from './history.js';
 import { compareGpuCpuSkinning } from './skinCheck.js';
 import { AnimationClip } from './animation.js';
+import { RigEvaluator } from './rig.js';
 import { Timeline } from './timeline.js';
 
 const VERSION = '1.0.0';
@@ -203,7 +204,7 @@ class ViewerApp {
         e.preventDefault();
         return;
       }
-      if (e.altKey && !e.ctrlKey && !e.metaKey && this.clip) {
+      if (e.altKey && !e.ctrlKey && !e.metaKey && this.hasTimeline) {
         // Maya と同じ: Alt+V = 再生／停止、Alt+, / Alt+. = 前／次のフレーム（記号はキーの位置で判定）
         if (e.code === 'KeyV') this.togglePlay();
         else if (e.code === 'Comma') this.stepFrame(-1);
@@ -213,7 +214,7 @@ class ViewerApp {
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (this.clip && (k === ',' || k === '.' || k === 'home' || k === 'end')) {
+      if (this.hasTimeline && (k === ',' || k === '.' || k === 'home' || k === 'end')) {
         if (k === ',') this.stepKey(-1);            // Maya と同じ: , / . = 前／次のキー
         else if (k === '.') this.stepKey(1);
         else this.goToEdge(k === 'home' ? -1 : 1);
@@ -401,6 +402,7 @@ class ViewerApp {
     if (this.marker) this.marker.visible = false;
     this.pause();
     this.clip = null;
+    this.rig = null;
     this.timeline.setClip(null);
   }
 
@@ -735,6 +737,8 @@ class ViewerApp {
     this.pause();
     this.clip = clip;
     this.data.animation = anim;
+    // リグ（コンストレイント・IK・計算ノード）を含めて評価する。動かないノードはファイルの値
+    this.rig = new RigEvaluator(clip, this.data.nodes, (ni) => this.built.nodeObjects[ni].userData.fileMatrix);
     // 姿勢の基準が変わったときに子のスケール補正も掛け直すよう、動くノードとその子を覚えておく
     const touched = new Set();
     for (const ni of clip.nodes) {
@@ -744,32 +748,53 @@ class ViewerApp {
     this.animTouched = [...touched].sort((a, b) => a - b);
     // 保存時の値は、保存したときのフレーム（time1）の値（カーブで決まる値は .ma に残っていないため）。
     // バインドポーズの表示で、バインドポーズの情報がないノードに使う
-    for (const [ni, m] of clip.evaluate(clip.current)) this.built.nodeObjects[ni].userData.savedMatrix.copy(m);
-    if (clip.warnings.length) this.ui.setWarnings((this.ui.warnings || []).concat(clip.warnings));
-    this.timeline.setClip(clip);
+    for (const [ni, m] of this.rig.evaluate(clip.current, () => null, new Map())) {
+      this.built.nodeObjects[ni].userData.savedMatrix.copy(m);
+    }
+    const warnings = clip.warnings.concat([...this.rig.problems].map((p) => `アニメーション: リグの評価を打ち切りました（${p}）。`));
+    if (warnings.length) this.ui.setWarnings((this.ui.warnings || []).concat(warnings));
+    // コントローラー（ジョイント・メッシュ以外でリグを動かすノード）の目印
+    const meshNodes = new Set(this.built.meshes.map((e) => e.transform));
+    this.overlay.setControllers([...this.rig.directDrivers].filter((ni) => this.data.nodes[ni].type !== 'joint'
+      && !meshNodes.has(ni)).sort((a, b) => a - b));
+    // キーがなくリグだけのときは、タイムラインは出さずに評価だけする（ポーズ確認でコントローラーを動かせる）
+    if (!this.hasTimeline) this.timeline.setStatus('');
+    this.timeline.setClip(this.hasTimeline ? clip : null);
     this.updateTimelineKeys();
     this.applyFrame(clip.current);
     const st = anim.stats || {};
     this.ui.setMessage(`アニメーションを読み込みました（カーブ ${num(st.curves ?? clip.curves.length)} 本・`
-      + `動くノード ${num(clip.nodes.length)} 個・${clip.start}〜${clip.end} フレーム）`, 6000);
+      + `動くノード ${num(this.rig.moving.size)} 個・${clip.start}〜${clip.end} フレーム）`, 6000);
     this.log('info', `animation loaded: ${clip.curves.length} curves, ${clip.nodes.length} nodes`);
     return true;
   }
 
-  /** フレーム f の姿勢にする（ポーズ確認の追加分はそのまま上に重ねる） */
-  applyFrame(f) {
+  /** 現在のフレームの、リグ（カーブ・コンストレイント・IK）を評価した値 { t, r, s }（動かないノードは null） */
+  rigValues(ni) {
+    const c = this.rig.rest(ni) ? this.rig.chan(ni) : null;
+    return c ? { t: c.t.slice(), r: c.r.slice(), s: c.s.slice() } : null;
+  }
+
+  /** タイムラインを出すか（キーのあるカーブがあるとき） */
+  get hasTimeline() { return !!(this.clip && this.clip.curves.length); }
+
+  /** フレーム f の姿勢にする（ポーズ確認の追加分はそのまま上に重ねる。リグはポーズ確認の結果も使って評価する） */
+  applyFrame(f, light = this.playing) {
     if (!this.clip || !this.built) return;
     this.frame = f;
-    const mats = this.clip.evaluate(f);
+    const poseOf = (ni) => (this.pose && this.pose.has(ni) ? poseMatrix(this.pose.get(ni), new Matrix4()) : null);
+    const mats = this.rig.evaluate(f, poseOf);
     const mode = this.settings.poseSource;
+    const sceneHasBind = hasBindPose(this.built);
     for (const [ni, m] of mats) {
       const ud = this.built.nodeObjects[ni].userData;
       ud.fileMatrix.copy(m);
-      ud.baseMatrix.copy(poseBaseMatrix(ud, mode));     // バインドポーズではフレームによらない
+      ud.baseMatrix.copy(poseBaseMatrix(ud, mode, sceneHasBind));     // バインドポーズではフレームによらない
     }
     for (const ni of this.animTouched) this.pose.apply(ni);
     this.timeline.setFrame(f);
-    this.afterPoseChange(this.playing);
+    this.rigBusy = true;
+    try { this.afterPoseChange(light); } finally { this.rigBusy = false; }
   }
 
   /** タイムラインを操作したとき。バインドポーズの表示中なら「ファイルの値」に切り替える（アニメーションが見えないため） */
@@ -781,20 +806,20 @@ class ViewerApp {
   }
 
   scrubTo(f) {
-    if (!this.clip) return;
+    if (!this.hasTimeline) return;
     this.pause();
     this.ensureAnimatedPose();
     this.applyFrame(f);
   }
 
   stepFrame(d) {
-    if (!this.clip) return;
+    if (!this.hasTimeline) return;
     this.scrubTo(this.clip.wrap(Math.round(this.frame) + d));
   }
 
   /** 前・次のキー（選択ノードにキーがあればそのノードのキー、なければすべてのキー） */
   stepKey(d) {
-    if (!this.clip) return;
+    if (!this.hasTimeline) return;
     const times = this.keyTimesForSelection();
     const eps = 1e-6;
     const t = d > 0 ? times.find((x) => x > this.frame + eps) : [...times].reverse().find((x) => x < this.frame - eps);
@@ -803,7 +828,7 @@ class ViewerApp {
   }
 
   goToEdge(d) {
-    if (this.clip) this.scrubTo(d < 0 ? this.clip.start : this.clip.end);
+    if (this.hasTimeline) this.scrubTo(d < 0 ? this.clip.start : this.clip.end);
   }
 
   setPlaybackRange(start, end) {
@@ -820,7 +845,7 @@ class ViewerApp {
 
   /** 再生（実時間。間に合わないときはフレームを飛ばす。範囲の最後まで行くと先頭に戻る） */
   play() {
-    if (!this.clip || this.playing) return;
+    if (!this.hasTimeline || this.playing) return;
     this.ensureAnimatedPose();
     this.endPoseEdit();
     const from = this.frame >= this.clip.start && this.frame <= this.clip.end ? Math.round(this.frame) : this.clip.start;
@@ -930,7 +955,9 @@ class ViewerApp {
       usingBind: this.settings.poseSource === 'bind' && !!n.bindMatrix,
       drivenBy: n.drivenBy || null,
       animChannels: this.clip ? this.clip.channelsOf(ni) : [],
-      animValues: this.clip ? this.clip.valuesOf(ni) : null,
+      rigDrivers: this.rig ? this.rig.driversOf(ni) : [],
+      animLoaded: !!this.clip,
+      animValues: this.rig ? this.rigValues(ni) : null,
       frame: this.frame,
     };
   }
@@ -1009,6 +1036,7 @@ class ViewerApp {
 
   setPose(ni, pose) {
     if (!this.pose) return;
+    this.beforeDriverPose(ni);
     this.pose.set(ni, pose);
     this.afterPoseChange();
   }
@@ -1097,6 +1125,11 @@ class ViewerApp {
 
   /** @param light 再生中など、パネルの情報の更新を省くとき */
   afterPoseChange(light = false) {
+    // リグがあれば、ポーズ確認の結果（コントローラーの移動など）でコンストレイント・IK を評価し直す
+    if (this.rig && this.rig.hasGraph && !this.rigBusy) {
+      this.applyFrame(this.frame, light);
+      return;
+    }
     this.built.root.updateMatrixWorld(true);
     this.overlay.update();
     this.poseDirty = true;
@@ -1105,6 +1138,14 @@ class ViewerApp {
     if (!light && this.selected >= 0) this.ui.showNodeInfo(this.nodeInfo(this.selected));
     if (!this.gizmoDragging) this.syncGizmo();
     this.requestRender();
+  }
+
+  /** リグを動かすノード（コントローラーなど）をポーズ確認で動かすときは、骨が動いて見えるよう「ファイルの値」にする */
+  beforeDriverPose(ni) {
+    if (this.rig && this.rig.drivers.has(ni) && this.settings.poseSource === 'bind' && hasBindPose(this.built)) {
+      this.setSetting('poseSource', 'file');
+      this.ui.setMessage('コントローラーの動きを確認するため、姿勢の基準を「ファイルの値」に切り替えました', 6000);
+    }
   }
 
   /** 選択と操作モードに合わせてハンドルを付け外しする */
@@ -1143,6 +1184,7 @@ class ViewerApp {
     const pose = poseFromTransform(pr.position, pr.quaternion, pr.scale);
     // スケールを 0 付近で止めたときは代理オブジェクトにも反映する
     pr.scale.fromArray(pose.s);
+    this.beforeDriverPose(this.selected);
     this.pose.set(this.selected, pose);
     this.afterPoseChange();
     this.ui.showPoseFor(this.selected, pose);
@@ -1211,7 +1253,8 @@ class ViewerApp {
       webgl: !!this.renderer,
       animation: this.clip ? {
         frame: this.frame, playing: this.playing, start: this.clip.start, end: this.clip.end, fps: this.clip.fps,
-        curves: this.clip.curves.length, nodes: this.clip.nodes.length,
+        curves: this.clip.curves.length, nodes: this.rig ? this.rig.moving.size : this.clip.nodes.length,
+        graphNodes: this.rig ? this.rig.graph.length : 0, rigProblems: this.rig ? [...this.rig.problems] : [],
       } : null,
     };
   }

@@ -36,7 +36,6 @@ CHANNELS = {
     "rx": ("r", 0), "ry": ("r", 1), "rz": ("r", 2),
     "sx": ("s", 0), "sy": ("s", 1), "sz": ("s", 2),
 }
-_CHANNEL_BASES = {"t", "tx", "ty", "tz", "r", "rx", "ry", "rz", "s", "sx", "sy", "sz"}
 
 # currentUnit -t の名前 → 1 秒あたりのフレーム数
 _FPS = {
@@ -242,11 +241,14 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
     skipped_attr: Dict[str, int] = {}
     hidden_targets = 0
     via: Dict[str, int] = {}
+    graph_curves = ms.graph_info.curves if ms.graph_info is not None else {}
     for src, sattr, dst, dattr in ms.connections:
         if src.type not in CURVE_TYPES or src.span is None or sattr not in ("o", "output"):
             continue
         ni = out_index.get(id(dst))
         if ni is None:
+            if id(src) in graph_curves:
+                continue                                  # リグの入力（コンストレイントのウェイトなど）
             if dst.type in TRANSFORM_TYPES or dst.is_dag:
                 hidden_targets += 1                       # コントローラーなど、表示しないノード
             else:
@@ -258,21 +260,21 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         else:
             skipped_attr[dattr] = skipped_attr.get(dattr, 0) + 1
 
-    # 表示するノードの移動・回転・スケールが、カーブ以外（コンストレイント・IK・エクスプレッションなど）で決まっている
-    other_driven: Dict[str, List[str]] = {}
     kept_nodes = {i: n for n in ms.nodes for i in [out_index.get(id(n))] if i is not None}
-    for ni, n in kept_nodes.items():
-        for key, (src, _sattr) in n.inputs.items():
-            base = key.split("[")[0].split(".")[0]
-            if base in _CHANNEL_BASES and src.type not in CURVE_TYPES:
-                other_driven.setdefault(src.type, []).append(n.name)
-                break
+    # リグ（コンストレイント・IK・計算ノード）。入力になっているカーブも読む
+    info = ms.graph_info
+    has_graph = info is not None and not info.empty
+    if has_graph:
+        for cid, c in info.curves.items():
+            if c.span is not None:
+                curve_nodes[cid] = c
 
-    if not targets:
+    if not targets and not has_graph:
         return None
 
     # --- カーブの読み込み ------------------------------------------------
     order = sorted(curve_nodes.values(), key=lambda c: c.order)
+    curve_index: Dict[int, int] = {}
     curves_out = []
     channels_out = []
     times_chunks, values_chunks = [], []
@@ -310,19 +312,32 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
                           ox * fps if ox is not None and oy is not None else nan,
                           oy * tk if ox is not None and oy is not None else nan))
         index = len(curves_out)
+        curve_index[id(node)] = index
         curves_out.append({"name": node.name, "type": cv.kind, "offset": offset, "count": n,
                            "tangent": cv.tan, "weighted": cv.weighted, "pre": cv.pre, "post": cv.post})
-        for ni, attr in targets[id(node)]:
+        for ni, attr in targets.get(id(node), ()):
             channels_out.append({"node": ni, "attr": attr, "curve": index})
         offset += n
 
-    if not channels_out:
+    graph_nodes, moving = [], set()
+    if has_graph:
+        from .rig import build_graph, graph_warnings
+        graph_nodes, moving = build_graph(ms, info, out_index, curve_index)
+        warnings.extend(graph_warnings(info))
+        for g in graph_nodes:
+            if g["type"].endswith("Constraint") and not g.get("targets"):
+                warnings.append("アニメーション: %s にターゲットがないため、評価しません。" % g["name"])
+    if not channels_out and not moving:
         return None
     channels_out.sort(key=lambda c: (c["node"], c["attr"]))
 
     # --- 動くノードの静的な値（ビューアがフレームごとにローカル行列を組み立て直すため）------
-    animated = {c["node"] for c in channels_out}
-    scaled = {c["node"] for c in channels_out if c["attr"][0] == "s"}
+    # カーブ・リグで動くノード、リグの評価に使う DAG ノード、親のスケールで動く子ジョイント
+    animated = {c["node"] for c in channels_out} | moving
+    in_graph = {g["dag"] for g in graph_nodes if g["dag"] >= 0}
+    # スケールが動くノード（子ジョイントのスケール補正が変わる）
+    scaled = {c["node"] for c in channels_out if c["attr"][0] == "s"} | {
+        g["dag"] for g in graph_nodes if g["dag"] >= 0 and any(k[0] == "s" for k in g.get("inputs", {}))}
     rest_nodes = []
     for ni in sorted(kept_nodes):
         n = kept_nodes[ni]
@@ -330,16 +345,11 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         if n.type == "joint" and n.flag("ssc", True) and "is" in n.inputs:
             is_src = n.inputs["is"][0]
         is_idx = out_index.get(id(is_src)) if is_src is not None else None
-        if ni not in animated and not (is_idx is not None and is_idx in scaled):
+        if ni not in animated and ni not in in_graph and not (is_idx is not None and is_idx in scaled):
             continue
         rest_nodes.append(rest_entry(n, ni, ang_k, is_src, is_idx))
 
     # --- 警告 -------------------------------------------------------------
-    if other_driven:
-        names = sum(other_driven.values(), [])
-        kinds = "・".join("%s（%d）" % (k, len(v)) for k, v in sorted(other_driven.items(), key=lambda kv: -len(kv[1])))
-        warnings.append("アニメーション: %d 個のノードは、カーブ以外（%s）で動くため再生されません（例: %s）。"
-                        % (len(names), kinds, "、".join(names[:3])))
     if via:
         warnings.append("アニメーション: %s を経由するカーブは再生しません（%d 本）。" % (
             "・".join(sorted(via)), sum(via.values())))
@@ -353,8 +363,9 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
     times_all = _concat(times_chunks)
     values_all = _concat(values_chunks)
     pb = playback_range(ms)
-    t_first = float((np.min if numpy_enabled() else min)(times_all)) if len(times_all) else 0.0
-    t_last = float((np.max if numpy_enabled() else max)(times_all)) if len(times_all) else 0.0
+    now = ms.current_time if ms.current_time is not None else 1.0
+    t_first = float((np.min if numpy_enabled() else min)(times_all)) if len(times_all) else now
+    t_last = float((np.max if numpy_enabled() else max)(times_all)) if len(times_all) else now
     start = pb.get("min", t_first)
     end = pb.get("max", t_last)
     if end < start:
@@ -370,13 +381,15 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         "curves": curves_out,
         "channels": channels_out,
         "nodes": rest_nodes,
+        "graph": graph_nodes,
         "times": _pack(times_all, "float32"),
         "values": _pack(values_all, "float32"),
         "tangentTypes": _pack(types, "uint8"),
         "fixedTangents": _pack(fixed, "float32"),
         "warnings": warnings,
         "stats": {"curves": len(curves_out), "keys": offset, "channels": len(channels_out),
-                  "nodes": len(animated), "seconds": round(time.perf_counter() - t0, 4)},
+                  "nodes": len(animated), "graphNodes": len(graph_nodes),
+                  "seconds": round(time.perf_counter() - t0, 4)},
     }
 
 

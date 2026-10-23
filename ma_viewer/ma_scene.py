@@ -225,6 +225,7 @@ class MaScene:
         self.current_time: Optional[float] = None    # time1 の .o（保存時の現在フレーム）
         self.text = ""                               # コメントを除いた本文（animCurve などの span はこの位置）
         self.out_index: Dict[int, int] = {}          # id(ノード) → 共通 JSON の nodes の番号（変換後に設定）
+        self.graph_info = None                       # rig.GraphInfo（変換時に設定）
         self.references: List[str] = []
         self.stats: Dict[str, int] = {}          # 文の種類ごとの数（読み込みの内訳に出す）
         # 「文の種類 ノードの種類」ごとの [秒, 文の数, 文字数]（どこに時間がかかっているかを調べる）
@@ -956,11 +957,11 @@ def parse_ma_text(text: str, source_path: str = "", progress: ProgressFn = None)
         c[1] += 1
         c[2] += len(stmt)
         if cmd == "createNode" and scene.current is not None and (
-                scene.current.skip_attrs or scene.current.type in _SPAN_TYPES):
+                scene.current.skip_attrs or scene.current.type in _SPAN_TYPES or scene.current.type in TRANSFORM_TYPES):
             m = _BLOCK_END_RE.search(text, pos)
             skip_to = m.start() + 1 if m else n
-            if scene.current.type in _SPAN_TYPES:
-                scene.current.span = (pos, skip_to)
+            # 範囲を覚えておく（アニメーションカーブ・リグの計算ノード・コントローラーの独自の属性を後から読むため）
+            scene.current.span = (pos, skip_to)
             if skip_to > pos and scene.current.skip_attrs:
                 counts["読み飛ばし"] = counts.get("読み飛ばし", 0) + text.count(";", pos, skip_to)
                 pos = skip_to

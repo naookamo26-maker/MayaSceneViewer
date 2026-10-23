@@ -1,12 +1,13 @@
-// ジョイントの表示（球・骨・ローカル軸）とピック。
+// ジョイントの表示（球・骨・ローカル軸）とピック。リグのコントローラーの目印（八面体）も描く。
 // 骨はシーン階層とは別のオーバーレイとして描くので、Maya 側で骨の親が非表示でも表示できる。
 import {
   BufferGeometry, Color, DynamicDrawUsage, Float32BufferAttribute, Group, InstancedMesh,
-  LineBasicMaterial, LineSegments, Matrix4, MeshBasicMaterial, Quaternion, SphereGeometry, Vector3,
+  LineBasicMaterial, LineSegments, Matrix4, MeshBasicMaterial, OctahedronGeometry, Quaternion, SphereGeometry, Vector3,
 } from 'three';
 
 export const JOINT_COLOR = new Color(0x5ec8e5);
 export const SELECT_COLOR = new Color(0xf2a93b);
+export const CONTROL_COLOR = new Color(0xc4e36b);       // コントローラー（リグを動かすノード）
 const AXIS_COLORS = [new Color(0xe5675b), new Color(0x7fd16b), new Color(0x5b8ff0)];
 
 const _m = new Matrix4();
@@ -54,6 +55,10 @@ export class JointOverlay {
     this.spheres = null;
     this.bones = null;
     this.axes = null;
+    this.controls = [];        // コントローラーのノード番号
+    this.controlGeo = new OctahedronGeometry(1, 0);
+    this.controlMat = new MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.95 });
+    this.controlMesh = null;
   }
 
   clear() {
@@ -61,6 +66,9 @@ export class JointOverlay {
       if (o) { this.group.remove(o); if (o.isLineSegments) o.geometry.dispose(); else o.dispose?.(); }
     }
     this.spheres = this.bones = this.axes = null;
+    if (this.controlMesh) { this.group.remove(this.controlMesh); this.controlMesh.dispose(); }
+    this.controlMesh = null;
+    this.controls = [];
     this.joints = [];
     this.links = [];
     this.slotOf = new Map();
@@ -113,12 +121,27 @@ export class JointOverlay {
   }
 
   applyXray() {
-    for (const m of [this.sphereMat, this.boneMat, this.axesMat]) {
+    for (const m of [this.sphereMat, this.boneMat, this.axesMat, this.controlMat]) {
       m.depthTest = !this.xray;
       m.depthWrite = !this.xray;
       m.needsUpdate = true;
     }
-    for (const o of [this.spheres, this.bones, this.axes]) if (o) o.renderOrder = this.xray ? 10 : 0;
+    for (const o of [this.spheres, this.bones, this.axes, this.controlMesh]) if (o) o.renderOrder = this.xray ? 10 : 0;
+  }
+
+  /** リグのコントローラー（ジョイント・メッシュ以外でリグを動かすノード）の目印を描く */
+  setControllers(list) {
+    if (this.controlMesh) { this.group.remove(this.controlMesh); this.controlMesh.dispose(); }
+    this.controls = list.slice();
+    this.controlMesh = null;
+    if (this.controls.length) {
+      this.controlMesh = new InstancedMesh(this.controlGeo, this.controlMat, this.controls.length);
+      this.controlMesh.instanceMatrix.setUsage(DynamicDrawUsage);
+      this.controlMesh.frustumCulled = false;
+      this.group.add(this.controlMesh);
+    }
+    this.applyXray();
+    this.update();
   }
 
   setXray(v) { this.xray = v; this.applyXray(); }
@@ -198,13 +221,33 @@ export class JointOverlay {
     this.axes.visible = n > 0;
     this.spheres.visible = this.joints.length > 0;
     this.bones.visible = this.links.length > 0;
+
+    // コントローラー: ジョイントの球の 2.2 倍の八面体（向きはノードに合わせる）
+    if (this.controlMesh) {
+      this.controls.forEach((ni, k) => {
+        objs[ni].matrixWorld.decompose(_p, _q, _s);
+        const rr = isHidden(ni) ? 0 : r * 2.2;
+        _m.compose(_p, _q, _s.set(rr, rr, rr));
+        this.controlMesh.setMatrixAt(k, _m);
+        this.controlMesh.setColorAt(k, ni === this.selected ? SELECT_COLOR : CONTROL_COLOR);
+      });
+      this.controlMesh.instanceMatrix.needsUpdate = true;
+      if (this.controlMesh.instanceColor) this.controlMesh.instanceColor.needsUpdate = true;
+      this.controlMesh.boundingSphere = null;
+    }
   }
 
   /** レイが当たったジョイントの nodeIndex（なければ -1） */
   pick(raycaster) {
-    if (!this.spheres || !this.group.visible || this.joints.length === 0) return -1;
-    const hits = raycaster.intersectObject(this.spheres, false);
-    if (hits.length && hits[0].instanceId !== undefined) return this.joints[hits[0].instanceId];
+    if (!this.spheres || !this.group.visible) return -1;
+    if (this.joints.length) {
+      const hits = raycaster.intersectObject(this.spheres, false);
+      if (hits.length && hits[0].instanceId !== undefined) return this.joints[hits[0].instanceId];
+    }
+    if (this.controlMesh) {
+      const hits = raycaster.intersectObject(this.controlMesh, false);
+      if (hits.length && hits[0].instanceId !== undefined) return this.controls[hits[0].instanceId];
+    }
     return -1;
   }
 }

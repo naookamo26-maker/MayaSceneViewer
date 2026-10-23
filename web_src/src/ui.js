@@ -489,11 +489,16 @@ export class UI {
     h += `<tr><th>バインドポーズの情報</th><td>${info.bindSource ? esc(SRC[info.bindSource] || info.bindSource) : 'なし'}</td></tr>`;
     h += '</table>';
     const anim = info.animChannels || [];
-    if (anim.length) {
-      h += `<table class="kv"><tr><th>アニメーション</th><td>${esc(anim.join('・'))}</td></tr></table>`;
+    const rig = info.rigDrivers || [];
+    if (anim.length || rig.length) {
+      h += '<table class="kv">';
+      if (anim.length) h += `<tr><th>アニメーション</th><td>${esc(anim.join('・'))}</td></tr>`;
+      if (rig.length) h += `<tr><th>リグ</th><td>${rig.slice(0, 6).map(esc).join('<br>')}${rig.length > 6 ? '<br>ほか' : ''}</td></tr>`;
+      h += '</table>';
     }
-    // アニメーションを読み込んだあとは、カーブで決まる値は再生されるので注記から外す
-    const driven = (info.drivenBy || []).filter((d) => !(anim.length && /\banimCurveT[LAU]\b/.test(d)));
+    // アニメーションを読み込んだあとは、カーブ・リグで評価する値は注記から外す
+    const evaluated = /（(animCurveT[LAU]|pointConstraint|orientConstraint|parentConstraint|scaleConstraint|poleVectorConstraint|unitConversion|pairBlend|blendColors|multiplyDivide|plusMinusAverage|reverse|condition)）$/;
+    const driven = (info.drivenBy || []).filter((d) => !(info.animLoaded && evaluated.test(d)));
     if (driven.length) {
       h += '<p class="note small">次の値は接続で決まるため、ファイルに残っていません'
         + (info.bindSource ? '（「ファイルの値」でもバインドポーズの姿勢で表示）' : '（既定値で表示）') + '：<br>'

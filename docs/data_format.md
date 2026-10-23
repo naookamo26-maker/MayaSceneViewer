@@ -141,6 +141,30 @@ transform・joint などの変換ノードです。**親は必ず子より前に
 
 接線の傾きの計算（スプライン・オートなど）とカーブの評価はビューアで行います（`web_src/src/animation.js`）。
 
+### animation.graph
+
+リグ（コンストレイント・IK・計算ノード）の評価に使うノードの一覧です（なければ空）。評価はビューアで行います（`web_src/src/rig.js`）。
+
+```json
+{ "id": 4, "name": "arm_ik", "type": "ikHandle", "dag": 5,
+  "attrs":  { "roc": 1 },
+  "inputs": { "pvx": { "node": 5, "attr": "ctx" }, "rz": { "curve": 2 } },
+  "ik": { "solver": "ikRPsolver", "chain": [0, 1, 2] } }
+```
+
+| キー | 内容 |
+|---|---|
+| `id` | graph の中の番号（`inputs` の `node` が指す） |
+| `name` / `type` | ノードの名前と型 |
+| `dag` | DAG ノード（ジョイント・トランスフォーム・IK ハンドル）なら nodes の番号、コンストレイント・計算ノードなら -1。DAG ノードは animation.nodes にローカル行列の材料がある |
+| `attrs` | ファイルに書かれた属性の値（数値、または 3 つ組などのリスト）。`i1[0:2]` のような範囲は `i1[0]`・`i1[1]`・`i1[2]` に分ける。DAG ノードは移動・回転などの標準の属性を除く（独自の属性・`pa` など） |
+| `inputs` | 属性への接続。`{"node": id, "attr": 接続元の属性}` か、カーブなら `{"curve": curves の番号}` |
+| `driven` | コンストレイントが動かすノード（nodes の番号）。`targets` はターゲット（`{"index": tg の番号, "node": id}`） |
+| `pivot` | poleVectorConstraint の開始ジョイント（nodes の番号） |
+| `ik` | IK ハンドルのソルバーと、開始から終端までのジョイント（nodes の番号）。2 ボーン（3 つ）の ikRPsolver だけを出力する |
+
+値の単位は Maya の内部単位にそろえて評価します（角度はラジアン。ファイルに度で書かれた角度の属性は読むときに変換する）。
+
 ## 行列の規約
 
 行列は Maya と同じ**行ベクトル規約・行優先**の 16 要素です（点 p は `p' = p · M`、平行移動は要素 12〜14）。
