@@ -8,7 +8,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { PoseState, identityPose, poseFromTransform, poseQuaternion } from './pose.js';
 import {
-  applyPoseSource, hasBindPose, BASE_COLOR, buildScene, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
+  applyPoseSource, hasBindPose, poseBaseMatrix, BASE_COLOR, buildScene, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
   vertexWorldPosition, writeVertexColors,
 } from './sceneBuilder.js';
 import { base64ToArrayBuffer } from './textures.js';
@@ -742,6 +742,9 @@ class ViewerApp {
       for (const c of this.built.childrenOf[ni]) touched.add(c);
     }
     this.animTouched = [...touched].sort((a, b) => a - b);
+    // 保存時の値は、保存したときのフレーム（time1）の値（カーブで決まる値は .ma に残っていないため）。
+    // バインドポーズの表示で、バインドポーズの情報がないノードに使う
+    for (const [ni, m] of clip.evaluate(clip.current)) this.built.nodeObjects[ni].userData.savedMatrix.copy(m);
     if (clip.warnings.length) this.ui.setWarnings((this.ui.warnings || []).concat(clip.warnings));
     this.timeline.setClip(clip);
     this.updateTimelineKeys();
@@ -758,11 +761,11 @@ class ViewerApp {
     if (!this.clip || !this.built) return;
     this.frame = f;
     const mats = this.clip.evaluate(f);
-    const bind = this.settings.poseSource === 'bind';
+    const mode = this.settings.poseSource;
     for (const [ni, m] of mats) {
       const ud = this.built.nodeObjects[ni].userData;
       ud.fileMatrix.copy(m);
-      ud.baseMatrix.copy(bind && ud.bindMatrix ? ud.bindMatrix : m);
+      ud.baseMatrix.copy(poseBaseMatrix(ud, mode));     // バインドポーズではフレームによらない
     }
     for (const ni of this.animTouched) this.pose.apply(ni);
     this.timeline.setFrame(f);

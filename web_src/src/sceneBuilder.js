@@ -37,7 +37,8 @@ export function buildScene(data, options = {}) {
     o.userData = {
       nodeIndex: i, path: n.path, type: n.type,
       baseMatrix: o.matrix.clone(),                                         // いま基準にしている行列
-      fileMatrix: o.matrix.clone(),                                         // ファイルの値
+      fileMatrix: o.matrix.clone(),                                         // ファイルの値（アニメーションでは現在のフレームの値）
+      savedMatrix: o.matrix.clone(),                                        // 保存時の値（フレームによらない）
       bindMatrix: n.bindMatrix ? new Matrix4().fromArray(n.bindMatrix) : null,  // バインドポーズ
     };
     return o;
@@ -183,14 +184,21 @@ export function applySkinNormalization(built, mode) {
   return changed;
 }
 
+/** 姿勢の基準 mode でのノードの行列。バインドポーズの情報がないノードは、バインドポーズでも保存時の値にする */
+export function poseBaseMatrix(ud, mode) {
+  if (mode !== 'bind') return ud.fileMatrix;
+  return ud.bindMatrix || ud.savedMatrix || ud.fileMatrix;
+}
+
 /**
- * 姿勢の基準を切り替える。'bind' はバインドポーズ（情報のないノードはファイルの値）、'file' はファイルの値。
+ * 姿勢の基準を切り替える。'bind' はバインドポーズ（情報のないノードは保存時の値）、'file' はファイルの値
+ * （アニメーションがあれば現在のフレームの値）。
  * ポーズ確認の追加分は PoseState.reapplyAll() で掛け直すこと。
  */
 export function applyPoseSource(built, mode) {
   for (const o of built.nodeObjects) {
     const ud = o.userData;
-    ud.baseMatrix.copy(mode === 'bind' && ud.bindMatrix ? ud.bindMatrix : ud.fileMatrix);
+    ud.baseMatrix.copy(poseBaseMatrix(ud, mode));
     o.matrix.copy(ud.baseMatrix);
   }
   built.root.updateMatrixWorld(true);

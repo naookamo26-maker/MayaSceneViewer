@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { applyPoseSource, buildScene } from '../src/sceneBuilder.js';
 import {
   AnimationClip, INFINITY, TANGENT, composeLocalMatrix, decodeArray, evaluateCurve, prepareCurve,
 } from '../src/animation.js';
@@ -124,4 +125,22 @@ test('再生範囲とキーの時刻', () => {
   assert.deepEqual(clip.keyTimes(shoulder), [1, 12, 24]);
   assert.deepEqual(clip.channelsOf(shoulder).sort(), ['rz', 'sx']);
   assert.ok(clip.keyTimes().includes(25));
+});
+
+test('バインドポーズの表示はフレームによらない（バインドポーズの情報がないノードは保存時の値）', () => {
+  const built = buildScene(data);
+  const clip = new AnimationClip(data.animation);
+  const ud = (name) => built.nodeObjects[names.indexOf(name)].userData;
+  for (const [ni, m] of clip.evaluate(clip.current)) built.nodeObjects[ni].userData.savedMatrix.copy(m);
+  for (const [ni, m] of clip.evaluate(12)) built.nodeObjects[ni].userData.fileMatrix.copy(m);   // フレーム 12 に進めた
+  const rig = ud('rig_grp'), shoulder = ud('shoulder');
+  assert.equal(rig.bindMatrix, null);
+  assert.ok(shoulder.bindMatrix);
+  applyPoseSource(built, 'bind');
+  assert.ok(rig.baseMatrix.equals(rig.savedMatrix), 'バインドポーズの情報がないノードは保存時の値');
+  assert.ok(!rig.baseMatrix.equals(rig.fileMatrix), 'フレーム 12 の値ではない');
+  assert.ok(shoulder.baseMatrix.equals(shoulder.bindMatrix));
+  applyPoseSource(built, 'file');
+  assert.ok(rig.baseMatrix.equals(rig.fileMatrix), 'ファイルの値ではフレーム 12 の値');
+  assert.ok(shoulder.baseMatrix.equals(shoulder.fileMatrix));
 });

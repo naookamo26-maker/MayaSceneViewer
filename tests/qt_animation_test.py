@@ -28,12 +28,15 @@ STATE_JS = """JSON.stringify((() => {
   const s = window.mayaViewer.getStats();
   const app = window.mayaViewer.debug.app;
   const tl = document.getElementById('timeline');
-  const wrist = app.built ? app.data.nodes.findIndex((n) => n.name === 'wrist') : -1;
+  const at = (name) => {
+    const i = app.built ? app.data.nodes.findIndex((n) => n.name === name) : -1;
+    return i >= 0 ? app.built.nodeObjects[i].matrixWorld.elements.slice(12, 15).map((v) => +v.toFixed(3)) : null;
+  };
   return {
     loaded: !!s.loaded, name: s.loaded ? app.sceneName || '' : '', animation: s.animation || null,
     pose: s.settings ? s.settings.poseSource : null,
     timeline: !tl.hidden, status: document.getElementById('tl-status').textContent,
-    wrist: wrist >= 0 ? app.built.nodeObjects[wrist].matrixWorld.elements.slice(12, 15).map((v) => +v.toFixed(3)) : null,
+    wrist: at('wrist'), rig: at('rig_grp'), box: at('box'),
   };
 })())"""
 
@@ -110,7 +113,7 @@ def main() -> int:
             check(any(w.startswith("アニメーション:") for w in win.viewer.warnings), "アニメーションの警告を警告一覧に追加")
             check("アニメーション" in win.statusBar().currentMessage(), "ステータスバーに読み込み結果: %s"
                   % win.statusBar().currentMessage())
-            s_open.wrist1 = s["wrist"]
+            s_open.first = s
             wait_idle(nxt)
         wait_state(lambda s: s["loaded"] and s["animation"], got)
 
@@ -127,12 +130,36 @@ def main() -> int:
             def got(s):
                 check(s["animation"]["frame"] == 12, "スライダーで 12 フレームに移動")
                 check(s["pose"] == "file", "タイムラインを操作すると「ファイルの値」に切り替わる")
-                check(s["wrist"] != s_open.wrist1, "骨が動いた: %s → %s" % (s_open.wrist1, s["wrist"]))
+                check(s["wrist"] != s_open.first["wrist"], "骨が動いた: %s → %s" % (s_open.first["wrist"], s["wrist"]))
                 js("document.getElementById('select-info').innerText", lambda t: (
                     check("アニメーション" in t and "フレーム 12 の値" in t, "選択ノードの情報にアニメーションの値"),
                     nxt()))
             js(STATE_JS, got)
         js(code, after)
+
+    def s_bind(nxt):
+        """フレーム 12 でバインドポーズに戻しても、読み込み直後（保存時のフレーム）と同じ姿勢になる"""
+        set_pose = ("(() => { const sel = document.getElementById('opt-pose-source');"
+                    " sel.value = '%s'; sel.dispatchEvent(new Event('change')); return 'ok'; })()")
+        first = s_open.first
+
+        def bind12(s):
+            check(s["pose"] == "bind" and s["animation"]["frame"] == 12, "フレーム 12 のままバインドポーズに戻した")
+            check((s["wrist"], s["rig"], s["box"]) == (first["wrist"], first["rig"], first["box"]),
+                  "骨・一番上のグループ・バインドポーズの情報がない箱が読み込み直後と同じ位置: rig_grp %s / box %s"
+                  % (s["rig"], s["box"]))
+            js("window.mayaViewer.debug.app.applyFrame(18); 'ok'", lambda _: js(STATE_JS, bind18))
+
+        def bind18(s):
+            check((s["wrist"], s["rig"], s["box"]) == (first["wrist"], first["rig"], first["box"]),
+                  "バインドポーズのままフレームを進めても姿勢は変わらない")
+            js(set_pose % "file", lambda _: js(STATE_JS, file18))
+
+        def file18(s):
+            check(s["pose"] == "file" and s["rig"] != first["rig"] and s["wrist"] != first["wrist"],
+                  "「ファイルの値」に戻すと、そのフレーム（18）の姿勢: rig_grp %s" % s["rig"])
+            js("window.mayaViewer.setFrame(12); 'ok'", lambda _: nxt())
+        js(set_pose % "bind", lambda _: js(STATE_JS, bind12))
 
     def s_keys(nxt):
         code = """JSON.stringify((() => {
@@ -254,7 +281,7 @@ def main() -> int:
         app.exit(0 if ok["v"] else 1)
 
     def start():
-        run([s_open, s_scrub, s_keys, s_play, s_cancel, s_disabled, s_json, s_reopen, finish])
+        run([s_open, s_scrub, s_bind, s_keys, s_play, s_cancel, s_disabled, s_json, s_reopen, finish])
 
     win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(300, start))
     QtCore.QTimer.singleShot(120000, lambda: (print("タイムアウト"), app.exit(2)))
