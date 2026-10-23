@@ -211,7 +211,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 | orientConstraint | ターゲットのワールドの向きの重み付き平均（四元数）· オフセット（.o） |
 | parentConstraint | ターゲットごとに（ターゲット · オフセットの移動 · オフセットの回転）を求め、位置と向きを重み付き平均 |
 | scaleConstraint | ターゲットのワールドのスケールの重み付き平均 × オフセット（.o） |
-| poleVectorConstraint | ターゲットの位置 − 開始ジョイントの位置（IK ハンドルの極ベクトル） |
+| poleVectorConstraint | ターゲットの位置 − 開始の位置（IK ハンドルの極ベクトル）。Maya と同じく、開始の位置はコンストレイントの属性 (constraintRotatePivot + constraintRotateTranslate) を pivotSpace でワールドへ移したもの（ふつうは開始ジョイントの位置。crp がつながっていなければ親の原点などになる）、ターゲットの位置は (targetTranslate + targetRotatePivot + targetRotateTranslate) を targetParentMatrix で移したもの |
 | aimConstraint | aim ベクトル（.a）をターゲットへ向け、up ベクトル（.u）を world up の側に向ける。world up はシーンの上・オブジェクト（.wum の位置）・オブジェクトの回転・ベクトル（.wu）・なし（最短の回転）。オフセット（.o） |
 | IK（ikRPsolver） | 2 ボーン（開始・中間・終端のジョイント）は、ハンドルに届くように余弦定理で曲げ、極ベクトル（ハンドルの親の空間。ファイルに値がなければ Maya の既定値 (0, 0, 1)）の側に肘を置き、ひねり（twist）で回す。届かないときはまっすぐ伸ばす。ikBlend で FK と混ぜる。まっすぐなチェーンは優先角（.pa）で曲げる向きを決める。3 ボーン以上は、FK の形を極ベクトルの面に合わせて回してから、面の上で FABRIK（反復の解き方）で解く（曲がり方の配分は Maya と違うことがある） |
 | IK（ikSCsolver） | 1 ボーンは、終端がハンドルの方を向くよう開始ジョイントを最短の回転で回す。2 ボーン以上は回転プレーンと同じ解き方で、極ベクトルの代わりに FK の形の側に曲げる（Maya の SC はハンドルの回転で面を決めるので、ずれることがある） |

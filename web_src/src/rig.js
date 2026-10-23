@@ -1106,8 +1106,8 @@ export class RigEvaluator {
       case 'pointConstraint':
         return expand('ct', toTranslate(weighted((t) => pivot(t.ni))), XYZ);
       case 'poleVectorConstraint': {
-        const target = weighted((t) => pivot(t.ni));
-        const start = g.pivot >= 0 ? this.pivotPosition(g.pivot) : new Vector3();
+        const target = weighted((t) => this.pvcTargetPosition(g, t));
+        const start = this.pvcStartPosition(g);
         const v = target.sub(start);
         // 動かされるノード（IK ハンドル）の親の空間へ（スケール・反転を含む 3x3。IK 側の変換と打ち消し合う）
         return expand('ct', v.applyMatrix3(new Matrix3().setFromMatrix4(pwInv)).toArray(), XYZ);
@@ -1578,6 +1578,35 @@ export class RigEvaluator {
     return this.parentWorld(handleNi);
   }
 
+  /**
+   * poleVectorConstraint の開始の位置: Maya と同じく、コンストレイントの属性 (crp + crt) を pivotSpace（ps）で
+   * ワールドへ移す（ふつうは crp ← 開始ジョイントの t、ps ← その parentMatrix）。crp・ps のどちらも
+   * 接続・値がなければ、開始ジョイント（pivot）の位置
+   */
+  pvcStartPosition(g) {
+    const inputs = g.inputs || {};
+    const attrs = g.attrs || {};
+    const has = (k) => Object.keys(inputs).some((x) => x === k || x.startsWith(k)) || Object.keys(attrs).some((x) => x === k || x.startsWith(k));
+    if (has('crp') || has('ps') || has('crt')) {
+      const crp = this.vec(g.id, 'crp'), crt = this.vec(g.id, 'crt');
+      return new Vector3(crp[0] + crt[0], crp[1] + crt[1], crp[2] + crt[2]).applyMatrix4(this.mat(g.id, 'ps'));
+    }
+    return g.pivot >= 0 ? this.pivotPosition(g.pivot) : new Vector3();
+  }
+
+  /** poleVectorConstraint のターゲットの位置: (tt + trp + trt) を targetParentMatrix（tpm）でワールドへ（Maya と同じ） */
+  pvcTargetPosition(g, t) {
+    const k = t.index;
+    const inputs = g.inputs || {};
+    if (inputs[`tg[${k}].tt`] || inputs[`tg[${k}].tpm`] || inputs[`tg[${k}].ttx`]) {
+      const tt = this.vec(g.id, `tg[${k}].tt`), trp = this.vec(g.id, `tg[${k}].trp`), trt = this.vec(g.id, `tg[${k}].trt`);
+      return new Vector3(tt[0] + trp[0] + trt[0], tt[1] + trp[1] + trt[1], tt[2] + trp[2] + trt[2]).applyMatrix4(this.mat(g.id, `tg[${k}].tpm`));
+    }
+    const r = this.rest(t.ni);
+    const rp = r && r.rp ? r.rp : [0, 0, 0];
+    return new Vector3(rp[0], rp[1], rp[2]).applyMatrix4(this.world(t.ni));
+  }
+
   /** 極ベクトル（ハンドルの親の空間の値）→ ワールド（スケール・反転を含む 3x3。poleVectorConstraint の変換と打ち消し合う） */
   pvWorld(pvLocal, handleNi, startNi) {
     const v = new Vector3(pvLocal[0], pvLocal[1], pvLocal[2]);
@@ -1790,20 +1819,31 @@ export class RigEvaluator {
     const cg = src && src.node !== undefined ? this.byId.get(src.node) : null;
     if (!cg) return null;
     if (cg.type !== 'poleVectorConstraint') return { via: `${cg.name}（${cg.type}）`, targets: [] };
-    const start = cg.pivot >= 0 ? this.pivotPosition(cg.pivot) : null;
+    const start = this.pvcStartPosition(cg);
     const offset = this.vec(cg.id, 'o', [0, 0, 0]);
+    // 開始の位置の材料（crp・crt・ps）の接続元。つながっていない属性は値
+    const srcName = (key) => {
+      const src = (cg.inputs || {})[key];
+      if (!src) return null;
+      if (src.node === undefined) return 'カーブ';
+      const sg = this.byId.get(src.node);
+      return sg ? `${sg.name}.${src.attr}` : '?';
+    };
+    const startInputs = {};
+    for (const key of ['crp', 'crt', 'ps']) {
+      const s2 = srcName(key);
+      startInputs[key] = s2 || (key === 'ps' ? '（接続なし）' : `（接続なし: ${this.vec(cg.id, key).map((x) => Math.round(x * 1e4) / 1e4).join(', ')}）`);
+    }
     const targets = (cg.targets || []).map((t) => {
       const tg = this.byId.get(t.node);
       if (!tg || tg.dag < 0) return null;
       const ni = tg.dag;
-      const r = this.rest(ni);
-      const rp = r && r.rp ? r.rp : [0, 0, 0];
-      const pos = new Vector3(rp[0], rp[1], rp[2]).applyMatrix4(this.world(ni));
+      const pos = this.pvcTargetPosition(cg, { index: t.index, ni });
       return { name: this.sceneNodes[ni].name, weight: this.num(cg.id, `tg[${t.index}].tw`, 1),
         position: pos.toArray().map((x) => Math.round(x * 1e4) / 1e4),
         drift: this.parentDrift(ni, fileLocal, tol, true) };
     }).filter(Boolean);
-    return { via: cg.name, start: start ? start.toArray().map((x) => Math.round(x * 1e4) / 1e4) : null,
+    return { via: cg.name, start: start ? start.toArray().map((x) => Math.round(x * 1e4) / 1e4) : null, startInputs,
       offset: offset.some((x) => Math.abs(x) > 1e-9) ? offset : null, targets };
   }
 

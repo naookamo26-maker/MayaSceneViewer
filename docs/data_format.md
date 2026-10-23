@@ -178,7 +178,7 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 | `attrs` | ファイルに書かれた属性の値（数値、または 3 つ組などのリスト）。`i1[0:2]` のような範囲は `i1[0]`・`i1[1]`・`i1[2]` に分ける。DAG ノードは移動・回転などの標準の属性を除く（独自の属性・`pa` など） |
 | `inputs` | 属性への接続。`{"node": id, "attr": 接続元の属性}` か、カーブなら `{"curve": curves の番号}` |
 | `driven` | コンストレイントが動かすノード（nodes の番号）。`targets` はターゲット（`{"index": tg の番号, "node": id}`） |
-| `pivot` | poleVectorConstraint の開始ジョイント（nodes の番号） |
+| `pivot` | poleVectorConstraint の開始ジョイント（nodes の番号）。開始の位置は crp・crt・ps の接続・値から求め、どれもなければこのノードの位置 |
 | `ik` | IK ハンドルのソルバー（ikRPsolver・ikSCsolver・ikSplineSolver）と、開始から終端までのジョイント（nodes の番号）。スプライン IK のカーブは `inputs` の `ic` |
 | `parent` | nurbsCurve・locator（シェイプ）の親のトランスフォーム（nodes の番号）。ワールド空間（ws・worldPosition）の計算に使う |
 | `shape` | nurbsCurve が表示するカーブのとき、そのトップレベルの curves の番号（inputs の `curve` が指す animation.curves とは別） |

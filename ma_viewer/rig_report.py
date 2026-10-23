@@ -381,6 +381,11 @@ def format_verification(result: Optional[dict]) -> str:
                 out.append("    極ベクトルの目標（%s。開始の位置 %s）%s" % (
                     pt["via"], "(%s)" % ", ".join("%.4f" % x for x in pt["start"]) if pt.get("start") else "-",
                     "・★ オフセット %s（使っていない）" % pt["offset"] if pt.get("offset") else ""))
+                si = pt.get("startInputs")
+                if si:
+                    # Maya は開始の位置を (crp + crt) · ps で求める（ふつうは crp ← 開始ジョイントの t、ps ← その pm）
+                    out.append("      開始の位置の材料: crp ← %s・crt ← %s・ps ← %s" % (
+                        si.get("crp", "-"), si.get("crt", "-"), si.get("ps", "-")))
             for t in pt.get("targets", []):
                 d = t.get("drift")
                 fb = d.get("firstBad") if d else None

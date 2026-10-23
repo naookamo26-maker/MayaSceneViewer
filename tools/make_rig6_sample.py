@@ -34,6 +34,10 @@
     再現チェックはファイルに書かれた回転（20°）と比べる
   * 尻尾の先 t2_4 の子に、2 ボーンの IK arm4_a → arm4_b → arm4_c（ハンドル arm4_ik は動かない）。
     親（スプライン IK の尻尾）が動くと、この IK も動く（再現チェックで「親の側が原因」を見分ける確認用）
+  * 腕 arm5_a → arm5_b → arm5_c（親 arm5_grp は (60, 0, 0)、arm5_a はその (0, 0, 3)）の ikRPsolver。極ベクトルは
+    arm5_pv (63, 0, 10) への poleVectorConstraint arm5_pvc で、開始の位置の crp は接続なし（値 0）、ps ← arm5_a.pm。
+    Maya と同じく (crp + crt) · ps = 親の原点 (60, 0, 0) から測るので、極ベクトルは (3, 0, 10)（開始ジョイントからなら
+    (3, 0, 7)）
   * 自作のトランスフォームノード cx_ctrl（未知の型 myCtrlTransform。親も子もない）の ty にキー 0 → 2。
     cx_jnt.t = decomposeMatrix(cx_ctrl.wm).ot → transform として扱って評価する
   * 行列を出力する自作ノード mm_custom（未知の型 myMatrixBlend。inMatrix ← ctl.wm、outMatrix → mm_dec2 → mm_jnt2.t）。
@@ -261,6 +265,19 @@ def main():
     node("ikEffector", "arm4_eff", "arm4_b", t=(3, 0, -1), v="no")
     node("ikHandle", "arm4_ik", t=(14, 2, -10))
 
+    # --- 開始の位置（crp）が接続されていない極ベクトルのコンストレイント ---------------------------
+    node("transform", "arm5_grp", t=(60, 0, 0))
+    node("joint", "arm5_a", "arm5_grp", t=(0, 0, 3))
+    node("joint", "arm5_b", "arm5_a", t=(3, 0, 1))
+    node("joint", "arm5_c", "arm5_b", t=(3, 0, -1))
+    node("ikEffector", "arm5_eff", "arm5_b", t=(3, 0, -1), v="no")
+    node("ikHandle", "arm5_ik", t=(66, 0, 3), pv=(3, 0, 10))
+    A('createNode poleVectorConstraint -n "arm5_pvc" -p "arm5_ik";')
+    uid("arm5_pvc")
+    A('\taddAttr -dcb 0 -ci true -k true -sn "w0" -ln "arm5_pvW0" -dv 1 -min 0 -at "double";')
+    A('\tsetAttr -k on ".w0";')
+    node("transform", "arm5_pv", t=(63, 0, 10))
+
     # --- 自作のトランスフォームノード -------------------------------------------------------
     A('createNode myCtrlTransform -n "cx_ctrl";')
     uid("cx_ctrl")
@@ -387,6 +404,17 @@ def main():
     for src, dst in (("t", "tt"), ("rp", "trp"), ("rpt", "trt"), ("pm", "tpm")):
         C("arm3_root.%s" % src, "arm3_pc.tg[0].%s" % dst)
     C("arm3_pc.w0", "arm3_pc.tg[0].tw")
+    C("arm5_a.msg", "arm5_ik.hsj")
+    C("arm5_eff.hp", "arm5_ik.hee")
+    C("ikRPsolver.msg", "arm5_ik.hsv")
+    for ax in "xyz":
+        C("arm5_c.t%s" % ax, "arm5_eff.t%s" % ax)
+        C("arm5_pvc.ct%s" % ax, "arm5_ik.pv%s" % ax)
+    C("arm5_ik.pim", "arm5_pvc.cpim")
+    C("arm5_a.pm", "arm5_pvc.ps")
+    for src, dst in (("t", "tt"), ("rp", "trp"), ("rpt", "trt"), ("pm", "tpm")):
+        C("arm5_pv.%s" % src, "arm5_pvc.tg[0].%s" % dst)
+    C("arm5_pvc.w0", "arm5_pvc.tg[0].tw")
     C("layerManager.dli[1]", "rig_layer.id")
     for n in ("leg_ik", "leg_pvc", "knee_pv", "foot_ctrl"):
         C("rig_layer.di", "%s.do" % n)

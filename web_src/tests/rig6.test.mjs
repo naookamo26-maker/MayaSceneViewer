@@ -306,3 +306,23 @@ test('再現チェックの候補: ハンドルの親が反転していて、May
   assert.ok(h.best.error < 0.01);
   assert.ok(h.detail.handleParent.mirrored && h.detail.handleParent.name === 'arm3_grp');
 });
+
+test('極ベクトル: 開始の位置は Maya と同じくコンストレイントの crp・ps から（crp が接続なしなら親の原点）', () => {
+  for (const f of [1, 24]) {
+    const rig = at(f);
+    const ik = data.animation.graph.find((x) => x.name === 'arm5_ik');
+    const pvc = data.animation.graph.find((x) => x.name === 'arm5_pvc');
+    // (crp + crt) · ps = arm5_grp の原点 (60, 0, 0) から arm5_pv (63, 0, 10) へ
+    assert.ok(nearVec(new Vector3(...rig.vec(pvc.id, 'ct')), new Vector3(3, 0, 10)), `${rig.vec(pvc.id, 'ct')}`);
+    assert.ok(nearVec(new Vector3(...rig.vec(ik.id, 'pv')), new Vector3(3, 0, 10)));
+    const pt = rig.poleTargets(ik, (ni) => rig.fileRestLocal(ni), 0.5);
+    assert.deepEqual(pt.start, [60, 0, 0]);
+    assert.equal(pt.startInputs.ps, 'arm5_a.pm');
+    assert.match(pt.startInputs.crp, /接続なし: 0, 0, 0/);
+    assert.deepEqual(pt.targets[0].position, [63, 0, 10]);
+  }
+  // 保存時のフレームの答えも再現する
+  const rig = at(data.animation.current);
+  const h = rig.verifySaved((ni) => rig.fileRestLocal(ni)).find((x) => x.handle === 'arm5_ik');
+  assert.ok(h.ok, JSON.stringify(h.joints));
+});
