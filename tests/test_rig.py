@@ -484,6 +484,19 @@ class TestStage6(unittest.TestCase):
         clean = rig_report_file(os.path.join(ROOT, "samples", "ik_sample.ma"))
         self.assertIn("■ 評価できないノード\n  なし", clean)
 
+    def test_point_on_curve_and_verification_text(self):
+        g = self.graph["poc_half"]
+        self.assertEqual((g["attrs"]["pr"], g["attrs"]["top"]), (0.5, 1.0))
+        self.assertEqual(g["inputs"]["ic"], {"node": self.graph["t2_wireShape"]["id"], "attr": "ws"})
+        from ma_viewer.rig_report import format_verification
+        text = format_verification({"frame": 1, "handles": [
+            {"handle": "arm_ik", "solver": "ikRPsolver", "pv": [0, 0, 1], "twist": 0, "ok": False, "chain": [],
+             "joints": [{"name": "shoulder", "angle": 30, "roll": -30, "bend": 0, "position": 0, "ok": False}]}]})
+        self.assertIn("★ arm_ik（ikRPsolver）・極ベクトル（ワールド）(0.000, 0.000, 1.000)", text)
+        self.assertIn("★ shoulder: ずれ 30.00°（ねじれ -30.00°・曲がり 0.00°）", text)
+        self.assertIn("ずれのある IK: arm_ik", text)
+        self.assertIn("確認できません", format_verification(None))
+
     def test_cli(self):
         import io
         from contextlib import redirect_stdout

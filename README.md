@@ -84,6 +84,7 @@ python -m ma_viewer rig scene.ma               # リグの診断（評価でき�
 - 評価できないノード（未対応の型・自作ノード・解釈できない expression）と、それを使っているノードの属性。
 - IK ハンドルごとの上流のつながり：ハンドルの位置・極ベクトル・ひねり・開始ジョイントの親が、何で決まっているかを示します。行頭の ✓ は評価できる、★ は評価できない（そこから先の値はファイルに保存された値のまま）という意味です。
 - 値を求められないノード（バインドポーズの形で推定・推定できない）と、警告の全文。
+- （Qt 版のみ）**保存時のフレームの再現チェック**: .ma に保存されたジョイントの回転は、保存したときに Maya が IK を解いた結果です。保存時のフレームでビューアが解いた IK の結果とこれを比べ、IK ハンドルごとに、ジョイントのずれの角度を「ねじれ（骨の軸まわり）」と「曲がり（骨の向き）」に分けて出します。★ があれば、その IK の解き方が Maya と合っていません（極ベクトル（ワールド）とひねりの値も出します）。
 
 出力はテキストなので、そのまま貼り付けて相談できます（ファイル本体を渡さなくても、原因の見当がつきます）。
 
@@ -197,7 +198,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 | scaleConstraint | ターゲットのワールドのスケールの重み付き平均 × オフセット（.o） |
 | poleVectorConstraint | ターゲットの位置 − 開始ジョイントの位置（IK ハンドルの極ベクトル） |
 | aimConstraint | aim ベクトル（.a）をターゲットへ向け、up ベクトル（.u）を world up の側に向ける。world up はシーンの上・オブジェクト（.wum の位置）・オブジェクトの回転・ベクトル（.wu）・なし（最短の回転）。オフセット（.o） |
-| IK（ikRPsolver） | 2 ボーン（開始・中間・終端のジョイント）は、ハンドルに届くように余弦定理で曲げ、極ベクトルの側に肘を置き、ひねり（twist）で回す。届かないときはまっすぐ伸ばす。ikBlend で FK と混ぜる。まっすぐなチェーンは優先角（.pa）で曲げる向きを決める。3 ボーン以上は、FK の形を極ベクトルの面に合わせて回してから、面の上で FABRIK（反復の解き方）で解く（曲がり方の配分は Maya と違うことがある） |
+| IK（ikRPsolver） | 2 ボーン（開始・中間・終端のジョイント）は、ハンドルに届くように余弦定理で曲げ、極ベクトル（ハンドルの親の空間。ファイルに値がなければ Maya の既定値 (0, 0, 1)）の側に肘を置き、ひねり（twist）で回す。届かないときはまっすぐ伸ばす。ikBlend で FK と混ぜる。まっすぐなチェーンは優先角（.pa）で曲げる向きを決める。3 ボーン以上は、FK の形を極ベクトルの面に合わせて回してから、面の上で FABRIK（反復の解き方）で解く（曲がり方の配分は Maya と違うことがある） |
 | IK（ikSCsolver） | 1 ボーンは、終端がハンドルの方を向くよう開始ジョイントを最短の回転で回す。2 ボーン以上は回転プレーンと同じ解き方で、極ベクトルの代わりに FK の形の側に曲げる（Maya の SC はハンドルの回転で面を決めるので、ずれることがある） |
 | IK（ikSplineSolver） | ジョイントをカーブ（.ic の nurbsCurve）に沿って並べる。骨の長さを保ち、次のジョイントはカーブの上で骨の長さだけ離れた点に置く。rootOnCurve なら開始ジョイントをカーブの始点（+ オフセット .off）に置く。向きは、最小の回転 + ひねり（roll は全体、twist は終端に向けて配分）。上級ツイスト（dtce）は world up（シーンの上・オブジェクト・オブジェクトの回転・ベクトル）に up 軸（.dwua）を向け、forward 軸（.dfa）を骨の向きに合わせる。始点と終点を使う種類は、始点の up を骨に沿って運び、終点の up とのなす角（ひねり）を始点からの長さに比例して配る（向きの差が大きくても途中で潰れない）。up 軸の Closest は、＋と−のうち world up に近い方を使う。カーブは、ファイルの形（.cc）、skinCluster・wire による変形、制御点（controlPoints）への接続（ロケーターの worldPosition など）で決まる |
 | 計算ノード | unitConversion・pairBlend（成分ごとのモード・四元数の補間を含む）・blendColors・multiplyDivide・plusMinusAverage（1D・2D・3D）・reverse・condition・addDoubleLinear・multDoubleLinear・clamp・setRange・remapValue（値のランプ。補間なし・線形・スムーズ、スプラインはスムーズで近似）・distanceBetween（行列も使う）・vectorProduct（内積・外積・ベクトル × 行列・点 × 行列・正規化）・blendTwoAttr・blendWeighted・choice |
@@ -208,7 +209,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 | expression | 式（.ixp）を解釈して評価する。入力 .I[n]・出力 .O[n]・frame・time・変数（$x。float / int）・代入（= += -= *= /= ++ --）・四則演算と %（整数どうしの割り算は切り捨て）・比較・論理・? :・if / else・for・while・数学関数（sin・cos・tan・sind など度の版・asin・acos・atan・atan2・abs・sqrt・pow・exp・log・floor・ceil・sign・min・max・clamp・smoothstep・linstep・deg_to_rad・rad_to_deg・fmod・hypot など）。フレームごとに最初から評価する。frame・time を使う式があれば、キーがなくてもタイムラインを出す |
 | cluster（カーブの変形） | ハンドルの行列（.ma）と bindPreMatrix（.pm）で CV を動かす（Maya の p · gm · pm · ma · gm⁻¹）。CV のウェイト（.wl）とエンベロープで元の位置と混ぜる。クラスタで動くワイヤーにも使える。relative（ハンドルの親の動きを除く）には未対応 |
 | wire（カーブの変形） | ワイヤー（.dw）とベースワイヤー（.bw）の差でカーブの CV を動かす（尻尾・胴体のスプライン IK のカーブなど）。ワールド空間で、CV ごとにベースワイヤーの一番近い点を求め、そこでのワイヤーの移動・向きの変化（.rot）・スケール（.sc）を、影響範囲（.dds）による減衰 (1 − (距離/範囲)²)² で掛ける。エンベロープ（.en）と CV のウェイト（.wl）も使う。Maya の計算式は公開されていないため近似（tension・localInfluence・ホルダーは使わない）。メッシュの wire には未対応 |
-| そのほか | curveInfo（カーブの長さ .al。ストレッチの計算などに使う）、displayLayer（値を読むだけ） |
+| そのほか | curveInfo（カーブの長さ .al。ストレッチの計算などに使う）、pointOnCurveInfo（パラメータ .pr の点 .p・接線 .t・正規化した接線 .nt・法線 .n・.nn・曲率の中心と半径。turnOnPercentage なら .pr は長さの割合）、displayLayer（値を読むだけ） |
 
 - ウェイトはカーブで動かせます（スペースの切り替えなど）。コントローラーの独自の属性（IK/FK の切り替えなど）も、カーブや値をそのまま使います。値が書かれていない独自の属性は、addAttr の既定値（-dv）を使います（キーのあるノードにコンストレイントを付けたときにできる blendPoint1・blendOrient1・blendParent1 など。pairBlend のウェイトになる）。
 - 未対応（警告を出し、そこから先はファイルの値）: tangent・normal・geometry などほかのコンストレイント、ikSpringSolver・HumanIK、解釈できない expression（MEL コマンド・getAttr などの呼び出し、文字列、ベクトル、rand などの乱数、.I/.O 以外の属性の参照、フレームをまたいで値を持ち越すグローバル変数）、blendMatrix・pickMatrix・aimMatrix などほかの行列ノード、animBlendNodeAdditiveScale などほかのアニメーションレイヤーのノード、skinCluster・wire・cluster 以外のデフォーマで動くカーブ、メッシュの wire・cluster、プラグインのノード（自作ノード）。どこで止まっているかは「リグの診断」で確認できます。
@@ -353,6 +354,7 @@ bundle は ES モジュールではなく、通常の `<script>` で読める形
 | リグ（第 4 段階） | displayLayer の非表示と値、四元数ノードの結果、ジョイント 4 つの IK（ハンドルに届く・骨の長さ・面と曲がる側）、スプライン IK（ジョイントがカーブの上に並ぶ・rootOnCurve・skinCluster とロケーターで動くカーブ・上級ツイストの up 軸・ポーズ確認での追従）、curveInfo の長さ、NURBS カーブの評価（Python 7 件・Node.js 10 件・Qt） | 合格 |
 | 第 5 段階 | NURBS カーブの出力（形・周期的な円・.cp の調整・色番号と RGB のオーバーライド・ディスプレイレイヤーの色・テンプレート・非表示・中間オブジェクト・ヒストリから変形前の形）と表示（transform の子・選択の色・表示の切り替え・リグで変形した形）、上級ツイストのひねりの配分（170° でも反転しない）と up 軸の Closest、expression の解釈器（演算・変数・制御構文・関数・エラー）と評価（frame・入力・if・unitConversion）、解釈できない式の判定と警告（Python 5 件・Node.js 15 件・Qt） | 合格 |
 | 第 6 段階 | cluster（ウェイト・ハンドルの親の動き）で動くワイヤー → wire → スプライン IK、標準の計算ノード 10 種の値、ドリブンキー（独自の属性・unitConversion 経由の角度）、アニメーションレイヤーの合成、自作ノードで動く極ベクトルの判定、リグの診断（CLI・Qt のダイアログ）（Python 5 件・Node.js 6 件・Qt） | 合格 |
+| 極ベクトルの既定値など | 極ベクトルを書かない RP IK が Maya の既定値 (0, 0, 1) の側に曲がること、pointOnCurveInfo の点・接線、保存時のフレームの再現チェック（一致・ねじれのずれの検出・Qt のダイアログ）（Python 1 件・Node.js 3 件・Qt） | 合格 |
 | 値を求められないノードの推定（試作） | 判定（推定・不明、不明な親を飛ばした基準の祖先、IK のハンドルが不明な場合）、推定したノードが基準の祖先からの相対をバインドポーズのとおりに保つこと（フレーム・ポーズ確認）（Python 3 件・Node.js 4 件） | 合格 |
 | 大きなアニメーション | 200 ジョイント × 1,000 フレーム（全フレームにキー、カーブ 1,800 本・キー 180 万個、26 MB） | 1 段階目（表示まで）は変わらず 0.15 秒、2 段階目 0.7 秒（裏で実行）、転送 24 MB、ビューアの準備 0.3 秒・1 フレームの計算 0.6 ms |
 | **実際の Maya での動作** | 未確認 | Maya のない環境で開発したため |

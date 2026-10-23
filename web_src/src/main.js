@@ -791,6 +791,22 @@ class ViewerApp {
     return c ? { t: c.t.slice(), r: c.r.slice(), s: c.s.slice() } : null;
   }
 
+  /**
+   * 保存時のフレームの再現チェック（IK の解き方が Maya と合っているか）。表示は変えない。
+   * 戻り値は RigEvaluator.verifySaved() の一覧に frame を足したもの（アニメーションがなければ null）
+   */
+  verifyRig() {
+    if (!this.rig || !this.clip) return null;
+    const nodes = this.data.nodes;
+    this.rig.evaluate(this.clip.current, () => null, new Map());
+    const list = this.rig.verifySaved((ni) => {
+      const driven = (nodes[ni].drivenBy || []).some((d) => /^r/.test(d));
+      return driven ? null : new Matrix4().fromArray(nodes[ni].matrix);   // 回転が接続で決まるジョイントは比べられない
+    });
+    this.applyFrame(this.frame);                       // 表示中のフレームの評価に戻す
+    return { frame: this.clip.current, handles: list };
+  }
+
   /** タイムラインを出すか（キーのあるカーブか、frame・time を使う expression があるとき） */
   get hasTimeline() { return !!(this.clip && (this.clip.timeCurves.length || (this.rig && this.rig.usesTime))); }
 
@@ -1360,6 +1376,8 @@ window.mayaViewer = {
   selectByPath(path) { return app.selectByPath(path); },
   clear() { app.clearAll(); return true; },
   getStats() { return app.stats(); },
+  /** 保存時のフレームの再現チェック（IK の結果とファイルの値の比較） */
+  verifyRig() { return app.verifyRig(); },
   /** テクスチャの読み込み状況 */
   getTextureState() { return app.stats().textures; },
   frameAll() { app.frameAll(); },

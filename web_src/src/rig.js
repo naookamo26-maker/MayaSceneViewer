@@ -10,7 +10,7 @@
 import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { composeLocalMatrix, evaluateCurve } from './animation.js';
 import { compileExpression } from './expression.js';
-import { arcLength, parseNurbsCurve, pointAtDistance, pointAtLength, polyline, withCvs } from './curve.js';
+import { arcLength, domain, parseNurbsCurve, pointAt, pointAtDistance, pointAtLength, polyline, withCvs } from './curve.js';
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -32,7 +32,7 @@ const DEFAULTS = {
   blendColors: { c1: [1, 0, 0], c2: [0, 0, 1], b: 0.5 },
   pairBlend: { w: 1, it1: [0, 0, 0], it2: [0, 0, 0], ir1: [0, 0, 0], ir2: [0, 0, 0], ri: 0 },
   unitConversion: { i: 0, cf: 1 },
-  ikHandle: { pv: [0, 1, 0], twi: 0, ikb: 1 },
+  ikHandle: { pv: [0, 0, 1], twi: 0, ikb: 1 },              // Maya の既定の極ベクトルは Z 軸（既定値はファイルに書かれない）
   scaleConstraint: { o: [1, 1, 1] },
   aimConstraint: { a: [1, 0, 0], u: [0, 1, 0], wu: [0, 1, 0], wut: 3, o: [0, 0, 0] },
   decomposeMatrix: { ro: 0 },
@@ -59,6 +59,7 @@ const DEFAULTS = {
   animBlendNodeAdditiveRotation: { ia: [0, 0, 0], ib: [0, 0, 0], wa: 1, wb: 1 },
   animLayer: { w: 1, m: 0 },
   cluster: { en: 1 },
+  pointOnCurveInfo: { pr: 0, top: 0 },
 };
 // ikHandle の属性の既定値（スプライン IK を含む）
 DEFAULTS.ikHandle = { ...DEFAULTS.ikHandle, roc: 0, off: 0, rol: 0, dtce: 0, dwut: 0, dwua: 0, dfa: 0,
@@ -77,7 +78,8 @@ const OUTPUTS = {
   addDoubleLinear: /^o$/, multDoubleLinear: /^o$/, clamp: /^op[rgb]?$/, setRange: /^o[xyz]?$/, remapValue: /^(ov|outValue)$/,
   distanceBetween: /^d$/, vectorProduct: /^o[xyz]?$/, blendTwoAttr: /^o$/, blendWeighted: /^o$/, choice: /^o$/,
   animBlendNodeAdditiveDL: /^o$/, animBlendNodeAdditiveDA: /^o$/, animBlendNodeAdditiveRotation: /^o[xyz]?$/, animLayer: /^fo$/,
-  cluster: /^og(\[\d+\])?$/, animCurveUA: /^(o|output)$/, animCurveUL: /^(o|output)$/, animCurveUU: /^(o|output)$/,
+  cluster: /^og(\[\d+\])?$/, pointOnCurveInfo: /^(p|n|t|nn|nt|cc)[xyz]?$|^cr$/,
+  animCurveUA: /^(o|output)$/, animCurveUL: /^(o|output)$/, animCurveUU: /^(o|output)$/,
   multMatrix: /^o$/, decomposeMatrix: /^o(t|r|s|sh)[xyz]?$|^oq[xyzw]?$/, composeMatrix: /^omat$/, inverseMatrix: /^omat$/,
 };
 // DAG ノードの、値が決まると行列が変わる属性
@@ -622,6 +624,7 @@ export class RigEvaluator {
         break;
       }
       case 'remapValue': o = this.remapValue(g); break;
+      case 'pointOnCurveInfo': o = this.pointOnCurve(g); break;
       case 'distanceBetween': {
         const p1 = new Vector3(...this.vec(id, 'p1')).applyMatrix4(this.mat(id, 'im1'));
         const p2 = new Vector3(...this.vec(id, 'p2')).applyMatrix4(this.mat(id, 'im2'));
@@ -776,6 +779,43 @@ export class RigEvaluator {
       if (!out.og) out.og = out[`og[${k}]`];
     }
     return out;
+  }
+
+  /**
+   * pointOnCurveInfo: カーブ（ic）のパラメータ pr の点・接線・法線。turnOnPercentage（top）なら pr は長さの割合（0〜1）。
+   * 接線（t）はパラメータでの微分、法線（n）は 2 階微分の接線に垂直な成分（曲率の向き）。どちらも差分で求める
+   */
+  pointOnCurve(g) {
+    const id = g.id;
+    const c = this.plug(id, 'ic');
+    if (!c || !c.isCurve) return null;
+    const [u0, u1] = domain(c);
+    let u = this.num(id, 'pr', 0);
+    if (this.num(id, 'top', 0) >= 0.5) {
+      const poly = polyline(c, 64);
+      const s = Math.min(Math.max(u, 0), 1) * poly.total;
+      let k = 0;
+      while (k < poly.len.length - 2 && poly.len[k + 1] < s) k++;
+      const seg = poly.len[k + 1] - poly.len[k];
+      const frac = seg > EPS ? (s - poly.len[k]) / seg : 0;
+      u = u0 + (u1 - u0) * (k + frac) / (poly.pts.length - 1);
+    }
+    u = Math.min(Math.max(u, u0), u1);
+    const h = (u1 - u0) * 1e-4;
+    const at = (x) => pointAt(c, Math.min(Math.max(x, u0), u1));
+    const p = at(u);
+    const a = Math.max(u - h, u0), b = Math.min(u + h, u1);
+    const t = at(b).sub(at(a)).divideScalar(b - a);
+    const d2 = at(b).add(at(a)).sub(p.clone().multiplyScalar(2)).divideScalar(((b - a) / 2) ** 2);
+    const tn = t.clone().normalize();
+    const n = d2.clone().addScaledVector(tn, -d2.dot(tn));
+    const speed2 = t.lengthSq();
+    const curvature = speed2 > EPS ? n.length() / speed2 : 0;
+    const cr = curvature > EPS ? 1 / curvature : 0;
+    const cc = curvature > EPS ? p.clone().addScaledVector(n.clone().normalize(), cr) : p.clone();
+    return { ...expand('p', p.toArray(), XYZ), ...expand('t', t.toArray(), XYZ), ...expand('nt', tn.toArray(), XYZ),
+      ...expand('n', n.toArray(), XYZ), ...expand('nn', n.clone().normalize().toArray(), XYZ),
+      ...expand('cc', cc.toArray(), XYZ), cr };
   }
 
   /** remapValue: 入力を 0〜1 にして値のランプ（vl[i]: 位置 vp・値 fv・補間 vi）を引き、出力の範囲に戻す */
@@ -1163,7 +1203,7 @@ export class RigEvaluator {
     u.divideScalar(d);
     // 極ベクトル（ハンドルの親の空間）→ ワールド。ひねり（twist）で u のまわりに回す。
     // シングルチェーン（SC）は極ベクトルを持たないので、FK の形の中間ジョイントの側に曲げる（面を保つ）
-    const pvLocal = sc ? [0, 0, 0] : this.vec(id, 'pv', [0, 1, 0]);
+    const pvLocal = sc ? [0, 0, 0] : this.vec(id, 'pv', [0, 0, 1]);
     const pvRot = new Matrix4().extractRotation(this.parentWorld(hni));
     const pv = new Vector3(pvLocal[0], pvLocal[1], pvLocal[2]).applyMatrix4(pvRot);
     let v = pv.clone().addScaledVector(u, -pv.dot(u));
@@ -1318,7 +1358,7 @@ export class RigEvaluator {
     // 目標の面: 回転プレーンは極ベクトルの側、シングルチェーンは FK の形の側
     let v = null;
     if (g.ik.solver === 'ikRPsolver') {
-      const pvL = this.vec(id, 'pv', [0, 1, 0]);
+      const pvL = this.vec(id, 'pv', [0, 0, 1]);
       const pv = new Vector3(pvL[0], pvL[1], pvL[2]).applyMatrix4(new Matrix4().extractRotation(this.parentWorld(g.dag)));
       v = pv.addScaledVector(u, -pv.dot(u));
     }
@@ -1477,6 +1517,57 @@ export class RigEvaluator {
       // Closest: 最小の回転で並べたときの up 軸が world up と逆向きなら、− の軸を world up に向ける
       const axis = closest && uaP.clone().applyQuaternion(minimal[i]).dot(up) < 0 ? flipped : uaP;
       out.push(new Quaternion().setFromRotationMatrix(frame(dir, up).multiply(frame(faN, axis).transpose())));
+    }
+    return out;
+  }
+
+  /**
+   * 保存時のフレームの再現チェック: IK で回転が決まるジョイントについて、評価した回転とファイルに保存された回転
+   * （保存したときに Maya が IK を解いた結果）を比べる。evaluate(clip.current) のあとに呼ぶ。
+   * 戻り値: IK ハンドルごとに { handle, solver, chain, pv（ワールド）, twist（度）, joints: [{ name, angle（度）,
+   *   roll（骨の軸まわりの成分。度）, bend（それ以外の成分。度）, position（位置のずれ） }] }
+   */
+  verifySaved(fileLocal, tol = 0.5) {
+    const out = [];
+    for (const g of this.graph) {
+      if (!g.ik) continue;
+      const chain = g.ik.chain;
+      const joints = [];
+      // ファイルの値で組み立てたワールド行列（開始ジョイントの親は評価した値）
+      let parentFile = this.parentWorld(chain[0]);
+      for (let k = 0; k < chain.length - 1; k++) {
+        const ni = chain[k];
+        const file = fileLocal(ni);
+        if (!file) break;
+        const Wf = parentFile.clone().multiply(file);
+        const We = this.world(ni);
+        const qf = rotationOf(Wf), qe = rotationOf(We);
+        const d = qe.clone().multiply(qf.clone().invert());                      // ファイル → 評価 の回転
+        if (d.w < 0) { d.x = -d.x; d.y = -d.y; d.z = -d.z; d.w = -d.w; }
+        const angle = 2 * Math.acos(Math.min(1, d.w)) * R2D;
+        // 骨の向き（次のジョイントへ）のまわりの成分（twist）と、それ以外（swing）に分ける
+        const next = chain[k + 1];
+        const nextLocal = fileLocal(next);
+        const bone = nextLocal ? new Vector3().setFromMatrixPosition(nextLocal).applyQuaternion(qf).normalize() : null;
+        let roll = 0, bend = angle;
+        if (bone && bone.lengthSq() > EPS) {
+          const proj = bone.clone().multiplyScalar(new Vector3(d.x, d.y, d.z).dot(bone));
+          const twist = new Quaternion(proj.x, proj.y, proj.z, d.w).normalize();
+          roll = 2 * Math.atan2(new Vector3(twist.x, twist.y, twist.z).dot(bone), twist.w) * R2D;
+          if (roll > 180) roll -= 360;
+          if (roll < -180) roll += 360;
+          const swing = d.clone().multiply(twist.clone().invert());
+          bend = 2 * Math.acos(Math.min(1, Math.abs(swing.w))) * R2D;
+        }
+        const position = positionOf(Wf).distanceTo(positionOf(We));
+        joints.push({ node: ni, name: this.sceneNodes[ni].name, angle, roll, bend, position, ok: angle <= tol });
+        parentFile = Wf;
+      }
+      const pv = g.ik.solver === 'ikRPsolver'
+        ? new Vector3(...this.vec(g.id, 'pv', [0, 0, 1])).applyMatrix4(new Matrix4().extractRotation(this.parentWorld(g.dag))).toArray()
+        : null;
+      out.push({ handle: g.name, solver: g.ik.solver, chain: chain.map((ni) => this.sceneNodes[ni].name), pv,
+        twist: this.num(g.id, 'twi', 0) * R2D, joints, ok: joints.every((j) => j.ok) });
     }
     return out;
   }

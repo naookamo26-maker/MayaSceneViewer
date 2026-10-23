@@ -94,3 +94,44 @@ test('ドリブンキー: 独自の属性・unitConversion を経由した回転
   assert.ok(clip.timeCurves.length < clip.curves.length);
   assert.ok(clip.keyTimes().every((t) => t >= 1 && t <= 48), `${clip.keyTimes()}`);
 });
+
+test('pointOnCurveInfo: 長さの割合の点・終点の接線の向き', () => {
+  for (const f of FRAMES) {
+    const rig = at(f);
+    const wire = rig.plug(gid('t2_wireShape'), 'ws');
+    const { pts, len, total } = polyline(wire, 256);
+    let k = 0;
+    while (len[k + 1] < total / 2) k++;
+    const half = pts[k].clone().lerp(pts[k + 1], (total / 2 - len[k]) / (len[k + 1] - len[k]));
+    const p = new Vector3(...rig.chan(idx('poc_jnt')).t);
+    assert.ok(p.distanceTo(half) < 1e-2, `フレーム ${f}: 長さの半分の点 ${p.toArray()} != ${half.toArray()}`);
+    const tan = new Vector3(...rig.chan(idx('poc_jnt2')).t);
+    const end = pointAt(wire, 1).sub(pointAt(wire, 0.999)).normalize();
+    assert.ok(near(tan.length(), 1, 1e-6) && tan.distanceTo(end) < 1e-3, `フレーム ${f}: 終点の接線 ${tan.toArray()}`);
+  }
+});
+
+test('極ベクトルを書かない RP IK は、Maya の既定値 (0, 0, 1) の側に曲げる', () => {
+  for (const f of FRAMES) {
+    const rig = at(f);
+    const b = new Vector3().setFromMatrixPosition(rig.world(idx('arm2_b')));
+    const c = new Vector3().setFromMatrixPosition(rig.world(idx('arm2_c')));
+    assert.ok(b.z > 10.5 && Math.abs(b.y) < 1e-6, `フレーム ${f}: 肘 ${b.toArray()}`);
+    assert.ok(c.distanceTo(new Vector3(lin(f, 46, 43), 0, 10)) < 1e-4, `フレーム ${f}: 手首がハンドルに届く`);
+  }
+});
+
+test('保存時のフレームの再現チェック: 一致する IK は ✓、ファイルの回転をずらすと、ねじれ・曲がりに分けて報告する', () => {
+  const rig = at(data.animation.current);
+  const fileLocal = (ni) => new Matrix4().fromArray(data.nodes[ni].matrix);
+  const res = rig.verifySaved(fileLocal);
+  const arm = res.find((h) => h.handle === 'arm2_ik');
+  assert.ok(arm.ok, JSON.stringify(arm));
+  assert.deepEqual(arm.pv.map((v) => +v.toFixed(6)), [0, 0, 1]);
+  // 肩のファイルの値を骨の軸（+X 寄り）まわりに 30° ねじった場合
+  const a = idx('arm2_a');
+  const bone = new Vector3(3, 0, 1).normalize();
+  const r2 = rig.verifySaved((ni) => (ni === a ? fileLocal(a).multiply(new Matrix4().makeRotationAxis(bone, 30 * Math.PI / 180)) : fileLocal(ni)));
+  const j = r2.find((h) => h.handle === 'arm2_ik').joints[0];
+  assert.ok(!j.ok && near(Math.abs(j.roll), 30, 1e-3) && j.bend < 1e-3, JSON.stringify(j));
+});

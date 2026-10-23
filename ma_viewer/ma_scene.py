@@ -81,7 +81,7 @@ _SKIP_ATTR_TYPES = {
     "aiOptions", "aiAOVDriver", "aiAOVFilter", "aiImagerDenoiserOidn",
     # リグの計算ノード（値は 2 段階目に属性の範囲から読む）
     "quatToEuler", "eulerToQuat", "quatProd", "quatInvert", "quatNormalize", "quatSlerp", "curveInfo",
-    "distanceBetween", "vectorProduct", "angleBetween", "animBlendNodeAdditiveDL", "animBlendNodeAdditiveDA",
+    "distanceBetween", "vectorProduct", "angleBetween", "pointOnCurveInfo", "motionPath", "animBlendNodeAdditiveDL", "animBlendNodeAdditiveDA",
     "animBlendNodeAdditiveRotation", "animBlendNodeAdditiveScale", "animBlendNodeAdditive",
 }
 # シェイプのうち、メッシュ以外（子を持たず、属性も使わない）

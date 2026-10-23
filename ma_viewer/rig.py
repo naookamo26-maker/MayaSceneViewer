@@ -17,7 +17,7 @@
   * アニメーションレイヤー: animBlendNodeAdditiveDL・DA・Rotation、animLayer（ウェイトとミュート）
   * 行列ノード: multMatrix・decomposeMatrix・composeMatrix・inverseMatrix、DAG ノードの offsetParentMatrix
   * 四元数ノード: quatToEuler・eulerToQuat・quatProd・quatInvert・quatNormalize・quatSlerp
-  * そのほか: curveInfo（カーブの長さ）、displayLayer（値を読むだけ）
+  * そのほか: curveInfo（カーブの長さ）、pointOnCurveInfo（カーブ上の点・接線・法線）、displayLayer（値を読むだけ）
   * カーブ: nurbsCurve と、それを動かす skinCluster・wire・cluster・制御点（controlPoints）の接続・ロケーター（worldPosition）
   * アニメーションカーブ（animCurveTL / TA / TU）
 これ以外のノード（エクスプレッション・ドリブンキー・行列ノードなど）に当たったら、そこから先は評価せず警告する。
@@ -39,7 +39,7 @@ UTILITY_TYPES = {"unitConversion", "pairBlend", "blendColors", "multiplyDivide",
                  "displayLayer", "expression", "addDoubleLinear", "multDoubleLinear", "clamp", "setRange", "remapValue",
                  "distanceBetween", "vectorProduct", "blendTwoAttr", "blendWeighted", "choice",
                  "animBlendNodeAdditiveDL", "animBlendNodeAdditiveDA", "animBlendNodeAdditiveRotation", "animLayer",
-                 "animCurveUA", "animCurveUL", "animCurveUU"}
+                 "animCurveUA", "animCurveUL", "animCurveUU", "pointOnCurveInfo"}
 # 入力をたどらない（値を読むだけの）ノード
 _NO_INPUT_TYPES = {"displayLayer", "animLayer"}       # animLayer はウェイトとミュートを読むだけ
 # カーブと、それを動かすノード（必要な入力だけをたどる）

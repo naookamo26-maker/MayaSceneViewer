@@ -192,6 +192,36 @@ def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
     return "\n".join(out)
 
 
+def format_verification(result: Optional[dict]) -> str:
+    """ビューアの保存時のフレームの再現チェック（mayaViewer.verifyRig() の結果）を文章にする"""
+    out = ["■ 保存時のフレームの再現チェック（IK）"]
+    if not result:
+        out.append("  アニメーション（リグ）を読み込んでいないため、確認できません")
+        return "\n".join(out)
+    handles = result.get("handles") or []
+    out.append("  フレーム %g で、IK で動くジョイントの回転を、ファイルに保存された値（保存したときに Maya が解いた結果）と比べます。"
+               % result.get("frame", 0))
+    out.append("  ねじれ = 骨の軸まわりのずれ、曲がり = 骨の向きのずれ（度）")
+    if not handles:
+        out.append("  IK ハンドルはありません")
+    for h in handles:
+        mark = "✓" if h["ok"] else "★"
+        extra = ""
+        if h.get("pv") is not None:
+            extra = "・極ベクトル（ワールド）(%s)・ひねり %.2f°" % (", ".join("%.3f" % v for v in h["pv"]), h["twist"])
+        out.append("%s %s（%s）%s" % (mark, h["handle"], h["solver"], extra))
+        if not h["joints"]:
+            out.append("    比べられるジョイントがありません（回転が接続で決まる）")
+        for j in h["joints"]:
+            jm = "✓" if j["ok"] else "★"
+            out.append("    %s %s: ずれ %.2f°（ねじれ %+.2f°・曲がり %.2f°）・位置 %.4f"
+                       % (jm, j["name"], j["angle"], j["roll"], j["bend"], j["position"]))
+    bad = [h["handle"] for h in handles if not h["ok"]]
+    out.append("")
+    out.append("  → ずれのある IK: %s" % ("、".join(bad) if bad else "なし（保存時のフレームでは Maya と一致）"))
+    return "\n".join(out)
+
+
 def rig_report_file(path: str) -> str:
     from .animation import build_animation
     from .extract_ma import scene_to_dict

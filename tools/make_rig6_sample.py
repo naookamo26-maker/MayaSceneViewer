@@ -24,6 +24,10 @@
     knee_pv.tx は自作ノード（未知の型 myRigNode）の出力 → 再生できない（リグの診断で見つける）。
     脚の IK まわり（ハンドル・poleVectorConstraint・knee_pv）はディスプレイレイヤー rig_layer に入っている
     （layerManager（displayLayerManager）→ rig_layer.id、rig_layer.di → 各ノードの .do。値の計算には関係しない）
+  * pointOnCurveInfo: poc_jnt.t = ワイヤー t2_wireShape の長さの半分の点（turnOnPercentage）、
+    poc_jnt2.t = パラメータ 1（終点）の接線の向き（normalizedTangent）
+  * 腕 arm2_a → arm2_b → arm2_c（+X 方向、肘は +Z 側に曲がる）の ikRPsolver。極ベクトルは書かない
+    （Maya の既定値 (0, 0, 1) のまま）。ハンドル arm2_ik.tx にキー 46 → 43
 保存時のフレーム（1）の各ノードの値は、リグの計算結果と一致するように書く。
 """
 from __future__ import annotations
@@ -196,6 +200,20 @@ def main():
     node("displayLayer", "rig_layer")
     A('\tsetAttr ".do" 1;')
 
+    # --- pointOnCurveInfo ------------------------------------------------------------
+    node("joint", "poc_jnt", t=(4, 0, -10))
+    node("pointOnCurveInfo", "poc_half", pr=0.5, top="yes")
+    node("joint", "poc_jnt2", t=(1, 0, 0))
+    node("pointOnCurveInfo", "poc_end", pr=1)
+
+    # --- 極ベクトルが既定値の腕の IK ---------------------------------------------------------
+    node("joint", "arm2_a", t=(40, 0, 10))
+    node("joint", "arm2_b", "arm2_a", t=(3, 0, 1))
+    node("joint", "arm2_c", "arm2_b", t=(3, 0, -1))
+    node("ikEffector", "arm2_eff", "arm2_b", t=(3, 0, -1), v="no")
+    node("ikHandle", "arm2_ik", t=(46, 0, 10))
+    anim("TL", "arm2_ik_translateX", [(1, 46), (48, 43)])
+
     node("script", "sceneConfigurationScriptNode")
     A('\tsetAttr ".b" -type "string" "playbackOptions -min 1 -max 48 -ast 1 -aet 48 ";')
     A('createNode ikSplineSolver -n "ikSplineSolver";')
@@ -278,6 +296,16 @@ def main():
         C("knee_pv.%s" % src, "leg_pvc.tg[0].%s" % dst)
     C("leg_pvc.w0", "leg_pvc.tg[0].tw")
     C("my_pv_driver.out", "knee_pv.tx")
+    C("t2_wireShape.ws", "poc_half.ic")
+    C("poc_half.p", "poc_jnt.t")
+    C("t2_wireShape.ws", "poc_end.ic")
+    C("poc_end.nt", "poc_jnt2.t")
+    C("arm2_a.msg", "arm2_ik.hsj")
+    C("arm2_eff.hp", "arm2_ik.hee")
+    C("ikRPsolver.msg", "arm2_ik.hsv")
+    for ax in "xyz":
+        C("arm2_c.t%s" % ax, "arm2_eff.t%s" % ax)
+    C("arm2_ik_translateX.o", "arm2_ik.tx")
     C("layerManager.dli[1]", "rig_layer.id")
     for n in ("leg_ik", "leg_pvc", "knee_pv", "foot_ctrl"):
         C("rig_layer.di", "%s.do" % n)

@@ -272,11 +272,21 @@ def main() -> int:
             check(abs(r["rollTy"] - 3) < 1e-3, "ドリブンキー（unitConversion 経由）: %s" % r["rollTy"])
             check(abs(r["add"] - 12) < 1e-3, "addDoubleLinear: %s" % r["add"])
             check(r["timeline"] and r["problems"] == [], "タイムライン・評価の問題なし: %s" % r["problems"])
-            win.show_rig_report()
-            text = getattr(win, "rig_report_text", "")
-            check("my_pv_driver（myRigNode）" in text and win.rig_report_dialog.isVisible(), "リグの診断のダイアログ")
-            win.rig_report_dialog.close()
-            nxt()
+            win.rig_report_text = ""
+            win.show_rig_report()                    # ビューアの再現チェックを待ってからダイアログを開く
+
+            def opened(tries=[0]):
+                text = getattr(win, "rig_report_text", "")
+                if not text and tries[0] < 100:
+                    tries[0] += 1
+                    QtCore.QTimer.singleShot(100, opened)
+                    return
+                check("my_pv_driver（myRigNode）" in text and win.rig_report_dialog.isVisible(), "リグの診断のダイアログ")
+                check("✓ arm2_ik（ikRPsolver）" in text and "保存時のフレームの再現チェック" in text,
+                      "保存時のフレームの再現チェック（極ベクトルが既定値の IK も一致）")
+                win.rig_report_dialog.close()
+                nxt()
+            opened()
         wait_idle(lambda: wait_state(lambda s: s["loaded"] and s["name"] == "rig6_sample.ma" and s["animation"],
                                      lambda _s: js(code, got)))
 

@@ -585,7 +585,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if not path or not path.lower().endswith(".ma"):
             QtWidgets.QMessageBox.information(self, "リグの診断", ".ma ファイルを開いているときに使えます。")
             return
-        from .rig_report import rig_report_file
+        from .rig_report import format_verification, rig_report_file
         QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             text = rig_report_file(path)
@@ -593,6 +593,17 @@ class ViewerWindow(QtWidgets.QMainWindow):
             text = "診断できませんでした: %s" % exc
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
+
+        def with_check(raw):
+            # ビューアで、保存時のフレームの IK の結果をファイルの値と比べる
+            try:
+                result = json.loads(raw) if isinstance(raw, str) and raw not in ("", "null") else None
+            except ValueError:
+                result = None
+            self._show_rig_report_dialog(path, format_verification(result) + "\n\n" + text)
+        self.viewer.run_js("JSON.stringify(window.mayaViewer && window.mayaViewer.verifyRig())", with_check)
+
+    def _show_rig_report_dialog(self, path, text):
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("リグの診断 - %s" % os.path.basename(path))
         dlg.resize(820, 640)
