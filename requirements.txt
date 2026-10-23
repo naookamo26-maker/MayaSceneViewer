@@ -1,0 +1,4 @@
+# スタンドアロン版に必要（Maya 内では Maya 同梱の PySide6 / PySide2 を使う）
+PySide6>=6.5
+# .ma の読み込みを速くする（なくても動く。Maya 2022 以降は同梱）
+numpy>=1.21
