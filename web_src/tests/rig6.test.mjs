@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { Matrix4, Vector3 } from 'three';
+import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { AnimationClip } from '../src/animation.js';
 import { RigEvaluator } from '../src/rig.js';
 import { pointAt, polyline } from '../src/curve.js';
@@ -219,4 +219,35 @@ test('再現チェック: 開始ジョイントの親のずれと、最初にず
   const h = rig.verifySaved(tilted).find((x) => x.handle === 'arm4_ik');
   assert.ok(h.parent.angle > 9 && h.parent.firstBad && h.parent.firstBad.name === 't2_2', JSON.stringify(h.parent));
   assert.equal(h.parent.firstBad.ik, 't2_ik');
+});
+
+test('再現チェック: 極ベクトルの目標（poleVectorConstraint のターゲット）のウェイト・位置・ずれ', () => {
+  // 脚 leg_ik の極ベクトルは自作ノードで動く knee_pv が目標（ずれの判定は「不明」なので、構成だけ確かめる）
+  const rig = new RigEvaluator(new AnimationClip(data.animation), data.nodes, (ni) => new Matrix4().fromArray(data.nodes[ni].matrix));
+  rig.evaluate(data.animation.current);
+  const g = data.animation.graph.find((x) => x.name === 'leg_ik');
+  const pt = rig.poleTargets(g, (ni) => rig.fileRestLocal(ni), 0.5);
+  assert.equal(pt.via, 'leg_pvc');
+  assert.equal(pt.targets.length, 1);
+  assert.equal(pt.targets[0].name, 'knee_pv');
+  assert.equal(pt.targets[0].weight, 1);
+  assert.ok(Array.isArray(pt.start) && pt.start.length === 3);
+});
+
+test('極ベクトルの空間の変換: 反転（スケール -1）や不均一なスケールのある親でも、コンストレイントと IK の変換が打ち消し合う', () => {
+  const d = JSON.parse(JSON.stringify(data));
+  // leg_ik の親 foot_ctrl を反転・不均一スケールにする（ファイルの値を書き換える）
+  const fi = d.nodes.findIndex((n) => n.name === 'foot_ctrl');
+  const m = new Matrix4().compose(new Vector3(20, 0, 0), new Quaternion().setFromEuler(new Euler(0.3, -0.7, 0.2)), new Vector3(-1, 2, 0.5));
+  d.nodes[fi].matrix = m.toArray();
+  const rest = d.animation.nodes.find((n) => n.node === fi);
+  if (rest) d.animation.nodes = d.animation.nodes.filter((n) => n !== rest);
+  const rig = new RigEvaluator(new AnimationClip(d.animation), d.nodes, (ni) => new Matrix4().fromArray(d.nodes[ni].matrix));
+  rig.evaluate(1);
+  const g = d.animation.graph.find((x) => x.name === 'leg_ik');
+  const pvc = d.animation.graph.find((x) => x.name === 'leg_pvc');
+  const pvW = rig.pvWorld(rig.vec(g.id, 'pv', [0, 0, 1]), g.dag, g.ik.chain[0]);
+  const tgt = new Vector3().setFromMatrixPosition(rig.world(idx('knee_pv')));
+  const start = rig.pivotPosition(pvc.pivot);
+  assert.ok(pvW.distanceTo(tgt.sub(start)) < 1e-6, `${pvW.toArray()}`);
 });

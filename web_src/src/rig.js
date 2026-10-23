@@ -1102,8 +1102,8 @@ export class RigEvaluator {
         const target = weighted((t) => pivot(t.ni));
         const start = g.pivot >= 0 ? this.pivotPosition(g.pivot) : new Vector3();
         const v = target.sub(start);
-        const rot = new Matrix4().extractRotation(pwInv);
-        return expand('ct', v.applyMatrix4(rot).toArray(), XYZ);
+        // 動かされるノード（IK ハンドル）の親の空間へ（スケール・反転を含む 3x3。IK 側の変換と打ち消し合う）
+        return expand('ct', v.applyMatrix3(new Matrix3().setFromMatrix4(pwInv)).toArray(), XYZ);
       }
       case 'orientConstraint': {
         const o = this.vec(id, 'o');
@@ -1223,8 +1223,7 @@ export class RigEvaluator {
     // 極ベクトル（ハンドルの親の空間）→ ワールド。ひねり（twist）で u のまわりに回す。
     // シングルチェーン（SC）は極ベクトルを持たないので、FK の形の中間ジョイントの側に曲げる（面を保つ）
     const pvLocal = sc ? [0, 0, 0] : this.vec(id, 'pv', [0, 0, 1]);
-    const pvRot = new Matrix4().extractRotation(this.pvSpace(hni, s));
-    const pv = new Vector3(pvLocal[0], pvLocal[1], pvLocal[2]).applyMatrix4(pvRot);
+    const pv = this.pvWorld(pvLocal, hni, s);
     let v = pv.clone().addScaledVector(u, -pv.dot(u));
     if (v.lengthSq() < EPS) v = new Vector3().subVectors(B, A).addScaledVector(u, -new Vector3().subVectors(B, A).dot(u));
     if (v.lengthSq() < EPS) v = new Vector3(0, 1, 0).cross(u).lengthSq() > EPS ? new Vector3(0, 1, 0).cross(u) : new Vector3(1, 0, 0).cross(u);
@@ -1379,7 +1378,7 @@ export class RigEvaluator {
     let v = null;
     if (g.ik.solver === 'ikRPsolver') {
       const pvL = this.vec(id, 'pv', [0, 0, 1]);
-      const pv = new Vector3(pvL[0], pvL[1], pvL[2]).applyMatrix4(new Matrix4().extractRotation(this.pvSpace(g.dag, chain[0])));
+      const pv = this.pvWorld(pvL, g.dag, chain[0]);
       v = pv.addScaledVector(u, -pv.dot(u));
       if (this.ikVariant && this.ikVariant.side === -1) v.negate();
     }
@@ -1554,6 +1553,11 @@ export class RigEvaluator {
     return this.parentWorld(handleNi);
   }
 
+  /** 極ベクトル（ハンドルの親の空間の値）→ ワールド（スケール・反転を含む 3x3。poleVectorConstraint の変換と打ち消し合う） */
+  pvWorld(pvLocal, handleNi, startNi) {
+    return new Vector3(pvLocal[0], pvLocal[1], pvLocal[2]).applyMatrix3(new Matrix3().setFromMatrix4(this.pvSpace(handleNi, startNi)));
+  }
+
   /** ひねりの向き（ふだんは 1。再現チェックでは −1・0 も試す） */
   twistSign() {
     const t = this.ikVariant ? this.ikVariant.twistSign : undefined;
@@ -1632,7 +1636,7 @@ export class RigEvaluator {
         side.add(v.addScaledVector(u, -v.dot(u)));
       }
       const pvL = this.vec(g.id, 'pv', [0, 0, 1]);
-      const pv = new Vector3(...pvL).applyMatrix4(new Matrix4().extractRotation(this.pvSpace(g.dag, chain[0])));
+      const pv = this.pvWorld(pvL, g.dag, chain[0]);
       const want = pv.addScaledVector(u, -pv.dot(u));
       if (this.ikVariant && this.ikVariant.side === -1) want.negate();
       const tw = this.num(g.id, 'twi', 0) * this.twistSign();
@@ -1650,7 +1654,7 @@ export class RigEvaluator {
       fileJoints: filePos.map(r3), evalJoints: evalPos.map(r3), handle: r3(H),
       fileLengths: lens(filePos), evalLengths: lens(evalPos),
       pv: g.ik.solver === 'ikRPsolver'
-        ? r3(new Vector3(...this.vec(g.id, 'pv', [0, 0, 1])).applyMatrix4(new Matrix4().extractRotation(this.pvSpace(g.dag, chain[0]))))
+        ? r3(this.pvWorld(this.vec(g.id, 'pv', [0, 0, 1]), g.dag, chain[0]))
         : null,
       twist: Math.round(this.num(g.id, 'twi', 0) * R2D * 1e4) / 1e4,
       ikBlend: this.num(g.id, 'ikb', 1),
@@ -1670,8 +1674,8 @@ export class RigEvaluator {
    * ルートから親までを順に、評価したローカル行列とファイルのローカル行列を比べ、最初にずれるノードも探す
    * （値が接続で決まり、ファイルに値がないノードは比べられないので飛ばす）
    */
-  parentDrift(ni, fileLocal, tol) {
-    const chain = [];
+  parentDrift(ni, fileLocal, tol, includeSelf = false) {
+    const chain = includeSelf ? [ni] : [];
     for (let x = this.sceneNodes[ni].parent; x >= 0; x = this.sceneNodes[x].inheritsTransform !== false ? this.sceneNodes[x].parent : -1) chain.unshift(x);
     if (!chain.length) return null;
     let Wf = new Matrix4();
@@ -1697,12 +1701,40 @@ export class RigEvaluator {
       position: positionOf(We).distanceTo(positionOf(Wf)), firstBad };
   }
 
+  /**
+   * 極ベクトルを決める poleVectorConstraint のターゲットごとの、ウェイト・計算した位置・ファイルの値とのずれ
+   * （そのノード自身と親を、ルートから順に比べて最初にずれるノード）。極ベクトルが接続で決まらなければ null
+   */
+  poleTargets(g, fileLocal, tol) {
+    const inputs = g.inputs || {};
+    const src = inputs.pv || inputs.pvx || inputs.pvy || inputs.pvz;
+    const cg = src && src.node !== undefined ? this.byId.get(src.node) : null;
+    if (!cg) return null;
+    if (cg.type !== 'poleVectorConstraint') return { via: `${cg.name}（${cg.type}）`, targets: [] };
+    const start = cg.pivot >= 0 ? this.pivotPosition(cg.pivot) : null;
+    const offset = this.vec(cg.id, 'o', [0, 0, 0]);
+    const targets = (cg.targets || []).map((t) => {
+      const tg = this.byId.get(t.node);
+      if (!tg || tg.dag < 0) return null;
+      const ni = tg.dag;
+      const r = this.rest(ni);
+      const rp = r && r.rp ? r.rp : [0, 0, 0];
+      const pos = new Vector3(rp[0], rp[1], rp[2]).applyMatrix4(this.world(ni));
+      return { name: this.sceneNodes[ni].name, weight: this.num(cg.id, `tg[${t.index}].tw`, 1),
+        position: pos.toArray().map((x) => Math.round(x * 1e4) / 1e4),
+        drift: this.parentDrift(ni, fileLocal, tol, true) };
+    }).filter(Boolean);
+    return { via: cg.name, start: start ? start.toArray().map((x) => Math.round(x * 1e4) / 1e4) : null,
+      offset: offset.some((x) => Math.abs(x) > 1e-9) ? offset : null, targets };
+  }
+
   verifySaved(fileLocal, tol = 0.5) {
     const out = [];
     for (const g of this.graph) {
       if (!g.ik) continue;
       const base = this.compareChain(g, fileLocal, tol);
       const parent = this.parentDrift(g.ik.chain[0], fileLocal, tol);
+      const poleTargets = g.ik.solver === 'ikRPsolver' ? this.poleTargets(g, fileLocal, tol) : null;
       let best = null;
       if (base.error > tol && base.joints.length) {
         for (const v of IK_VARIANTS[g.ik.solver] || []) {
@@ -1715,11 +1747,11 @@ export class RigEvaluator {
         this.reset();
       }
       const pv = g.ik.solver === 'ikRPsolver'
-        ? new Vector3(...this.vec(g.id, 'pv', [0, 0, 1])).applyMatrix4(new Matrix4().extractRotation(this.parentWorld(g.dag))).toArray()
+        ? this.pvWorld(this.vec(g.id, 'pv', [0, 0, 1]), g.dag, g.ik.chain[0]).toArray()
         : null;
       out.push({ handle: g.name, solver: g.ik.solver, chain: g.ik.chain.map((ni) => this.sceneNodes[ni].name), pv,
         twist: this.num(g.id, 'twi', 0) * R2D, joints: base.joints, reach: base.reach, poleError: base.poleError, parent,
-        detail: base.detail,
+        detail: base.detail, poleTargets,
         error: base.error, best,
         ok: base.joints.every((j) => j.ok) });
     }

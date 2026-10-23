@@ -527,6 +527,17 @@ class TestStage6(unittest.TestCase):
         self.assertIn("el: ファイル (1.0000, 0.0000, 1.0000) ／ 計算 (1.0000, 0.1000, 1.0000)", text4)
         self.assertIn("骨の長さ: ファイル [1.4142, 1.4142] ／ 計算 [1.4177, 1.4177]", text4)
         self.assertIn("極ベクトル（ワールド・計算）(0.0000, 0.0000, 1.0000)・ひねり 0.0000°・ikBlend 1.000", text4)
+        text5 = format_verification({"frame": 1, "handles": [
+            {"handle": "arm_ik", "solver": "ikRPsolver", "pv": [0, 0, 1], "twist": 0, "ok": False, "chain": [],
+             "reach": 0.0, "error": 5.0, "best": None, "poleError": 5.0, "parent": None,
+             "poleTargets": {"via": "arm_pvc", "start": [0, 0, 0], "offset": None, "targets": [
+                 {"name": "arm_pv", "weight": 1.0, "position": [1, 2, 3],
+                  "drift": {"name": "arm_pv", "angle": 0, "position": 2.0,
+                            "firstBad": {"name": "arm_pv_space", "angle": 30.0, "position": 0.0, "ik": None}}}]},
+             "joints": [{"name": "sh", "angle": 5, "roll": 5, "bend": 0, "position": 0, "ok": False}]}]})
+        self.assertIn("極ベクトルの目標（arm_pvc。開始の位置 (0.0000, 0.0000, 0.0000)）", text5)
+        self.assertIn("arm_pv（ウェイト 1.000）: 位置 (1.0000, 2.0000, 3.0000)・★ ファイルの値とずれている"
+                      "（最初にずれるノード: arm_pv_space。向き 30.00°・位置 0.0000）", text5)
         self.assertIn("確認できません", format_verification(None))
 
     def test_no_false_warning_for_rig_nodes(self):

@@ -356,6 +356,22 @@ def format_verification(result: Optional[dict]) -> str:
             if det.get("pv") is not None:
                 out.append("      極ベクトル（ワールド・計算）%s・ひねり %.4f°・ikBlend %.3f"
                            % (fmt3(det["pv"]), det["twist"], det["ikBlend"]))
+        pt = h.get("poleTargets")
+        if pt and not h["ok"]:
+            if not pt.get("targets"):
+                out.append("    極ベクトルは %s で決まる" % pt["via"])
+            else:
+                out.append("    極ベクトルの目標（%s。開始の位置 %s）%s" % (
+                    pt["via"], "(%s)" % ", ".join("%.4f" % x for x in pt["start"]) if pt.get("start") else "-",
+                    "・★ オフセット %s（使っていない）" % pt["offset"] if pt.get("offset") else ""))
+            for t in pt.get("targets", []):
+                d = t.get("drift")
+                fb = d.get("firstBad") if d else None
+                state = ("★ ファイルの値とずれている（最初にずれるノード: %s。向き %.2f°・位置 %.4f%s）"
+                         % (fb["name"], fb["angle"], fb["position"], "。IK %s で動く" % fb["ik"] if fb.get("ik") else "")
+                         if fb else "✓ ファイルの値と一致")
+                out.append("      %s（ウェイト %.3f）: 位置 (%s)・%s" % (
+                    t["name"], t["weight"], ", ".join("%.4f" % x for x in t["position"]), state))
         best = h.get("best")
         if best:
             out.append("    → 一番合う解き方: %s（ずれ %.2f°。今の解き方は %.2f°）" % (best["label"], best["error"], h["error"]))
