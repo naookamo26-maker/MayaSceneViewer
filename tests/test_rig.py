@@ -552,6 +552,7 @@ class TestStage6(unittest.TestCase):
         text5 = format_verification({"frame": 1, "handles": [
             {"handle": "arm_ik", "solver": "ikRPsolver", "pv": [0, 0, 1], "twist": 0, "ok": False, "chain": [],
              "reach": 0.0, "error": 5.0, "best": None, "poleError": 5.0, "parent": None,
+             "cycle": {"pole": "el", "handle": None, "twist": None},
              "poleTargets": {"via": "arm_pvc", "start": [0, 0, 0], "offset": None,
                              "startInputs": {"crp": "（接続なし: 0, 0, 0）", "crt": "（接続なし: 0, 0, 0）",
                                              "ps": "sh.pm"}, "targets": [
@@ -563,6 +564,8 @@ class TestStage6(unittest.TestCase):
         self.assertIn("arm_pv（ウェイト 1.000）: 位置 (1.0000, 2.0000, 3.0000)・★ ファイルの値とずれている"
                       "（最初にずれるノード: arm_pv_space。向き 30.00°・位置 0.0000）", text5)
         self.assertIn("開始の位置の材料: crp ← （接続なし: 0, 0, 0）・crt ← （接続なし: 0, 0, 0）・ps ← sh.pm", text5)
+        self.assertIn("★ 極ベクトルが、この IK で回るジョイント el（またはその子）に依存している（循環", text5)
+        self.assertNotIn("ハンドルの位置が、", text5)
         self.assertIn("確認できません", format_verification(None))
 
     def test_no_false_warning_for_rig_nodes(self):

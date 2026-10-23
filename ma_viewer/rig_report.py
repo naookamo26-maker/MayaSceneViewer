@@ -373,6 +373,13 @@ def format_verification(result: Optional[dict]) -> str:
                         ax["name"], ax["fileToRef"], ax["evalToRef"], ax["fileToChain"]))
                     out.append("          rotate %s・jointOrient %s・rotateAxis %s・preferredAngle %s・回転順 %s" % (
                         ax["r"], ax["jo"], ax["ra"], ax["pa"] if ax["pa"] is not None else "（なし）", ax["ro"]))
+        cyc = h.get("cycle") or {}
+        if not h["ok"]:
+            for key, label in (("pole", "極ベクトル"), ("handle", "ハンドルの位置"), ("twist", "ひねり")):
+                if cyc.get(key):
+                    # 循環: Maya は 1 つ前の評価の値で解くため、保存された姿勢と入力の値が食い違う
+                    out.append("    ★ %sが、この IK で回るジョイント %s（またはその子）に依存している（循環。Maya は 1 つ前の"
+                               "評価の値で解くので、保存された姿勢と合わないことがある）" % (label, cyc[key]))
         pt = h.get("poleTargets")
         if pt and not h["ok"]:
             if not pt.get("targets"):

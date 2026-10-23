@@ -326,3 +326,22 @@ test('極ベクトル: 開始の位置は Maya と同じくコンストレイン
   const h = rig.verifySaved((ni) => rig.fileRestLocal(ni)).find((x) => x.handle === 'arm5_ik');
   assert.ok(h.ok, JSON.stringify(h.joints));
 });
+
+test('再現チェック: IK の入力が、その IK で回るジョイントに依存している（循環）かを調べる', () => {
+  const rig = at(data.animation.current);
+  for (const h of rig.verifySaved((ni) => rig.fileRestLocal(ni))) {
+    assert.deepEqual(h.cycle, { pole: null, handle: null, twist: null }, h.handle);
+  }
+  // 極ベクトルの目標 arm5_pv を肘 arm5_b の子にする → 極ベクトルが IK の答えに依存する
+  const d = JSON.parse(JSON.stringify(data));
+  d.nodes[idx('arm5_pv')].parent = idx('arm5_b');
+  const rig2 = new RigEvaluator(new AnimationClip(d.animation), d.nodes, (ni) => new Matrix4().fromArray(d.nodes[ni].matrix));
+  rig2.evaluate(d.animation.current);
+  const g = d.animation.graph.find((x) => x.name === 'arm5_ik');
+  assert.deepEqual(rig2.chainCycle(g), { pole: 'arm5_b', handle: null, twist: null });
+  // ハンドルを開始ジョイントの子にする
+  d.nodes[g.dag].parent = idx('arm5_a');
+  const rig3 = new RigEvaluator(new AnimationClip(d.animation), d.nodes, (ni) => new Matrix4().fromArray(d.nodes[ni].matrix));
+  rig3.evaluate(d.animation.current);
+  assert.equal(rig3.chainCycle(g).handle, 'arm5_a');
+});

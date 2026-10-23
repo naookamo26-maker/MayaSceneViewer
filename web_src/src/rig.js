@@ -1847,6 +1847,62 @@ export class RigEvaluator {
       offset: offset.some((x) => Math.abs(x) > 1e-9) ? offset : null, targets };
   }
 
+  /**
+   * IK の入力（極ベクトル・ハンドルの位置・ひねり）が、その IK で回るジョイント（またはその子）に依存しているか（循環）。
+   * 循環があると Maya は 1 つ前の評価の値で解くため、保存された姿勢と入力の値が食い違う。
+   * 戻り値: { pole, handle, twist } それぞれ、循環が通るジョイントの名前（なければ null）
+   */
+  chainCycle(g) {
+    const rotated = new Set(g.ik.chain.slice(0, -1));
+    const MATRIX_PARENT = /^(pm|pim|parentMatrix|parentInverseMatrix)(\[\d+\])?$/;
+    const MATRIX_WORLD = /^(wm|wim|worldMatrix|worldInverseMatrix|xm|xformMatrix|wp|worldPosition)(\[\d+\])?/;
+    const ROTATE = /^(r[xyz]?|rotate[XYZ]?|m|matrix)$/;
+    const search = (seeds) => {
+      const seen = new Set();
+      const stack = [...seeds];
+      while (stack.length) {
+        const [kind, key] = stack.pop();
+        const tag = `${kind}${key}`;
+        if (key === undefined || key < 0 || seen.has(tag)) continue;
+        seen.add(tag);
+        if (kind === 'w') {                                     // ワールド行列: 自分と親たち
+          for (let x = key; x >= 0; x = this.sceneNodes[x].parent) {
+            if (rotated.has(x)) return this.sceneNodes[x].name;
+            stack.push(['c', x]);
+          }
+          continue;
+        }
+        const gg = kind === 'c' ? this.dagGraph.get(key) : this.byId.get(key);
+        if (!gg) continue;
+        for (const src of Object.values(gg.inputs || {})) {
+          if (src.node === undefined || src.node === gg.id) continue;
+          const sg = this.byId.get(src.node);
+          if (!sg) continue;
+          if (sg.dag < 0) { stack.push(['g', sg.id]); continue; }
+          const attr = String(src.attr || '');
+          if (MATRIX_PARENT.test(attr)) stack.push(['w', this.sceneNodes[sg.dag].parent]);
+          else if (MATRIX_WORLD.test(attr)) stack.push(['w', sg.dag]);
+          else {
+            if (ROTATE.test(attr) && rotated.has(sg.dag)) return this.sceneNodes[sg.dag].name;
+            stack.push(['c', sg.dag]);
+          }
+        }
+      }
+      return null;
+    };
+    const inputs = g.inputs || {};
+    const from = (keys) => keys.filter((k) => inputs[k] && inputs[k].node !== undefined).map((k) => {
+      const sg = this.byId.get(inputs[k].node);
+      return sg && sg.dag >= 0 ? ['c', sg.dag] : ['g', inputs[k].node];
+    });
+    // ポール: コンストレイントの ps（開始ジョイントの親の行列）は IK で動かないので、そのまま調べてよい
+    return {
+      pole: search(from(['pv', 'pvx', 'pvy', 'pvz'])),
+      handle: search([['w', this.sceneNodes[g.dag].parent], ...from(['t', 'tx', 'ty', 'tz'])]),
+      twist: search(from(['twi'])),
+    };
+  }
+
   verifySaved(fileLocal, tol = 0.5) {
     const out = [];
     for (const g of this.graph) {
@@ -1870,7 +1926,7 @@ export class RigEvaluator {
         : null;
       out.push({ handle: g.name, solver: g.ik.solver, chain: g.ik.chain.map((ni) => this.sceneNodes[ni].name), pv,
         twist: this.num(g.id, 'twi', 0) * R2D, joints: base.joints, reach: base.reach, poleError: base.poleError, parent,
-        detail: base.detail, poleTargets,
+        detail: base.detail, poleTargets, cycle: this.chainCycle(g),
         error: base.error, best,
         ok: base.joints.every((j) => j.ok) });
     }
