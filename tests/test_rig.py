@@ -477,6 +477,9 @@ class TestStage6(unittest.TestCase):
         self.assertIn("★ tx ← my_pv_driver.out（myRigNode・未対応）", text)
         self.assertIn("✓ ma ← cl_tipHandle.wm（transform）", text)
         self.assertIn("推定できない（ファイルの値のまま）: leg_hip", text)
+        # ディスプレイレイヤー（.do）とレイヤーマネージャーは値の計算に関係しないので、たどらない・未対応にしない
+        self.assertNotIn("displayLayerManager", text)
+        self.assertNotIn("do", self.graph["leg_pvc"]["inputs"])
         # 評価できないノードがないファイル
         clean = rig_report_file(os.path.join(ROOT, "samples", "ik_sample.ma"))
         self.assertIn("■ 評価できないノード\n  なし", clean)

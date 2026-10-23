@@ -15,8 +15,8 @@ from __future__ import annotations
 from typing import List, Optional, Set
 
 from .ma_scene import MaNode, MaScene
-from .rig import (CONSTRAINT_TYPES, CURVE_TYPES, GEOMETRY_TYPES, SUPPORTED_DG, _CHANNEL_KEYS, _MATRIX_PLUGS, _base,
-                  _dag_like, _evaluable)
+from .rig import (CONSTRAINT_TYPES, CURVE_TYPES, GEOMETRY_TYPES, SUPPORTED_DG, _CHANNEL_KEYS, _DISPLAY_KEYS, _MATRIX_PLUGS,
+                  _base, _dag_like, _evaluable)
 
 MAX_DEPTH = 10
 MAX_LINES = 60
@@ -87,10 +87,10 @@ class _Tracer:
             if len(self.lines) == before and depth > 0:
                 del self.lines[at:]                            # 接続のない DAG ノード: ファイルの値なので省く
             return
-        for key2 in sorted(src.inputs):
-            if src.type == "expression" and key2 in ("tim", "time"):
-                continue
-            if src.type in GEOMETRY_TYPES and key2 == "x":
+        # 評価で使う接続だけをたどる（ディスプレイレイヤーの .do・clusterHandle の .x などは値に関係しない）
+        used = self.info.edges.get(id(src)) if self.info is not None and id(src) in self.info.dg else None
+        for key2 in sorted(used if used is not None else src.inputs):
+            if used is None and (_base(key2) in _DISPLAY_KEYS or key2 in ("tim", "time", "x")):
                 continue
             self.plug(src, key2, depth + 1)
 

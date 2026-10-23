@@ -21,7 +21,9 @@
   * アニメーションレイヤー: lay_jnt.rx = animBlendNodeAdditiveRotation(ベースのキー 0 → 30、レイヤーのキー 0 → 10、
     レイヤー layer1 のウェイト 0.5)
   * 脚 leg_hip → leg_knee → leg_ankle の ikRPsolver。極ベクトルは knee_pv への poleVectorConstraint で、
-    knee_pv.tx は自作ノード（未知の型 myRigNode）の出力 → 再生できない（リグの診断で見つける）
+    knee_pv.tx は自作ノード（未知の型 myRigNode）の出力 → 再生できない（リグの診断で見つける）。
+    脚の IK まわり（ハンドル・poleVectorConstraint・knee_pv）はディスプレイレイヤー rig_layer に入っている
+    （layerManager（displayLayerManager）→ rig_layer.id、rig_layer.di → 各ノードの .do。値の計算には関係しない）
 保存時のフレーム（1）の各ノードの値は、リグの計算結果と一致するように書く。
 """
 from __future__ import annotations
@@ -188,6 +190,12 @@ def main():
     uid("my_pv_driver")
     A('\tsetAttr ".amount" 3;')
 
+    A('createNode displayLayerManager -n "layerManager";')
+    uid("layerManager")
+    A('\tsetAttr -s 2 ".dli[1]"  1;')
+    node("displayLayer", "rig_layer")
+    A('\tsetAttr ".do" 1;')
+
     node("script", "sceneConfigurationScriptNode")
     A('\tsetAttr ".b" -type "string" "playbackOptions -min 1 -max 48 -ast 1 -aet 48 ";')
     A('createNode ikSplineSolver -n "ikSplineSolver";')
@@ -270,6 +278,9 @@ def main():
         C("knee_pv.%s" % src, "leg_pvc.tg[0].%s" % dst)
     C("leg_pvc.w0", "leg_pvc.tg[0].tw")
     C("my_pv_driver.out", "knee_pv.tx")
+    C("layerManager.dli[1]", "rig_layer.id")
+    for n in ("leg_ik", "leg_pvc", "knee_pv", "foot_ctrl"):
+        C("rig_layer.di", "%s.do" % n)
     A('// End of rig6_sample.ma')
 
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:

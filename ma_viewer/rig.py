@@ -114,6 +114,9 @@ class GraphInfo:
             src.type not in CURVE_TYPES for e in self.edges.values() for src, _ in e.values())
 
 
+# 表示だけに使う接続（値の計算に使わない）。コンストレイントは DAG ノードなので、ディスプレイレイヤーの .do などを持つ
+_DISPLAY_KEYS = {"do", "drawOverride", "iog", "instObjGroups", "msg", "message"}
+
 _DEFORM_OUT = re.compile(r"^og\[(\d+)\]$")
 
 
@@ -187,6 +190,8 @@ def discover(ms: MaScene, keep: Set[int], geometry=()) -> GraphInfo:
                     for key in list(n.inputs):
                         if n.type == "expression" and key in ("tim", "time"):
                             continue                     # 時間はビューアのフレームから求める
+                        if _base(key) in _DISPLAY_KEYS:
+                            continue                     # 表示だけの接続（コンストレイントのディスプレイレイヤーなど）
                         add_edge(n, key)
             return
         if n.type in GEOMETRY_TYPES:
