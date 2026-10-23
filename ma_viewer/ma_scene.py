@@ -166,7 +166,7 @@ def _sparse_into(weights: Dict[int, Dict[int, float]], a: int, b: int, vals) -> 
 
 class MaNode:
     __slots__ = ("name", "type", "parent", "children", "path", "order", "is_dag",
-                 "xattrs", "mesh", "skin", "tweak", "inputs", "raw", "skip_attrs")
+                 "xattrs", "mesh", "skin", "tweak", "inputs", "raw", "skip_attrs", "span")
 
     def __init__(self, name: str, node_type: str, parent: Optional["MaNode"], order: int):
         self.name = name
@@ -183,6 +183,7 @@ class MaNode:
         self.inputs: Dict[str, Tuple["MaNode", str]] = {}
         self.raw: Optional[Dict[str, List[str]]] = {} if node_type in RAW_TYPES else None
         self.skip_attrs = skips_attrs(node_type)       # setAttr をすべて読み飛ばす種類か
+        self.span: Optional[Tuple[int, int]] = None     # 読み飛ばした属性の範囲（アニメーションを後から読むため）
 
     @property
     def is_shape(self) -> bool:
@@ -206,6 +207,10 @@ class MaNode:
         return "<MaNode %s %s>" % (self.type, self.path)
 
 
+# time1（シーンの時間）の setAttr を受け取るための目印。ノード一覧には入れない
+_TIME_NODE = MaNode("time1", "time", None, -1)
+
+
 class MaScene:
     def __init__(self, source_path: str = ""):
         self.source_path = source_path
@@ -216,6 +221,10 @@ class MaScene:
         self.angular_unit = "deg"
         self.maya_version: Optional[str] = None
         self.up_axis = "y"
+        self.time_unit = "film"
+        self.current_time: Optional[float] = None    # time1 の .o（保存時の現在フレーム）
+        self.text = ""                               # コメントを除いた本文（animCurve などの span はこの位置）
+        self.out_index: Dict[int, int] = {}          # id(ノード) → 共通 JSON の nodes の番号（変換後に設定）
         self.references: List[str] = []
         self.stats: Dict[str, int] = {}          # 文の種類ごとの数（読み込みの内訳に出す）
         # 「文の種類 ノードの種類」ごとの [秒, 文の数, 文字数]（どこに時間がかかっているかを調べる）
@@ -273,6 +282,8 @@ class MaScene:
     # ------------------------------------------------------------------
     def handle(self, cmd: str, rest: str):
         if cmd == "setAttr":
+            if self.current is _TIME_NODE and self._set_time_attr(rest):
+                return
             if not self._wants_setattr(rest):
                 return                      # 使わない属性（アニメーションのキー・カーブの形状・法線など）
             sa = R.parse_setattr(rest)
@@ -290,6 +301,9 @@ class MaScene:
             opts, _ = R.parse_flags(R.tokenize(rest), ["-l", "-linear", "-a", "-angle", "-t", "-time"])
             lin = opts.get("-l") or opts.get("-linear")
             ang = opts.get("-a") or opts.get("-angle")
+            tim = opts.get("-t") or opts.get("-time")
+            if isinstance(tim, str):
+                self.time_unit = tim
             if isinstance(lin, str):
                 self.linear_unit = _LINEAR_UNITS.get(lin, lin)
             if isinstance(ang, str):
@@ -346,6 +360,19 @@ class MaScene:
             return base in _SKIN_NAMES
         return base in _XFORM_NAMES
 
+    def _set_time_attr(self, rest: str) -> bool:
+        """select :time1 のあとの setAttr ".o"（現在のフレーム）。ノード名つきのプラグは通常どおり処理する。"""
+        sa = R.parse_setattr(rest)
+        if sa is None or not sa.plug.startswith("."):
+            return False
+        if sa.plug[1:] in ("o", "outTime"):
+            vals = sa.values()
+            try:
+                self.current_time = R.to_float(vals[0]) if vals else None
+            except ValueError:
+                pass
+        return True
+
     # ------------------------------------------------------------------
     def _create_node(self, rest: str):
         toks = R.tokenize(rest)
@@ -378,7 +405,9 @@ class MaScene:
     def _select(self, rest: str):
         toks = R.tokenize(rest)
         _, pos = R.parse_flags(toks, [])
-        if pos:
+        if pos and pos[-1].value.lstrip(":") == "time1" and self.resolve(pos[-1].value) is None:
+            self.current = _TIME_NODE              # select -ne :time1; setAttr ".o" 1;
+        elif pos:
             self.current = self.resolve(pos[-1].value)
         else:
             self.current = None
@@ -882,6 +911,8 @@ def read_ma_text(path: str) -> str:
 
 
 _BLOCK_END_RE = re.compile(r"\n(?=[^\t \n])")
+# 後から中身を読むために、属性の範囲（span）を覚えておくノード（アニメーションカーブと、再生範囲を持つ script）
+_SPAN_TYPES = ("animCurveTL", "animCurveTA", "animCurveTU", "script")
 _NO_SKIP = os.environ.get("MA_VIEWER_NO_SKIP") == "1"
 
 
@@ -894,6 +925,7 @@ def parse_ma_text(text: str, source_path: str = "", progress: ProgressFn = None)
     """
     scene = MaScene(source_path)
     text = R.strip_line_comments(text)
+    scene.text = text
     n = len(text)
     total = max(n, 1)
     next_report = 0.0
@@ -923,10 +955,13 @@ def parse_ma_text(text: str, source_path: str = "", progress: ProgressFn = None)
         c[0] += clock() - t_stmt
         c[1] += 1
         c[2] += len(stmt)
-        if cmd == "createNode" and scene.current is not None and scene.current.skip_attrs:
+        if cmd == "createNode" and scene.current is not None and (
+                scene.current.skip_attrs or scene.current.type in _SPAN_TYPES):
             m = _BLOCK_END_RE.search(text, pos)
             skip_to = m.start() + 1 if m else n
-            if skip_to > pos:
+            if scene.current.type in _SPAN_TYPES:
+                scene.current.span = (pos, skip_to)
+            if skip_to > pos and scene.current.skip_attrs:
                 counts["読み飛ばし"] = counts.get("読み飛ばし", 0) + text.count(";", pos, skip_to)
                 pos = skip_to
         if progress is not None and pos / total >= next_report:

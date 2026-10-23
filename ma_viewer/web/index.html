@@ -123,6 +123,26 @@
     <div id="vp-title"></div>
     <div id="legend" hidden></div>
     <div id="vp-hint">左ドラッグ: 回転　中ドラッグ: 移動　右ドラッグ・ホイール: ズーム　クリック: 選択</div>
+    <div id="timeline" role="group" aria-label="タイムライン" hidden>
+      <div class="tl-btns">
+        <button class="icon-btn" id="tl-first" aria-label="先頭のフレーム" title="先頭のフレーム（Home）"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><rect x="2" y="2.5" width="1.6" height="9"/><path d="M12 2.5v9L4.5 7Z"/></svg></button>
+        <button class="icon-btn" id="tl-prev-key" aria-label="前のキー" title="前のキー（,）"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><path d="M8 2.5v9L1.5 7Z"/><path d="M11 4.5 13 7l-2 2.5L9 7Z"/></svg></button>
+        <button class="icon-btn" id="tl-prev" aria-label="前のフレーム" title="前のフレーム（Alt+,）"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><path d="M10 2.5v9L3.5 7Z"/></svg></button>
+        <button class="icon-btn" id="tl-play" aria-label="再生" aria-pressed="false" title="再生（Alt+V）"><svg class="ic-play" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><path d="M4 2.5v9L11 7Z"/></svg><svg class="ic-pause" style="display:none" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><rect x="3.5" y="2.5" width="2.4" height="9"/><rect x="8.1" y="2.5" width="2.4" height="9"/></svg></button>
+        <button class="icon-btn" id="tl-next" aria-label="次のフレーム" title="次のフレーム（Alt+.）"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><path d="M4 2.5v9L10.5 7Z"/></svg></button>
+        <button class="icon-btn" id="tl-next-key" aria-label="次のキー" title="次のキー（.）"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><path d="M6 2.5v9L12.5 7Z"/><path d="M3 4.5 5 7 3 9.5 1 7Z"/></svg></button>
+        <button class="icon-btn" id="tl-last" aria-label="最後のフレーム" title="最後のフレーム（End）"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><rect x="10.4" y="2.5" width="1.6" height="9"/><path d="M2 2.5v9L9.5 7Z"/></svg></button>
+      </div>
+      <input type="number" id="tl-start" class="tl-num" step="1" aria-label="再生範囲の開始" title="再生範囲の開始">
+      <div class="tl-track">
+        <canvas id="tl-keys" aria-hidden="true"></canvas>
+        <input type="range" id="tl-slider" min="0" max="1" step="1" value="0" aria-label="現在のフレーム">
+      </div>
+      <input type="number" id="tl-end" class="tl-num" step="1" aria-label="再生範囲の終了" title="再生範囲の終了">
+      <input type="number" id="tl-frame" class="tl-num tl-frame" step="1" aria-label="現在のフレーム" title="現在のフレーム">
+      <span id="tl-info" class="tl-info"></span>
+      <span id="tl-status" class="tl-status" role="status"></span>
+    </div>
     <div id="empty" class="overlay-msg">
       <p class="lead" data-host-text="qt">.ma ファイルをウィンドウにドロップするか、［ファイル］→［開く］で読み込みます。</p>
       <p class="lead" data-host-text="browser">共通 JSON をドロップするか、［JSON を開く］で読み込みます。</p>

@@ -348,6 +348,8 @@ _MEMBER_RE = re.compile(r"^m\[(\d+)\]$")
 # 移動・回転・スケールなど、ノードの行列を決める属性（ここに接続があると .ma に値が残らない）
 _CHANNEL_ATTRS = {"t", "tx", "ty", "tz", "r", "rx", "ry", "rz", "s", "sx", "sy", "sz", "jo", "jox", "joy", "joz",
                   "ra", "rax", "ray", "raz", "sh", "rp", "sp", "rpt", "spt", "ro", "opm"}
+# アニメーションカーブで再生できる属性（animation.CHANNELS と同じ）
+_CURVE_CHANNELS = {"tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz"}
 BIND_SOURCE_LABELS = {"pm": "skinCluster の .pm", "dagPose": "dagPose", "bps": "ジョイントの .bps"}
 
 
@@ -743,12 +745,17 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
 
     # 接続で値が決まる（.ma に値が残っていない）属性
     driven: Dict[int, List[str]] = {}
+    curve_driven = set()                # 接続元がすべてアニメーションカーブ（animCurveTL / TA / TU）のノード
     for n in ms.nodes:
         if id(n) not in keep or n.is_shape:
             continue
+        by_curve = True
         for key, (src, sattr) in n.inputs.items():
             if key.split("[")[0].split(".")[0] in _CHANNEL_ATTRS:
                 driven.setdefault(id(n), []).append("%s ← %s（%s）" % (key, src.name, src.type))
+                by_curve = by_curve and key in _CURVE_CHANNELS and src.type in ("animCurveTL", "animCurveTA", "animCurveTU")
+        if by_curve and id(n) in driven:
+            curve_driven.add(id(n))
 
     # バインド時のワールド行列（情報源のないノードはファイル上のローカル値のまま親についていく）
     bind_local: Dict[int, List[float]] = {}
@@ -780,6 +787,9 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         shown = "、".join(chans[:3]) + (" ほか" if len(chans) > 3 else "")
         if nid in bind_local:
             ctx.local[nid] = bind_local[nid]
+        if nid in curve_driven:
+            continue                    # アニメーションカーブで決まる（アニメーションを読み込むとその値で表示する）
+        if nid in bind_local:
             ms.warn("%s: %s が接続で決まるため、ファイルに値がありません。バインドポーズ（%s）の姿勢で表示します。"
                     % (node.name, shown, BIND_SOURCE_LABELS[bind_src[nid][2]]), key="#接続で値が決まるノード", limit=20)
         else:
@@ -931,6 +941,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         },
     }
     lap("メッシュ（その他）")
+    ms.out_index = index_of            # アニメーションを後から読むときに使う（出力するノードの番号）
     return scene
 
 
@@ -1109,8 +1120,23 @@ def _build_skin(ms: MaScene, ctx: _Ctx, shape: MaNode, sk_node: MaNode, nverts: 
 LAST_TIMING: Dict[str, float] = {}
 
 
-def load_ma(path: str, progress: ProgressFn = None) -> dict:
-    """.ma ファイルを読み、共通 JSON（dict）を返す。"""
+def load_ma(path: str, progress: ProgressFn = None, animation: bool = False) -> dict:
+    """.ma ファイルを読み、共通 JSON（dict）を返す。animation=True ならアニメーションも読む（scene["animation"]）。"""
+    scene, load_animation = load_ma_staged(path, progress)
+    if animation:
+        anim = load_animation(progress)
+        if anim is not None:
+            scene["animation"] = anim
+    return scene
+
+
+def load_ma_staged(path: str, progress: ProgressFn = None):
+    """.ma を 2 段階で読む。(共通 JSON, アニメーションを読む関数) を返す。
+
+    1 段階目（この関数）はアニメーションカーブの中身を読まず、範囲だけを覚えておく。
+    返した関数を呼ぶと、表示するノードを動かすカーブだけを読み、animation（なければ None）を返す。
+    シーンを先に表示しておき、アニメーションは後から読み込むために使う。
+    """
     import gc
     import time
     # 解析中は大量のオブジェクトを作るので、ガベージコレクションを止めておく（循環参照はほぼ作らない。約 1 割速い）
@@ -1136,4 +1162,18 @@ def load_ma(path: str, progress: ProgressFn = None) -> dict:
     LAST_TIMING.update(parse=t1 - t0, convert=time.perf_counter() - t1,
                        statements=sum(v for k, v in ms.stats.items() if k != "読み飛ばし"),
                        skipped=ms.stats.get("読み飛ばし", 0), numpy=numpy_enabled())
-    return sc
+
+    # アニメーションカーブがなければ、本文（.ma の全文）をすぐに手放す（大きなファイルでメモリを抱えないため）
+    if not any(n.span is not None and n.type.startswith("animCurve") for n in ms.nodes):
+        ms.text = ""
+
+    def load_animation(progress2: ProgressFn = None) -> Optional[dict]:
+        if not ms.text:
+            return None
+        from .animation import build_animation
+        try:
+            return build_animation(ms, getattr(ms, "out_index", {}), progress2)
+        finally:
+            ms.text = ""                 # 読み終えたら本文を手放す
+
+    return sc, load_animation

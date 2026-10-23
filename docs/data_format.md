@@ -15,9 +15,12 @@
   "materials": [ ... ],
   "textures": [ ... ],
   "warnings": [ "..." ],
-  "stats": { "nodes": 10, "joints": 5, "meshes": 3, "vertices": 316, "polygons": 302, "skinnedMeshes": 1 }
+  "stats": { "nodes": 10, "joints": 5, "meshes": 3, "vertices": 316, "polygons": 302, "skinnedMeshes": 1 },
+  "animation": { ... }
 }
 ```
+
+`animation` は省略できます（アニメーションがない場合や、読み込まない設定の場合）。
 
 `source.kind` は `"ma"`（.ma から）か `"maya"`（Maya 内から）です。
 
@@ -97,6 +100,46 @@ transform・joint などの変換ノードです。**親は必ず子より前に
 | `tried` | 探したパスの一覧（順番どおり） |
 | `udim` / `tiles` | UDIM のとき true と、見つかったタイル `[{"tile": 1001, "resolved": ..., "url": ...}]` |
 | `note` | 補足（同じ名前のファイルが複数見つかったときなど） |
+
+## animation
+
+アニメーションカーブ（animCurveTL・TA・TU）のキーです。.ma の読み込みは 2 段階で、ビューアはシーン本体を先に受け取り、animation は後から別に受け取ります（Qt では `setAnimation`）。JSON ファイルに含まれている場合は、シーンと一緒に読み込みます。
+
+```json
+{
+  "fps": 24, "timeUnit": "film",
+  "start": 1, "end": 24, "animStart": 1, "animEnd": 30, "current": 1,
+  "curves":   [ { "name": "shoulder_rotateZ", "type": "TA", "offset": 0, "count": 3,
+                  "tangent": 18, "weighted": false, "pre": 0, "post": 0 } ],
+  "channels": [ { "node": 2, "attr": "rz", "curve": 0 } ],
+  "nodes":    [ { "node": 2, "joint": true, "ro": 0, "t": [0, 5, 0], "r": [0, 0, 20], "s": [1, 1, 1],
+                  "ra": [0, 0, 0], "jo": [90, 0, 0] } ],
+  "times":  { "dtype": "float32", "count": 14, "data": "<base64>" },
+  "values": { "dtype": "float32", "count": 14, "data": "<base64>" },
+  "tangentTypes":  { "dtype": "uint8", "count": 28, "data": "<base64>" },
+  "fixedTangents": { "dtype": "float32", "count": 10, "data": "<base64>" },
+  "warnings": [ "..." ],
+  "stats": { "curves": 6, "keys": 14, "channels": 6, "nodes": 5, "seconds": 0.001 }
+}
+```
+
+| キー | 内容 |
+|---|---|
+| `fps` / `timeUnit` | 1 秒あたりのフレーム数と、.ma の時間単位（`currentUnit -t`） |
+| `start` / `end` | 再生範囲（playbackOptions の -min / -max。なければキーのある範囲） |
+| `animStart` / `animEnd` | アニメーションの範囲（playbackOptions の -ast / -aet） |
+| `current` | 読み込み直後のフレーム（time1 の .o） |
+| `curves` | カーブごとの設定。キーは `times` などの `offset` から `count` 個。`tangent` はカーブの既定の接線の種類（.tan）、`pre` / `post` は範囲外の振る舞い（0 = 一定、1 = リニア、3 = 繰り返し、4 = オフセット付き繰り返し、5 = 往復） |
+| `channels` | どのノード（nodes の番号）のどの属性（`tx`〜`sz`）をどのカーブが動かすか |
+| `nodes` | 動くノードのローカル行列の材料。アニメーションしない成分はこの値を使う。角度は度。joint は `jo`、transform は `rp`・`sp`・`rpt`・`spt`・`sh`（0 でないもの）を持つ。segmentScaleCompensate の対象のジョイントは `isNode`（.is につながったノードの番号）と `isScale`（その静的なスケール）を持つ。親のスケールが動くジョイントは、自分が動かなくても含む |
+| `times` / `values` | キーの時刻（フレーム）と値。値は TL がファイルの長さの単位、TA が度、TU はそのまま |
+| `tangentTypes` | キーごとに（入りの種類, 出の種類）。.ma の kit / kot の値（1 = 固定、2 = リニア、3 = フラット、5 = ステップ、9 = スプライン、10 = クランプ、16 = プラトー、17 = ステップ（次）、18 = オートなど）。0 はカーブの既定 |
+| `fixedTangents` | 固定の接線。5 つずつ（キーの番号, 入りの x, 入りの y, 出の x, 出の y）。x はフレーム、y は値の単位（.ma の秒・cm・ラジアンから変換済み）。値のない側は NaN |
+| `warnings` | 再生できないもの（コンストレイントで動くノードなど） |
+
+数値の配列は、base64 にしたリトルエンディアンのバイナリ（`{"dtype", "count", "data"}`）か、数値のリストです。キーの多いモーションでも小さく、速く受け渡せるよう、通常はバイナリにします。
+
+接線の傾きの計算（スプライン・オートなど）とカーブの評価はビューアで行います（`web_src/src/animation.js`）。
 
 ## 行列の規約
 

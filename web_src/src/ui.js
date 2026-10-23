@@ -488,10 +488,16 @@ export class UI {
     h += `<tr><th>姿勢の基準</th><td>${info.usingBind ? 'バインドポーズ' : 'ファイルの値'}</td></tr>`;
     h += `<tr><th>バインドポーズの情報</th><td>${info.bindSource ? esc(SRC[info.bindSource] || info.bindSource) : 'なし'}</td></tr>`;
     h += '</table>';
-    if (info.drivenBy && info.drivenBy.length) {
+    const anim = info.animChannels || [];
+    if (anim.length) {
+      h += `<table class="kv"><tr><th>アニメーション</th><td>${esc(anim.join('・'))}</td></tr></table>`;
+    }
+    // アニメーションを読み込んだあとは、カーブで決まる値は再生されるので注記から外す
+    const driven = (info.drivenBy || []).filter((d) => !(anim.length && /\banimCurveT[LAU]\b/.test(d)));
+    if (driven.length) {
       h += '<p class="note small">次の値は接続で決まるため、ファイルに残っていません'
         + (info.bindSource ? '（「ファイルの値」でもバインドポーズの姿勢で表示）' : '（既定値で表示）') + '：<br>'
-        + info.drivenBy.slice(0, 6).map(esc).join('<br>') + (info.drivenBy.length > 6 ? '<br>ほか' : '') + '</p>';
+        + driven.slice(0, 6).map(esc).join('<br>') + (driven.length > 6 ? '<br>ほか' : '') + '</p>';
     }
     h += '<p class="sub">ファイル上の値</p><table class="kv">';
     if (a.t) h += `<tr><th>移動</th><td>${fmt3(a.t)}</td></tr>`;
@@ -500,6 +506,12 @@ export class UI {
     if (a.s) h += `<tr><th>スケール</th><td>${fmt3(a.s)}</td></tr>`;
     if (a.ro) h += `<tr><th>回転順</th><td>${esc(a.ro)}</td></tr>`;
     h += '</table>';
+    if (info.animValues) {
+      const v = info.animValues;
+      h += `<p class="sub">フレーム ${esc(fmt(info.frame, Number.isInteger(info.frame) ? 0 : 2))} の値</p><table class="kv">`
+        + `<tr><th>移動</th><td>${fmt3(v.t)}</td></tr><tr><th>回転</th><td>${fmt3(v.r, 2)}</td></tr>`
+        + `<tr><th>スケール</th><td>${fmt3(v.s)}</td></tr></table>`;
+    }
     h += `<table class="kv" style="margin-top:6px"><tr><th>ワールド位置</th><td>${fmt3(info.worldPos)}</td></tr></table>`;
     if (info.usage && info.usage.length) {
       h += '<p class="sub">インフルエンスとして</p><table class="kv">';

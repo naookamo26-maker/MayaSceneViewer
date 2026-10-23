@@ -1,0 +1,417 @@
+# -*- coding: utf-8 -*-
+"""アニメーションカーブ（animCurveTL / TA / TU）→ ビューア用のキー列（共通 JSON の animation）。
+
+読み込みを 2 段階に分けるため、.ma の解析（ma_scene）ではカーブの中身を読まず、
+ファイル上の範囲（MaNode.span）だけを覚えておく。シーンを表示したあとで、
+表示するノードにつながっているカーブの範囲だけをここで読む。
+
+キーの補間（スプライン・オートなどの接線の計算と、カーブの評価）はビューア（JS）側で行う。
+ここではキーの時刻・値・接線の種類と、固定の接線（kix / kiy / kox / koy）を単位をそろえて渡すだけにする
+（キーの多いモーションでも Python 側のループを増やさないため）。
+
+単位:
+  * 時刻はファイルの時間単位のフレーム（currentUnit -t）
+  * 値は TL がファイルの長さの単位、TA が度、TU はそのまま
+  * 固定の接線は (x: フレーム, y: 値の単位)。.ma では x が秒、y が内部単位（cm・ラジアン）で書かれている
+"""
+from __future__ import annotations
+
+import base64
+import math
+import re
+from array import array
+from typing import Callable, Dict, List, Optional, Tuple
+
+from .ma_scene import TRANSFORM_TYPES, MaNode, MaScene, np, numpy_enabled
+from . import ma_reader as R
+from . import mathutil as M
+
+ProgressFn = Optional[Callable[[float, str], None]]
+
+CURVE_TYPES = {"animCurveTL": "TL", "animCurveTA": "TA", "animCurveTU": "TU"}
+
+# アニメーションで動かせる属性（ノードの移動・回転・スケール）
+CHANNELS = {
+    "tx": ("t", 0), "ty": ("t", 1), "tz": ("t", 2),
+    "rx": ("r", 0), "ry": ("r", 1), "rz": ("r", 2),
+    "sx": ("s", 0), "sy": ("s", 1), "sz": ("s", 2),
+}
+_CHANNEL_BASES = {"t", "tx", "ty", "tz", "r", "rx", "ry", "rz", "s", "sx", "sy", "sz"}
+
+# currentUnit -t の名前 → 1 秒あたりのフレーム数
+_FPS = {
+    "game": 15.0, "film": 24.0, "pal": 25.0, "ntsc": 30.0, "show": 48.0, "palf": 50.0, "ntscf": 60.0,
+    "sec": 1.0, "min": 1.0 / 60.0, "hour": 1.0 / 3600.0, "millisec": 1000.0,
+}
+_FPS_RE = re.compile(r"^(\d+(?:\.\d+)?)(?:fps|df)$")
+
+# 長さの単位 → cm（固定の接線の y は cm で書かれている）
+_CM_PER_UNIT = {"mm": 0.1, "cm": 1.0, "m": 100.0, "km": 100000.0, "in": 2.54, "ft": 30.48,
+                "yd": 91.44, "mi": 160934.4}
+
+# カーブのブロック内の setAttr: 属性名・添字（範囲）・値
+_SETATTR_RE = re.compile(r'setAttr\b[^";]*"\.(\w+)(?:\[(\d+)(?::(\d+))?\])?"([^;]*);')
+_PLAYBACK_RE = re.compile(r"playbackOptions\b([^;\"]*)")
+_PLAYBACK_FLAGS = {"-min": "min", "-minTime": "min", "-max": "max", "-maxTime": "max",
+                   "-ast": "animStart", "-animationStartTime": "animStart",
+                   "-aet": "animEnd", "-animationEndTime": "animEnd"}
+
+
+def fps_of(time_unit: str) -> float:
+    u = (time_unit or "film").strip()
+    if u in _FPS:
+        return _FPS[u]
+    m = _FPS_RE.match(u)
+    if m:
+        return float(m.group(1))
+    return 24.0
+
+
+def playback_range(ms: MaScene) -> Dict[str, float]:
+    """sceneConfigurationScriptNode の playbackOptions から再生範囲を読む（なければ空）。"""
+    nodes = [n for n in ms.nodes if n.type == "script" and n.span is not None]
+    nodes.sort(key=lambda n: n.name != "sceneConfigurationScriptNode")
+    for n in nodes:
+        m = _PLAYBACK_RE.search(ms.text, n.span[0], n.span[1])
+        if not m:
+            continue
+        toks = m.group(1).split()
+        out: Dict[str, float] = {}
+        for i, t in enumerate(toks[:-1]):
+            key = _PLAYBACK_FLAGS.get(t)
+            if key:
+                try:
+                    out[key] = float(toks[i + 1])
+                except ValueError:
+                    pass
+        if out:
+            return out
+    return {}
+
+
+def _floats(body: str) -> List[float]:
+    if numpy_enabled():
+        try:
+            return np.fromstring(body, dtype=np.float64, sep=" ")
+        except (ValueError, DeprecationWarning):
+            pass
+    return [R.to_float(t) for t in body.split()]
+
+
+def _bool(tok: str) -> bool:
+    return tok.lower() in ("yes", "true", "on", "1")
+
+
+class Curve:
+    """1 本のカーブのキー（単位はまだファイルのまま）"""
+    __slots__ = ("node", "kind", "times", "values", "kit", "kot", "fixed", "tan", "weighted", "pre", "post")
+
+    def __init__(self, node: MaNode, kind: str):
+        self.node = node
+        self.kind = kind
+        self.times: List[float] = []
+        self.values: List[float] = []
+        self.kit: Dict[int, int] = {}
+        self.kot: Dict[int, int] = {}
+        self.fixed: Dict[str, Dict[int, float]] = {"kix": {}, "kiy": {}, "kox": {}, "koy": {}}
+        self.tan = 0
+        self.weighted = False
+        self.pre = 0
+        self.post = 0
+
+
+def parse_curve(text: str, node: MaNode) -> Curve:
+    """animCurve のブロック（node.span）からキーと設定を読む。"""
+    cv = Curve(node, CURVE_TYPES[node.type])
+    pieces: List[Tuple[int, object]] = []            # (先頭の添字, [時刻, 値, 時刻, 値, ...])
+    a, b = node.span
+    for m in _SETATTR_RE.finditer(text, a, b):
+        name, i0, body = m.group(1), m.group(2), m.group(4)
+        start = int(i0) if i0 is not None else 0
+        if name in ("ktv", "keyTimeValue"):
+            pieces.append((start, _floats(body)))
+        elif name in ("kit", "kot", "keyTanInType", "keyTanOutType"):
+            d = cv.kit if name in ("kit", "keyTanInType") else cv.kot
+            for k, tok in enumerate(body.split()):
+                try:
+                    d[start + k] = int(float(tok))
+                except ValueError:
+                    pass
+        elif name in ("kix", "kiy", "kox", "koy"):
+            d = cv.fixed[name]
+            for k, v in enumerate(_floats(body)):
+                d[start + k] = float(v)
+        elif name in ("tan", "tangentType"):
+            toks = body.split()
+            if toks:
+                cv.tan = int(float(toks[0]))
+        elif name in ("wgt", "weightedTangents"):
+            toks = body.split()
+            if toks:
+                cv.weighted = _bool(toks[0])
+        elif name in ("pre", "preInfinity", "pst", "postInfinity"):
+            toks = body.split()
+            if toks:
+                v = int(float(toks[0]))
+                if name in ("pre", "preInfinity"):
+                    cv.pre = v
+                else:
+                    cv.post = v
+    if len(pieces) == 1 and pieces[0][0] == 0:
+        flat = pieces[0][1]
+        cv.times = flat[0::2]
+        cv.values = flat[1::2]
+    elif pieces:
+        keys: Dict[int, Tuple[float, float]] = {}
+        for start, flat in pieces:
+            for k in range(len(flat) // 2):
+                keys[start + k] = (float(flat[2 * k]), float(flat[2 * k + 1]))
+        order = sorted(keys)
+        cv.times = [keys[k][0] for k in order]
+        cv.values = [keys[k][1] for k in order]
+        remap = {k: j for j, k in enumerate(order)}
+        cv.kit = {remap[k]: v for k, v in cv.kit.items() if k in remap}
+        cv.kot = {remap[k]: v for k, v in cv.kot.items() if k in remap}
+        for name in cv.fixed:
+            cv.fixed[name] = {remap[k]: v for k, v in cv.fixed[name].items() if k in remap}
+    n = min(len(cv.times), len(cv.values))
+    cv.times, cv.values = cv.times[:n], cv.values[:n]
+    return cv
+
+
+def _pack(values, dtype: str) -> dict:
+    """数値の列を base64 のバイナリにする（JSON の数値より小さく、変換も速い）。リトルエンディアン。"""
+    if isinstance(values, (bytes, bytearray)):
+        data = bytes(values)
+    elif numpy_enabled():
+        arr = np.asarray(values, dtype="<f4" if dtype == "float32" else "u1")
+        data = arr.tobytes()
+    else:
+        arr = array("f" if dtype == "float32" else "B", values)
+        if arr.itemsize > 1 and array("H", [1]).tobytes()[0] != 1:
+            arr.byteswap()
+        data = arr.tobytes()
+    return {"dtype": dtype, "count": len(values), "data": base64.b64encode(data).decode("ascii")}
+
+
+def unpack(entry) -> list:
+    """_pack の逆（テスト・確認用）。数値のリストもそのまま受け付ける。"""
+    if isinstance(entry, list):
+        return entry
+    raw = base64.b64decode(entry["data"])
+    arr = array("f" if entry["dtype"] == "float32" else "B")
+    arr.frombytes(raw)
+    if arr.itemsize > 1 and array("H", [1]).tobytes()[0] != 1:
+        arr.byteswap()
+    return list(arr)
+
+
+def _concat(chunks):
+    if numpy_enabled():
+        return np.concatenate([np.asarray(c, dtype=np.float64) for c in chunks]) if chunks else np.zeros(0)
+    out: List[float] = []
+    for c in chunks:
+        out.extend(c)
+    return out
+
+
+def _scaled(values, k: float):
+    if k == 1.0:
+        return values
+    if numpy_enabled():
+        return np.asarray(values, dtype=np.float64) * k
+    return [v * k for v in values]
+
+
+def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn = None) -> Optional[dict]:
+    """表示するノード（out_index にあるノード）を動かすカーブを読み、共通 JSON の animation を作る。
+
+    カーブがなければ None。progress は (0〜1, 文言) で呼ぶ（例外を投げれば中止できる）。
+    """
+    import time
+    t0 = time.perf_counter()
+    fps = fps_of(ms.time_unit)
+    ang_k = 180.0 / math.pi if ms.angular_unit in ("rad", "radian") else 1.0
+    cm = _CM_PER_UNIT.get(ms.linear_unit, 1.0)
+    rad2deg = 180.0 / math.pi
+    warnings: List[str] = []
+
+    # --- カーブ → 動かす属性 ---------------------------------------------
+    targets: Dict[int, List[Tuple[int, str]]] = {}        # id(カーブ) → [(ノード番号, 属性)]
+    curve_nodes: Dict[int, MaNode] = {}
+    skipped_attr: Dict[str, int] = {}
+    hidden_targets = 0
+    via: Dict[str, int] = {}
+    for src, sattr, dst, dattr in ms.connections:
+        if src.type not in CURVE_TYPES or src.span is None or sattr not in ("o", "output"):
+            continue
+        ni = out_index.get(id(dst))
+        if ni is None:
+            if dst.type in TRANSFORM_TYPES or dst.is_dag:
+                hidden_targets += 1                       # コントローラーなど、表示しないノード
+            else:
+                via[dst.type] = via.get(dst.type, 0) + 1
+            continue
+        if dattr in CHANNELS:
+            targets.setdefault(id(src), []).append((ni, dattr))
+            curve_nodes[id(src)] = src
+        else:
+            skipped_attr[dattr] = skipped_attr.get(dattr, 0) + 1
+
+    # 表示するノードの移動・回転・スケールが、カーブ以外（コンストレイント・IK・エクスプレッションなど）で決まっている
+    other_driven: Dict[str, List[str]] = {}
+    kept_nodes = {i: n for n in ms.nodes for i in [out_index.get(id(n))] if i is not None}
+    for ni, n in kept_nodes.items():
+        for key, (src, _sattr) in n.inputs.items():
+            base = key.split("[")[0].split(".")[0]
+            if base in _CHANNEL_BASES and src.type not in CURVE_TYPES:
+                other_driven.setdefault(src.type, []).append(n.name)
+                break
+
+    if not targets:
+        return None
+
+    # --- カーブの読み込み ------------------------------------------------
+    order = sorted(curve_nodes.values(), key=lambda c: c.order)
+    curves_out = []
+    channels_out = []
+    times_chunks, values_chunks = [], []
+    types = bytearray()                                    # キーごとに (入りの種類, 出の種類)。0 はカーブの既定
+    fixed: List[float] = []
+    offset = 0
+    total = max(len(order), 1)
+    for ci, node in enumerate(order):
+        if progress is not None and ci % 64 == 0:
+            progress(ci / total, "アニメーションを読み込み中 %d%%" % int(ci * 100 / total))
+        cv = parse_curve(ms.text, node)
+        n = len(cv.times)
+        if n == 0:
+            continue
+        vk = ang_k if cv.kind == "TA" else 1.0
+        tk = rad2deg if cv.kind == "TA" else (1.0 / cm if cv.kind == "TL" else 1.0)
+        times_chunks.append(cv.times)
+        values_chunks.append(_scaled(cv.values, vk))
+        chunk = bytearray(2 * n)
+        for k, v in cv.kit.items():
+            if 0 <= k < n:
+                chunk[2 * k] = v & 255
+        for k, v in cv.kot.items():
+            if 0 <= k < n:
+                chunk[2 * k + 1] = v & 255
+        types += chunk
+        fx = cv.fixed
+        for k in sorted(set(fx["kix"]) | set(fx["kox"])):
+            ix, iy = fx["kix"].get(k), fx["kiy"].get(k)
+            ox, oy = fx["kox"].get(k), fx["koy"].get(k)
+            nan = float("nan")
+            fixed.extend((offset + k,
+                          ix * fps if ix is not None and iy is not None else nan,
+                          iy * tk if ix is not None and iy is not None else nan,
+                          ox * fps if ox is not None and oy is not None else nan,
+                          oy * tk if ox is not None and oy is not None else nan))
+        index = len(curves_out)
+        curves_out.append({"name": node.name, "type": cv.kind, "offset": offset, "count": n,
+                           "tangent": cv.tan, "weighted": cv.weighted, "pre": cv.pre, "post": cv.post})
+        for ni, attr in targets[id(node)]:
+            channels_out.append({"node": ni, "attr": attr, "curve": index})
+        offset += n
+
+    if not channels_out:
+        return None
+    channels_out.sort(key=lambda c: (c["node"], c["attr"]))
+
+    # --- 動くノードの静的な値（ビューアがフレームごとにローカル行列を組み立て直すため）------
+    animated = {c["node"] for c in channels_out}
+    scaled = {c["node"] for c in channels_out if c["attr"][0] == "s"}
+    rest_nodes = []
+    for ni in sorted(kept_nodes):
+        n = kept_nodes[ni]
+        is_src = None
+        if n.type == "joint" and n.flag("ssc", True) and "is" in n.inputs:
+            is_src = n.inputs["is"][0]
+        is_idx = out_index.get(id(is_src)) if is_src is not None else None
+        if ni not in animated and not (is_idx is not None and is_idx in scaled):
+            continue
+        rest_nodes.append(rest_entry(n, ni, ang_k, is_src, is_idx))
+
+    # --- 警告 -------------------------------------------------------------
+    if other_driven:
+        names = sum(other_driven.values(), [])
+        kinds = "・".join("%s（%d）" % (k, len(v)) for k, v in sorted(other_driven.items(), key=lambda kv: -len(kv[1])))
+        warnings.append("アニメーション: %d 個のノードは、カーブ以外（%s）で動くため再生されません（例: %s）。"
+                        % (len(names), kinds, "、".join(names[:3])))
+    if via:
+        warnings.append("アニメーション: %s を経由するカーブは再生しません（%d 本）。" % (
+            "・".join(sorted(via)), sum(via.values())))
+    if skipped_attr:
+        warnings.append("アニメーション: 移動・回転・スケール以外の属性（%s）のカーブは再生しません。"
+                        % "・".join(sorted(skipped_attr)[:8]))
+    if hidden_targets:
+        warnings.append("アニメーション: 表示していないノード（コントローラーなど）を動かすカーブ %d 本は読み込みません。"
+                        % hidden_targets)
+
+    times_all = _concat(times_chunks)
+    values_all = _concat(values_chunks)
+    pb = playback_range(ms)
+    t_first = float((np.min if numpy_enabled() else min)(times_all)) if len(times_all) else 0.0
+    t_last = float((np.max if numpy_enabled() else max)(times_all)) if len(times_all) else 0.0
+    start = pb.get("min", t_first)
+    end = pb.get("max", t_last)
+    if end < start:
+        start, end = end, start
+    return {
+        "fps": fps,
+        "timeUnit": ms.time_unit,
+        "start": start,
+        "end": end,
+        "animStart": pb.get("animStart", min(start, t_first)),
+        "animEnd": pb.get("animEnd", max(end, t_last)),
+        "current": ms.current_time if ms.current_time is not None else start,
+        "curves": curves_out,
+        "channels": channels_out,
+        "nodes": rest_nodes,
+        "times": _pack(times_all, "float32"),
+        "values": _pack(values_all, "float32"),
+        "tangentTypes": _pack(types, "uint8"),
+        "fixedTangents": _pack(fixed, "float32"),
+        "warnings": warnings,
+        "stats": {"curves": len(curves_out), "keys": offset, "channels": len(channels_out),
+                  "nodes": len(animated), "seconds": round(time.perf_counter() - t0, 4)},
+    }
+
+
+def rest_entry(n: MaNode, ni: int, ang_k: float, is_src: Optional[MaNode], is_idx: Optional[int]) -> dict:
+    """ローカル行列の材料（角度は度）。アニメーションしない成分はこの値のまま使う。"""
+    deg = lambda v: [v[0] * ang_k, v[1] * ang_k, v[2] * ang_k]  # noqa: E731
+    ro_i = int(n.xattrs.get("ro", 0) or 0)
+    e = {
+        "node": ni,
+        "joint": n.type == "joint",
+        "ro": ro_i if 0 <= ro_i < 6 else 0,
+        "t": list(n.vec3("t")), "r": deg(n.vec3("r")), "s": list(n.vec3("s")),
+        "ra": deg(n.vec3("ra")),
+    }
+    if n.type == "joint":
+        e["jo"] = deg(n.vec3("jo"))
+        if is_src is not None:
+            e["isNode"] = is_idx if is_idx is not None else -1
+            e["isScale"] = list(is_src.vec3("s"))
+    else:
+        for k in ("rp", "sp", "rpt", "spt", "sh"):
+            v = n.vec3(k)
+            if any(v):
+                e[k] = list(v)
+    return e
+
+
+def rest_matrix(e: dict) -> List[float]:
+    """rest_entry からローカル行列を組み立てる（ビューアの計算と同じ。テスト用）"""
+    rad = lambda v: [x * math.pi / 180.0 for x in v]  # noqa: E731
+    ro = M.ROTATE_ORDERS[e.get("ro", 0)]
+    if e["joint"]:
+        ips = e.get("isScale") if "isScale" in e else None
+        return M.joint_matrix(t=e["t"], r=rad(e["r"]), s=e["s"], ro=ro, ra=rad(e["ra"]), jo=rad(e.get("jo", [0, 0, 0])),
+                              inverse_parent_scale=ips)
+    z = [0.0, 0.0, 0.0]
+    return M.transform_matrix(t=e["t"], r=rad(e["r"]), s=e["s"], ro=ro, ra=rad(e["ra"]), rp=e.get("rp", z),
+                              sp=e.get("sp", z), rpt=e.get("rpt", z), spt=e.get("spt", z), sh=e.get("sh", z))

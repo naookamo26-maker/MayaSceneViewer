@@ -122,7 +122,43 @@ def validate(scene: dict) -> List[str]:
     for i, mat in enumerate(scene.get("materials") or []):
         if not (-1 <= mat.get("texture", -1) < ntex):
             raise SchemaError("materials[%d] の texture が範囲外です" % i)
+    anim = scene.get("animation")
+    if anim:
+        validate_animation(anim, nn)
     return notes
+
+
+def _array_len(entry) -> int:
+    """数値の配列（リスト、または {"dtype", "count", "data"} の base64）の要素数"""
+    if isinstance(entry, list):
+        return len(entry)
+    if isinstance(entry, dict) and isinstance(entry.get("data"), str):
+        return int(entry.get("count", 0))
+    raise SchemaError("animation の配列の形式が不正です")
+
+
+def validate_animation(anim: dict, nn: int) -> None:
+    if not (float(anim.get("fps", 0)) > 0):
+        raise SchemaError("animation.fps が不正です")
+    nkeys = _array_len(anim.get("times", []))
+    if _array_len(anim.get("values", [])) != nkeys:
+        raise SchemaError("animation の times と values の長さが合いません")
+    if _array_len(anim.get("tangentTypes", [])) not in (0, nkeys * 2):
+        raise SchemaError("animation.tangentTypes の長さが合いません")
+    if _array_len(anim.get("fixedTangents", [])) % 5:
+        raise SchemaError("animation.fixedTangents の長さが 5 の倍数ではありません")
+    curves = anim.get("curves") or []
+    for i, c in enumerate(curves):
+        if c.get("offset", -1) < 0 or c.get("count", 0) < 1 or c["offset"] + c["count"] > nkeys:
+            raise SchemaError("animation.curves[%d] のキーの範囲が不正です" % i)
+    for i, ch in enumerate(anim.get("channels") or []):
+        if not (0 <= ch.get("node", -1) < nn) or not (0 <= ch.get("curve", -1) < len(curves)):
+            raise SchemaError("animation.channels[%d] が範囲外です" % i)
+        if ch.get("attr") not in ("tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz"):
+            raise SchemaError("animation.channels[%d] の attr が不正です" % i)
+    for i, n in enumerate(anim.get("nodes") or []):
+        if not (0 <= n.get("node", -1) < nn):
+            raise SchemaError("animation.nodes[%d] が範囲外です" % i)
 
 
 def round_list(values, ndigits: int = 6) -> list:

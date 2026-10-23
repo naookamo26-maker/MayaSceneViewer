@@ -19,6 +19,8 @@ import { UI } from './ui.js';
 import { connectBridge, isQtHost } from './bridge.js';
 import { History, sameChanges } from './history.js';
 import { compareGpuCpuSkinning } from './skinCheck.js';
+import { AnimationClip } from './animation.js';
+import { Timeline } from './timeline.js';
 
 const VERSION = '1.0.0';
 const D2R = Math.PI / 180;
@@ -56,7 +58,13 @@ class ViewerApp {
     this.bridge = null;
     this.transfer = null;
     this.sceneRadius = 50;
+    this.clip = null;           // AnimationClip（アニメーションを読み込んだとき）
+    this.frame = 0;             // 現在のフレーム
+    this.playing = false;
+    this.sceneLoading = false;  // シーンの転送が終わり、組み立てを待っている間
+    this.pendingAnimation = null;   // シーンの組み立て前に届いたアニメーション
     this.ui = new UI(this);
+    this.timeline = new Timeline(this);
     this.ui.setHost(isQtHost() ? 'qt' : 'browser');
     this.ui.syncSettings(this.settings);     // ツールバーの表示を初期設定（DEFAULTS）に合わせる
     try {
@@ -195,7 +203,23 @@ class ViewerApp {
         e.preventDefault();
         return;
       }
+      if (e.altKey && !e.ctrlKey && !e.metaKey && this.clip) {
+        // Maya と同じ: Alt+V = 再生／停止、Alt+, / Alt+. = 前／次のフレーム（記号はキーの位置で判定）
+        if (e.code === 'KeyV') this.togglePlay();
+        else if (e.code === 'Comma') this.stepFrame(-1);
+        else if (e.code === 'Period') this.stepFrame(1);
+        else return;
+        e.preventDefault();
+        return;
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (this.clip && (k === ',' || k === '.' || k === 'home' || k === 'end')) {
+        if (k === ',') this.stepKey(-1);            // Maya と同じ: , / . = 前／次のキー
+        else if (k === '.') this.stepKey(1);
+        else this.goToEdge(k === 'home' ? -1 : 1);
+        e.preventDefault();
+        return;
+      }
       if (k === 'h') {                                  // Maya と同じ: H = 切り替え、Shift+H = 表示
         if (e.shiftKey) this.setNodeVisible(this.selected, true);
         else this.toggleNodeVisible(this.selected);
@@ -265,8 +289,10 @@ class ViewerApp {
   }
 
   loadScene(data) {
+    this.sceneLoading = false;
     if (!this.renderer) return false;
     const t0 = performance.now();
+    this.pause();
     try {
       validateScene(data);
       this.clearScene();
@@ -346,6 +372,10 @@ class ViewerApp {
           + `（${marks.map(([k, v]) => `${k} ${ms(v)}`).join('・')}）`);
         this.timing = null;
       }));
+      // アニメーション（JSON に含まれているもの、またはシーンの組み立て前に届いたもの）
+      const anim = this.pendingAnimation || data.animation;
+      this.pendingAnimation = null;
+      if (anim) this.setAnimation(anim);
       return true;
     } catch (err) {
       this.ui.hideLoading();
@@ -369,10 +399,15 @@ class ViewerApp {
     this.selected = -1;
     this.picked = null;
     if (this.marker) this.marker.visible = false;
+    this.pause();
+    this.clip = null;
+    this.timeline.setClip(null);
   }
 
   clearAll() {
+    this.pendingAnimation = null;
     this.clearScene();
+    this.timeline.setStatus('');
     this.ui.populate({ nodes: [], meshes: [] }, { childrenOf: [], meshes: [] });
     this.ui.setWarnings([]);
     this.ui.setTitle('');
@@ -680,6 +715,146 @@ class ViewerApp {
   }
 
   // ------------------------------------------------------------------ 選択
+  // ------------------------------------------------------------------ アニメーション
+  /** アニメーション（共通 JSON の animation）を読み込む。シーンの組み立て前なら、組み立て後に読み込む */
+  setAnimation(anim) {
+    if (this.sceneLoading || !this.built) {
+      this.pendingAnimation = anim;
+      return true;
+    }
+    let clip;
+    try {
+      clip = new AnimationClip(anim);
+      const bad = clip.nodes.find((ni) => !(ni >= 0 && ni < this.data.nodes.length));
+      if (bad !== undefined) throw new Error(`ノード番号 ${bad} がシーンにありません`);
+    } catch (err) {
+      this.timeline.setStatus('アニメーションを読み込めませんでした: ' + (err && err.message || err));
+      this.log('error', err && err.stack || err);
+      return false;
+    }
+    this.pause();
+    this.clip = clip;
+    this.data.animation = anim;
+    // 姿勢の基準が変わったときに子のスケール補正も掛け直すよう、動くノードとその子を覚えておく
+    const touched = new Set();
+    for (const ni of clip.nodes) {
+      touched.add(ni);
+      for (const c of this.built.childrenOf[ni]) touched.add(c);
+    }
+    this.animTouched = [...touched].sort((a, b) => a - b);
+    if (clip.warnings.length) this.ui.setWarnings((this.ui.warnings || []).concat(clip.warnings));
+    this.timeline.setClip(clip);
+    this.updateTimelineKeys();
+    this.applyFrame(clip.current);
+    const st = anim.stats || {};
+    this.ui.setMessage(`アニメーションを読み込みました（カーブ ${num(st.curves ?? clip.curves.length)} 本・`
+      + `動くノード ${num(clip.nodes.length)} 個・${clip.start}〜${clip.end} フレーム）`, 6000);
+    this.log('info', `animation loaded: ${clip.curves.length} curves, ${clip.nodes.length} nodes`);
+    return true;
+  }
+
+  /** フレーム f の姿勢にする（ポーズ確認の追加分はそのまま上に重ねる） */
+  applyFrame(f) {
+    if (!this.clip || !this.built) return;
+    this.frame = f;
+    const mats = this.clip.evaluate(f);
+    const bind = this.settings.poseSource === 'bind';
+    for (const [ni, m] of mats) {
+      const ud = this.built.nodeObjects[ni].userData;
+      ud.fileMatrix.copy(m);
+      ud.baseMatrix.copy(bind && ud.bindMatrix ? ud.bindMatrix : m);
+    }
+    for (const ni of this.animTouched) this.pose.apply(ni);
+    this.timeline.setFrame(f);
+    this.afterPoseChange(this.playing);
+  }
+
+  /** タイムラインを操作したとき。バインドポーズの表示中なら「ファイルの値」に切り替える（アニメーションが見えないため） */
+  ensureAnimatedPose() {
+    if (this.settings.poseSource === 'bind' && hasBindPose(this.built)) {
+      this.setSetting('poseSource', 'file');
+      this.ui.setMessage('アニメーションを確認するため、姿勢の基準を「ファイルの値」に切り替えました', 6000);
+    }
+  }
+
+  scrubTo(f) {
+    if (!this.clip) return;
+    this.pause();
+    this.ensureAnimatedPose();
+    this.applyFrame(f);
+  }
+
+  stepFrame(d) {
+    if (!this.clip) return;
+    this.scrubTo(this.clip.wrap(Math.round(this.frame) + d));
+  }
+
+  /** 前・次のキー（選択ノードにキーがあればそのノードのキー、なければすべてのキー） */
+  stepKey(d) {
+    if (!this.clip) return;
+    const times = this.keyTimesForSelection();
+    const eps = 1e-6;
+    const t = d > 0 ? times.find((x) => x > this.frame + eps) : [...times].reverse().find((x) => x < this.frame - eps);
+    if (t !== undefined) this.scrubTo(t);
+    else this.ui.setMessage(d > 0 ? 'これより後のキーはありません' : 'これより前のキーはありません');
+  }
+
+  goToEdge(d) {
+    if (this.clip) this.scrubTo(d < 0 ? this.clip.start : this.clip.end);
+  }
+
+  setPlaybackRange(start, end) {
+    if (!this.clip) return;
+    if (!(Number.isFinite(start) && Number.isFinite(end))) { this.timeline.setRange(this.clip.start, this.clip.end); return; }
+    if (end < start) [start, end] = [end, start];
+    this.clip.start = start;
+    this.clip.end = end;
+    this.timeline.setRange(start, end);
+    if (this.frame < start || this.frame > end) this.scrubTo(Math.min(Math.max(this.frame, start), end));
+  }
+
+  togglePlay() { if (this.playing) this.pause(); else this.play(); }
+
+  /** 再生（実時間。間に合わないときはフレームを飛ばす。範囲の最後まで行くと先頭に戻る） */
+  play() {
+    if (!this.clip || this.playing) return;
+    this.ensureAnimatedPose();
+    this.endPoseEdit();
+    const from = this.frame >= this.clip.start && this.frame <= this.clip.end ? Math.round(this.frame) : this.clip.start;
+    this.playing = true;
+    this.timeline.setPlaying(true);
+    const t0 = performance.now();
+    const tick = (now) => {
+      if (!this.playing || !this.clip) return;
+      const f = this.clip.wrap(from + Math.floor(((now - t0) / 1000) * this.clip.fps));
+      if (f !== this.frame) this.applyFrame(f);
+      this.playHandle = requestAnimationFrame(tick);
+    };
+    this.playHandle = requestAnimationFrame(tick);
+  }
+
+  pause() {
+    if (!this.playing) return;
+    this.playing = false;
+    cancelAnimationFrame(this.playHandle);
+    this.timeline.setPlaying(false);
+    // 再生中は省いていた、パネルの情報を更新する
+    if (this.built) this.afterPoseChange();
+  }
+
+  keyTimesForSelection() {
+    if (!this.clip) return [];
+    const own = this.selected >= 0 ? this.clip.keyTimes(this.selected) : [];
+    return own.length ? own : this.clip.keyTimes();
+  }
+
+  updateTimelineKeys() {
+    if (!this.clip) return;
+    const own = this.selected >= 0 && this.clip.keyTimes(this.selected).length;
+    this.timeline.setKeys(this.keyTimesForSelection(),
+      own ? `${this.data.nodes[this.selected].name} のキー` : 'すべてのキー');
+  }
+
   select(ni, opts = {}) {
     if (!this.built || ni < 0 || ni >= this.data.nodes.length) return;
     this.selected = ni;
@@ -689,6 +864,7 @@ class ViewerApp {
     this.ui.showPoseFor(ni, this.pose.get(ni));
     this.updateGizmo();
     if (this.settings.weightMode === 'selected') this.applyWeights();
+    this.updateTimelineKeys();
     if (opts.notify && this.bridge && this.bridge.nodeSelected) this.bridge.nodeSelected(this.data.nodes[ni].path);
     this.requestRender();
   }
@@ -724,6 +900,7 @@ class ViewerApp {
     this.ui.showPoseFor(-1);
     this.updateGizmo();
     if (this.settings.weightMode === 'selected') this.applyWeights();
+    this.updateTimelineKeys();
     this.requestRender();
   }
 
@@ -749,6 +926,9 @@ class ViewerApp {
       bindSource: n.bindSource || null,
       usingBind: this.settings.poseSource === 'bind' && !!n.bindMatrix,
       drivenBy: n.drivenBy || null,
+      animChannels: this.clip ? this.clip.channelsOf(ni) : [],
+      animValues: this.clip ? this.clip.valuesOf(ni) : null,
+      frame: this.frame,
     };
   }
 
@@ -912,13 +1092,14 @@ class ViewerApp {
     if (this.bridge && this.bridge.historyChanged) this.bridge.historyChanged(h.canUndo, h.canRedo, h.undoLabel, h.redoLabel);
   }
 
-  afterPoseChange() {
+  /** @param light 再生中など、パネルの情報の更新を省くとき */
+  afterPoseChange(light = false) {
     this.built.root.updateMatrixWorld(true);
     this.overlay.update();
     this.poseDirty = true;
     this.updateMarker();
-    if (this.picked) this.ui.showVertexInfo(this.vertexInfo());
-    if (this.selected >= 0) this.ui.showNodeInfo(this.nodeInfo(this.selected));
+    if (!light && this.picked) this.ui.showVertexInfo(this.vertexInfo());
+    if (!light && this.selected >= 0) this.ui.showNodeInfo(this.nodeInfo(this.selected));
     if (!this.gizmoDragging) this.syncGizmo();
     this.requestRender();
   }
@@ -1025,6 +1206,10 @@ class ViewerApp {
       timing: this.lastTiming || null,
       settings: { ...this.settings },
       webgl: !!this.renderer,
+      animation: this.clip ? {
+        frame: this.frame, playing: this.playing, start: this.clip.start, end: this.clip.end, fps: this.clip.fps,
+        curves: this.clip.curves.length, nodes: this.clip.nodes.length,
+      } : null,
     };
   }
 }
@@ -1047,6 +1232,7 @@ window.mayaViewer = {
       app.timing = { ...(app.timing || {}), parse: typeof data === 'string' ? performance.now() - t : 0 };
       return app.loadScene(obj);
     } catch (err) {
+      app.sceneLoading = false;
       app.ui.hideLoading();
       app.ui.showError('データを読めませんでした。\n' + err.message);
       return false;
@@ -1063,11 +1249,34 @@ window.mayaViewer = {
   endTransfer() {
     const text = app.transfer ? app.transfer.join('') : '';
     app.transfer = null;
+    app.sceneLoading = true;            // 組み立てまでに届いたアニメーションは、組み立て後に読み込む
     app.timing = { transfer: performance.now() - (app.transferStart || performance.now()) };
     app.ui.showLoading('シーンを組み立て中');
     setTimeout(() => this.loadScene(text), 16);
     return text.length;
   },
+  /** アニメーションを分割して受け取る（シーンのあとに届く） */
+  beginAnimationTransfer() { app.transfer = []; return true; },
+  endAnimationTransfer() {
+    const text = app.transfer ? app.transfer.join('') : '';
+    app.transfer = null;
+    try {
+      return app.setAnimation(JSON.parse(text));
+    } catch (err) {
+      app.timeline.setStatus('アニメーションを読めませんでした: ' + err.message);
+      return false;
+    }
+  },
+  setAnimation(data) { return app.setAnimation(typeof data === 'string' ? JSON.parse(data) : data); },
+  /** アニメーションの読み込み状況（空文字で消す） */
+  setAnimationStatus(text) {
+    // 組み立て待ちのシーンがあれば、いまのアニメーションはこのあと消えるので状況を出す
+    app.timeline.setStatus(app.clip && !app.sceneLoading ? '' : text);
+    return true;
+  },
+  setFrame(f) { app.scrubTo(+f); return app.frame; },
+  play() { app.play(); },
+  pause() { app.pause(); },
   showLoading(text, frac) { app.ui.setEmpty(false); app.ui.showLoading(text, frac); },
   hideLoading() { app.ui.hideLoading(); if (!app.built) app.ui.setEmpty(true); },
   showError(text) { app.ui.hideLoading(); app.ui.showError(text); },

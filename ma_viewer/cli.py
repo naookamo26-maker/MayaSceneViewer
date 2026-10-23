@@ -23,14 +23,14 @@ def _progress(frac, msg):
 def cmd_export(args) -> int:
     from .extract_ma import load_ma
     t0 = time.time()
-    scene = load_ma(args.input, progress=None if args.quiet else _progress)
+    scene = load_ma(args.input, progress=None if args.quiet else _progress, animation=not args.no_animation)
     if not args.quiet:
         sys.stderr.write("\n")
     out = args.output or os.path.splitext(args.input)[0] + ".json"
     with open(out, "w", encoding="utf-8") as f:
         json.dump(scene, f, ensure_ascii=False, separators=(",", ":"), indent=None if args.compact else 1)
     print("書き出しました: %s（%.2f 秒）" % (out, time.time() - t0))
-    for w in scene["warnings"]:
+    for w in scene["warnings"] + (scene.get("animation") or {}).get("warnings", []):
         print("  警告: " + w)
     return 0
 
@@ -38,7 +38,7 @@ def cmd_export(args) -> int:
 def cmd_info(args) -> int:
     from .extract_ma import load_ma
     t0 = time.time()
-    scene = load_ma(args.input)
+    scene = load_ma(args.input, animation=True)
     st = scene["stats"]
     print("ファイル: %s" % args.input)
     print("Maya: %s / 単位: %s, %s" % (scene["source"]["mayaVersion"], scene["source"]["linearUnit"],
@@ -74,9 +74,15 @@ def cmd_info(args) -> int:
                 "%s（%s）" % (os.path.basename(t["resolved"]), "見つかった") if t["resolved"]
                 else "%s（見つからない）" % t["path"])
             print("      %s（%s）: %d 面 → %s" % (md["name"], md["type"], n, tex))
-    if scene["warnings"]:
+    anim = scene.get("animation")
+    if anim:
+        a = anim["stats"]
+        print("アニメーション: カーブ %d 本・キー %d 個・ノード %d 個 / %s（%g fps）・再生範囲 %g〜%g"
+              % (a["curves"], a["keys"], a["nodes"], anim["timeUnit"], anim["fps"], anim["start"], anim["end"]))
+    warnings = scene["warnings"] + (anim or {}).get("warnings", [])
+    if warnings:
         print("警告:")
-        for w in scene["warnings"]:
+        for w in warnings:
             print("  - " + w)
     print("処理時間: %.2f 秒" % (time.time() - t0))
     return 0
@@ -105,6 +111,7 @@ def main(argv=None) -> int:
     pe.add_argument("-o", "--output")
     pe.add_argument("--compact", action="store_true", help="改行なしで出力")
     pe.add_argument("-q", "--quiet", action="store_true")
+    pe.add_argument("--no-animation", action="store_true", help="アニメーションを書き出さない")
     pi = sub.add_parser("info", help="内容の概要を表示")
     pi.add_argument("input")
     pv = sub.add_parser("view", help="ビューアを起動")

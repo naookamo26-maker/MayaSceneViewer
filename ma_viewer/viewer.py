@@ -224,6 +224,21 @@ class ViewerWidget(QtWidgets.QWidget):
         self._call("endTransfer")
         return len(payload)
 
+    def set_animation(self, anim: dict):
+        """アニメーション（共通 JSON の animation）を送る。シーンを送ったあとに呼ぶ。"""
+        t0 = time.perf_counter()
+        payload = json.dumps(anim, ensure_ascii=True, separators=(",", ":"))
+        self.last_dump_seconds = time.perf_counter() - t0
+        self._call("beginAnimationTransfer")
+        for i in range(0, len(payload), CHUNK_SIZE):
+            self.run_js("window.mayaViewer.appendChunk(%s)" % json.dumps(payload[i:i + CHUNK_SIZE]))
+        self._call("endAnimationTransfer")
+        return len(payload)
+
+    def set_animation_status(self, text: str):
+        """アニメーションの読み込み状況（タイムラインに表示）"""
+        self._call("setAnimationStatus", text)
+
     def select_path(self, path: str):
         self._call("selectByPath", path)
 
@@ -280,13 +295,20 @@ class ViewerWidget(QtWidgets.QWidget):
 # ---------------------------------------------------------------------------
 
 class _LoadWorker(QtCore.QObject):
+    """読み込みは 2 段階: シーン（finished）を先に渡して表示し、そのあとアニメーション（animationReady）を読む。"""
     progress = Signal(float, str)
     finished = Signal(object, float)
     failed = Signal(str, str)
+    animationProgress = Signal(float, str)
+    animationReady = Signal(object, float)     # animation（なければ None）, 秒
+    animationFailed = Signal(str, str)
+    done = Signal()
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, animation: bool = True):
         super().__init__()
         self.path = path
+        self.animation = animation
+        self.in_animation = False
         self._cancel = False
         self._last = 0.0
 
@@ -299,11 +321,12 @@ class _LoadWorker(QtCore.QObject):
         now = time.time()
         if now - self._last > 0.25 or frac >= 1.0:      # 再描画の負荷を抑えるため、更新は毎秒 4 回まで
             self._last = now
-            self.progress.emit(frac, msg)
+            (self.animationProgress if self.in_animation else self.progress).emit(frac, msg)
 
     @Slot()
     def run(self):
         t0 = time.time()
+        load_animation = None
         try:
             if self.path.lower().endswith(".json"):
                 from . import schema
@@ -312,13 +335,28 @@ class _LoadWorker(QtCore.QObject):
                 schema.validate(scene)
                 scene.setdefault("source", {}).setdefault("name", os.path.basename(self.path))
             else:
-                from .extract_ma import load_ma
-                scene = load_ma(self.path, progress=self._progress)
+                from .extract_ma import load_ma_staged
+                scene, load_animation = load_ma_staged(self.path, progress=self._progress)
             self.finished.emit(scene, time.time() - t0)
         except _Cancelled:
             self.failed.emit("中止しました", "")
+            load_animation = None
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc), traceback.format_exc())
+            load_animation = None
+        # 2 段階目: シーンの表示と並行して、アニメーションカーブを読む
+        if load_animation is not None and self.animation and not self._cancel:
+            self.in_animation = True
+            t1 = time.time()
+            try:
+                anim = load_animation(self._progress)
+                if not self._cancel:
+                    self.animationReady.emit(anim, time.time() - t1)
+            except _Cancelled:
+                pass
+            except Exception as exc:  # noqa: BLE001  アニメーションが読めなくてもシーンは表示したままにする
+                self.animationFailed.emit(str(exc), traceback.format_exc())
+        self.done.emit()
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +373,9 @@ Q: 選択　W: 移動　E: 回転　R: スケール　＋／−: ハンドルの
 Ctrl+Z（Z）: 元に戻す　Ctrl+Y・Ctrl+Shift+Z（Shift+Z）: やり直す<br>
 H: 選択中のノードの表示・非表示を切り替え　Ctrl+H: 隠す　Shift+H: 表示する（階層の目のアイコンでも切り替え）<br>
 4: ワイヤーのみ　5: シェーディング（テクスチャなし）　6: シェーディング（テクスチャあり）　J: ジョイント表示<br><br>
+<b>アニメーション</b>（.ma にキーがあるとき。ビューポート下端のタイムライン）<br>
+Alt+V: 再生・停止　Alt+, / Alt+.: 前／次のフレーム　, / .: 前／次のキー　Home / End: 先頭／最後<br>
+アニメーションはシーンの表示後に読み込みます（［ファイル］→［アニメーションを読み込む］でオフにできます）。<br><br>
 <b>パネル</b><br>
 左右のパネルは、見出し横の ‹ › で最小化できます。最小化した帯をクリックすると戻ります。<br>
 左パネルの幅は、右端をドラッグして変えられます（ダブルクリックで元の幅）。<br>
@@ -349,6 +390,27 @@ H: 選択中のノードの表示・非表示を切り替え　Ctrl+H: 隠す　
 """
 
 
+def _settings():
+    return QtCore.QSettings("MayaSceneViewer", "MayaSceneViewer")
+
+
+def _settings_bool(key: str, default: bool) -> bool:
+    try:
+        v = _settings().value(key, default)
+    except Exception:  # noqa: BLE001
+        return default
+    if isinstance(v, str):
+        return v.lower() in ("true", "1", "yes")
+    return bool(v)
+
+
+def _settings_set(key: str, value) -> None:
+    try:
+        _settings().setValue(key, value)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class ViewerWindow(QtWidgets.QMainWindow):
     """host: "standalone" または "maya" """
 
@@ -359,6 +421,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.current_scene = None
         self._thread = None
         self._worker = None
+        self._pending_open = None          # アニメーションの読み込みを中止したあとに開くファイル
+        self._anim_scene = None            # アニメーションを読み込み中のシーン
         self._sel_job = None
         self._last_viewer_path = None
 
@@ -438,9 +502,14 @@ class ViewerWindow(QtWidgets.QMainWindow):
         a_reload = self._act("再読み込み", self.reload, "F5", tip="同じファイルを読み直す")
         a_export = self._act("JSON として書き出し…", self.export_json, "Ctrl+Shift+E")
         a_close = self._act("閉じる", self.close, "Ctrl+W")
+        self.a_anim = self._act("アニメーションを読み込む", self._toggle_animation, checkable=True,
+                                checked=_settings_bool("loadAnimation", True),
+                                tip=".ma のアニメーションカーブを、シーンの表示後に読み込む（次に開くファイルから有効）")
         m = mb.addMenu("ファイル")
         for a in (a_open, a_reload, a_export):
             m.addAction(a)
+        m.addSeparator()
+        m.addAction(self.a_anim)
         m.addSeparator()
         m.addAction(a_close)
 
@@ -543,6 +612,12 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self._error(".ma または .json を指定してください。")
             return
         if self._thread is not None:
+            if self._worker is not None and self._worker.in_animation:
+                # アニメーションの読み込み中なら中止して、終わりしだい新しいファイルを開く
+                self._pending_open = path
+                self._worker.cancel()
+                self.viewer.set_animation_status("")
+                return
             self.statusBar().showMessage("読み込み中です。完了してから開き直してください。", 5000)
             return
         self.current_path = path
@@ -553,14 +628,16 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.log("info", "読み込み開始: %s" % path)
 
         self._thread = QtCore.QThread(self)
-        self._worker = _LoadWorker(path)
+        self._worker = _LoadWorker(path, animation=self.a_anim.isChecked())
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_loaded)
         self._worker.failed.connect(self._on_failed)
-        self._worker.finished.connect(self._thread.quit)
-        self._worker.failed.connect(self._thread.quit)
+        self._worker.animationProgress.connect(self._on_animation_progress)
+        self._worker.animationReady.connect(self._on_animation_ready)
+        self._worker.animationFailed.connect(self._on_animation_failed)
+        self._worker.done.connect(self._thread.quit)
         self._thread.finished.connect(self._on_thread_finished)
         self._thread.start()
 
@@ -572,6 +649,45 @@ class ViewerWindow(QtWidgets.QMainWindow):
     @Slot(object, float)
     def _on_loaded(self, scene, seconds):
         self.show_scene(scene, "解析 %.2f 秒" % seconds)
+        self._anim_scene = scene           # このシーンのアニメーションだけを受け取る
+        if self._worker is not None and self._worker.animation and not self.current_path.lower().endswith(".json"):
+            self.viewer.set_animation_status("アニメーションを読み込み中")
+
+    @Slot(float, str)
+    def _on_animation_progress(self, frac, msg):
+        if self._pending_open is None:
+            self.viewer.set_animation_status(msg)
+
+    @Slot(object, float)
+    def _on_animation_ready(self, anim, seconds):
+        if self._pending_open is not None or self.current_scene is None or self.current_scene is not self._anim_scene:
+            return
+        if anim is None:
+            self.viewer.set_animation_status("")
+            return
+        self.current_scene["animation"] = anim
+        size = self.viewer.set_animation(anim)
+        st = anim.get("stats", {})
+        for w in anim.get("warnings", []):
+            self.log("warn", w)
+        amount = "%.1f MB" % (size / 1048576.0) if size >= 1048576 else "%d KB" % max(1, size // 1024)
+        msg = "アニメーション: カーブ %s 本・キー %s 個・ノード %s 個（解析 %.2f 秒・転送 %s）" % (
+            "{:,}".format(st.get("curves", 0)), "{:,}".format(st.get("keys", 0)), "{:,}".format(st.get("nodes", 0)),
+            seconds, amount)
+        self.statusBar().showMessage(msg, 8000)
+        self.log("info", msg)
+
+    @Slot(str, str)
+    def _on_animation_failed(self, message, detail):
+        if detail:
+            self.log("error", detail)
+        self.viewer.set_animation_status("アニメーションを読み込めませんでした: %s" % message)
+        self.log("warn", "アニメーションを読み込めませんでした（シーンはそのまま表示します）: %s" % message)
+
+    def _toggle_animation(self, on):
+        _settings_set("loadAnimation", bool(on))
+        self.statusBar().showMessage("アニメーションを%s（次に開くファイルから）" % ("読み込みます" if on else "読み込みません"),
+                                     5000)
 
     @Slot(str, str)
     def _on_failed(self, message, detail):
@@ -586,6 +702,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self._thread.deleteLater()
         self._worker = None
         self._thread = None
+        if self._pending_open is not None:
+            path, self._pending_open = self._pending_open, None
+            self.open_file(path)
 
     def show_scene(self, scene: dict, note: str = ""):
         """共通 JSON をビューアに表示する（Maya 抽出や外部ツールからも使える）。"""
