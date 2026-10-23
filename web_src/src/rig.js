@@ -145,7 +145,9 @@ const RP_VARIANTS = [];
 for (const plane of ['points', 'axis']) {
   for (const twistSign of [1, -1, 0]) {
     for (const pvSpace of ['handle', 'world', 'start']) {
-      for (const side of [1, -1]) RP_VARIANTS.push({ plane, twistSign, pvSpace, side });
+      for (const pvConvert of ['full', 'rot', 'reflect']) {
+        for (const side of [1, -1]) RP_VARIANTS.push({ plane, twistSign, pvSpace, pvConvert, side });
+      }
     }
   }
 }
@@ -158,7 +160,9 @@ function variantLabel(v) {
   const tw = { 1: 'ひねり 今の向き', '-1': 'ひねり 逆向き', 0: 'ひねり 使わない' }[v.twistSign];
   const sp = { handle: '極ベクトル ハンドルの親の空間', world: '極ベクトル ワールド空間', start: '極ベクトル 開始ジョイントの親の空間' }[v.pvSpace];
   const pl = v.plane === 'axis' ? '面 開始ジョイントの軸（肘の回転軸）を基準面にそろえる' : '面 3 点（今の解き方）';
-  return `${pl}・${tw}・${sp}・肘 ${v.side === 1 ? '極ベクトルの側' : '反対側'}`;
+  const cv = { full: '空間の変換 スケール込み（今の解き方）', rot: '空間の変換 IK は回転だけ（反転を除く）',
+    reflect: '空間の変換 IK は回転だけ（反転を残す）' }[v.pvConvert || 'full'];
+  return `${pl}・${tw}・${sp}・${cv}・肘 ${v.side === 1 ? '極ベクトルの側' : '反対側'}`;
 }
 
 export class RigEvaluator {
@@ -1576,7 +1580,13 @@ export class RigEvaluator {
 
   /** 極ベクトル（ハンドルの親の空間の値）→ ワールド（スケール・反転を含む 3x3。poleVectorConstraint の変換と打ち消し合う） */
   pvWorld(pvLocal, handleNi, startNi) {
-    return new Vector3(pvLocal[0], pvLocal[1], pvLocal[2]).applyMatrix3(new Matrix3().setFromMatrix4(this.pvSpace(handleNi, startNi)));
+    const v = new Vector3(pvLocal[0], pvLocal[1], pvLocal[2]);
+    const M = this.pvSpace(handleNi, startNi);
+    const conv = this.ikVariant ? this.ikVariant.pvConvert : null;
+    // （再現チェックの候補）IK 側は親の回転だけで戻す: rot = 反転を除いた回転、reflect = 反転を残した回転
+    if (conv === 'rot') return v.applyQuaternion(rotationOf(M));
+    if (conv === 'reflect') return v.applyMatrix4(new Matrix4().extractRotation(M));
+    return v.applyMatrix3(new Matrix3().setFromMatrix4(M));
   }
 
   /** ひねりの向き（ふだんは 1。再現チェックでは −1・0 も試す） */
@@ -1681,7 +1691,22 @@ export class RigEvaluator {
         : null,
       twist: Math.round(this.num(g.id, 'twi', 0) * R2D * 1e4) / 1e4,
       ikBlend: this.num(g.id, 'ikb', 1),
+      roll: Math.round(this.num(g.id, 'rol', 0) * R2D * 1e4) / 1e4,
     };
+    {
+      // ハンドルの親のスケール（反転は負の値）。極ベクトルの空間の変換に関わる
+      const hp = this.sceneNodes[g.dag].parent;
+      const Pm = this.parentWorld(g.dag);
+      const sc = new Vector3(), pq = new Quaternion();
+      Pm.decompose(new Vector3(), pq, sc);
+      detail.handleParent = { name: hp >= 0 ? this.sceneNodes[hp].name : '（ワールド）',
+        scale: sc.toArray().map((x) => Math.round(x * 1e4) / 1e4), mirrored: Pm.determinant() < 0 };
+      const sp = this.sceneNodes[chain[0]].parent;
+      const Sm = this.parentWorld(chain[0]);
+      Sm.decompose(new Vector3(), pq, sc);
+      detail.startParent = { name: sp >= 0 ? this.sceneNodes[sp].name : '（ワールド）',
+        scale: sc.toArray().map((x) => Math.round(x * 1e4) / 1e4), mirrored: Sm.determinant() < 0 };
+    }
     // ジョイントの軸と基準面（開始 → ハンドル と 極ベクトル＋ひねり の面）の法線のなす角（度）。
     // Maya の答え（ファイル）でどれかの軸が 0° / 180° なら、Maya はその軸を基準面の法線にそろえている
     if (g.ik.solver === 'ikRPsolver' && filePos.length) {

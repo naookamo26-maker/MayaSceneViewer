@@ -537,6 +537,17 @@ class TestStage6(unittest.TestCase):
                                   "pa": None, "ro": 0}]},
              "joints": [{"name": "sh", "angle": 5, "roll": 5, "bend": 0, "position": 0, "ok": False}]}]})
         self.assertIn("sh: Maya [90, 0.0, 90] ／ 計算 [90, 5.0, 85] ／ Maya の 3 点の面の法線とは [90, 5.0, 95]", text4b)
+        text4c = format_verification({"frame": 1, "handles": [
+            {"handle": "arm_ik", "solver": "ikRPsolver", "pv": [0, 0, 1], "twist": 0, "ok": False,
+             "chain": [], "reach": 0.0, "error": 5.0, "best": None, "poleError": 5.0, "parent": None,
+             "detail": {"fileJoints": [], "evalJoints": [], "handle": [0, 0, 0], "fileLengths": [], "evalLengths": [],
+                        "pv": [0, 0, 1], "twist": 0, "ikBlend": 1, "roll": 15.0,
+                        "handleParent": {"name": "hand_ctrl", "scale": [-1, 1, 1], "mirrored": True},
+                        "startParent": {"name": "clavicle", "scale": [1, 1, 1], "mirrored": False}},
+             "joints": [{"name": "sh", "angle": 5, "roll": 5, "bend": 0, "position": 0, "ok": False}]}]})
+        self.assertIn("ハンドルの親 hand_ctrl: スケール [-1, 1, 1]・反転あり", text4c)
+        self.assertIn("開始ジョイントの親 clavicle: スケール [1, 1, 1]", text4c)
+        self.assertIn("ハンドルの roll 15.0000°", text4c)
         self.assertIn("rotate [0, 20, 0]・jointOrient [0, 0, 0]・rotateAxis [0, 0, 0]・preferredAngle （なし）・回転順 0", text4b)
         text5 = format_verification({"frame": 1, "handles": [
             {"handle": "arm_ik", "solver": "ikRPsolver", "pv": [0, 0, 1], "twist": 0, "ok": False, "chain": [],

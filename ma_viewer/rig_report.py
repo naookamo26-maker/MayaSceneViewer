@@ -356,6 +356,12 @@ def format_verification(result: Optional[dict]) -> str:
             if det.get("pv") is not None:
                 out.append("      極ベクトル（ワールド・計算）%s・ひねり %.4f°・ikBlend %.3f"
                            % (fmt3(det["pv"]), det["twist"], det["ikBlend"]))
+            for key, label in (("handleParent", "ハンドルの親"), ("startParent", "開始ジョイントの親")):
+                hp = det.get(key)
+                if hp:
+                    out.append("      %s %s: スケール %s%s" % (label, hp["name"], hp["scale"], "・反転あり" if hp["mirrored"] else ""))
+            if det.get("roll"):
+                out.append("      ハンドルの roll %.4f°" % det["roll"])
             if det.get("axes"):
                 out.append("      ジョイントの軸（X, Y, Z）と、基準面（開始→ハンドル と 極ベクトル＋ひねり の面）の法線のなす角（度）:")
                 for ax in det["axes"]:

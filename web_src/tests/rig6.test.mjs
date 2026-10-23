@@ -271,3 +271,38 @@ test('再現チェックの候補: Maya の答えが「開始ジョイントの�
   assert.equal(h.best.variant.plane, 'axis', h.best.label);
   assert.ok(h.best.error < 0.01, `${h.best.error}`);
 });
+
+test('再現チェックの候補: ハンドルの親が反転していて、Maya の IK が親の回転だけで極ベクトルを戻す場合を見つける', () => {
+  const d = JSON.parse(JSON.stringify(data));
+  // arm3_ik の親を反転・不均一スケールの transform にする（ハンドルのワールドの位置は変えない）
+  const hi = d.nodes.findIndex((n) => n.name === 'arm3_ik');
+  const P = new Matrix4().compose(new Vector3(1, 2, 3), new Quaternion().setFromEuler(new Euler(0.4, 0.2, -0.3)), new Vector3(-1, 1.5, 1));
+  d.nodes.push({ name: 'arm3_grp', path: '|arm3_grp', type: 'transform', parent: -1, matrix: P.toArray(), worldMatrix: P.toArray(),
+    inheritsTransform: true, visible: true, attrs: {} });
+  const gi = d.nodes.length - 1;
+  d.nodes[hi].parent = gi;
+  const W = new Matrix4().fromArray(d.nodes[hi].matrix);
+  const rest = d.animation.nodes.find((n) => n.node === hi);
+  const local = P.clone().invert().multiply(W);
+  const t = new Vector3().setFromMatrixPosition(local);
+  rest.t = t.toArray();
+  // キーの移動も親の空間に直す（ワールドで x が 2 減る → 親の空間のベクトル）
+  const ch = d.animation.channels.find((c) => c.node === hi);
+  if (ch) d.animation.channels = d.animation.channels.filter((c) => c !== ch);
+  // 極ベクトルは親の空間の値（スケール・反転のかかる、斜めの向き）
+  const gpv = d.animation.graph.find((x) => x.name === 'arm3_ik');
+  gpv.attrs = { ...(gpv.attrs || {}), pv: [0.6, 0.5, 0.7] };
+  const mk = () => new RigEvaluator(new AnimationClip(d.animation), d.nodes, (ni) => new Matrix4().fromArray(d.nodes[ni].matrix));
+  const g = d.animation.graph.find((x) => x.name === 'arm3_ik');
+  const maya = mk();
+  maya.ikVariant = { plane: 'points', twistSign: 1, pvSpace: 'handle', pvConvert: 'rot', side: 1 };
+  maya.evaluate(d.animation.current);
+  const answer = new Map(g.ik.chain.map((ni) => [ni, maya.localFile(ni).clone()]));
+  const rig = mk();
+  rig.evaluate(d.animation.current);
+  const h = rig.verifySaved((ni) => answer.get(ni) || rig.fileRestLocal(ni)).find((x) => x.handle === 'arm3_ik');
+  assert.ok(!h.ok, `${h.error}`);
+  assert.equal(h.best.variant.pvConvert, 'rot', h.best.label);
+  assert.ok(h.best.error < 0.01);
+  assert.ok(h.detail.handleParent.mirrored && h.detail.handleParent.name === 'arm3_grp');
+});
