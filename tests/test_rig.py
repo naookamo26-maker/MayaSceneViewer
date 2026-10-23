@@ -517,6 +517,16 @@ class TestStage6(unittest.TestCase):
                       "spine_03（向き 3.00°・位置 0.0000。IK spine_ik で動く）（この IK ではなく、親の側が原因）", text3)
         self.assertIn("→ 開始ジョイントの親がずれている IK: 1 個（親の側が原因）", text3)
         self.assertIn("最初にずれるノード spine_03（IK spine_ik）: arm_ik", text3)
+        text4 = format_verification({"frame": 1, "handles": [
+            {"handle": "arm_ik", "solver": "ikRPsolver", "pv": [0, 0, 1], "twist": 0, "ok": False,
+             "chain": ["sh", "el", "wr"], "reach": 0.0, "error": 5.0, "best": None, "poleError": 5.0, "parent": None,
+             "detail": {"fileJoints": [[0, 0, 0], [1, 0, 1], [2, 0, 0]], "evalJoints": [[0, 0, 0], [1, 0.1, 1], [2, 0, 0]],
+                        "handle": [2, 0, 0], "fileLengths": [1.4142, 1.4142], "evalLengths": [1.4177, 1.4177],
+                        "pv": [0, 0, 1], "twist": 0, "ikBlend": 1},
+             "joints": [{"name": "sh", "angle": 5, "roll": 5, "bend": 0, "position": 0, "ok": False}]}]})
+        self.assertIn("el: ファイル (1.0000, 0.0000, 1.0000) ／ 計算 (1.0000, 0.1000, 1.0000)", text4)
+        self.assertIn("骨の長さ: ファイル [1.4142, 1.4142] ／ 計算 [1.4177, 1.4177]", text4)
+        self.assertIn("極ベクトル（ワールド・計算）(0.0000, 0.0000, 1.0000)・ひねり 0.0000°・ikBlend 1.000", text4)
         self.assertIn("確認できません", format_verification(None))
 
     def test_no_false_warning_for_rig_nodes(self):

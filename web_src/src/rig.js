@@ -1642,7 +1642,20 @@ export class RigEvaluator {
         poleError = Math.atan2(u.dot(want.clone().cross(side)), want.dot(side)) * R2D;   // want → side の角度（u まわり）
       }
     }
-    return { joints, reach, poleError, error: joints.reduce((m, j) => Math.max(m, j.angle), 0) };
+    // 詳細（ずれの原因を調べるための生の数値。ワールド空間）
+    const r3 = (v) => v.toArray().map((x) => Math.round(x * 1e4) / 1e4);
+    const evalPos = chain.map((ni) => positionOf(this.world(ni)));
+    const lens = (P) => P.slice(1).map((p, k) => Math.round(p.distanceTo(P[k]) * 1e4) / 1e4);
+    const detail = {
+      fileJoints: filePos.map(r3), evalJoints: evalPos.map(r3), handle: r3(H),
+      fileLengths: lens(filePos), evalLengths: lens(evalPos),
+      pv: g.ik.solver === 'ikRPsolver'
+        ? r3(new Vector3(...this.vec(g.id, 'pv', [0, 0, 1])).applyMatrix4(new Matrix4().extractRotation(this.pvSpace(g.dag, chain[0]))))
+        : null,
+      twist: Math.round(this.num(g.id, 'twi', 0) * R2D * 1e4) / 1e4,
+      ikBlend: this.num(g.id, 'ikb', 1),
+    };
+    return { joints, reach, poleError, detail, error: joints.reduce((m, j) => Math.max(m, j.angle), 0) };
   }
 
   /**
@@ -1706,6 +1719,7 @@ export class RigEvaluator {
         : null;
       out.push({ handle: g.name, solver: g.ik.solver, chain: g.ik.chain.map((ni) => this.sceneNodes[ni].name), pv,
         twist: this.num(g.id, 'twi', 0) * R2D, joints: base.joints, reach: base.reach, poleError: base.poleError, parent,
+        detail: base.detail,
         error: base.error, best,
         ok: base.joints.every((j) => j.ok) });
     }

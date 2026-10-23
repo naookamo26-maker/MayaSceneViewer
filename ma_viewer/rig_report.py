@@ -308,6 +308,7 @@ def format_verification(result: Optional[dict]) -> str:
     out.append("  ねじれ = 骨の軸まわりのずれ、曲がり = 骨の向きのずれ（度）")
     if not handles:
         out.append("  IK ハンドルはありません")
+    shown_detail = [0]                                    # 詳細は、ずれのある IK の最初の 3 本だけ
     for h in handles:
         mark = "✓" if h["ok"] else "★"
         extra = ""
@@ -341,6 +342,20 @@ def format_verification(result: Optional[dict]) -> str:
                            "（極ベクトル・ひねりの入力が Maya と違う。極ベクトルを決めるノードの評価を疑う）" % pe)
             else:
                 out.append("    ✓ 肘（膝）の向き: 極ベクトル＋ひねりの入力は Maya と一致（%+.2f°）" % pe)
+        det = h.get("detail")
+        if det and not h["ok"] and shown_detail[0] < 3:
+            shown_detail[0] += 1
+            fmt3 = lambda v: "(%s)" % ", ".join("%.4f" % x for x in v)  # noqa: E731
+            out.append("    ［詳細］ワールド空間。ファイル = 保存時の Maya の答え、計算 = ビューア")
+            for k, name in enumerate(h["chain"]):
+                fj = det["fileJoints"][k] if k < len(det["fileJoints"]) else None
+                ej = det["evalJoints"][k] if k < len(det["evalJoints"]) else None
+                out.append("      %s: ファイル %s ／ 計算 %s" % (name, fmt3(fj) if fj else "-", fmt3(ej) if ej else "-"))
+            out.append("      ハンドルの位置（計算）%s" % fmt3(det["handle"]))
+            out.append("      骨の長さ: ファイル %s ／ 計算 %s" % (det["fileLengths"], det["evalLengths"]))
+            if det.get("pv") is not None:
+                out.append("      極ベクトル（ワールド・計算）%s・ひねり %.4f°・ikBlend %.3f"
+                           % (fmt3(det["pv"]), det["twist"], det["ikBlend"]))
         best = h.get("best")
         if best:
             out.append("    → 一番合う解き方: %s（ずれ %.2f°。今の解き方は %.2f°）" % (best["label"], best["error"], h["error"]))
