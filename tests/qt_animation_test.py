@@ -105,7 +105,7 @@ def main() -> int:
         def got(s):
             a = s["animation"] or {}
             check(s["loaded"] and s["name"] == "anim_sample.ma", "シーンを表示した")
-            check(bool(a) and a["curves"] == 6 and a["nodes"] == 5, "アニメーションをあとから受け取った: %s" % a)
+            check(bool(a) and a["curves"] == 6 and a["nodes"] == 6, "アニメーションをあとから受け取った（動くノード 6 = キー 5 + 推定 1）: %s" % a)
             check(s["timeline"] and s["status"] == "", "タイムラインを表示し、読み込み中の表示は消えた")
             check(a.get("frame") == 1 and (a.get("start"), a.get("end")) == (1, 24), "再生範囲 1〜24・現在 1 フレーム")
             check(s["pose"] == "bind", "読み込み直後はバインドポーズのまま")

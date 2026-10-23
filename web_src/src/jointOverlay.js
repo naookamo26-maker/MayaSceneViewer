@@ -8,6 +8,8 @@ import {
 export const JOINT_COLOR = new Color(0x5ec8e5);
 export const SELECT_COLOR = new Color(0xf2a93b);
 export const CONTROL_COLOR = new Color(0xc4e36b);       // コントローラー（リグを動かすノード）
+export const ESTIMATED_COLOR = new Color(0xb9a6f2);     // バインドポーズの形で推定したノード
+export const UNKNOWN_COLOR = new Color(0x6b737c);       // 値を求められないノード
 const AXIS_COLORS = [new Color(0xe5675b), new Color(0x7fd16b), new Color(0x5b8ff0)];
 
 const _m = new Matrix4();
@@ -59,6 +61,7 @@ export class JointOverlay {
     this.controlGeo = new OctahedronGeometry(1, 0);
     this.controlMat = new MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.95 });
     this.controlMesh = null;
+    this.statusOf = null;      // (nodeIndex) => 'estimated' | 'unknown' | null
   }
 
   clear() {
@@ -69,6 +72,7 @@ export class JointOverlay {
     if (this.controlMesh) { this.group.remove(this.controlMesh); this.controlMesh.dispose(); }
     this.controlMesh = null;
     this.controls = [];
+    this.statusOf = null;
     this.joints = [];
     this.links = [];
     this.slotOf = new Map();
@@ -149,6 +153,8 @@ export class JointOverlay {
   setAxesMode(v) { this.axesMode = v; this.update(); }
   setSelected(ni) { this.selected = ni; this.update(); }
   setVisible(v) { this.group.visible = v; }
+  /** 推定・不明のノードの色分け（null で解除） */
+  setStatus(fn) { this.statusOf = fn; this.update(); }
   /** @param hidden 配列（nodeIndex → 非表示なら true）または null */
   setHiddenNodes(hidden) { this.hiddenNodes = hidden; this.update(); }
 
@@ -163,12 +169,16 @@ export class JointOverlay {
 
     const hidden = this.hiddenNodes;
     const isHidden = (ni) => !!(hidden && hidden[ni]);
+    const baseColor = (ni, normal) => {
+      const st = this.statusOf ? this.statusOf(ni) : null;
+      return st === 'estimated' ? ESTIMATED_COLOR : st === 'unknown' ? UNKNOWN_COLOR : normal;
+    };
     this.joints.forEach((ni, k) => {
       objs[ni].matrixWorld.decompose(_p, _q, _s);
       const rr = isHidden(ni) ? 0 : r;           // 非表示のジョイントは大きさ 0（ピックもされない）
       _m.compose(_p, _ident, _s.set(rr, rr, rr));
       this.spheres.setMatrixAt(k, _m);
-      this.spheres.setColorAt(k, ni === this.selected ? SELECT_COLOR : JOINT_COLOR);
+      this.spheres.setColorAt(k, ni === this.selected ? SELECT_COLOR : baseColor(ni, JOINT_COLOR));
     });
     this.spheres.instanceMatrix.needsUpdate = true;
     if (this.spheres.instanceColor) this.spheres.instanceColor.needsUpdate = true;
@@ -187,7 +197,7 @@ export class JointOverlay {
         _m.compose(_a, _q, _s.set(w, len, w));
       }
       this.bones.setMatrixAt(k, _m);
-      this.bones.setColorAt(k, childOfSelected.has(k) ? SELECT_COLOR : JOINT_COLOR);
+      this.bones.setColorAt(k, childOfSelected.has(k) ? SELECT_COLOR : baseColor(c, JOINT_COLOR));
     });
     this.bones.instanceMatrix.needsUpdate = true;
     if (this.bones.instanceColor) this.bones.instanceColor.needsUpdate = true;
@@ -229,7 +239,7 @@ export class JointOverlay {
         const rr = isHidden(ni) ? 0 : r * 2.2;
         _m.compose(_p, _q, _s.set(rr, rr, rr));
         this.controlMesh.setMatrixAt(k, _m);
-        this.controlMesh.setColorAt(k, ni === this.selected ? SELECT_COLOR : CONTROL_COLOR);
+        this.controlMesh.setColorAt(k, ni === this.selected ? SELECT_COLOR : baseColor(ni, CONTROL_COLOR));
       });
       this.controlMesh.instanceMatrix.needsUpdate = true;
       if (this.controlMesh.instanceColor) this.controlMesh.instanceColor.needsUpdate = true;

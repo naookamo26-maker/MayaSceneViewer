@@ -217,5 +217,52 @@ class TestStage3(unittest.TestCase):
         self.assertAlmostEqual(world[13], 1.0)                 # (1, 0, 0) を z 軸まわりに 90 度 → (0, 1, 0) + (10, 0, 0)
 
 
+
+class TestFallback(unittest.TestCase):
+    """値を求められないノード: バインドポーズの形で推定（fallback）・推定できない（tainted）"""
+
+    def test_sample(self):
+        scene = load_ma(os.path.join(ROOT, "samples", "fallback_sample.ma"), animation=True)
+        names = [n["name"] for n in scene["nodes"]]
+        a = scene["animation"]
+        fb = {names[f["node"]]: f for f in a["fallback"]}
+        self.assertEqual(set(fb), {"shoulder", "elbow"})
+        self.assertEqual(names[fb["shoulder"]["anchor"]], "rig_grp")     # 不明な祖先（なし）を飛ばして確かな祖先
+        self.assertEqual(names[fb["elbow"]["anchor"]], "shoulder")       # 推定したノードも基準にできる
+        self.assertEqual(fb["elbow"]["unresolved"], ["rz"])
+        self.assertEqual({names[i] for i in a["tainted"]}, {"ctrl_grp", "arm_ctrl", "box"})
+        self.assertIn("バインドポーズの形で推定", "\n".join(a["warnings"]))
+
+    def test_anchor_skips_unknown_parent(self):
+        """親が不明でも、バインドポーズの情報があるジョイントは、さらに上の確かな祖先を基準に推定する"""
+        body = ('createNode transform -n "root";\n'
+                'createNode transform -n "grp" -p "root";\n'
+                'createNode joint -n "j" -p "grp";\n'
+                '\tsetAttr ".bps" -type "matrix" 1 0 0 0 0 1 0 0 0 0 1 0 3 4 5 1;\n'
+                'createNode expression -n "ex";\n'
+                'connectAttr "ex.out[0]" "grp.tx";\n')
+        sc, anim = from_text(body)
+        names = [n["name"] for n in sc["nodes"]]
+        self.assertEqual([(names[f["node"]], names[f["anchor"]]) for f in anim["fallback"]], [("j", "root")])
+        self.assertEqual([names[i] for i in anim["tainted"]], ["grp"])
+
+    def test_ik_with_unknown_handle(self):
+        """IK ハンドルの位置が分からないときは、チェーンのジョイントも推定に回す（原点へ伸びないように）"""
+        body = ('createNode joint -n "a";\n\tsetAttr ".bps" -type "matrix" 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1;\n'
+                'createNode joint -n "b" -p "a";\n\tsetAttr ".t" -type "double3" 1 0 0.2 ;\n'
+                '\tsetAttr ".bps" -type "matrix" 1 0 0 0 0 1 0 0 0 0 1 0 1 0 0.2 1;\n'
+                'createNode joint -n "c" -p "b";\n\tsetAttr ".t" -type "double3" 1 0 -0.2 ;\n'
+                'createNode ikEffector -n "eff" -p "b";\n'
+                'createNode transform -n "ctrl";\ncreateNode ikHandle -n "ik" -p "ctrl";\n'
+                'createNode ikRPsolver -n "rp";\ncreateNode expression -n "ex";\n'
+                'connectAttr "a.msg" "ik.hsj";\nconnectAttr "eff.hp" "ik.hee";\nconnectAttr "rp.msg" "ik.hsv";\n'
+                'connectAttr "c.tx" "eff.tx";\nconnectAttr "ex.out[0]" "ctrl.tx";\n')
+        sc, anim = from_text(body)
+        names = [n["name"] for n in sc["nodes"]]
+        fb = {names[f["node"]]: f for f in anim["fallback"]}
+        self.assertEqual(set(fb), {"a", "b"})
+        self.assertTrue(fb["a"]["unresolved"][0].startswith("r（IK: ik）"))
+
+
 if __name__ == "__main__":
     unittest.main()

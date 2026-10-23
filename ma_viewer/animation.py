@@ -263,7 +263,7 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
     kept_nodes = {i: n for n in ms.nodes for i in [out_index.get(id(n))] if i is not None}
     # リグ（コンストレイント・IK・計算ノード）。入力になっているカーブも読む
     info = ms.graph_info
-    has_graph = info is not None and not info.empty
+    has_graph = info is not None and (not info.empty or bool(info.unsupported))
     if has_graph:
         for cid, c in info.curves.items():
             if c.span is not None:
@@ -327,7 +327,16 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         for g in graph_nodes:
             if g["type"].endswith("Constraint") and not g.get("targets"):
                 warnings.append("アニメーション: %s にターゲットがないため、評価しません。" % g["name"])
-    if not channels_out and not moving:
+    # 値を求められないノード: バインドポーズの形で推定する（fallback）・推定もできない（tainted）
+    fallback, tainted = [], []
+    if has_graph:
+        from .rig import analyze_fallback
+        kept_list = [kept_nodes[i] for i in sorted(kept_nodes)]
+        fallback, tainted = analyze_fallback(info, kept_list, ms.bind_ids, out_index)
+        if fallback or tainted:
+            warnings.append("アニメーション: 値を求められないノードのうち %d 個はバインドポーズの形で推定して表示し、"
+                            "%d 個は推定できないためファイルの値（既定値）のまま表示します。" % (len(fallback), len(tainted)))
+    if not channels_out and not moving and not fallback:
         return None
     channels_out.sort(key=lambda c: (c["node"], c["attr"]))
 
@@ -383,6 +392,8 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         "channels": channels_out,
         "nodes": rest_nodes,
         "graph": graph_nodes,
+        "fallback": fallback,
+        "tainted": tainted,
         "times": _pack(times_all, "float32"),
         "values": _pack(values_all, "float32"),
         "tangentTypes": _pack(types, "uint8"),

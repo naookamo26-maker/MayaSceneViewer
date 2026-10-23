@@ -193,6 +193,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 - ウェイトはカーブで動かせます（スペースの切り替えなど）。コントローラーの独自の属性（IK/FK の切り替えなど）も、カーブや値をそのまま使います。
 - 未対応（警告を出し、そこから先はファイルの値）: tangent・normal・geometry などほかのコンストレイント、ikSplineSolver・HumanIK、回転プレーンの 3 本以上・シングルチェーンの 4 本以上のジョイントの IK、エクスプレッション、ドリブンキー、blendMatrix・pickMatrix などほかの行列ノード、プラグインのノード。
 - 循環（自分の結果を自分で使う接続）に当たったら、そこはファイルの値で打ち切り、警告を出します。
+- **値を求められないノードの推定（試作）**: 未対応のノードの影響を受けるノード（その子や、それをターゲットにするコンストレイントで動くノードも含む）は、.ma に値が残っていないため、そのままでは原点に集まります。バインドポーズの情報（skinCluster の .pm・dagPose・ジョイントの .bps）があるノードは、値を求められた一番近い祖先からの相対をバインドポーズのとおりに保って表示します（形を保ったまま、確かな部分の動きについていく）。ジョイントの表示（J）で、推定したノードは薄紫、推定もできないノード（バインドポーズの情報がない）は灰色になり、選択したノードの情報に理由を出します。推定では、そのノードの求められた成分（例: キーのある移動）も使いません。
 
 **Maya 内で読み込む場合**
 
@@ -269,7 +270,7 @@ maya_ma_viewer/
 │  └─ web/                ビューア（index.html・style.css・viewer.bundle.js）
 ├─ web_src/               ビューアの JS ソース（three.js r160）とビルド・テスト
 ├─ samples/               検証用の .ma と期待値（textured_project/ はテクスチャ確認用の Maya プロジェクト）
-├─ tools/                 検証用データの生成（make_sample_ma.py・make_textured_sample.py・make_anim_sample.py・make_rig_sample.py・make_rig3_sample.py）
+├─ tools/                 検証用データの生成（make_sample_ma.py・make_textured_sample.py・make_anim_sample.py・make_rig_sample.py・make_rig3_sample.py・make_fallback_sample.py）
 ├─ tests/                 テスト
 └─ docs/data_format.md    共通 JSON の仕様
 ```
@@ -329,6 +330,7 @@ bundle は ES モジュールではなく、通常の `<script>` で読める形
 | アニメーション | 補間・範囲外・単位の変換（Python 15 件・Node.js 8 件）、ビューアで組み立てたローカル行列が Python の行列計算と一致すること、Qt での 2 段階読み込み・タイムライン操作・読み込み中の中止 | 合格 |
 | リグ | 保存時のフレームでファイルの値を再現すること（IK・コンストレイント・計算ノードを含む）、IK の終端がハンドルに届く・骨の長さが保たれる・肘が極ベクトルの側に曲がる（ジョイントの向き・回転順・rotateAxis を変えた場合も）、各コンストレイントの結果、計算ノードの値、ポーズ確認でコントローラーを動かしたときの追従（Python 13 件・Node.js 12 件・Qt） | 合格 |
 | リグ（第 3 段階） | aimConstraint の向き（world up の 5 種類・オフセット）、SC IK（1・2 ボーン）、multMatrix の掛ける順・decomposeMatrix・composeMatrix・inverseMatrix の結果、offsetParentMatrix（ファイルの値の行列計算・接続による親子付け・ポーズ確認での追従）、保存時のフレームでファイルの値を再現すること（Python 7 件・Node.js 10 件・Qt） | 合格 |
+| 値を求められないノードの推定（試作） | 判定（推定・不明、不明な親を飛ばした基準の祖先、IK のハンドルが不明な場合）、推定したノードが基準の祖先からの相対をバインドポーズのとおりに保つこと（フレーム・ポーズ確認）（Python 3 件・Node.js 4 件） | 合格 |
 | 大きなアニメーション | 200 ジョイント × 1,000 フレーム（全フレームにキー、カーブ 1,800 本・キー 180 万個、26 MB） | 1 段階目（表示まで）は変わらず 0.15 秒、2 段階目 0.7 秒（裏で実行）、転送 24 MB、ビューアの準備 0.3 秒・1 フレームの計算 0.6 ms |
 | **実際の Maya での動作** | 未確認 | Maya のない環境で開発したため |
 | **Maya が書き出した実際の .ma** | 未確認 | 実ファイルに近い書式で作ったサンプルで確認 |

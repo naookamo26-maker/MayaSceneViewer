@@ -278,6 +278,99 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
     return nodes, moving
 
 
+_PARENT_MATRIX_PLUGS = {"pm", "pim", "parentMatrix", "parentInverseMatrix"}
+
+
+def analyze_fallback(info: GraphInfo, kept: List[MaNode], bind_ids: Set[int], out_index: Dict[int, int]):
+    """値を求められないノード（未対応のノードの影響を受けるノード）を調べる。
+
+    接続の構造だけで決まる（フレームによらない）ので、ここでまとめて調べる:
+      * unresolved: 移動・回転などの接続元が、未対応のノード（またはその影響を受けるノード）
+      * tainted（不明）: ワールドの位置が分からない（unresolved か、親が tainted）。バインドポーズの情報があれば推定に回す
+      * anchored（推定）: バインドポーズの情報があるノードが unresolved か、親が tainted。
+        「確かな一番近い祖先」からの相対をバインドポーズのとおりに保つ（形を保ったまま、確かな部分の動きについていく）
+    循環（コンストレイントの cpim ← 動かすノードの pim など）は「求められる」とみなして打ち切る。
+    戻り値: (fallback のリスト, tainted のノード番号のリスト)
+    """
+    busy: Set[Tuple[str, int]] = set()
+    memo: Dict[Tuple[str, int], object] = {}
+    ik_of: Dict[int, MaNode] = {}
+    for e in info.ik:
+        if not e["problem"]:
+            for j in e["chain"][:-1]:
+                ik_of[id(j)] = e["handle"]
+
+    def guarded(kind, n, fn, optimistic):
+        key = (kind, id(n))
+        if key in memo:
+            return memo[key]
+        if key in busy:
+            return optimistic
+        busy.add(key)
+        try:
+            v = fn()
+        finally:
+            busy.discard(key)
+        memo[key] = v
+        return v
+
+    def parent_of(n):
+        return n.parent if n.parent is not None and n.flag("it", True) else None
+
+    def bad_source(src: MaNode, sattr: str) -> bool:
+        if src.type in CURVE_TYPES:
+            return False
+        if src.type in SUPPORTED_DG:
+            if src.type in CONSTRAINT_TYPES and not _evaluable(src):
+                return True
+            return guarded("dg", src, lambda: any(bad_source(s, a) for s, a in info.edges.get(id(src), {}).values()),
+                           False)
+        if _dag_like(src):
+            b = _base(sattr)
+            if b in _PARENT_MATRIX_PLUGS:
+                return tainted(parent_of(src))
+            if b in _MATRIX_PLUGS:
+                return tainted(src)
+            if b in _CHANNEL_KEYS:
+                return any(k[0] == b[0] for k in unresolved(src))
+            e = info.edges.get(id(src), {}).get(sattr)
+            return bad_source(*e) if e else False
+        return True                                      # 未対応のノード
+
+    def unresolved(n: MaNode) -> List[str]:
+        def calc():
+            keys = [k for k, (s, a) in info.edges.get(id(n), {}).items()
+                    if _base(k) in _CHANNEL_KEYS and bad_source(s, a)]
+            h = ik_of.get(id(n))
+            if h is not None and (tainted(h) or any(bad_source(s, a) for k, (s, a) in info.edges.get(id(h), {}).items()
+                                                    if _base(k) in ("pv", "pvx", "pvy", "pvz", "twi", "ikb"))):
+                keys.append("r（IK: %s）" % h.name)
+            return keys
+        return guarded("unres", n, calc, [])
+
+    def tainted(n: Optional[MaNode]) -> bool:
+        if n is None:
+            return False
+
+        def calc():
+            bad = bool(unresolved(n)) or tainted(parent_of(n))
+            return bad and id(n) not in bind_ids          # バインドポーズの情報があれば推定できる
+        return guarded("taint", n, calc, False)
+
+    fallback, tainted_out = [], []
+    for n in kept:
+        ni = out_index[id(n)]
+        if id(n) in bind_ids and (unresolved(n) or tainted(parent_of(n))):
+            a = parent_of(n)
+            while a is not None and tainted(a):
+                a = parent_of(a)
+            fallback.append({"node": ni, "anchor": out_index.get(id(a), -1) if a is not None else -1,
+                             "unresolved": unresolved(n)})
+        elif tainted(n):
+            tainted_out.append(ni)
+    return fallback, tainted_out
+
+
 def graph_warnings(info: GraphInfo) -> List[str]:
     out = []
     for t, items in sorted(info.unsupported.items(), key=lambda kv: -len(kv[1])):

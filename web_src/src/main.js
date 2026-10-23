@@ -737,11 +737,11 @@ class ViewerApp {
     this.pause();
     this.clip = clip;
     this.data.animation = anim;
-    // リグ（コンストレイント・IK・計算ノード）を含めて評価する。動かないノードはファイルの値
-    this.rig = new RigEvaluator(clip, this.data.nodes, (ni) => this.built.nodeObjects[ni].userData.fileMatrix);
+    // リグ（コンストレイント・IK・計算ノード）を含めて評価する（上で作成）。動かないノードはファイルの値
     // 姿勢の基準が変わったときに子のスケール補正も掛け直すよう、動くノードとその子を覚えておく
+    this.rig = new RigEvaluator(clip, this.data.nodes, (ni) => this.built.nodeObjects[ni].userData.fileMatrix);
     const touched = new Set();
-    for (const ni of clip.nodes) {
+    for (const ni of this.rig.moving) {
       touched.add(ni);
       for (const c of this.built.childrenOf[ni]) touched.add(c);
     }
@@ -753,6 +753,8 @@ class ViewerApp {
     }
     const warnings = clip.warnings.concat([...this.rig.problems].map((p) => `アニメーション: リグの評価を打ち切りました（${p}）。`));
     if (warnings.length) this.ui.setWarnings((this.ui.warnings || []).concat(warnings));
+    // 推定・不明のノードをジョイントの表示で色分けする
+    this.overlay.setStatus(this.rig.fallback.size || this.rig.tainted.size ? (ni) => this.rig.statusOf(ni) : null);
     // コントローラー（ジョイント・メッシュ以外でリグを動かすノード）の目印
     const meshNodes = new Set(this.built.meshes.map((e) => e.transform));
     this.overlay.setControllers([...this.rig.directDrivers].filter((ni) => this.data.nodes[ni].type !== 'joint'

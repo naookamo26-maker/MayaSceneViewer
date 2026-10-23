@@ -146,6 +146,16 @@ export class RigEvaluator {
     for (const e of clip.entries) {
       if ((e.rest.isNode ?? -1) >= 0 && scaled.has(e.rest.isNode)) this.moving.add(e.node);
     }
+    // 値を求められないノード: バインドポーズの形で推定する（fallback）・推定もできない（tainted。子にも伝わる）
+    this.fallback = new Map((clip.raw.fallback || []).map((f) => [f.node, f]));
+    for (const ni of this.fallback.keys()) this.moving.add(ni);
+    const taintRoots = new Set(clip.raw.tainted || []);
+    this.tainted = new Set();
+    sceneNodes.forEach((n, i) => {
+      const p = n.inheritsTransform !== false ? n.parent : -1;
+      if (taintRoots.has(i) || (p >= 0 && this.tainted.has(p) && !this.fallback.has(i))) this.tainted.add(i);
+    });
+    this.bindCache = new Map();
     this.matrices = new Map();               // evaluate() の結果（動くノードだけ）
     this.problems = new Set();               // 評価中に見つかった問題（循環など）
     this.frame = 0;
@@ -248,6 +258,17 @@ export class RigEvaluator {
   localFile(ni) {
     const hit = this.cache.local.get(ni);
     if (hit) return hit;
+    const fb = this.fallback.get(ni);
+    if (fb) {
+      // 推定: 確かな一番近い祖先（anchor）からの相対を、バインドポーズのとおりに保つ
+      //   W = W(anchor) · B(anchor)⁻¹ · B(ni)   →   ローカル = 親の W⁻¹ · W
+      const W = fb.anchor >= 0
+        ? this.world(fb.anchor).clone().multiply(this.bindWorld(fb.anchor).clone().invert()).multiply(this.bindWorld(ni))
+        : this.bindWorld(ni).clone();
+      const m = this.parentWorld(ni).clone().invert().multiply(W);
+      this.cache.local.set(ni, m);
+      return m;
+    }
     const rest = this.rest(ni);
     if (!rest || !this.moving.has(ni)) return this.staticLocal(ni);
     const c = this.chan(ni, 'full');
@@ -275,6 +296,24 @@ export class RigEvaluator {
     });
     this.cache.world.set(ni, m);
     return m;
+  }
+
+  /** バインドポーズのワールド行列（バインドポーズの情報がないノードはファイルの値。フレームによらない） */
+  bindWorld(ni) {
+    const hit = this.bindCache.get(ni);
+    if (hit) return hit;
+    const n = this.sceneNodes[ni];
+    const local = new Matrix4().fromArray(n.bindMatrix || n.matrix);
+    const p = n.inheritsTransform !== false ? n.parent : -1;
+    const m = p >= 0 ? this.bindWorld(p).clone().multiply(local) : local;
+    this.bindCache.set(ni, m);
+    return m;
+  }
+
+  /** 'estimated'（バインドポーズの形で推定）・'unknown'（値を求められない）・null */
+  statusOf(ni) {
+    if (this.fallback.has(ni)) return 'estimated';
+    return this.tainted.has(ni) ? 'unknown' : null;
   }
 
   /** 回転に依存しない位置（親のワールド行列 · 移動の値）。IK の開始ジョイントなど、循環を避けたい所で使う */
@@ -798,7 +837,13 @@ export class RigEvaluator {
   // ------------------------------------------------------------------ 表示用
   /** ノードを動かしているもの（選択ノードの情報に出す） */
   driversOf(ni) {
-    const out = [];
+    const fb = this.fallback.get(ni);
+    if (fb) {
+      // 推定したノードは接続を使っていないので、推定のことだけを示す
+      const base = fb.anchor >= 0 ? this.sceneNodes[fb.anchor].name : 'ワールド';
+      return [`推定: ${(fb.unresolved || []).join('・') || '親の位置'} を求められないため、${base} からの相対をバインドポーズの形で表示`];
+    }
+    const out = this.tainted.has(ni) ? ['不明: 未対応のノードの影響で値を求められません（ファイルの値・既定値のまま）'] : [];
     const g = this.dagGraph.get(ni);
     if (g && g.inputs) {
       for (const [key, src] of Object.entries(g.inputs)) {

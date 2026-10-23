@@ -226,6 +226,7 @@ class MaScene:
         self.text = ""                               # コメントを除いた本文（animCurve などの span はこの位置）
         self.out_index: Dict[int, int] = {}          # id(ノード) → 共通 JSON の nodes の番号（変換後に設定）
         self.graph_info = None                       # rig.GraphInfo（変換時に設定）
+        self.bind_ids = set()                        # バインドポーズの情報を持つノードの id（変換時に設定）
         self.references: List[str] = []
         self.stats: Dict[str, int] = {}          # 文の種類ごとの数（読み込みの内訳に出す）
         # 「文の種類 ノードの種類」ごとの [秒, 文の数, 文字数]（どこに時間がかかっているかを調べる）

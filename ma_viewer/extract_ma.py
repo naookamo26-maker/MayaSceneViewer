@@ -951,6 +951,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     }
     lap("メッシュ（その他）")
     ms.out_index = index_of            # アニメーションを後から読むときに使う（出力するノードの番号）
+    ms.bind_ids = set(bind_src)         # バインドポーズの情報を持つノード（値を求められないときの推定に使う）
     return scene
 
 
