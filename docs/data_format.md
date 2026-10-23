@@ -162,7 +162,9 @@ transform・joint などの変換ノードです。**親は必ず子より前に
 | `inputs` | 属性への接続。`{"node": id, "attr": 接続元の属性}` か、カーブなら `{"curve": curves の番号}` |
 | `driven` | コンストレイントが動かすノード（nodes の番号）。`targets` はターゲット（`{"index": tg の番号, "node": id}`） |
 | `pivot` | poleVectorConstraint の開始ジョイント（nodes の番号） |
-| `ik` | IK ハンドルのソルバーと、開始から終端までのジョイント（nodes の番号）。ikRPsolver は 2 ボーン（3 つ）、ikSCsolver は 1〜2 ボーン（2〜3 つ）だけを出力する |
+| `ik` | IK ハンドルのソルバー（ikRPsolver・ikSCsolver・ikSplineSolver）と、開始から終端までのジョイント（nodes の番号）。スプライン IK のカーブは `inputs` の `ic` |
+| `parent` | nurbsCurve・locator（シェイプ）の親のトランスフォーム（nodes の番号）。ワールド空間（ws・worldPosition）の計算に使う |
+| `skin` | カーブを動かす skinCluster のウェイト `[[CV の番号, インフルエンスの論理番号, 値], …]`、`pm`（論理番号 → 16 要素）、`gm`。インフルエンスは `inputs` の `ma[i]` |
 
 ### animation.fallback・animation.tainted
 

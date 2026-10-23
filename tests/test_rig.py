@@ -141,12 +141,20 @@ class TestSmallRigs(unittest.TestCase):
                 'createNode %s -n "solver";\n'
                 'connectAttr "a.msg" "ik.hsj";\nconnectAttr "eff.hp" "ik.hee";\nconnectAttr "solver.msg" "ik.hsv";\n'
                 'connectAttr "d.tx" "eff.tx";\n')
-        _sc, anim = from_text(body % "ikSCsolver")
+        _sc, anim = from_text(body % "ikSpringSolver")
         self.assertIsNone(anim)                   # 評価するものがない
-        ms = parse_ma_text(HEADER + body % "ikRPsolver", "t.ma")
+        ms = parse_ma_text(HEADER + body % "ikSpringSolver", "t.ma")
         scene_to_dict(ms)
-        problems = [e["problem"] for e in ms.graph_info.ik]
-        self.assertTrue(problems and "2 ボーン" in problems[0])
+        self.assertIn("ikSpringSolver は未対応", ms.graph_info.ik[0]["problem"])
+        # ジョイント 2 つの回転プレーン IK は解けない（極ベクトルの面が決まらない）
+        body2 = body.replace('connectAttr "d.tx" "eff.tx";', 'connectAttr "b.tx" "eff.tx";')
+        ms = parse_ma_text(HEADER + body2 % "ikRPsolver", "t.ma")
+        scene_to_dict(ms)
+        self.assertIn("2 個しかありません", ms.graph_info.ik[0]["problem"])
+        # ジョイント 4 つの回転プレーン・シングルチェーンは解ける
+        for solver in ("ikRPsolver", "ikSCsolver"):
+            _sc, anim = from_text(body % solver)
+            self.assertEqual(len(next(g for g in anim["graph"] if g["type"] == "ikHandle")["ik"]["chain"]), 4)
 
     def test_attr_ranges_are_expanded(self):
         ms = parse_ma_text(HEADER + 'createNode plusMinusAverage -n "p";\n\tsetAttr -s 3 ".i1[0:2]"  1 2 3;\n'
@@ -182,8 +190,8 @@ class TestStage3(unittest.TestCase):
     def test_single_chain_ik(self):
         self.assertEqual([self.names[i] for i in self.graph["sc_ik"]["ik"]["chain"]], ["sc_a", "sc_b"])
         self.assertEqual(self.graph["sc2_ik"]["ik"]["solver"], "ikSCsolver")
-        self.assertNotIn("sc4_ik", self.graph)
-        self.assertIn("sc4_ik", "\n".join(self.anim["warnings"]))
+        self.assertEqual(len(self.graph["sc4_ik"]["ik"]["chain"]), 4)            # 第 4 段階で対応
+        self.assertNotIn("sc4_ik", "\n".join(self.anim["warnings"]))
 
     def test_matrix_attr(self):
         m = self.graph["mm_mult"]["attrs"]["i[0]"]
@@ -262,6 +270,76 @@ class TestFallback(unittest.TestCase):
         fb = {names[f["node"]]: f for f in anim["fallback"]}
         self.assertEqual(set(fb), {"a", "b"})
         self.assertTrue(fb["a"]["unresolved"][0].startswith("r（IK: ik）"))
+
+
+
+class TestStage4(unittest.TestCase):
+    """displayLayer・四元数ノード・3 本以上のジョイントの IK・スプライン IK"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.scene = load_ma(os.path.join(ROOT, "samples", "ik_sample.ma"), animation=True)
+        cls.anim = cls.scene["animation"]
+        cls.names = [n["name"] for n in cls.scene["nodes"]]
+        cls.graph = {g["name"]: g for g in cls.anim["graph"]}
+
+    def test_no_warnings(self):
+        self.assertEqual(self.anim["warnings"], [])
+        self.assertEqual(self.scene["warnings"], [])
+
+    def test_display_layer(self):
+        n = {x["name"]: x for x in self.scene["nodes"]}
+        self.assertFalse(n["proxy_geo"]["visible"])                       # 非表示のレイヤー
+        mesh = next(m for m in self.scene["meshes"] if m["name"] == "proxy_geoShape")
+        self.assertFalse(mesh["visible"])
+        self.assertEqual(self.graph["hidden_layer"]["attrs"]["v"], 0.0)  # リグからは値を読むだけ
+        self.assertNotIn("inputs", self.graph["hidden_layer"])
+
+    def test_display_layer_disabled_or_visible(self):
+        base = ('createNode transform -n "g";\ncreateNode mesh -n "gShape" -p "g";\n'
+                '\tsetAttr ".vt[0:2]" 0 0 0 1 0 0 0 1 0;\n\tsetAttr ".ed[0:2]" 0 1 0 1 2 0 2 0 0;\n'
+                '\tsetAttr ".fc[0]" -type "polyFaces" f 3 0 1 2;\n'
+                'createNode displayLayer -n "lay";\n%s'
+                'connectAttr "lay.di" "g.do";\n')
+        sc, _ = from_text(base % '\tsetAttr ".v" no;\n')
+        self.assertFalse(sc["nodes"][0]["visible"])
+        sc, _ = from_text(base % '')
+        self.assertTrue(sc["nodes"][0]["visible"])
+        sc, _ = from_text(base % '\tsetAttr ".v" no;\n\tsetAttr ".e" no;\n')        # レイヤーが無効なら影響しない
+        self.assertTrue(sc["nodes"][0]["visible"])
+
+    def test_quat_nodes(self):
+        self.assertEqual(self.graph["q_e2q_45"]["attrs"]["irt"], [0.0, 0.0, 45.0])
+        self.assertEqual(self.graph["q_slerp"]["attrs"]["it"], 0.5)
+        for t in ("quatToEuler", "eulerToQuat", "quatProd", "quatInvert", "quatSlerp", "decomposeMatrix"):
+            self.assertIn(t, {g["type"] for g in self.anim["graph"]})
+
+    def test_long_chains(self):
+        self.assertEqual(len(self.graph["rp4_ik"]["ik"]["chain"]), 4)
+        self.assertEqual(self.graph["sc4_ik"]["ik"]["solver"], "ikSCsolver")
+
+    def test_spline_ik(self):
+        ik = self.graph["spA_ik"]
+        self.assertEqual(ik["ik"]["solver"], "ikSplineSolver")
+        self.assertEqual([self.names[i] for i in ik["ik"]["chain"]], ["spA_%d" % i for i in range(5)])
+        shape = self.anim["graph"][ik["inputs"]["ic"]["node"]]
+        self.assertEqual(shape["name"], "spA_curveShape")
+        self.assertEqual(self.names[shape["parent"]], "spA_curve")        # カーブの親も出力する
+        skin = self.anim["graph"][shape["inputs"]["cr"]["node"]]
+        self.assertEqual(skin["type"], "skinCluster")
+        self.assertEqual(skin["skin"]["weights"], [[0, 0, 1.0], [1, 0, 1.0], [2, 1, 1.0], [3, 1, 1.0]])
+        self.assertEqual(set(skin["skin"]["pm"]), {"0", "1"})
+        orig = self.anim["graph"][skin["inputs"]["ip[0].ig"]["node"]]
+        self.assertEqual(orig["attrs"]["cc"][:6], [3.0, 1.0, 0.0, 0.0, 3.0, 6.0])
+
+    def test_spline_ik_locators_and_twist(self):
+        g = self.graph["spB_ik"]
+        self.assertEqual(g["attrs"]["dtce"], 1.0)
+        self.assertEqual(set(g["inputs"]), {"ic", "dwum", "dwue"})
+        shape = self.anim["graph"][g["inputs"]["ic"]["node"]]
+        srcs = [self.anim["graph"][shape["inputs"]["cp[%d]" % i]["node"]] for i in range(4)]
+        self.assertEqual([s["type"] for s in srcs], ["locator"] * 4)
+        self.assertEqual([self.names[s["parent"]] for s in srcs], ["spB_loc%d" % i for i in range(4)])
 
 
 if __name__ == "__main__":

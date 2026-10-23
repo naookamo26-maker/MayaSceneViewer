@@ -9,6 +9,7 @@
 // 完全な再現は目指さず、Maya と同じ考え方の近似にする（docs/data_format.md「animation.graph」）。
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { composeLocalMatrix, evaluateCurve } from './animation.js';
+import { arcLength, parseNurbsCurve, pointAtDistance, pointAtLength, polyline, withCvs } from './curve.js';
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -18,6 +19,7 @@ const THREE_ORDER = ROTATE_ORDERS.map((o) => o.split('').reverse().join('').toUp
 const XYZ = ['x', 'y', 'z'];
 const RGB = ['r', 'g', 'b'];
 const XY = ['x', 'y'];
+const XYZW = ['x', 'y', 'z', 'w'];
 const IDENTITY = new Matrix4();
 
 // 計算ノードの属性の既定値（ファイルに値がないとき）
@@ -34,7 +36,17 @@ const DEFAULTS = {
   aimConstraint: { a: [1, 0, 0], u: [0, 1, 0], wu: [0, 1, 0], wut: 3, o: [0, 0, 0] },
   decomposeMatrix: { ro: 0 },
   composeMatrix: { it: [0, 0, 0], ir: [0, 0, 0], is: [1, 1, 1], ish: [0, 0, 0], iro: 0, uer: 1 },
+  quatToEuler: { iq: [0, 0, 0, 1], iro: 0 },
+  eulerToQuat: { irt: [0, 0, 0], iro: 0 },
+  quatProd: { iq1: [0, 0, 0, 1], iq2: [0, 0, 0, 1] },
+  quatInvert: { iq: [0, 0, 0, 1] },
+  quatNormalize: { iq: [0, 0, 0, 1] },
+  quatSlerp: { iq1: [0, 0, 0, 1], iq2: [0, 0, 0, 1], it: 0 },
+  displayLayer: { v: 1, dt: 0, e: 1 },
 };
+// ikHandle の属性の既定値（スプライン IK を含む）
+DEFAULTS.ikHandle = { ...DEFAULTS.ikHandle, roc: 0, off: 0, rol: 0, dtce: 0, dwut: 0, dwua: 0, dfa: 0,
+  dwuv: [0, 1, 0], dwve: [0, 1, 0] };
 
 // 型ごとの出力の属性（これ以外の名前で計算結果を探さない。入力を読むときに自分の計算へ戻らないため）
 const OUTPUTS = {
@@ -42,6 +54,10 @@ const OUTPUTS = {
   reverse: /^o[xyz]?$/, condition: /^oc[rgb]?$/, blendColors: /^op[rgb]?$/, pairBlend: /^o[tr][xyz]?$/,
   pointConstraint: /^ct[xyz]?$/, poleVectorConstraint: /^ct[xyz]?$/, orientConstraint: /^cr[xyz]?$/,
   parentConstraint: /^c[tr][xyz]?$/, scaleConstraint: /^cs[xyz]?$/, aimConstraint: /^cr[xyz]?$/,
+  quatToEuler: /^ort[xyz]?$/, eulerToQuat: /^oq[xyzw]?$/, quatProd: /^oq[xyzw]?$/, quatInvert: /^oq[xyzw]?$/,
+  quatNormalize: /^oq[xyzw]?$/, quatSlerp: /^oq[xyzw]?$/, curveInfo: /^(al|arcLength)$/,
+  nurbsCurve: /^(ws|worldSpace|l|local)(\[\d+\])?$/, skinCluster: /^og(\[\d+\])?$/, tweak: /^og(\[\d+\])?$/,
+  groupParts: /^og$/, locator: /^(wp|worldPosition)(\[\d+\])?$/,
   multMatrix: /^o$/, decomposeMatrix: /^o(t|r|s|sh)[xyz]?$|^oq[xyzw]?$/, composeMatrix: /^omat$/, inverseMatrix: /^omat$/,
 };
 // DAG ノードの、値が決まると行列が変わる属性
@@ -53,6 +69,7 @@ function isAngleAttr(type, attr) {
     case 'pairBlend': return /^ir[12][xyz]?$/.test(attr);
     case 'orientConstraint': case 'aimConstraint': return /^o[xyz]?$/.test(attr);
     case 'composeMatrix': return /^ir[xyz]?$/.test(attr);
+    case 'eulerToQuat': return /^irt[xyz]?$/.test(attr);
     case 'parentConstraint': return /^tg\[\d+\]\.tor[xyz]?$/.test(attr);
     case 'ikHandle': return attr === 'twi';
     default: return false;
@@ -64,6 +81,7 @@ function suffixesOf(type, base) {
   if ((type === 'blendColors' && (base === 'c1' || base === 'c2' || base === 'op'))
     || (type === 'condition' && (base === 'ct' || base === 'cf' || base === 'oc'))) return RGB;
   if (type === 'plusMinusAverage' && /^(o2|i2\[\d+\])$/.test(base)) return XY;
+  if (/^(iq|iq1|iq2|oq)$/.test(base)) return XYZW;                // 四元数
   return XYZ;
 }
 
@@ -157,6 +175,9 @@ export class RigEvaluator {
     });
     this.bindCache = new Map();
     this.matrices = new Map();               // evaluate() の結果（動くノードだけ）
+    // スプライン IK で、開始ジョイントの位置もカーブに合わせるもの（rootOnCurve）
+    this.splineRoots = new Set(this.graph.filter((g) => g.ik && g.ik.solver === 'ikSplineSolver'
+      && ((g.attrs || {}).roc ?? 0) >= 0.5).map((g) => g.ik.chain[0]));
     this.problems = new Set();               // 評価中に見つかった問題（循環など）
     this.frame = 0;
     this.poseOf = () => null;
@@ -244,9 +265,15 @@ export class RigEvaluator {
           } else if (typeof v === 'number') out[base][XYZ.indexOf(key2[1])] = v * k;
         }
       }
-      if (mode === 'full' && this.ikJoint.has(ni)) {
+      if (this.ikJoint.has(ni) && (mode === 'full' || (mode === 't' && this.splineRoots.has(ni)))) {
         const sol = this.solveIK(this.ikJoint.get(ni));
-        if (sol && sol.has(ni)) out.r = sol.get(ni);
+        const v = sol && sol.get(ni);
+        if (Array.isArray(v)) {
+          if (mode === 'full') out.r = v;
+        } else if (v) {                                    // { r, t }（スプライン IK の開始ジョイント）
+          if (v.t) out.t = v.t;
+          if (v.r && mode === 'full') out.r = v.r;
+        }
       }
       return out;
     }, () => out);
@@ -394,7 +421,8 @@ export class RigEvaluator {
     // 計算結果
     if (OUTPUTS[g.type] && OUTPUTS[g.type].test(attr)) {
       const outs = this.outputs(id);
-      return outs && attr in outs ? outs[attr] : undefined;
+      if (!outs) return undefined;
+      return attr in outs ? outs[attr] : outs[attr.replace(/\[\d+\]$/, '')];       // ws[0] → ws
     }
     // 3 つ組: 成分ごとに接続・値がある
     const sfx = suffixesOf(g.type, attr);
@@ -512,9 +540,133 @@ export class RigEvaluator {
         break;
       }
       case 'inverseMatrix': o = { omat: this.mat(id, 'imat').clone().invert() }; break;
+      case 'quatToEuler': {
+        const e = new Euler().setFromQuaternion(this.quat(id, 'iq').normalize(), this.order(id, 'iro'));
+        o = expand('ort', [e.x, e.y, e.z], XYZ);
+        break;
+      }
+      case 'eulerToQuat': {
+        const r = this.vec(id, 'irt');
+        const q = new Quaternion().setFromEuler(new Euler(r[0], r[1], r[2], this.order(id, 'iro')));
+        o = expand('oq', [q.x, q.y, q.z, q.w], XYZW);
+        break;
+      }
+      case 'quatProd': {
+        // Maya の積 input1 · input2 は「1 を先に回してから 2」（行ベクトル規約）。three.js では q2 · q1
+        const q = this.quat(id, 'iq2').multiply(this.quat(id, 'iq1'));
+        o = expand('oq', [q.x, q.y, q.z, q.w], XYZW);
+        break;
+      }
+      case 'quatInvert': case 'quatNormalize': {
+        const q = this.quat(id, 'iq').normalize();
+        if (g.type === 'quatInvert') q.invert();
+        o = expand('oq', [q.x, q.y, q.z, q.w], XYZW);
+        break;
+      }
+      case 'quatSlerp': {
+        const q = this.quat(id, 'iq1').normalize().slerp(this.quat(id, 'iq2').normalize(), this.num(id, 'it', 0));
+        o = expand('oq', [q.x, q.y, q.z, q.w], XYZW);
+        break;
+      }
+      case 'curveInfo': {
+        const c = this.plug(id, 'ic');
+        const al = c && c.isCurve ? arcLength(c) : 0;
+        o = { al, arcLength: al };
+        break;
+      }
+      case 'nurbsCurve': o = this.curveOutputs(g); break;
+      case 'locator': {
+        const p = positionOf(g.parent >= 0 ? this.world(g.parent) : IDENTITY).toArray();
+        o = { wp: p, worldPosition: p };
+        break;
+      }
+      case 'skinCluster': o = this.skinCurve(g); break;
+      case 'tweak': {                                       // 頂点の調整は反映しない（形はそのまま通す）
+        const c = this.plug(id, 'ip[0].ig');
+        o = c && c.isCurve ? { og: c } : null;
+        break;
+      }
+      case 'groupParts': {
+        const c = this.plug(id, 'ig');
+        o = c && c.isCurve ? { og: c } : null;
+        break;
+      }
       default: break;
     }
     return o;
+  }
+
+  quat(id, base) {
+    const v = this.vec(id, base, [0, 0, 0, 1]);
+    return new Quaternion(v[0], v[1], v[2], v[3]);
+  }
+
+  order(id, attr) { return THREE_ORDER[Math.round(this.num(id, attr, 0))] || 'ZYX'; }
+
+  /** nurbsCurve の出力: local（形）と ws（ワールド空間）。形は create の接続か .cc。制御点（cp）の接続は位置をそのまま使う */
+  curveOutputs(g) {
+    let base = null;
+    const inputs = g.inputs || {};
+    if (inputs.cr) {
+      const v = this.source(inputs.cr);
+      if (v && v.isCurve) base = v;
+    }
+    if (!base) base = parseNurbsCurve((g.attrs || {}).cc);
+    if (!base) return null;
+    const cvs = base.cvs.map((c) => c.clone());
+    for (const [k, v] of Object.entries(g.attrs || {})) {          // ファイルの調整（tweak）は足す
+      const m = /^cp\[(\d+)\]$/.exec(k);
+      if (m && cvs[+m[1]] && Array.isArray(v)) cvs[+m[1]].add(new Vector3(v[0], v[1], v[2]));
+    }
+    for (const [k, src] of Object.entries(inputs)) {               // 接続は位置そのもの
+      const m = /^cp\[(\d+)\](?:\.([xyz])v)?$/.exec(k);
+      if (!m || !cvs[+m[1]]) continue;
+      const v = this.source(src);
+      if (m[2] && typeof v === 'number') cvs[+m[1]].setComponent(XYZ.indexOf(m[2]), v);
+      else if (Array.isArray(v)) cvs[+m[1]].set(v[0], v[1], v[2]);
+    }
+    const local = withCvs(base, cvs);
+    const Wp = g.parent >= 0 ? this.world(g.parent) : IDENTITY;
+    const ws = withCvs(base, cvs.map((c) => c.clone().applyMatrix4(Wp)));
+    return { l: local, local, ws, worldSpace: ws };
+  }
+
+  /** カーブの skinCluster: p' = Σ w · (W · pm · gm) · p → gm⁻¹（three.js の順。Maya の p · gm · pm · W · gm⁻¹） */
+  skinCurve(g) {
+    const c = this.plug(g.id, 'ip[0].ig');
+    if (!c || !c.isCurve || !g.skin) return null;
+    if (!g.weightsOf) {
+      g.weightsOf = new Map();
+      for (const [v, i, w] of g.skin.weights) {
+        if (!g.weightsOf.has(v)) g.weightsOf.set(v, []);
+        g.weightsOf.get(v).push([i, w]);
+      }
+    }
+    const gm = g.skin.gm ? new Matrix4().fromArray(g.skin.gm) : new Matrix4();
+    const gmInv = gm.clone().invert();
+    const mats = new Map();
+    const matOf = (i) => {
+      if (!mats.has(i)) {
+        const pmIn = (g.inputs || {})[`pm[${i}]`];
+        const pm = pmIn ? this.mat(g.id, `pm[${i}]`) : new Matrix4().fromArray(g.skin.pm[String(i)] || new Matrix4().elements);
+        mats.set(i, this.mat(g.id, `ma[${i}]`).clone().multiply(pm).multiply(gm));
+      }
+      return mats.get(i);
+    };
+    const cvs = c.cvs.map((p, v) => {
+      const list = g.weightsOf.get(v);
+      if (!list) return p.clone();
+      const acc = new Vector3();
+      let total = 0;
+      for (const [i, w] of list) {
+        if (w === 0) continue;
+        acc.addScaledVector(p.clone().applyMatrix4(matOf(i)), w);
+        total += w;
+      }
+      return total > EPS ? acc.divideScalar(total).applyMatrix4(gmInv) : p.clone();
+    });
+    const out = withCvs(c, cvs);
+    return { og: out };
   }
 
   multiplyDivide(id) {
@@ -720,7 +872,9 @@ export class RigEvaluator {
 
   solveIKUncached(id) {
     const g = this.byId.get(id);
+    if (g.ik.solver === 'ikSplineSolver') return this.solveSpline(id);
     if (g.ik.chain.length === 2) return this.solveOneBone(id);
+    if (g.ik.chain.length > 3) return this.solveChain(id);
     const [s, mid, end] = g.ik.chain;
     const sc = g.ik.solver === 'ikSCsolver';
     if (!this.rest(s) || !this.rest(mid)) return null;
@@ -825,6 +979,210 @@ export class RigEvaluator {
       rs = [e.x * R2D, e.y * R2D, e.z * R2D];
     }
     return new Map([[s, rs]]);
+  }
+
+  /** IK のチェーンの FK の形: 親のワールド行列 P、各ジョイントのワールド行列 W と位置（終端は移動の値だけ使う） */
+  fkChain(chain) {
+    const P = this.parentWorld(chain[0]);
+    const W = [];
+    let prev = P;
+    chain.forEach((ni, i) => {
+      const c = i === chain.length - 1 ? this.chan(ni, 't') : this.chan(ni, 'fk');
+      prev = new Matrix4().multiplyMatrices(prev, composeLocalMatrix(c, this.isScaleOf(ni), new Matrix4()));
+      W.push(prev);
+    });
+    return { P, W, pos: W.map((m) => positionOf(m)) };
+  }
+
+  /** 新しいワールドの回転（開始から終端の手前まで）→ ジョイントの回転の値。ikBlend で FK と混ぜる */
+  ikLocals(id, chain, P, Qnew) {
+    const blend = this.num(id, 'ikb', 1);
+    const out = new Map();
+    let parentQ = rotationOf(P);
+    Qnew.forEach((q, i) => {
+      const ni = chain[i];
+      let r = this.localEuler(ni, parentQ.clone().invert().multiply(q));
+      if (blend < 1 - EPS) {
+        const ro = (this.rest(ni) || {}).ro || 0;
+        const e = new Euler().setFromQuaternion(eulerQuat(this.chan(ni, 'fk').r, ro)
+          .slerp(eulerQuat(r, ro), Math.max(0, blend)), THREE_ORDER[ro]);
+        r = [e.x * R2D, e.y * R2D, e.z * R2D];
+      }
+      out.set(ni, r);
+      parentQ = q;
+    });
+    return out;
+  }
+
+  /** 位置の列 q（開始から終端）に合うよう、FK の形の各ジョイントを順に最小の回転で回す（delta は最初に全体へ掛ける回転） */
+  rotateAlong(fk, q, delta, twistOf = null) {
+    const { W, pos } = fk;
+    const out = [];
+    let d = delta.clone();
+    for (let i = 0; i < q.length - 1; i++) {
+      const qW = rotationOf(W[i]);
+      const cur = d.clone().multiply(qW);
+      const a = new Vector3().subVectors(pos[i + 1], pos[i]).normalize().applyQuaternion(d);
+      const b = new Vector3().subVectors(q[i + 1], q[i]).normalize();
+      let qi = new Quaternion().setFromUnitVectors(a, b).multiply(cur);
+      const tw = twistOf ? twistOf(i) : 0;
+      if (Math.abs(tw) > EPS) qi = new Quaternion().setFromAxisAngle(b, tw).multiply(qi);
+      out.push(qi);
+      d = qi.clone().multiply(qW.clone().invert());
+    }
+    return out;
+  }
+
+  /** 3 本以上のジョイントの IK（回転プレーン・シングルチェーン）: 面の上で FABRIK を解く */
+  solveChain(id) {
+    const g = this.byId.get(id);
+    const chain = g.ik.chain;
+    if (chain.some((ni) => !this.rest(ni))) return null;
+    const fk = this.fkChain(chain);
+    const { pos } = fk;
+    const n = pos.length;
+    const lens = [];
+    for (let i = 0; i < n - 1; i++) lens.push(pos[i + 1].distanceTo(pos[i]));
+    if (lens.some((l) => l < EPS)) return null;
+    const total = lens.reduce((s, l) => s + l, 0);
+    const A = pos[0];
+    const H = positionOf(this.world(g.dag));
+    const u = new Vector3().subVectors(H, A);
+    const dist = u.length();
+    if (dist < EPS) return null;
+    u.divideScalar(dist);
+    // FK の形の軸（開始 → 終端）と、曲がっている側（途中のジョイントの、軸からのずれの平均）
+    const axis0 = new Vector3().subVectors(pos[n - 1], A).normalize();
+    const side0 = new Vector3();
+    for (let i = 1; i < n - 1; i++) {
+      const v = new Vector3().subVectors(pos[i], A);
+      side0.add(v.addScaledVector(axis0, -v.dot(axis0)));
+    }
+    // 目標の面: 回転プレーンは極ベクトルの側、シングルチェーンは FK の形の側
+    let v = null;
+    if (g.ik.solver === 'ikRPsolver') {
+      const pvL = this.vec(id, 'pv', [0, 1, 0]);
+      const pv = new Vector3(pvL[0], pvL[1], pvL[2]).applyMatrix4(new Matrix4().extractRotation(this.parentWorld(g.dag)));
+      v = pv.addScaledVector(u, -pv.dot(u));
+    }
+    if (!v || v.lengthSq() < EPS) v = side0.clone().addScaledVector(u, -side0.dot(u));
+    if (v.lengthSq() < EPS) v = new Vector3(0, 1, 0).cross(u).lengthSq() > EPS ? new Vector3(0, 1, 0).cross(u) : new Vector3(1, 0, 0).cross(u);
+    v.normalize();
+    if (g.ik.solver === 'ikRPsolver') {
+      const twist = this.num(id, 'twi', 0);
+      if (Math.abs(twist) > EPS) v.applyQuaternion(new Quaternion().setFromAxisAngle(u, twist));
+    }
+    // FK の形を、軸がハンドルへ、曲がる側が v へ向くように丸ごと回す
+    let n0 = side0.lengthSq() > EPS ? side0.clone().normalize().cross(axis0) : null;
+    const n1 = v.clone().cross(u).normalize();
+    if (!n0 || n0.lengthSq() < EPS) n0 = n1.clone();
+    n0.normalize();
+    const frame = (dd, nn) => new Matrix4().makeBasis(dd, nn, dd.clone().cross(nn));
+    const R1 = new Quaternion().setFromRotationMatrix(frame(u, n1).multiply(frame(axis0, n0).transpose()));
+    const q = pos.map((p) => p.clone().sub(A).applyQuaternion(R1).add(A));
+    if (dist >= total) {                                     // 届かない: まっすぐ伸ばす
+      let s = 0;
+      for (let i = 1; i < n; i++) { s += lens[i - 1]; q[i] = A.clone().addScaledVector(u, s); }
+    } else {
+      for (let it = 0; it < 64; it++) {
+        q[n - 1].copy(H);
+        for (let i = n - 2; i >= 0; i--) q[i] = q[i + 1].clone().add(q[i].clone().sub(q[i + 1]).normalize().multiplyScalar(lens[i]));
+        q[0].copy(A);
+        for (let i = 1; i < n; i++) q[i] = q[i - 1].clone().add(q[i].clone().sub(q[i - 1]).normalize().multiplyScalar(lens[i - 1]));
+        if (q[n - 1].distanceTo(H) < total * 1e-7) break;
+      }
+    }
+    return this.ikLocals(id, chain, fk.P, this.rotateAlong(fk, q, R1));
+  }
+
+  /**
+   * スプライン IK: ジョイントをカーブに沿って並べる（骨の長さを保ち、次のジョイントはカーブ上で骨の長さだけ離れた点）。
+   * rootOnCurve なら開始ジョイントをカーブの始点（+ オフセット）に置く。
+   * 向きは最小の回転 + ひねり（roll は全体、twist は終端に向けて配分）。上級ツイスト（dtce）なら world up に合わせる
+   */
+  solveSpline(id) {
+    const g = this.byId.get(id);
+    const chain = g.ik.chain;
+    if (chain.some((ni) => !this.rest(ni))) return null;
+    const curve = this.plug(id, 'ic');
+    if (!curve || !curve.isCurve) return null;
+    const fk = this.fkChain(chain);
+    const { pos } = fk;
+    const n = pos.length;
+    const lens = [];
+    for (let i = 0; i < n - 1; i++) lens.push(pos[i + 1].distanceTo(pos[i]));
+    const poly = polyline(curve);
+    const roc = this.num(id, 'roc', 0) >= 0.5;
+    let start, seg = 0;
+    if (roc) {
+      const s = Math.min(Math.max(this.num(id, 'off', 0), 0), 1) * poly.total;
+      start = pointAtLength(poly, s);
+      while (seg < poly.len.length - 2 && poly.len[seg + 1] < s) seg++;
+    } else {
+      start = pos[0].clone();
+      let best = Infinity;
+      poly.pts.forEach((p, k) => { const d = p.distanceToSquared(start); if (d < best) { best = d; seg = Math.max(0, k - 1); } });
+    }
+    const q = [start];
+    const endDir = new Vector3().subVectors(poly.pts[poly.pts.length - 1], poly.pts[poly.pts.length - 2]).normalize();
+    for (let i = 0; i < n - 1; i++) {
+      const r = pointAtDistance(poly, q[i], lens[i], seg);
+      if (r) { q.push(r.point); seg = r.seg; } else q.push(q[i].clone().addScaledVector(endDir, lens[i]));
+    }
+    const bones = n - 1;
+    let Qnew;
+    if (this.num(id, 'dtce', 0) >= 0.5 && Math.round(this.num(id, 'dwut', 0)) !== 7) {
+      Qnew = this.splineAdvancedTwist(id, fk, q, bones);
+    } else {
+      const twist = this.num(id, 'twi', 0), roll = this.num(id, 'rol', 0);
+      Qnew = this.rotateAlong(fk, q, new Quaternion(), (i) => (i === 0 ? roll : 0) + (bones > 1 ? (i === 0 ? 0 : twist / (bones - 1)) : twist));
+    }
+    const out = this.ikLocals(id, chain, fk.P, Qnew);
+    if (roc) {
+      const t = start.clone().applyMatrix4(fk.P.clone().invert());
+      out.set(chain[0], { r: out.get(chain[0]), t: t.toArray() });
+    }
+    return out;
+  }
+
+  /** 上級ツイスト: 骨の向き（forward 軸）と、world up（始点と終点の間で補間）に up 軸を向ける */
+  splineAdvancedTwist(id, fk, q, bones) {
+    const AXES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+    const UP = [[0, 1, 0], [0, -1, 0], [0, 1, 0], [0, 0, 1], [0, 0, -1], [0, 0, 1], [1, 0, 0], [-1, 0, 0], [1, 0, 0]];
+    const fa = new Vector3(...(AXES[Math.round(this.num(id, 'dfa', 0))] || AXES[0]));
+    const ua = new Vector3(...(UP[Math.round(this.num(id, 'dwua', 0))] || UP[0]));
+    const type = Math.round(this.num(id, 'dwut', 0));
+    const vecIn = (attr, mat) => {
+      const v = new Vector3(...this.vec(id, attr, [0, 1, 0]));
+      return mat ? v.applyMatrix4(new Matrix4().extractRotation(this.mat(id, mat))) : v;
+    };
+    const objPos = (mat) => positionOf(this.mat(id, mat));
+    const sceneUp = (this.clip.raw.upAxis || 'y') === 'z' ? new Vector3(0, 0, 1) : new Vector3(0, 1, 0);
+    const upAt = (i, p) => {
+      const t = bones > 1 ? i / (bones - 1) : 0;
+      switch (type) {
+        case 1: return objPos('dwum').sub(p);
+        case 2: return objPos('dwum').sub(p).lerp(objPos('dwue').sub(p), t);
+        case 3: return vecIn('dwuv', 'dwum');
+        case 4: return vecIn('dwuv', 'dwum').lerp(vecIn('dwve', 'dwue'), t);
+        case 5: return vecIn('dwuv');
+        case 6: return vecIn('dwuv').lerp(vecIn('dwve'), t);
+        default: return sceneUp.clone();
+      }
+    };
+    const frame = (x, y) => new Matrix4().makeBasis(x, y, x.clone().cross(y));
+    const faN = fa.clone().normalize();
+    const uaP = ua.clone().addScaledVector(faN, -ua.dot(faN)).normalize();
+    const out = [];
+    for (let i = 0; i < bones; i++) {
+      const dir = new Vector3().subVectors(q[i + 1], q[i]).normalize();
+      const up = upAt(i, q[i]);
+      up.addScaledVector(dir, -up.dot(dir));
+      if (up.lengthSq() < EPS) { out.push(new Quaternion().setFromUnitVectors(faN, dir)); continue; }
+      up.normalize();
+      out.push(new Quaternion().setFromRotationMatrix(frame(dir, up).multiply(frame(faN, uaP).transpose())));
+    }
+    return out;
   }
 
   isScaleOf(ni) {

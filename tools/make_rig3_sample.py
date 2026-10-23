@@ -11,7 +11,7 @@
     （Maya の行ベクトル規約で、mm_ctrl のローカル軸で (2, 0, 0) ずらした位置と向き）
   * cm_jnt = decomposeMatrix(inverseMatrix(composeMatrix(cm_ctrl の移動, 回転 (0, 0, 30))))
   * opm_jnt は offsetParentMatrix（移動 (5, 0, -20)）を持つ。opm_follow の offsetParentMatrix は opm_src.worldMatrix
-  * sc4_a〜sc4_d（ジョイント 4 つ）の ikSCsolver は未対応（警告の確認用）
+  * sc4_a〜sc4_d（ジョイント 4 つ、まっすぐ）の ikSCsolver（第 4 段階で対応。まっすぐ伸びた状態でハンドルに届く）
 保存時のフレーム（1）の各ノードの値は、リグの計算結果と一致するように書く。
 """
 from __future__ import annotations

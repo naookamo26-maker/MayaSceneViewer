@@ -9,9 +9,12 @@
 
 対応するノード:
   * コンストレイント: point・orient・parent・scale・poleVector・aim
-  * IK: ikRPsolver の 2 ボーン（開始ジョイント → 中間 → 終端）、ikSCsolver の 1〜2 ボーン
+  * IK: ikRPsolver・ikSCsolver（ジョイントの数は問わない）、ikSplineSolver（nurbsCurve に沿わせる）
   * 計算ノード: unitConversion・pairBlend・blendColors・multiplyDivide・plusMinusAverage・reverse・condition
   * 行列ノード: multMatrix・decomposeMatrix・composeMatrix・inverseMatrix、DAG ノードの offsetParentMatrix
+  * 四元数ノード: quatToEuler・eulerToQuat・quatProd・quatInvert・quatNormalize・quatSlerp
+  * そのほか: curveInfo（カーブの長さ）、displayLayer（値を読むだけ）
+  * カーブ: nurbsCurve と、それを動かす skinCluster・制御点（controlPoints）の接続・ロケーター（worldPosition）
   * アニメーションカーブ（animCurveTL / TA / TU）
 これ以外のノード（エクスプレッション・ドリブンキー・行列ノードなど）に当たったら、そこから先は評価せず警告する。
 """
@@ -27,7 +30,22 @@ CURVE_TYPES = {"animCurveTL", "animCurveTA", "animCurveTU"}
 CONSTRAINT_TYPES = {"pointConstraint", "orientConstraint", "parentConstraint", "scaleConstraint", "poleVectorConstraint",
                     "aimConstraint"}
 UTILITY_TYPES = {"unitConversion", "pairBlend", "blendColors", "multiplyDivide", "plusMinusAverage", "reverse",
-                 "condition", "multMatrix", "decomposeMatrix", "composeMatrix", "inverseMatrix"}
+                 "condition", "multMatrix", "decomposeMatrix", "composeMatrix", "inverseMatrix",
+                 "quatToEuler", "eulerToQuat", "quatProd", "quatInvert", "quatNormalize", "quatSlerp", "curveInfo",
+                 "displayLayer"}
+# 入力をたどらない（値を読むだけの）ノード
+_NO_INPUT_TYPES = {"displayLayer"}
+# カーブと、それを動かすノード（必要な入力だけをたどる）
+GEOMETRY_TYPES = {"nurbsCurve", "skinCluster", "tweak", "groupParts", "locator"}
+_GEOMETRY_INPUTS = {
+    "nurbsCurve": re.compile(r"^(cr|cp\[\d+\].*)$"),            # create・controlPoints
+    "skinCluster": re.compile(r"^(ma\[\d+\]|pm\[\d+\]|ip\[\d+\]\.ig)$"),
+    "tweak": re.compile(r"^ip\[\d+\]\.ig$"),
+    "groupParts": re.compile(r"^ig$"),
+    "locator": None,
+}
+# スプライン IK のハンドルで使う属性（カーブ・ひねり・上級ツイスト）
+_SPLINE_HANDLE_KEYS = {"ic", "twi", "rol", "off", "dtce", "dwut", "dwua", "dfa", "dwum", "dwue", "dwuv", "dwve"}
 SUPPORTED_DG = CONSTRAINT_TYPES | UTILITY_TYPES
 
 # DAG ノードの行列の属性（上流は、そのノードと祖先の移動・回転・スケールのすべて）
@@ -118,8 +136,19 @@ def discover(ms: MaScene, keep: Set[int]) -> GraphInfo:
         if n.type in SUPPORTED_DG:
             if id(n) not in info.dg:
                 info.dg[id(n)] = n
+                if n.type not in _NO_INPUT_TYPES:
+                    for key in list(n.inputs):
+                        add_edge(n, key)
+            return
+        if n.type in GEOMETRY_TYPES:
+            if id(n) not in info.dg:
+                info.dg[id(n)] = n
+                pat = _GEOMETRY_INPUTS[n.type]
                 for key in list(n.inputs):
-                    add_edge(n, key)
+                    if pat is not None and pat.match(key):
+                        add_edge(n, key)
+                if n.type in ("nurbsCurve", "locator"):
+                    need_world(n.parent)                 # ワールド空間（ws・worldPosition）は親の行列から
             return
         if _dag_like(n):
             info.dag[id(n)] = n
@@ -157,26 +186,31 @@ def discover(ms: MaScene, keep: Set[int]) -> GraphInfo:
         while x is not None and x is not start:
             chain.append(x)
             x = x.parent
-        entry = {"handle": handle, "solver": solver[0].type if solver else "ikSCsolver", "chain": [], "problem": None}
+        entry = {"handle": handle, "solver": solver[0].type if solver else "ikSCsolver", "chain": [], "problem": None,
+                 "curve": None}
         if end is None or x is not start:
             entry["problem"] = "終端のジョイントが見つかりません"
         else:
             chain.append(start)
             entry["chain"] = list(reversed(chain))
             n_joints = len(entry["chain"])
-            if entry["solver"] not in ("ikRPsolver", "ikSCsolver"):
-                entry["problem"] = "%s は未対応です（ikRPsolver・ikSCsolver のみ）" % entry["solver"]
-            elif entry["solver"] == "ikRPsolver" and n_joints != 3:
-                entry["problem"] = "ジョイント %d 個の ikRPsolver は未対応です（2 ボーンのみ）" % n_joints
-            elif entry["solver"] == "ikSCsolver" and n_joints not in (2, 3):
-                entry["problem"] = "ジョイント %d 個の ikSCsolver は未対応です（1〜2 ボーンのみ）" % n_joints
+            curve = handle.inputs.get("ic")
+            if entry["solver"] not in ("ikRPsolver", "ikSCsolver", "ikSplineSolver"):
+                entry["problem"] = "%s は未対応です" % entry["solver"]
+            elif entry["solver"] == "ikRPsolver" and n_joints < 3:
+                entry["problem"] = "ikRPsolver のジョイントが %d 個しかありません" % n_joints
+            elif entry["solver"] == "ikSplineSolver" and (curve is None or curve[0].type != "nurbsCurve"):
+                entry["problem"] = "スプライン IK のカーブ（nurbsCurve）が見つかりません"
+            elif entry["solver"] == "ikSplineSolver":
+                entry["curve"] = curve[0]
         info.ik.append(entry)
         if entry["problem"]:
             continue
         need_world(handle)
         need_world(end)
+        keys = _SPLINE_HANDLE_KEYS if entry["solver"] == "ikSplineSolver" else {"pv", "pvx", "pvy", "pvz", "twi", "ikb"}
         for key in list(handle.inputs):
-            if _base(key) in ("pv", "pvx", "pvy", "pvz", "twi", "ikb"):
+            if _base(key) in keys:
                 add_edge(handle, key)
     return info
 
@@ -274,6 +308,15 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
             e = ik_of[id(n)]
             entry["ik"] = {"solver": e["solver"], "chain": [out_index[id(j)] for j in e["chain"]]}
             moving.update(out_index[id(j)] for j in e["chain"][:-1])
+        if n.type in ("nurbsCurve", "locator"):
+            entry["parent"] = out_index.get(id(n.parent), -1) if n.parent is not None else -1
+        if n.type == "skinCluster" and n.skin is not None:
+            sk = n.skin
+            entry["skin"] = {
+                "weights": [[v, i, round(w, 6)] for v, d in sorted(sk.weights.items()) for i, w in sorted(d.items())],
+                "pm": {str(i): [float(x) for x in m] for i, m in sk.pm.items()},
+                "gm": [float(x) for x in sk.gm] if sk.gm else None,
+            }
         nodes.append(entry)
     return nodes, moving
 
@@ -320,8 +363,10 @@ def analyze_fallback(info: GraphInfo, kept: List[MaNode], bind_ids: Set[int], ou
     def bad_source(src: MaNode, sattr: str) -> bool:
         if src.type in CURVE_TYPES:
             return False
-        if src.type in SUPPORTED_DG:
+        if src.type in SUPPORTED_DG or src.type in GEOMETRY_TYPES:
             if src.type in CONSTRAINT_TYPES and not _evaluable(src):
+                return True
+            if src.type in ("nurbsCurve", "locator") and tainted(src.parent):
                 return True
             return guarded("dg", src, lambda: any(bad_source(s, a) for s, a in info.edges.get(id(src), {}).values()),
                            False)
@@ -342,8 +387,7 @@ def analyze_fallback(info: GraphInfo, kept: List[MaNode], bind_ids: Set[int], ou
             keys = [k for k, (s, a) in info.edges.get(id(n), {}).items()
                     if _base(k) in _CHANNEL_KEYS and bad_source(s, a)]
             h = ik_of.get(id(n))
-            if h is not None and (tainted(h) or any(bad_source(s, a) for k, (s, a) in info.edges.get(id(h), {}).items()
-                                                    if _base(k) in ("pv", "pvx", "pvy", "pvz", "twi", "ikb"))):
+            if h is not None and (tainted(h) or any(bad_source(s, a) for s, a in info.edges.get(id(h), {}).values())):
                 keys.append("r（IK: %s）" % h.name)
             return keys
         return guarded("unres", n, calc, [])

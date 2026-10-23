@@ -86,7 +86,18 @@ def _visible_self(n: MaNode) -> bool:
         return False
     if n.flag("ove", False) and not n.flag("ovv", True):
         return False
-    return True
+    return not _hidden_by_layer(n)
+
+
+def _hidden_by_layer(n: MaNode) -> bool:
+    """ディスプレイレイヤー（.do ← displayLayer.di）が非表示か（レイヤーが無効なら影響しない）"""
+    src = n.inputs.get("do")
+    if src is None or src[0].type != "displayLayer" or src[0].raw is None:
+        return False
+    raw = src[0].raw
+    if "e" in raw and raw["e"] and not R.to_bool(raw["e"][0]):
+        return False
+    return "v" in raw and bool(raw["v"]) and not R.to_bool(raw["v"][0])
 
 
 def _visible_effective(n: Optional[MaNode]) -> bool:

@@ -71,7 +71,7 @@ _SKIP_ATTR_TYPES = {
     "unitConversion", "multiplyDivide", "plusMinusAverage", "condition", "reverse", "clamp", "setRange",
     "blendColors", "blendTwoAttr", "blendWeighted", "pairBlend", "multDoubleLinear", "addDoubleLinear",
     "decomposeMatrix", "composeMatrix", "multMatrix", "inverseMatrix", "pickMatrix", "blendMatrix",
-    "choice", "remapValue", "network", "expression", "script", "objectSet", "displayLayer", "renderLayer",
+    "choice", "remapValue", "network", "expression", "script", "objectSet", "renderLayer",
     "displayLayerManager", "renderLayerManager", "nodeGraphEditorInfo", "hyperGraphInfo", "hyperView",
     "hyperLayout", "polyBlindData", "blindDataTemplate", "reference", "blendShape", "cluster", "ffd",
     "nonLinear", "wire", "wrap", "deltaMush", "tension", "animLayer", "character", "clipLibrary",
@@ -79,6 +79,8 @@ _SKIP_ATTR_TYPES = {
     "poseInterpolatorManager", "lightLinker", "partition", "brush", "strokeGlobals", "ikRPsolver",
     "ikSCsolver", "ikSplineSolver", "ikSystem", "hikSolver", "controller",
     "aiOptions", "aiAOVDriver", "aiAOVFilter", "aiImagerDenoiserOidn",
+    # リグの計算ノード（値は 2 段階目に属性の範囲から読む）
+    "quatToEuler", "eulerToQuat", "quatProd", "quatInvert", "quatNormalize", "quatSlerp", "curveInfo",
 }
 # シェイプのうち、メッシュ以外（子を持たず、属性も使わない）
 _SKIP_SHAPE_TYPES = SHAPE_TYPES - {"mesh"}
@@ -96,6 +98,7 @@ RAW_TYPES = {
     "file", "place2dTexture", "uvChooser", "shadingEngine", "lambert", "blinn", "phong", "phongE",
     "anisotropic", "surfaceShader", "aiStandardSurface", "standardSurface", "openPBRSurface",
     "StingrayPBS", "usdPreviewSurface", "aiFlat", "dagPose", "groupParts", "bump2d", "aiNormalMap",
+    "displayLayer",
 }
 
 _LINEAR_UNITS = {"mm": "mm", "millimeter": "mm", "cm": "cm", "centimeter": "cm",
@@ -918,7 +921,7 @@ def read_ma_text(path: str) -> str:
 
 _BLOCK_END_RE = re.compile(r"\n(?=[^\t \n])")
 # 後から中身を読むために、属性の範囲（span）を覚えておくノード（アニメーションカーブと、再生範囲を持つ script）
-_SPAN_TYPES = ("animCurveTL", "animCurveTA", "animCurveTU", "script")
+_SPAN_TYPES = ("animCurveTL", "animCurveTA", "animCurveTU", "script", "displayLayer")
 _NO_SKIP = os.environ.get("MA_VIEWER_NO_SKIP") == "1"
 
 

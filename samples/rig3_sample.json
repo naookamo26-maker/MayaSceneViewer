@@ -1154,6 +1154,68 @@
    "segmentScaleCompensate":true
   },
   {
+   "name":"sc4_ik",
+   "path":"|sc4_ik",
+   "type":"ikHandle",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    46.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    46.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     46.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   }
+  },
+  {
    "name":"mm_ctrl",
    "path":"|mm_ctrl",
    "type":"transform",
@@ -1637,7 +1699,7 @@
  "textures":[],
  "warnings":[],
  "stats":{
-  "nodes":24,
+  "nodes":25,
   "joints":15,
   "meshes":0,
   "vertices":0,
@@ -1782,17 +1844,17 @@
     "curve":5
    },
    {
-    "node":17,
+    "node":18,
     "attr":"ry",
     "curve":6
    },
    {
-    "node":19,
+    "node":20,
     "attr":"tx",
     "curve":7
    },
    {
-    "node":22,
+    "node":23,
     "attr":"tx",
     "curve":8
    }
@@ -2159,7 +2221,152 @@
     ]
    },
    {
+    "node":13,
+    "joint":true,
+    "ro":0,
+    "t":[
+     40.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":14,
+    "joint":true,
+    "ro":0,
+    "t":[
+     2.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":15,
+    "joint":true,
+    "ro":0,
+    "t":[
+     2.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":16,
+    "joint":true,
+    "ro":0,
+    "t":[
+     2.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
     "node":17,
+    "joint":false,
+    "ro":0,
+    "t":[
+     46.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":18,
     "joint":false,
     "ro":0,
     "t":[
@@ -2184,7 +2391,7 @@
     ]
    },
    {
-    "node":18,
+    "node":19,
     "joint":true,
     "ro":0,
     "t":[
@@ -2214,7 +2421,7 @@
     ]
    },
    {
-    "node":19,
+    "node":20,
     "joint":false,
     "ro":0,
     "t":[
@@ -2239,7 +2446,7 @@
     ]
    },
    {
-    "node":20,
+    "node":21,
     "joint":true,
     "ro":0,
     "t":[
@@ -2269,7 +2476,7 @@
     ]
    },
    {
-    "node":22,
+    "node":23,
     "joint":false,
     "ro":0,
     "t":[
@@ -2294,7 +2501,7 @@
     ]
    },
    {
-    "node":23,
+    "node":24,
     "joint":true,
     "ro":0,
     "t":[
@@ -2635,9 +2842,48 @@
    },
    {
     "id":15,
+    "name":"sc4_a",
+    "type":"joint",
+    "dag":13
+   },
+   {
+    "id":16,
+    "name":"sc4_b",
+    "type":"joint",
+    "dag":14
+   },
+   {
+    "id":17,
+    "name":"sc4_c",
+    "type":"joint",
+    "dag":15
+   },
+   {
+    "id":18,
+    "name":"sc4_d",
+    "type":"joint",
+    "dag":16
+   },
+   {
+    "id":19,
+    "name":"sc4_ik",
+    "type":"ikHandle",
+    "dag":17,
+    "ik":{
+     "solver":"ikSCsolver",
+     "chain":[
+      13,
+      14,
+      15,
+      16
+     ]
+    }
+   },
+   {
+    "id":20,
     "name":"mm_ctrl",
     "type":"transform",
-    "dag":17,
+    "dag":18,
     "inputs":{
      "ry":{
       "curve":6
@@ -2645,23 +2891,23 @@
     }
    },
    {
-    "id":16,
+    "id":21,
     "name":"mm_jnt",
     "type":"joint",
-    "dag":18,
+    "dag":19,
     "inputs":{
      "t":{
-      "node":18,
+      "node":23,
       "attr":"ot"
      },
      "r":{
-      "node":18,
+      "node":23,
       "attr":"or"
      }
     }
    },
    {
-    "id":17,
+    "id":22,
     "name":"mm_mult",
     "type":"multMatrix",
     "dag":-1,
@@ -2687,28 +2933,28 @@
     },
     "inputs":{
      "i[1]":{
-      "node":15,
+      "node":20,
       "attr":"wm"
      }
     }
    },
    {
-    "id":18,
+    "id":23,
     "name":"mm_dec",
     "type":"decomposeMatrix",
     "dag":-1,
     "inputs":{
      "imat":{
-      "node":17,
+      "node":22,
       "attr":"o"
      }
     }
    },
    {
-    "id":19,
+    "id":24,
     "name":"cm_ctrl",
     "type":"transform",
-    "dag":19,
+    "dag":20,
     "inputs":{
      "tx":{
       "curve":7
@@ -2716,23 +2962,23 @@
     }
    },
    {
-    "id":20,
+    "id":25,
     "name":"cm_jnt",
     "type":"joint",
-    "dag":20,
+    "dag":21,
     "inputs":{
      "t":{
-      "node":23,
+      "node":28,
       "attr":"ot"
      },
      "r":{
-      "node":23,
+      "node":28,
       "attr":"or"
      }
     }
    },
    {
-    "id":21,
+    "id":26,
     "name":"cm_comp",
     "type":"composeMatrix",
     "dag":-1,
@@ -2745,40 +2991,40 @@
     },
     "inputs":{
      "it":{
-      "node":19,
+      "node":24,
       "attr":"t"
      }
     }
    },
    {
-    "id":22,
+    "id":27,
     "name":"cm_inv",
     "type":"inverseMatrix",
     "dag":-1,
     "inputs":{
      "imat":{
-      "node":21,
+      "node":26,
       "attr":"omat"
      }
     }
    },
    {
-    "id":23,
+    "id":28,
     "name":"cm_dec",
     "type":"decomposeMatrix",
     "dag":-1,
     "inputs":{
      "imat":{
-      "node":22,
+      "node":27,
       "attr":"omat"
      }
     }
    },
    {
-    "id":24,
+    "id":29,
     "name":"opm_src",
     "type":"transform",
-    "dag":22,
+    "dag":23,
     "inputs":{
      "tx":{
       "curve":8
@@ -2786,13 +3032,13 @@
     }
    },
    {
-    "id":25,
+    "id":30,
     "name":"opm_follow",
     "type":"joint",
-    "dag":23,
+    "dag":24,
     "inputs":{
      "opm":{
-      "node":24,
+      "node":29,
       "attr":"wm"
      }
     }
@@ -2820,16 +3066,14 @@
    "count":0,
    "data":""
   },
-  "warnings":[
-   "アニメーション: IK ハンドル sc4_ik は再生されません（ジョイント 4 個の ikSCsolver は未対応です（1〜2 ボーンのみ））。"
-  ],
+  "warnings":[],
   "stats":{
    "curves":9,
    "keys":19,
    "channels":9,
-   "nodes":14,
-   "graphNodes":26,
-   "seconds":0.0014
+   "nodes":17,
+   "graphNodes":31,
+   "seconds":0.0013
   }
  }
 }

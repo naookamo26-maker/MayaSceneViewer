@@ -161,6 +161,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 - 作業単位は cm を前提にしています。それ以外の単位では、ファイルに書かれた値のまま表示します（警告を出します）。角度は度・ラジアンのどちらにも対応します。
 - 穴付きの面は、穴を無視して表示します。
 - **接続で値が決まる属性**は、.ma に値が残っていません。アニメーションカーブと、下の「リグ」で評価できるものは、アニメーションを読み込むと評価した値で表示します。それ以外（エクスプレッションなど）で決まるノードは、バインドポーズの情報があれば「ファイルの値」でもその姿勢で表示し、なければ既定値（移動 0・回転 0）で表示します。どちらの場合も警告を出し、選択情報に接続元を表示します。
+- **ディスプレイレイヤー**: 非表示のレイヤー（.v が off）に入っているノードは、非表示で読み込みます（レイヤーが無効なら影響しません）。
 - **offsetParentMatrix**（Maya 2020 以降）は、ファイルの値をローカル行列のあとに掛けます（ワールド行列 = ローカル · offsetParentMatrix · 親）。接続で決まる場合は、アニメーションを読み込むと評価した値を使います。
 
 **アニメーション（.ma から読み込む場合）**
@@ -185,13 +186,16 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 | scaleConstraint | ターゲットのワールドのスケールの重み付き平均 × オフセット（.o） |
 | poleVectorConstraint | ターゲットの位置 − 開始ジョイントの位置（IK ハンドルの極ベクトル） |
 | aimConstraint | aim ベクトル（.a）をターゲットへ向け、up ベクトル（.u）を world up の側に向ける。world up はシーンの上・オブジェクト（.wum の位置）・オブジェクトの回転・ベクトル（.wu）・なし（最短の回転）。オフセット（.o） |
-| IK（ikRPsolver） | 2 ボーン（開始・中間・終端のジョイント）。ハンドルに届くように余弦定理で曲げ、極ベクトルの側に肘を置き、ひねり（twist）で回す。届かないときはまっすぐ伸ばす。ikBlend で FK と混ぜる。まっすぐなチェーンは優先角（.pa）で曲げる向きを決める |
-| IK（ikSCsolver） | 1 ボーンは、終端がハンドルの方を向くよう開始ジョイントを最短の回転で回す。2 ボーンは回転プレーンと同じ解き方で、極ベクトルの代わりに FK の形の中間ジョイントの側に曲げる（Maya の SC はハンドルの回転で面を決めるので、ずれることがある） |
+| IK（ikRPsolver） | 2 ボーン（開始・中間・終端のジョイント）は、ハンドルに届くように余弦定理で曲げ、極ベクトルの側に肘を置き、ひねり（twist）で回す。届かないときはまっすぐ伸ばす。ikBlend で FK と混ぜる。まっすぐなチェーンは優先角（.pa）で曲げる向きを決める。3 ボーン以上は、FK の形を極ベクトルの面に合わせて回してから、面の上で FABRIK（反復の解き方）で解く（曲がり方の配分は Maya と違うことがある） |
+| IK（ikSCsolver） | 1 ボーンは、終端がハンドルの方を向くよう開始ジョイントを最短の回転で回す。2 ボーン以上は回転プレーンと同じ解き方で、極ベクトルの代わりに FK の形の側に曲げる（Maya の SC はハンドルの回転で面を決めるので、ずれることがある） |
+| IK（ikSplineSolver） | ジョイントをカーブ（.ic の nurbsCurve）に沿って並べる。骨の長さを保ち、次のジョイントはカーブの上で骨の長さだけ離れた点に置く。rootOnCurve なら開始ジョイントをカーブの始点（+ オフセット .off）に置く。向きは、最小の回転 + ひねり（roll は全体、twist は終端に向けて配分）。上級ツイスト（dtce）は world up（シーンの上・オブジェクト・オブジェクトの回転・ベクトル、それぞれの始点と終点の補間）に up 軸（.dwua）を向け、forward 軸（.dfa）を骨の向きに合わせる。カーブは、ファイルの形（.cc）、skinCluster による変形、制御点（controlPoints）への接続（ロケーターの worldPosition など）で決まる |
 | 計算ノード | unitConversion・pairBlend（成分ごとのモード・四元数の補間を含む）・blendColors・multiplyDivide・plusMinusAverage（1D・2D・3D）・reverse・condition |
 | 行列ノード | multMatrix（Maya と同じく i[0] · i[1] · … の順）・decomposeMatrix（回転順 .ro）・composeMatrix（オイラー角・四元数）・inverseMatrix。DAG ノードの行列の属性（worldMatrix・parentMatrix など）も入力にできる |
+| 四元数ノード | quatToEuler・eulerToQuat（回転順 .iro）・quatProd（Maya と同じく入力 1 を先に回す）・quatInvert・quatNormalize・quatSlerp |
+| そのほか | curveInfo（カーブの長さ .al。ストレッチの計算などに使う）、displayLayer（値を読むだけ） |
 
 - ウェイトはカーブで動かせます（スペースの切り替えなど）。コントローラーの独自の属性（IK/FK の切り替えなど）も、カーブや値をそのまま使います。
-- 未対応（警告を出し、そこから先はファイルの値）: tangent・normal・geometry などほかのコンストレイント、ikSplineSolver・HumanIK、回転プレーンの 3 本以上・シングルチェーンの 4 本以上のジョイントの IK、エクスプレッション、ドリブンキー、blendMatrix・pickMatrix などほかの行列ノード、プラグインのノード。
+- 未対応（警告を出し、そこから先はファイルの値）: tangent・normal・geometry などほかのコンストレイント、ikSpringSolver・HumanIK、エクスプレッション、ドリブンキー、blendMatrix・pickMatrix などほかの行列ノード、cluster など skinCluster 以外のデフォーマで動くカーブ、プラグインのノード。
 - 循環（自分の結果を自分で使う接続）に当たったら、そこはファイルの値で打ち切り、警告を出します。
 - **値を求められないノードの推定（試作）**: 未対応のノードの影響を受けるノード（その子や、それをターゲットにするコンストレイントで動くノードも含む）は、.ma に値が残っていないため、そのままでは原点に集まります。バインドポーズの情報（skinCluster の .pm・dagPose・ジョイントの .bps）があるノードは、値を求められた一番近い祖先からの相対をバインドポーズのとおりに保って表示します（形を保ったまま、確かな部分の動きについていく）。ジョイントの表示（J）で、推定したノードは薄紫、推定もできないノード（バインドポーズの情報がない）は灰色になり、選択したノードの情報に理由を出します。推定では、そのノードの求められた成分（例: キーのある移動）も使いません。
 
@@ -270,7 +274,7 @@ maya_ma_viewer/
 │  └─ web/                ビューア（index.html・style.css・viewer.bundle.js）
 ├─ web_src/               ビューアの JS ソース（three.js r160）とビルド・テスト
 ├─ samples/               検証用の .ma と期待値（textured_project/ はテクスチャ確認用の Maya プロジェクト）
-├─ tools/                 検証用データの生成（make_sample_ma.py・make_textured_sample.py・make_anim_sample.py・make_rig_sample.py・make_rig3_sample.py・make_fallback_sample.py）
+├─ tools/                 検証用データの生成（make_sample_ma.py・make_textured_sample.py・make_anim_sample.py・make_rig_sample.py・make_rig3_sample.py・make_fallback_sample.py・make_ik_sample.py）
 ├─ tests/                 テスト
 └─ docs/data_format.md    共通 JSON の仕様
 ```
@@ -296,7 +300,7 @@ python tests/qt_undo_test.py                            # 元に戻す・やり�
 python tests/qt_visibility_test.py                      # ノードの表示・非表示（目のアイコン・Ctrl+H / Shift+H）
 python tests/qt_maya_fake_test.py                       # Maya 用ウィンドウの連携（偽の Maya API を使用）
 python tests/qt_animation_test.py                       # アニメーション（2 段階読み込み・タイムライン・読み込み中の中止・JSON の往復）
-python tests/qt_rig_test.py                             # リグ（IK・コンストレイントの再生、コントローラーを動かしたときの追従と元に戻す、キーのないリグ、行列ノード・SC IK）
+python tests/qt_rig_test.py                             # リグ（IK・コンストレイントの再生、コントローラーを動かしたときの追従と元に戻す、キーのないリグ、行列ノード・SC IK、多関節 IK・スプライン IK）
 ```
 
 画面のない Linux では `xvfb-run -a` を付けて実行します。
@@ -330,6 +334,7 @@ bundle は ES モジュールではなく、通常の `<script>` で読める形
 | アニメーション | 補間・範囲外・単位の変換（Python 15 件・Node.js 8 件）、ビューアで組み立てたローカル行列が Python の行列計算と一致すること、Qt での 2 段階読み込み・タイムライン操作・読み込み中の中止 | 合格 |
 | リグ | 保存時のフレームでファイルの値を再現すること（IK・コンストレイント・計算ノードを含む）、IK の終端がハンドルに届く・骨の長さが保たれる・肘が極ベクトルの側に曲がる（ジョイントの向き・回転順・rotateAxis を変えた場合も）、各コンストレイントの結果、計算ノードの値、ポーズ確認でコントローラーを動かしたときの追従（Python 13 件・Node.js 12 件・Qt） | 合格 |
 | リグ（第 3 段階） | aimConstraint の向き（world up の 5 種類・オフセット）、SC IK（1・2 ボーン）、multMatrix の掛ける順・decomposeMatrix・composeMatrix・inverseMatrix の結果、offsetParentMatrix（ファイルの値の行列計算・接続による親子付け・ポーズ確認での追従）、保存時のフレームでファイルの値を再現すること（Python 7 件・Node.js 10 件・Qt） | 合格 |
+| リグ（第 4 段階） | displayLayer の非表示と値、四元数ノードの結果、ジョイント 4 つの IK（ハンドルに届く・骨の長さ・面と曲がる側）、スプライン IK（ジョイントがカーブの上に並ぶ・rootOnCurve・skinCluster とロケーターで動くカーブ・上級ツイストの up 軸・ポーズ確認での追従）、curveInfo の長さ、NURBS カーブの評価（Python 7 件・Node.js 10 件・Qt） | 合格 |
 | 値を求められないノードの推定（試作） | 判定（推定・不明、不明な親を飛ばした基準の祖先、IK のハンドルが不明な場合）、推定したノードが基準の祖先からの相対をバインドポーズのとおりに保つこと（フレーム・ポーズ確認）（Python 3 件・Node.js 4 件） | 合格 |
 | 大きなアニメーション | 200 ジョイント × 1,000 フレーム（全フレームにキー、カーブ 1,800 本・キー 180 万個、26 MB） | 1 段階目（表示まで）は変わらず 0.15 秒、2 段階目 0.7 秒（裏で実行）、転送 24 MB、ビューアの準備 0.3 秒・1 フレームの計算 0.6 ms |
 | **実際の Maya での動作** | 未確認 | Maya のない環境で開発したため |

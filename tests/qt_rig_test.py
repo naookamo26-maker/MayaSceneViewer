@@ -7,6 +7,7 @@
   2. ポーズ確認でコントローラーを動かすと、IK・コンストレイントが追従する（元に戻すと戻る）
   3. キーがなくリグだけの .ma では、タイムラインを出さずに評価する
   4. 第 3 段階（行列ノード・SC IK）の .ma を開き、フレームとコントローラーの操作で動く
+  5. 第 4 段階（displayLayer・多関節 IK・スプライン IK）の .ma を開き、フレーム 48 の姿勢を確かめる
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ sys.path.insert(0, ROOT)
 
 RIG = os.path.join(ROOT, "samples", "rig_sample.ma")
 RIG3 = os.path.join(ROOT, "samples", "rig3_sample.ma")
+IK4 = os.path.join(ROOT, "samples", "ik_sample.ma")
 
 STATE_JS = """JSON.stringify((() => {
   const s = window.mayaViewer.getStats();
@@ -195,13 +197,35 @@ def main() -> int:
         wait_idle(lambda: wait_state(lambda s: s["loaded"] and s["name"] == "rig3_sample.ma" and s["animation"],
                                      lambda _s: js(code, got)))
 
+    def s_stage4(nxt):
+        """第 4 段階: displayLayer・多関節 IK・スプライン IK"""
+        win.open_file(IK4)
+        code = """JSON.stringify((() => {
+          const app = window.mayaViewer.debug.app;
+          const i = (n) => app.data.nodes.findIndex((x) => x.name === n);
+          const p = (n) => app.built.nodeObjects[i(n)].matrixWorld.elements.slice(12, 15).map((v) => +v.toFixed(3));
+          window.mayaViewer.setFrame(48);
+          const proxy = app.built.meshes.find((e) => e.name === 'proxy_geoShape');
+          return { rp4: p('rp4_d'), rp4ik: p('rp4_ik'), spA0: p('spA_0'), drvBot: p('drv_bot'),
+                   proxyVisible: proxy.visible, problems: window.mayaViewer.getStats().animation.rigProblems };
+        })())"""
+
+        def got(r):
+            check(not r["proxyVisible"], "非表示のディスプレイレイヤーのメッシュは表示しない")
+            check(close(r["rp4"], r["rp4ik"]), "ジョイント 4 つの IK がハンドルに届く: %s" % r["rp4"])
+            check(close(r["spA0"], r["drvBot"]), "スプライン IK の開始ジョイントがカーブの始点: %s" % r["spA0"])
+            check(r["problems"] == [], "評価の問題なし")
+            nxt()
+        wait_idle(lambda: wait_state(lambda s: s["loaded"] and s["name"] == "ik_sample.ma" and s["animation"],
+                                     lambda _s: js(code, got)))
+
     def finish(_=None):
         win.a_anim.setChecked(load_setting)
         print("結果:", "OK" if ok["v"] else "NG")
         app.exit(0 if ok["v"] else 1)
 
     win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(300, lambda: run(
-        [s_open, s_frame, s_pose, s_static, s_stage3, finish])))
+        [s_open, s_frame, s_pose, s_static, s_stage3, s_stage4, finish])))
     QtCore.QTimer.singleShot(120000, lambda: (print("タイムアウト"), app.exit(2)))
     return app.exec()
 

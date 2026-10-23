@@ -141,6 +141,10 @@ test('offsetParentMatrix: ファイルの値（Python の行列計算）と、�
   assert.ok(nearVec(posed.pos('opm_follow'), new Vector3(0, 4, -30)));
 });
 
-test('未対応の IK（ジョイント 4 つのシングルチェーン）は警告に出す', () => {
-  assert.match(data.animation.warnings.join('\n'), /sc4_ik/);
+test('ジョイント 4 つのシングルチェーン IK（まっすぐなチェーン）は、ハンドルに届く', () => {
+  assert.doesNotMatch(data.animation.warnings.join('\n'), /sc4_ik/);
+  for (const f of FRAMES) {
+    const { pos } = at(f);
+    assert.ok(nearVec(pos('sc4_d'), pos('sc4_ik'), 1e-3), `フレーム ${f}`);
+  }
 });
