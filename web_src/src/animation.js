@@ -246,6 +246,8 @@ export class AnimationClip {
     const fixedOf = new Map();
     for (let i = 0; i + 4 < fixed.length; i += 5) fixedOf.set(fixed[i], [fixed[i + 1], fixed[i + 2], fixed[i + 3], fixed[i + 4]]);
     this.curves = (anim.curves || []).map((c) => prepareCurve(c, times, values, types, fixedOf));
+    // 時間のカーブ（ドリブンキー UA・UL・UU を除く。キーの目盛りとタイムラインに使う）
+    this.timeCurves = this.curves.filter((c) => !c.type || c.type[0] === 'T');
     this.warnings = (anim.warnings || []).slice();
     // ノードごとの材料と、動かす属性
     const byNode = new Map();
@@ -278,7 +280,7 @@ export class AnimationClip {
   /** キーのある時刻（ノードを指定すればそのノードのカーブだけ） */
   keyTimes(ni = -1) {
     const set = new Set();
-    const list = ni >= 0 ? (this.byNode.get(ni) || { channels: [] }).channels.map((c) => c.curve) : this.curves;
+    const list = ni >= 0 ? (this.byNode.get(ni) || { channels: [] }).channels.map((c) => c.curve) : this.timeCurves;
     for (const c of list) for (let i = 0; i < c.n; i++) set.add(c.t[i]);
     return [...set].sort((a, b) => a - b);
   }

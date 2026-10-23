@@ -87,7 +87,7 @@ class TestDiscovery(unittest.TestCase):
     def test_warnings(self):
         w = "\n".join(self.anim["warnings"])
         self.assertIn("expression", w)
-        self.assertIn("animCurveUA", w)
+        self.assertIn("myCustomDriver", w)
         self.assertNotIn("表示していないノード", w)         # ウェイトのカーブはリグの入力
         # リグで評価できるノードには「ファイルに値がありません」の警告を出さない
         scene_w = "\n".join(self.scene["warnings"])
@@ -432,6 +432,63 @@ class TestStage5(unittest.TestCase):
             problem = check_expression(text)
             self.assertIsNotNone(problem, text)
             self.assertIn(word, problem, text)
+
+
+class TestStage6(unittest.TestCase):
+    """第 6 段階: cluster・標準の計算ノード・ドリブンキー・アニメーションレイヤー・リグの診断"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.path = os.path.join(ROOT, "samples", "rig6_sample.ma")
+        cls.scene = load_ma(cls.path, animation=True)
+        cls.names = [n["name"] for n in cls.scene["nodes"]]
+        cls.graph = {g["name"]: g for g in cls.scene["animation"]["graph"]}
+
+    def test_cluster(self):
+        g = self.graph["cl_tip"]
+        self.assertEqual(set(g["inputs"]), {"ip[0].ig", "ma"})              # .x（clusterHandle）はたどらない
+        self.assertEqual(self.names[g["geom"]["0"]], "t2_wire")
+        self.assertEqual(g["attrs"]["wl[0].w[3]"], 1.0)
+        self.assertIn("cl_tipHandle", self.names)                           # ハンドルの行列を使うので出力する
+
+    def test_utilities_and_layers(self):
+        for t in ("addDoubleLinear", "multDoubleLinear", "clamp", "setRange", "remapValue", "distanceBetween",
+                  "vectorProduct", "blendTwoAttr", "blendWeighted", "choice", "animBlendNodeAdditiveRotation",
+                  "animLayer"):
+            self.assertIn(t, {g["type"] for g in self.graph.values()}, t)
+        self.assertEqual(self.graph["u_remap"]["attrs"]["vl[1]"], [0.5, 1.0, 1.0])
+        self.assertNotIn("inputs", self.graph["layer1"])                     # animLayer の入力はたどらない
+
+    def test_driven_keys(self):
+        a = self.scene["animation"]
+        g = self.graph["roll_jnt_rotateZ"]
+        self.assertEqual(a["curves"][g["curve"]]["type"], "UA")
+        self.assertEqual(g["inputs"]["i"], {"node": self.graph["roll_ctrl"]["id"], "attr": "roll"})
+        self.assertNotIn(g["curve"], [c["curve"] for c in a["channels"]])     # 時間では評価しない
+        self.assertEqual((a["start"], a["end"]), (1.0, 48.0))
+
+    def test_plugins_and_report(self):
+        from ma_viewer.rig_report import rig_report_file
+        text = rig_report_file(self.path)
+        self.assertIn("プラグイン（requires）: myRigPlugin", text)
+        self.assertIn("- myRigNode: 1 か所", text)
+        self.assertIn("my_pv_driver → knee_pv.tx", text)
+        self.assertIn("極ベクトル: ★ 評価できないノードがある: my_pv_driver（myRigNode）", text)
+        self.assertIn("★ tx ← my_pv_driver.out（myRigNode・未対応）", text)
+        self.assertIn("✓ ma ← cl_tipHandle.wm（transform）", text)
+        self.assertIn("推定できない（ファイルの値のまま）: leg_hip", text)
+        # 評価できないノードがないファイル
+        clean = rig_report_file(os.path.join(ROOT, "samples", "ik_sample.ma"))
+        self.assertIn("■ 評価できないノード\n  なし", clean)
+
+    def test_cli(self):
+        import io
+        from contextlib import redirect_stdout
+        from ma_viewer.cli import main as cli_main
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            self.assertEqual(cli_main(["rig", self.path]), 0)
+        self.assertIn("■ IK ハンドル", buf.getvalue())
 
 
 if __name__ == "__main__":

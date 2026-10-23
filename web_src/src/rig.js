@@ -7,7 +7,7 @@
 //   * 1 回の評価（evaluate）の中では、同じプラグ・行列を一度だけ計算する
 //   * 循環（自分の結果を自分で使う）に当たったら、そこはファイルの値で打ち切る
 // 完全な再現は目指さず、Maya と同じ考え方の近似にする（docs/data_format.md「animation.graph」）。
-import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
+import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { composeLocalMatrix, evaluateCurve } from './animation.js';
 import { compileExpression } from './expression.js';
 import { arcLength, parseNurbsCurve, pointAtDistance, pointAtLength, polyline, withCvs } from './curve.js';
@@ -44,6 +44,21 @@ const DEFAULTS = {
   quatNormalize: { iq: [0, 0, 0, 1] },
   quatSlerp: { iq1: [0, 0, 0, 1], iq2: [0, 0, 0, 1], it: 0 },
   displayLayer: { v: 1, dt: 0, e: 1 },
+  addDoubleLinear: { i1: 0, i2: 0 },
+  multDoubleLinear: { i1: 1, i2: 1 },
+  clamp: { ip: [0, 0, 0], mn: [0, 0, 0], mx: [0, 0, 0] },
+  setRange: { v: [0, 0, 0], n: [0, 0, 0], m: [0, 0, 0], on: [0, 0, 0], om: [0, 0, 0] },
+  remapValue: { i: 0, imn: 0, imx: 1, omn: 0, omx: 1 },
+  distanceBetween: { p1: [0, 0, 0], p2: [0, 0, 0] },
+  vectorProduct: { i1: [0, 0, 0], i2: [0, 0, 0], op: 1, no: 0 },
+  blendTwoAttr: { ab: 0 },
+  blendWeighted: {},
+  choice: { s: 0 },
+  animBlendNodeAdditiveDL: { ia: 0, ib: 0, wa: 1, wb: 1 },
+  animBlendNodeAdditiveDA: { ia: 0, ib: 0, wa: 1, wb: 1 },
+  animBlendNodeAdditiveRotation: { ia: [0, 0, 0], ib: [0, 0, 0], wa: 1, wb: 1 },
+  animLayer: { w: 1, m: 0 },
+  cluster: { en: 1 },
 };
 // ikHandle の属性の既定値（スプライン IK を含む）
 DEFAULTS.ikHandle = { ...DEFAULTS.ikHandle, roc: 0, off: 0, rol: 0, dtce: 0, dwut: 0, dwua: 0, dfa: 0,
@@ -59,6 +74,10 @@ const OUTPUTS = {
   quatNormalize: /^oq[xyzw]?$/, quatSlerp: /^oq[xyzw]?$/, curveInfo: /^(al|arcLength)$/,
   nurbsCurve: /^(ws|worldSpace|l|local)(\[\d+\])?$/, skinCluster: /^og(\[\d+\])?$/, tweak: /^og(\[\d+\])?$/,
   groupParts: /^og$/, wire: /^og(\[\d+\])?$/, locator: /^(wp|worldPosition)(\[\d+\])?$/, expression: /^(out|output)\[\d+\]$/,
+  addDoubleLinear: /^o$/, multDoubleLinear: /^o$/, clamp: /^op[rgb]?$/, setRange: /^o[xyz]?$/, remapValue: /^(ov|outValue)$/,
+  distanceBetween: /^d$/, vectorProduct: /^o[xyz]?$/, blendTwoAttr: /^o$/, blendWeighted: /^o$/, choice: /^o$/,
+  animBlendNodeAdditiveDL: /^o$/, animBlendNodeAdditiveDA: /^o$/, animBlendNodeAdditiveRotation: /^o[xyz]?$/, animLayer: /^fo$/,
+  cluster: /^og(\[\d+\])?$/, animCurveUA: /^(o|output)$/, animCurveUL: /^(o|output)$/, animCurveUU: /^(o|output)$/,
   multMatrix: /^o$/, decomposeMatrix: /^o(t|r|s|sh)[xyz]?$|^oq[xyzw]?$/, composeMatrix: /^omat$/, inverseMatrix: /^omat$/,
 };
 // DAG ノードの、値が決まると行列が変わる属性
@@ -73,6 +92,8 @@ function isAngleAttr(type, attr) {
     case 'eulerToQuat': return /^irt[xyz]?$/.test(attr);
     case 'parentConstraint': return /^tg\[\d+\]\.tor[xyz]?$/.test(attr);
     case 'ikHandle': return attr === 'twi';
+    case 'animBlendNodeAdditiveDA': return /^i[ab]$/.test(attr);
+    case 'animBlendNodeAdditiveRotation': return /^i[ab][xyz]?$/.test(attr);
     default: return false;
   }
 }
@@ -80,7 +101,8 @@ function isAngleAttr(type, attr) {
 /** 3 つ組の属性の成分の名前（c1 → c1r など） */
 function suffixesOf(type, base) {
   if ((type === 'blendColors' && (base === 'c1' || base === 'c2' || base === 'op'))
-    || (type === 'condition' && (base === 'ct' || base === 'cf' || base === 'oc'))) return RGB;
+    || (type === 'condition' && (base === 'ct' || base === 'cf' || base === 'oc'))
+    || (type === 'clamp' && /^(ip|mn|mx|op)$/.test(base))) return RGB;
   if (type === 'plusMinusAverage' && /^(o2|i2\[\d+\])$/.test(base)) return XY;
   if (/^(iq|iq1|iq2|oq)$/.test(base)) return XYZW;                // 四元数
   return XYZ;
@@ -586,6 +608,70 @@ export class RigEvaluator {
       }
       case 'skinCluster': o = this.skinCurve(g); break;
       case 'wire': o = this.wireCurves(g); break;
+      case 'cluster': o = this.clusterCurves(g); break;
+      case 'addDoubleLinear': o = { o: this.num(id, 'i1', 0) + this.num(id, 'i2', 0) }; break;
+      case 'multDoubleLinear': o = { o: this.num(id, 'i1', 1) * this.num(id, 'i2', 1) }; break;
+      case 'clamp': {
+        const v = this.vec(id, 'ip'), lo = this.vec(id, 'mn'), hi = this.vec(id, 'mx');
+        o = expand('op', v.map((x, i) => Math.min(Math.max(x, lo[i]), hi[i])), RGB);
+        break;
+      }
+      case 'setRange': {
+        const v = this.vec(id, 'v'), n = this.vec(id, 'n'), m = this.vec(id, 'm'), on = this.vec(id, 'on'), om = this.vec(id, 'om');
+        o = expand('o', v.map((x, i) => (Math.abs(om[i] - on[i]) < 1e-12 ? n[i] : n[i] + (x - on[i]) / (om[i] - on[i]) * (m[i] - n[i]))), XYZ);
+        break;
+      }
+      case 'remapValue': o = this.remapValue(g); break;
+      case 'distanceBetween': {
+        const p1 = new Vector3(...this.vec(id, 'p1')).applyMatrix4(this.mat(id, 'im1'));
+        const p2 = new Vector3(...this.vec(id, 'p2')).applyMatrix4(this.mat(id, 'im2'));
+        o = { d: p1.distanceTo(p2) };
+        break;
+      }
+      case 'vectorProduct': {
+        // op: 0 なし・1 内積・2 外積・3 ベクトル × 行列・4 点 × 行列
+        const a = new Vector3(...this.vec(id, 'i1')), b = new Vector3(...this.vec(id, 'i2'));
+        const op = Math.round(this.num(id, 'op', 1));
+        let r;
+        if (op === 1) { const d = a.dot(b); r = new Vector3(d, d, d); }
+        else if (op === 2) r = a.clone().cross(b);
+        else if (op === 3) r = a.clone().applyMatrix3(new Matrix3().setFromMatrix4(this.mat(id, 'm')));   // 移動を除く
+        else if (op === 4) r = a.clone().applyMatrix4(this.mat(id, 'm'));
+        else r = a.clone();
+        if (this.num(id, 'no', 0) >= 0.5 && op !== 1) r.normalize();
+        o = expand('o', r.toArray(), XYZ);
+        break;
+      }
+      case 'blendTwoAttr': {
+        const ab = this.num(id, 'ab', 0);
+        o = { o: this.num(id, 'i[0]', 0) * (1 - ab) + this.num(id, 'i[1]', 0) * ab };
+        break;
+      }
+      case 'blendWeighted': {
+        let sum = 0;
+        for (const k of this.indices(g, /^i\[(\d+)\]$/)) sum += this.num(id, `i[${k}]`, 0) * this.num(id, `w[${k}]`, 1);
+        o = { o: sum };
+        break;
+      }
+      case 'choice': o = { o: this.plug(id, `i[${Math.round(this.num(id, 's', 0))}]`) }; break;
+      case 'animBlendNodeAdditiveDL': case 'animBlendNodeAdditiveDA':
+        o = { o: this.num(id, 'ia', 0) * this.num(id, 'wa', 1) + this.num(id, 'ib', 0) * this.num(id, 'wb', 1) };
+        break;
+      case 'animBlendNodeAdditiveRotation': {
+        const a = this.vec(id, 'ia'), b = this.vec(id, 'ib'), wa = this.num(id, 'wa', 1), wb = this.num(id, 'wb', 1);
+        o = expand('o', a.map((x, i) => x * wa + b[i] * wb), XYZ);
+        break;
+      }
+      case 'animCurveUA': case 'animCurveUL': case 'animCurveUU': {
+        // ドリブンキー: 入力（ドライバーの値。角度は unitConversion で度になっている）でカーブを引く
+        const c = this.clip.curves[g.curve];
+        if (!c) break;
+        const v = evaluateCurve(c, this.num(id, 'i', 0));
+        o = { o: g.type === 'animCurveUA' ? v * D2R : v };
+        o.output = o.o;
+        break;
+      }
+      case 'animLayer': o = { fo: this.num(id, 'm', 0) >= 0.5 ? 0 : this.num(id, 'w', 1) }; break;
       case 'expression': o = this.expression(g); break;
       case 'tweak': {                                       // 頂点の調整は反映しない（形はそのまま通す）
         const c = this.plug(id, 'ip[0].ig');
@@ -661,6 +747,68 @@ export class RigEvaluator {
       if (!out.og) out.og = out[`og[${k}]`];
     }
     return out;
+  }
+
+  /**
+   * cluster: ハンドルの行列でカーブ（ip[k].ig）の CV を動かす。
+   * Maya の p · gm · pm · ma · gm⁻¹（行ベクトル）を three.js の順で gm⁻¹ · ma · pm · gm とし、CV のウェイト（wl[k].w[v]）と
+   * エンベロープで元の位置と混ぜる。gm（geomMatrix）がファイルになければ、変形するカーブの transform のワールド行列。
+   * relative（ハンドルの親の動きを除く）には対応しない
+   */
+  clusterCurves(g) {
+    const id = g.id;
+    const D = this.mat(id, 'ma').clone().multiply(this.mat(id, 'pm'));
+    const en = this.num(id, 'en', 1);
+    const attrs = g.attrs || {};
+    const out = {};
+    for (const k of this.indices(g, /^ip\[(\d+)\]\.ig$/)) {
+      const c = this.plug(id, `ip[${k}].ig`);
+      if (!c || !c.isCurve) continue;
+      const gp = (g.geom || {})[k];
+      const G = Array.isArray(attrs[`gm[${k}]`]) ? new Matrix4().fromArray(attrs[`gm[${k}]`]) : (gp >= 0 ? this.world(gp) : IDENTITY);
+      const M = G.clone().invert().multiply(D).multiply(G);
+      const cvs = c.cvs.map((p, v) => {
+        const wv = attrs[`wl[${k}].w[${v}]`];
+        const w = (typeof wv === 'number' ? wv : 1) * en;
+        return Math.abs(w) < EPS ? p.clone() : p.clone().lerp(p.clone().applyMatrix4(M), w);
+      });
+      out[`og[${k}]`] = withCvs(c, cvs);
+      if (!out.og) out.og = out[`og[${k}]`];
+    }
+    return out;
+  }
+
+  /** remapValue: 入力を 0〜1 にして値のランプ（vl[i]: 位置 vp・値 fv・補間 vi）を引き、出力の範囲に戻す */
+  remapValue(g) {
+    const id = g.id;
+    const lo = this.num(id, 'imn', 0), hi = this.num(id, 'imx', 1);
+    const t = Math.abs(hi - lo) < 1e-12 ? 0 : (this.num(id, 'i', 0) - lo) / (hi - lo);
+    const attrs = g.attrs || {};
+    const pts = this.indices(g, /^vl\[(\d+)\]/).map((i) => {
+      const whole = attrs[`vl[${i}]`];
+      const get = (name, k, def) => {
+        if ((g.inputs || {})[`vl[${i}].${name}`]) return this.num(id, `vl[${i}].${name}`, def);
+        if (typeof attrs[`vl[${i}].${name}`] === 'number') return attrs[`vl[${i}].${name}`];
+        return Array.isArray(whole) && Number.isFinite(whole[k]) ? whole[k] : def;
+      };
+      return { p: get('vp', 0, 0), v: get('fv', 1, 0), interp: Math.round(get('vi', 2, 1)) };
+    }).sort((a, b) => a.p - b.p);
+    let r;
+    if (!pts.length) r = Math.min(1, Math.max(0, t));                        // 既定: (0, 0)〜(1, 1) の直線
+    else if (t <= pts[0].p) r = pts[0].v;
+    else if (t >= pts[pts.length - 1].p) r = pts[pts.length - 1].v;
+    else {
+      let j = 0;
+      while (j < pts.length - 2 && pts[j + 1].p <= t) j++;
+      const a = pts[j], b = pts[j + 1];
+      const u = (t - a.p) / Math.max(b.p - a.p, 1e-12);
+      // 補間: 0 なし・1 線形・2 スムーズ・3 スプライン（スムーズで近似）
+      const f = a.interp === 0 ? 0 : a.interp === 1 ? u : u * u * (3 - 2 * u);
+      r = a.v + (b.v - a.v) * f;
+    }
+    const omn = this.num(id, 'omn', 0), omx = this.num(id, 'omx', 1);
+    const ov = omn + r * (omx - omn);
+    return { ov, outValue: ov };
   }
 
   /** expression: 式を（最初の 1 回だけ）関数にして、このフレームの値で評価する。出力は out[n] */

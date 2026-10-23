@@ -147,7 +147,7 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 | `start` / `end` | 再生範囲（playbackOptions の -min / -max。なければキーのある範囲） |
 | `animStart` / `animEnd` | アニメーションの範囲（playbackOptions の -ast / -aet） |
 | `current` | 読み込み直後のフレーム（time1 の .o） |
-| `curves` | カーブごとの設定。キーは `times` などの `offset` から `count` 個。`tangent` はカーブの既定の接線の種類（.tan）、`pre` / `post` は範囲外の振る舞い（0 = 一定、1 = リニア、3 = 繰り返し、4 = オフセット付き繰り返し、5 = 往復） |
+| `curves` | カーブごとの設定。`type` は TL・TA・TU（時間で引く）か、UA・UL・UU（ドリブンキー。入力はドライバーの値で、graph のノードとして評価する。キーの「時刻」は入力の値、固定の接線の x も入力の単位）。キーは `times` などの `offset` から `count` 個。`tangent` はカーブの既定の接線の種類（.tan）、`pre` / `post` は範囲外の振る舞い（0 = 一定、1 = リニア、3 = 繰り返し、4 = オフセット付き繰り返し、5 = 往復） |
 | `channels` | どのノード（nodes の番号）のどの属性（`tx`〜`sz`）をどのカーブが動かすか |
 | `nodes` | 動くノードのローカル行列の材料。アニメーションしない成分はこの値を使う。角度は度。joint は `jo`、transform は `rp`・`sp`・`rpt`・`spt`・`sh`（0 でないもの）を持つ。segmentScaleCompensate の対象のジョイントは `isNode`（.is につながったノードの番号）と `isScale`（その静的なスケール）を持つ。offsetParentMatrix が単位行列でなければ `opm`（16 要素）を持つ。親のスケールが動くジョイントは、自分が動かなくても含む |
 | `times` / `values` | キーの時刻（フレーム）と値。値は TL がファイルの長さの単位、TA が度、TU はそのまま |
@@ -183,7 +183,8 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 | `parent` | nurbsCurve・locator（シェイプ）の親のトランスフォーム（nodes の番号）。ワールド空間（ws・worldPosition）の計算に使う |
 | `shape` | nurbsCurve が表示するカーブのとき、そのトップレベルの curves の番号（inputs の `curve` が指す animation.curves とは別） |
 | `expr` | expression の式（.ixp。.I[n]・.O[n] で入出力を参照する）。出力は `out[n]`、入力は `inputs` の `in[n]`。時間（.tim）はつながず、ビューアのフレームから求める。解釈できない書き方（MEL コマンド・文字列・ベクトル・未対応の関数・.I/.O 以外の属性）を含む式は graph に入れず、未対応のノードとして警告し、つながるノードを fallback・tainted に回す（判定は `ma_viewer/expression.py`、評価は `web_src/src/expression.js`） |
-| `geom` | wire が変形するカーブの transform（`{"出力の番号 k": nodes の番号}`）。ワイヤー（`dw[i]`）・ベースワイヤー（`bw[i]`）はワールド空間なので、カーブをこの行列でワールドへ移して変形し、戻す。CV のウェイトは attrs の `wl[k].w[v]`（なければ 1） |
+| `curve` | ドリブンキー（animCurveUA・UL・UU）のとき、animation.curves の番号。入力は `inputs` の `i` |
+| `geom` | wire・cluster が変形するカーブの transform（`{"出力の番号 k": nodes の番号}`）。ワイヤー（`dw[i]`）・ベースワイヤー（`bw[i]`）はワールド空間なので、カーブをこの行列でワールドへ移して変形し、戻す。CV のウェイトは attrs の `wl[k].w[v]`（なければ 1）。cluster は attrs の `gm[k]` があればそちらを使う |
 | `skin` | カーブを動かす skinCluster のウェイト `[[CV の番号, インフルエンスの論理番号, 値], …]`、`pm`（論理番号 → 16 要素）、`gm`。インフルエンスは `inputs` の `ma[i]` |
 
 ### animation.fallback・animation.tainted

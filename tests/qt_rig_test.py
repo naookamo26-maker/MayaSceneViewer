@@ -25,6 +25,7 @@ RIG = os.path.join(ROOT, "samples", "rig_sample.ma")
 RIG3 = os.path.join(ROOT, "samples", "rig3_sample.ma")
 IK4 = os.path.join(ROOT, "samples", "ik_sample.ma")
 CTRL5 = os.path.join(ROOT, "samples", "ctrl_sample.ma")
+RIG6 = os.path.join(ROOT, "samples", "rig6_sample.ma")
 
 STATE_JS = """JSON.stringify((() => {
   const s = window.mayaViewer.getStats();
@@ -253,13 +254,39 @@ def main() -> int:
         wait_idle(lambda: wait_state(lambda s: s["loaded"] and s["name"] == "ctrl_sample.ma" and s["animation"],
                                      lambda _s: js(code, got)))
 
+    def s_stage6(nxt):
+        """第 6 段階: cluster・ドリブンキー・計算ノード・リグの診断（メニュー）"""
+        win.open_file(RIG6)
+        code = """JSON.stringify((() => {
+          const app = window.mayaViewer.debug.app;
+          const i = (n) => app.data.nodes.findIndex((x) => x.name === n);
+          window.mayaViewer.setFrame(48);
+          const e = (n, k) => +app.built.nodeObjects[i(n)].matrix.elements[k].toFixed(4);
+          return { tip: +app.built.nodeObjects[i('t2_4')].matrixWorld.elements[13].toFixed(3), rollTy: e('roll_jnt', 13),
+                   add: e('u_jnt1', 12), timeline: !document.getElementById('timeline').hidden,
+                   problems: window.mayaViewer.getStats().animation.rigProblems };
+        })())"""
+
+        def got(r):
+            check(r["tip"] > 1, "クラスタ → ワイヤー → スプライン IK で尻尾の先が上がる: %s" % r["tip"])
+            check(abs(r["rollTy"] - 3) < 1e-3, "ドリブンキー（unitConversion 経由）: %s" % r["rollTy"])
+            check(abs(r["add"] - 12) < 1e-3, "addDoubleLinear: %s" % r["add"])
+            check(r["timeline"] and r["problems"] == [], "タイムライン・評価の問題なし: %s" % r["problems"])
+            win.show_rig_report()
+            text = getattr(win, "rig_report_text", "")
+            check("my_pv_driver（myRigNode）" in text and win.rig_report_dialog.isVisible(), "リグの診断のダイアログ")
+            win.rig_report_dialog.close()
+            nxt()
+        wait_idle(lambda: wait_state(lambda s: s["loaded"] and s["name"] == "rig6_sample.ma" and s["animation"],
+                                     lambda _s: js(code, got)))
+
     def finish(_=None):
         win.a_anim.setChecked(load_setting)
         print("結果:", "OK" if ok["v"] else "NG")
         app.exit(0 if ok["v"] else 1)
 
     win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(300, lambda: run(
-        [s_open, s_frame, s_pose, s_static, s_stage3, s_stage4, s_stage5, finish])))
+        [s_open, s_frame, s_pose, s_static, s_stage3, s_stage4, s_stage5, s_stage6, finish])))
     QtCore.QTimer.singleShot(120000, lambda: (print("タイムアウト"), app.exit(2)))
     return app.exec()
 

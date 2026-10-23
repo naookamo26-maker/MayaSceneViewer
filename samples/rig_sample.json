@@ -1161,7 +1161,7 @@
    "segmentScaleCompensate":true,
    "drivenBy":[
     "ry ← expression1（expression）",
-    "rx ← drv_key（animCurveUA）"
+    "rx ← drv_key（myCustomDriver）"
    ]
   }
  ],
@@ -1268,7 +1268,7 @@
  "materials":[],
  "textures":[],
  "warnings":[
-  "expr_jnt: ry ← expression1（expression）、rx ← drv_key（animCurveUA） が接続で決まるため、ファイルに値がありません。バインドポーズの情報もないため、既定値（移動 0・回転 0）で表示しています。"
+  "expr_jnt: ry ← expression1（expression）、rx ← drv_key（myCustomDriver） が接続で決まるため、ファイルに値がありません。バインドポーズの情報もないため、既定値（移動 0・回転 0）で表示しています。"
  ],
  "stats":{
   "nodes":17,
@@ -2546,7 +2546,7 @@
   },
   "warnings":[
    "アニメーション: 解釈できない expression（expression1 など）につながる expr_jnt の値は再生されません。",
-   "アニメーション: animCurveUA（drv_key など）は未対応のため、これにつながる expr_jnt の値は再生されません。",
+   "アニメーション: myCustomDriver（drv_key など）は未対応のため、これにつながる expr_jnt の値は再生されません。",
    "アニメーション: expression expression1 を解釈できません（未対応の関数・コマンド rand を使っています）。",
    "アニメーション: 値を求められないノードのうち 0 個はバインドポーズの形で推定して表示し、1 個は推定できないためファイルの値（既定値）のまま表示します。"
   ],
@@ -2556,7 +2556,7 @@
    "channels":4,
    "nodes":10,
    "graphNodes":29,
-   "seconds":0.0018
+   "seconds":0.0023
   }
  }
 }

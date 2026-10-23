@@ -320,7 +320,7 @@
    ],
    "bindSource":"pm",
    "drivenBy":[
-    "rz ← elbow_drivenKey（animCurveUA）"
+    "rz ← elbow_drivenKey（myCustomDriver）"
    ]
   },
   {
@@ -6801,7 +6801,7 @@
  "textures":[],
  "warnings":[
   "history_geoShape: 形状データがありません（polySphere1（polySphere） から生成されています。ヒストリを削除して保存してください）",
-  "elbow: rz ← elbow_drivenKey（animCurveUA） が接続で決まるため、ファイルに値がありません。バインドポーズ（skinCluster の .pm）の姿勢で表示します。",
+  "elbow: rz ← elbow_drivenKey（myCustomDriver） が接続で決まるため、ファイルに値がありません。バインドポーズ（skinCluster の .pm）の姿勢で表示します。",
   "box: tx ← box_expr（expression） が接続で決まるため、ファイルに値がありません。バインドポーズの情報もないため、既定値（移動 0・回転 0）で表示しています。",
   "ctrl_grp: tx ← grp_expr（expression） が接続で決まるため、ファイルに値がありません。バインドポーズの情報もないため、既定値（移動 0・回転 0）で表示しています。",
   "（同様の警告が他に 2 件: 接続で値が決まるノード）"
@@ -7212,7 +7212,7 @@
   },
   "warnings":[
    "アニメーション: 解釈できない expression（grp_expr など）につながる box、ctrl_grp の値は再生されません。",
-   "アニメーション: animCurveUA（elbow_drivenKey など）は未対応のため、これにつながる elbow の値は再生されません。",
+   "アニメーション: myCustomDriver（elbow_drivenKey など）は未対応のため、これにつながる elbow の値は再生されません。",
    "アニメーション: expression box_expr を解釈できません（式（.ixp）が見つかりません）。",
    "アニメーション: expression grp_expr を解釈できません（未対応の関数・コマンド rand を使っています）。",
    "アニメーション: 値を求められないノードのうち 2 個はバインドポーズの形で推定して表示し、3 個は推定できないためファイルの値（既定値）のまま表示します。"
@@ -7223,7 +7223,7 @@
    "channels":1,
    "nodes":2,
    "graphNodes":7,
-   "seconds":0.001
+   "seconds":0.0007
   }
  }
 }

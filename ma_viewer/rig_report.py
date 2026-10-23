@@ -1,0 +1,202 @@
+# -*- coding: utf-8 -*-
+"""リグの診断: 再生がおかしいときに、原因になりそうなノードを探すための一覧を作る。
+
+  python -m ma_viewer rig scene.ma          （Qt 版は［表示］→［リグの診断］）
+
+内容:
+  * ファイルが読み込むプラグイン（自作ノードの手がかり）
+  * 評価できない（未対応・未知の型の）ノードと、それを使っているノード
+  * IK ハンドルごとに、ソルバー・ジョイント・極ベクトル・ひねり・ハンドルの位置を何が決めているか（上流のつながり）
+    行頭の印: ✓ 評価できる / ★ 評価できない（ここから先はファイルの値） / ・ ファイルの値（接続なし）
+  * 値を求められないノード（バインドポーズの形で推定・推定できない）
+"""
+from __future__ import annotations
+
+from typing import List, Optional, Set
+
+from .ma_scene import MaNode, MaScene
+from .rig import (CONSTRAINT_TYPES, CURVE_TYPES, GEOMETRY_TYPES, SUPPORTED_DG, _CHANNEL_KEYS, _MATRIX_PLUGS, _base,
+                  _dag_like, _evaluable)
+
+MAX_DEPTH = 10
+MAX_LINES = 60
+
+
+class _Tracer:
+    """接続を上流へたどって、つながりを字下げした行にする"""
+
+    def __init__(self, ms: MaScene):
+        self.ms = ms
+        self.info = ms.graph_info
+        self.lines: List[str] = []
+        self.seen: Set[tuple] = set()
+        self.bad: List[str] = []
+
+    def status(self, n: MaNode) -> str:
+        if n.type in CURVE_TYPES:
+            return "✓"
+        if n.type == "expression":
+            return "✓" if _evaluable(n, self.info) else "★"
+        if n.type in CONSTRAINT_TYPES:
+            return "✓" if _evaluable(n) else "★"
+        if n.type in SUPPORTED_DG or n.type in GEOMETRY_TYPES or _dag_like(n):
+            return "✓"
+        return "★"
+
+    def label(self, n: MaNode, attr: str) -> str:
+        what = n.type
+        if n.type in CURVE_TYPES:
+            what = "アニメーションカーブ"
+        elif n.type == "expression" and not _evaluable(n, self.info):
+            what = "expression・解釈できない: %s" % self.info.expression_problems.get(n.name, "")
+        elif self.status(n) == "★":
+            what = "%s・未対応" % n.type
+        return "%s.%s（%s）" % (n.name, attr, what)
+
+    def add(self, depth: int, text: str):
+        if len(self.lines) < MAX_LINES:
+            self.lines.append("    " + "  " * depth + text)
+        elif len(self.lines) == MAX_LINES:
+            self.lines.append("    " + "  " * depth + "…（以下省略）")
+
+    def plug(self, consumer: MaNode, key: str, depth: int):
+        """consumer.key の入力をたどる（接続のない DAG ノードの値は書かない）"""
+        src, sattr = consumer.inputs[key]
+        if src is consumer:
+            return                                             # 自分の属性（コンストレイントのウェイトなど）
+        mark = self.status(src)
+        line = "%s %s ← %s" % (mark, key, self.label(src, sattr))
+        if mark == "★":
+            self.add(depth, line)
+            self.bad.append("%s（%s）" % (src.name, src.type))
+            return
+        if src.type in CURVE_TYPES or depth >= MAX_DEPTH:
+            self.add(depth, line)
+            return
+        k = (id(src), _base(sattr) if _dag_like(src) else "")
+        if k in self.seen:
+            if not _dag_like(src):
+                self.add(depth, line + " …上に同じ")
+            return
+        self.seen.add(k)
+        at = len(self.lines)
+        self.add(depth, line)
+        before = len(self.lines)
+        if _dag_like(src):
+            self.dag(src, sattr, depth + 1)
+            if len(self.lines) == before and depth > 0:
+                del self.lines[at:]                            # 接続のない DAG ノード: ファイルの値なので省く
+            return
+        for key2 in sorted(src.inputs):
+            if src.type == "expression" and key2 in ("tim", "time"):
+                continue
+            if src.type in GEOMETRY_TYPES and key2 == "x":
+                continue
+            self.plug(src, key2, depth + 1)
+
+    def dag(self, n: MaNode, attr: str, depth: int):
+        """DAG ノードの値: 行列ならそのノードと祖先の移動・回転など、チャンネルならその接続"""
+        b = _base(attr)
+        if b in _MATRIX_PLUGS:
+            x: Optional[MaNode] = n if b not in ("pm", "pim", "parentMatrix", "parentInverseMatrix") else n.parent
+            while x is not None:
+                for k in sorted(x.inputs):
+                    if _base(k) in _CHANNEL_KEYS:
+                        self.plug(x, k, depth)
+                x = x.parent if x.flag("it", True) else None
+        elif b in _CHANNEL_KEYS:
+            for k in sorted(n.inputs):
+                if _base(k) in _CHANNEL_KEYS and k[0] == b[0]:
+                    self.plug(n, k, depth)
+        elif attr in n.inputs:
+            self.plug(n, attr, depth)
+
+
+def _ik_section(ms: MaScene, entry: dict) -> List[str]:
+    h: MaNode = entry["handle"]
+    chain = " → ".join(j.name for j in entry["chain"]) or "（不明）"
+    out = ["- %s（%s）: %s" % (h.name, entry["solver"], chain)]
+    if entry["problem"]:
+        out.append("    ★ 再生しない: %s" % entry["problem"])
+        return out
+    parts = [("ハンドルの位置", lambda t: t.dag(h, "wm", 0))]
+    if entry["solver"] == "ikRPsolver":
+        pv = [k for k in sorted(h.inputs) if _base(k) in ("pv", "pvx", "pvy", "pvz")]
+        parts.append(("極ベクトル", (lambda t, pv=pv: [t.plug(h, k, 0) for k in pv]) if pv else None))
+        parts.append(("ひねり（twist）", (lambda t: t.plug(h, "twi", 0)) if "twi" in h.inputs else None))
+    if entry["solver"] == "ikSplineSolver":
+        keys = [k for k in sorted(h.inputs) if _base(k) in ("ic", "twi", "rol", "dwum", "dwue", "dwuv", "dwve")]
+        parts.append(("カーブ・ひねり・world up", (lambda t, keys=keys: [t.plug(h, k, 0) for k in keys]) if keys else None))
+    parts.append(("開始ジョイントの親", lambda t: t.dag(entry["chain"][0], "pm", 0)))
+    for title, fn in parts:
+        if fn is None:
+            out.append("  %s: ファイルの値（接続なし）" % title)
+            continue
+        t = _Tracer(ms)
+        fn(t)
+        if not t.lines:
+            out.append("  %s: ファイルの値（接続なし）" % title)
+            continue
+        verdict = "★ 評価できないノードがある: %s" % "、".join(dict.fromkeys(t.bad)) if t.bad else "✓ すべて評価できる"
+        out.append("  %s: %s" % (title, verdict))
+        out.extend(t.lines)
+    return out
+
+
+def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
+    """scene_to_dict（と build_animation）を済ませた MaScene から、診断の文章を作る"""
+    info = ms.graph_info
+    names = [n["name"] for n in scene["nodes"]]
+    out = ["リグの診断: %s" % (ms.source_path or "")]
+    out.append("（✓ 評価できる / ★ 評価できない。★ から先の値はファイルに保存された値のまま）")
+    out.append("")
+    out.append("■ プラグイン（requires）: %s" % ("、".join(ms.plugins) if ms.plugins else "なし"))
+    out.append("")
+    out.append("■ 評価できないノード")
+    if info is None or (not info.unsupported and not any(e["problem"] for e in info.ik)):
+        out.append("  なし")
+    else:
+        for t, items in sorted(info.unsupported.items(), key=lambda kv: -len(kv[1])):
+            out.append("- %s: %d か所" % (t, len(items)))
+            for name, consumer, attr in items[:8]:
+                out.append("    %s → %s.%s" % (name, consumer, attr))
+            if len(items) > 8:
+                out.append("    …ほか %d か所" % (len(items) - 8))
+        for name, problem in sorted(info.expression_problems.items()):
+            out.append("  expression %s: %s" % (name, problem))
+    out.append("")
+    out.append("■ IK ハンドル")
+    if info is None or not info.ik:
+        out.append("  なし")
+    else:
+        for e in info.ik:
+            out.extend(_ik_section(ms, e))
+    out.append("")
+    out.append("■ 値を求められないノード")
+    fb = (anim or {}).get("fallback") or []
+    tainted = (anim or {}).get("tainted") or []
+    if not fb and not tainted:
+        out.append("  なし")
+    for f in fb:
+        anchor = names[f["anchor"]] if f["anchor"] >= 0 else "ワールド"
+        out.append("- %s: バインドポーズの形で推定（基準 %s、求められない属性 %s）"
+                   % (names[f["node"]], anchor, "・".join(f["unresolved"]) or "親"))
+    if tainted:
+        out.append("- 推定できない（ファイルの値のまま）: %s" % "、".join(names[i] for i in tainted[:30])
+                   + (" ほか %d 個" % (len(tainted) - 30) if len(tainted) > 30 else ""))
+    warnings = scene["warnings"] + (anim or {}).get("warnings", [])
+    if warnings:
+        out.append("")
+        out.append("■ 警告")
+        out.extend("- " + w for w in warnings)
+    return "\n".join(out)
+
+
+def rig_report_file(path: str) -> str:
+    from .animation import build_animation
+    from .extract_ma import scene_to_dict
+    from .ma_scene import parse_ma_file
+    ms = parse_ma_file(path)
+    scene = scene_to_dict(ms)
+    anim = build_animation(ms, ms.out_index) if ms.text else None
+    return rig_report(ms, scene, anim)

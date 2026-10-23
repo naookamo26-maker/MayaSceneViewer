@@ -549,6 +549,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.a_warn = self.warn_dock.toggleViewAction()
         self.a_warn.setText("警告")
         mv.addAction(self.a_warn)
+        self.a_rig = self._act("リグの診断…", self.show_rig_report,
+                               tip="評価できないノード（自作ノードなど）と、IK の極ベクトル・ひねりの上流を一覧にする")
+        mv.addAction(self.a_rig)
         mv.addAction(self._act("開発者ツール", self.viewer.open_dev_tools, "F12"))
         self.viewer.warningsChanged.connect(self._on_warnings_changed)
         self.viewer.showWarningsRequested.connect(self.show_warnings)
@@ -575,6 +578,41 @@ class ViewerWindow(QtWidgets.QMainWindow):
 
     def copy_warnings(self):
         QtWidgets.QApplication.clipboard().setText("\n".join(self.viewer.warnings))
+
+    def show_rig_report(self):
+        """リグの診断（.ma を読み直して、評価できないノードと IK の上流を一覧にする）"""
+        path = self.current_path
+        if not path or not path.lower().endswith(".ma"):
+            QtWidgets.QMessageBox.information(self, "リグの診断", ".ma ファイルを開いているときに使えます。")
+            return
+        from .rig_report import rig_report_file
+        QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            text = rig_report_file(path)
+        except Exception as exc:  # noqa: BLE001  診断の失敗はメッセージで知らせる
+            text = "診断できませんでした: %s" % exc
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle("リグの診断 - %s" % os.path.basename(path))
+        dlg.resize(820, 640)
+        lay = QtWidgets.QVBoxLayout(dlg)
+        view = QtWidgets.QPlainTextEdit(text)
+        view.setReadOnly(True)
+        view.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
+        lay.addWidget(view)
+        row = QtWidgets.QHBoxLayout()
+        row.addStretch(1)
+        b_copy = QtWidgets.QPushButton("コピー")
+        b_copy.clicked.connect(lambda: QtWidgets.QApplication.clipboard().setText(text))
+        b_close = QtWidgets.QPushButton("閉じる")
+        b_close.clicked.connect(dlg.accept)
+        row.addWidget(b_copy)
+        row.addWidget(b_close)
+        lay.addLayout(row)
+        self.rig_report_text = text            # テスト用
+        self.rig_report_dialog = dlg
+        dlg.show()
 
     def show_help(self):
         QtWidgets.QMessageBox.information(self, "操作方法", HELP_TEXT)

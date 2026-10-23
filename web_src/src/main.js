@@ -792,7 +792,7 @@ class ViewerApp {
   }
 
   /** タイムラインを出すか（キーのあるカーブか、frame・time を使う expression があるとき） */
-  get hasTimeline() { return !!(this.clip && (this.clip.curves.length || (this.rig && this.rig.usesTime))); }
+  get hasTimeline() { return !!(this.clip && (this.clip.timeCurves.length || (this.rig && this.rig.usesTime))); }
 
   /** フレーム f の姿勢にする（ポーズ確認の追加分はそのまま上に重ねる。リグはポーズ確認の結果も使って評価する） */
   applyFrame(f, light = this.playing) {

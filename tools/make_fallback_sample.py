@@ -8,7 +8,7 @@ samples/sample_arm.ma（スキン付きの腕）に、次を足したもの:
   * ctrl_grp の移動はエクスプレッションで決まる（未対応。ファイルに値がないので原点に集まる）
   * arm_ctrl（ctrl_grp の子）への parentConstraint で shoulder を動かす
     → arm_ctrl の位置が分からないので、shoulder は rig_grp からの相対をバインドポーズの形で推定する
-  * elbow.rz はドリブンキー（animCurveUA。未対応）→ shoulder からの相対をバインドポーズの形で推定する
+  * elbow.rz は自作ノード（未知の型 myCustomDriver。評価できない）→ shoulder からの相対をバインドポーズの形で推定する
   * box.tx はエクスプレッション（バインドポーズの情報がないので推定できない）
 """
 from __future__ import annotations
@@ -38,8 +38,7 @@ def main():
         'createNode expression -n "grp_expr";',
         '\tsetAttr ".ixp" -type "string" ".O[0] = rand(10);";',
         'createNode expression -n "box_expr";',
-        'createNode animCurveUA -n "elbow_drivenKey";',
-        '\tsetAttr -s 2 ".ktv[0:1]"  0 0 1 90;',
+        'createNode myCustomDriver -n "elbow_drivenKey";',
         'createNode animCurveTL -n "rig_grp_translateY";',
         '\tsetAttr ".tan" 2;',
         '\tsetAttr -s 2 ".ktv[0:1]"  1 0 48 5;',

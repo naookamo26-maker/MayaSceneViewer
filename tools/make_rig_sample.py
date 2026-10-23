@@ -16,7 +16,7 @@
       sy = ty > 0.5 なら 2、そうでなければ 1（condition）
       sz = 3 · blend + 1 · (1 − blend)（blendColors。blend は ctrl_util の独自の属性 = 0.25）
       pb_jnt の移動 = 0.5 · ctrl_util の移動、回転 = (0, 0, 45)（pairBlend）
-  * expr_jnt はエクスプレッション（ry）とドリブンキー animCurveUA（rx）で動く（未対応の警告の確認用）
+  * expr_jnt はエクスプレッション（ry。rand を使うので解釈できない）と自作ノード myCustomDriver（rx）で動く（未対応の警告の確認用）
 保存時のフレーム（1）の各ノードの値は、リグの計算結果と一致するように書く。
 """
 from __future__ import annotations
@@ -138,12 +138,13 @@ def main():
     A('\tsetAttr ".w" 0.5;')
     A('\tsetAttr ".ir2" -type "double3" 0 0 90 ;')
 
-    # --- 未対応（エクスプレッション・ドリブンキー） ------------------------------------
+    # --- 未対応（解釈できないエクスプレッション・自作ノード） ------------------------------------
     node("joint", "expr_jnt", t=(0, 0, -20))
     node("expression", "expression1")
     A('\tsetAttr -k on ".nds";')
     A('\tsetAttr ".ixp" -type "string" ".O[0] = rand(360);";')
-    curve("UA", "drv_key", [(0, 0), (1, 45)])
+    A('createNode myCustomDriver -n "drv_key";')
+    uid("drv_key")
 
     # --- キー -----------------------------------------------------------------------
     curve("TL", "hand_ctrl_translateX", [(1, 10), (24, 7), (48, 10)])

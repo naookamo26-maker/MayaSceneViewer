@@ -29,6 +29,9 @@ from . import mathutil as M
 ProgressFn = Optional[Callable[[float, str], None]]
 
 CURVE_TYPES = {"animCurveTL": "TL", "animCurveTA": "TA", "animCurveTU": "TU"}
+# ドリブンキー（入力はドライバーの値。時間では評価しない。リグのノードとして graph に入れる）
+DRIVEN_CURVE_TYPES = {"animCurveUA": "UA", "animCurveUL": "UL", "animCurveUU": "UU"}
+CURVE_KINDS = {**CURVE_TYPES, **DRIVEN_CURVE_TYPES}
 
 # アニメーションで動かせる属性（ノードの移動・回転・スケール）
 CHANNELS = {
@@ -121,7 +124,7 @@ class Curve:
 
 def parse_curve(text: str, node: MaNode) -> Curve:
     """animCurve のブロック（node.span）からキーと設定を読む。"""
-    cv = Curve(node, CURVE_TYPES[node.type])
+    cv = Curve(node, CURVE_KINDS[node.type])
     pieces: List[Tuple[int, object]] = []            # (先頭の添字, [時刻, 値, 時刻, 値, ...])
     a, b = node.span
     for m in _SETATTR_RE.finditer(text, a, b):
@@ -268,6 +271,9 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         for cid, c in info.curves.items():
             if c.span is not None:
                 curve_nodes[cid] = c
+        for cid, c in info.dg.items():                   # ドリブンキー
+            if c.type in DRIVEN_CURVE_TYPES and c.span is not None:
+                curve_nodes[cid] = c
 
     if not targets and not has_graph:
         return None
@@ -278,6 +284,7 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
     curves_out = []
     channels_out = []
     times_chunks, values_chunks = [], []
+    range_chunks = []                                      # 時間のカーブのキーの時刻（再生範囲に使う）
     types = bytearray()                                    # キーごとに (入りの種類, 出の種類)。0 はカーブの既定
     fixed: List[float] = []
     offset = 0
@@ -289,9 +296,12 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         n = len(cv.times)
         if n == 0:
             continue
-        vk = ang_k if cv.kind == "TA" else 1.0
-        tk = rad2deg if cv.kind == "TA" else (1.0 / cm if cv.kind == "TL" else 1.0)
+        vk = ang_k if cv.kind in ("TA", "UA") else 1.0
+        tk = rad2deg if cv.kind in ("TA", "UA") else (1.0 / cm if cv.kind in ("TL", "UL") else 1.0)
+        xk = fps if cv.kind[0] == "T" else 1.0           # 固定の接線の x: 時間は秒 → フレーム、ドリブンキーは入力の値のまま
         times_chunks.append(cv.times)
+        if cv.kind[0] == "T":
+            range_chunks.append(cv.times)
         values_chunks.append(_scaled(cv.values, vk))
         chunk = bytearray(2 * n)
         for k, v in cv.kit.items():
@@ -307,9 +317,9 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
             ox, oy = fx["kox"].get(k), fx["koy"].get(k)
             nan = float("nan")
             fixed.extend((offset + k,
-                          ix * fps if ix is not None and iy is not None else nan,
+                          ix * xk if ix is not None and iy is not None else nan,
                           iy * tk if ix is not None and iy is not None else nan,
-                          ox * fps if ox is not None and oy is not None else nan,
+                          ox * xk if ox is not None and oy is not None else nan,
                           oy * tk if ox is not None and oy is not None else nan))
         index = len(curves_out)
         curve_index[id(node)] = index
@@ -371,10 +381,11 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
 
     times_all = _concat(times_chunks)
     values_all = _concat(values_chunks)
+    range_all = _concat(range_chunks)
     pb = playback_range(ms)
     now = ms.current_time if ms.current_time is not None else 1.0
-    t_first = float((np.min if numpy_enabled() else min)(times_all)) if len(times_all) else now
-    t_last = float((np.max if numpy_enabled() else max)(times_all)) if len(times_all) else now
+    t_first = float((np.min if numpy_enabled() else min)(range_all)) if len(range_all) else now
+    t_last = float((np.max if numpy_enabled() else max)(range_all)) if len(range_all) else now
     start = pb.get("min", t_first)
     end = pb.get("max", t_last)
     if end < start:

@@ -131,7 +131,7 @@ test('計算ノード: multiplyDivide・plusMinusAverage・reverse・unitConvers
 test('未対応のノードは警告に出し、評価しない', () => {
   const w = data.animation.warnings.join('\n');
   assert.match(w, /expression/);
-  assert.match(w, /animCurveUA/);
+  assert.match(w, /myCustomDriver/);
   const { rig } = at(24);
   assert.deepEqual(rig.chan(idx('expr_jnt')).r, [0, 0, 0]);
 });

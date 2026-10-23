@@ -5,6 +5,7 @@
   python -m ma_viewer view scene.ma      ファイルを開いてビューアを起動
   python -m ma_viewer export scene.ma -o scene.json   共通 JSON に変換
   python -m ma_viewer info scene.ma      内容の概要と警告を表示
+  python -m ma_viewer rig scene.ma       リグの診断（評価できないノードと、IK の極ベクトルなどの上流）
 """
 from __future__ import annotations
 
@@ -98,6 +99,18 @@ def _faces_without_uv(m) -> int:
     return bad
 
 
+def cmd_rig(args) -> int:
+    from .rig_report import rig_report_file
+    text = rig_report_file(args.input)
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+        print("書き出しました: %s" % args.output)
+    else:
+        print(text)
+    return 0
+
+
 def cmd_view(args) -> int:
     from .app import main as app_main
     return app_main([args.input] if args.input else [])
@@ -114,6 +127,9 @@ def main(argv=None) -> int:
     pe.add_argument("--no-animation", action="store_true", help="アニメーションを書き出さない")
     pi = sub.add_parser("info", help="内容の概要を表示")
     pi.add_argument("input")
+    pr = sub.add_parser("rig", help="リグの診断（評価できないノードと IK の上流）")
+    pr.add_argument("input")
+    pr.add_argument("-o", "--output", help="テキストファイルに書き出す")
     pv = sub.add_parser("view", help="ビューアを起動")
     pv.add_argument("input", nargs="?")
     args = p.parse_args(argv)
@@ -121,6 +137,8 @@ def main(argv=None) -> int:
         return cmd_export(args)
     if args.cmd == "info":
         return cmd_info(args)
+    if args.cmd == "rig":
+        return cmd_rig(args)
     if args.cmd == "view":
         return cmd_view(args)
     from .app import main as app_main

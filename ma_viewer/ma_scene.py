@@ -81,6 +81,8 @@ _SKIP_ATTR_TYPES = {
     "aiOptions", "aiAOVDriver", "aiAOVFilter", "aiImagerDenoiserOidn",
     # リグの計算ノード（値は 2 段階目に属性の範囲から読む）
     "quatToEuler", "eulerToQuat", "quatProd", "quatInvert", "quatNormalize", "quatSlerp", "curveInfo",
+    "distanceBetween", "vectorProduct", "angleBetween", "animBlendNodeAdditiveDL", "animBlendNodeAdditiveDA",
+    "animBlendNodeAdditiveRotation", "animBlendNodeAdditiveScale", "animBlendNodeAdditive",
 }
 # シェイプのうち、メッシュ以外（子を持たず、属性も使わない）
 _SKIP_SHAPE_TYPES = SHAPE_TYPES - {"mesh"}
@@ -231,6 +233,7 @@ class MaScene:
         self.graph_info = None                       # rig.GraphInfo（変換時に設定）
         self.bind_ids = set()                        # バインドポーズの情報を持つノードの id（変換時に設定）
         self.references: List[str] = []
+        self.plugins: List[str] = []                 # requires で読み込むプラグイン（maya 以外）
         self.stats: Dict[str, int] = {}          # 文の種類ごとの数（読み込みの内訳に出す）
         # 「文の種類 ノードの種類」ごとの [秒, 文の数, 文字数]（どこに時間がかかっているかを調べる）
         self.cost: Dict[str, List[float]] = {}
@@ -318,6 +321,8 @@ class MaScene:
             vals = [t.value for t in toks if not t.text.startswith("-")]
             if len(vals) >= 2 and vals[0] == "maya" and self.maya_version is None:
                 self.maya_version = vals[1]
+            elif vals and vals[0] != "maya" and vals[0] not in self.plugins:
+                self.plugins.append(vals[0])
         elif cmd == "fileInfo":
             vals = [t.value for t in R.tokenize(rest) if t.quoted]
             if len(vals) >= 2 and vals[0] == "upAxis":

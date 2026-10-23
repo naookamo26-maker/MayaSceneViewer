@@ -10,11 +10,15 @@
 対応するノード:
   * コンストレイント: point・orient・parent・scale・poleVector・aim
   * IK: ikRPsolver・ikSCsolver（ジョイントの数は問わない）、ikSplineSolver（nurbsCurve に沿わせる）
-  * 計算ノード: unitConversion・pairBlend・blendColors・multiplyDivide・plusMinusAverage・reverse・condition
+  * 計算ノード: unitConversion・pairBlend・blendColors・multiplyDivide・plusMinusAverage・reverse・condition・
+    addDoubleLinear・multDoubleLinear・clamp・setRange・remapValue・distanceBetween・vectorProduct・blendTwoAttr・
+    blendWeighted・choice・expression（式を解釈できるもの）
+  * ドリブンキー: animCurveUA・UL・UU（ドライバーの値でキーを引く）
+  * アニメーションレイヤー: animBlendNodeAdditiveDL・DA・Rotation、animLayer（ウェイトとミュート）
   * 行列ノード: multMatrix・decomposeMatrix・composeMatrix・inverseMatrix、DAG ノードの offsetParentMatrix
   * 四元数ノード: quatToEuler・eulerToQuat・quatProd・quatInvert・quatNormalize・quatSlerp
   * そのほか: curveInfo（カーブの長さ）、displayLayer（値を読むだけ）
-  * カーブ: nurbsCurve と、それを動かす skinCluster・wire・制御点（controlPoints）の接続・ロケーター（worldPosition）
+  * カーブ: nurbsCurve と、それを動かす skinCluster・wire・cluster・制御点（controlPoints）の接続・ロケーター（worldPosition）
   * アニメーションカーブ（animCurveTL / TA / TU）
 これ以外のノード（エクスプレッション・ドリブンキー・行列ノードなど）に当たったら、そこから先は評価せず警告する。
 """
@@ -32,17 +36,21 @@ CONSTRAINT_TYPES = {"pointConstraint", "orientConstraint", "parentConstraint", "
 UTILITY_TYPES = {"unitConversion", "pairBlend", "blendColors", "multiplyDivide", "plusMinusAverage", "reverse",
                  "condition", "multMatrix", "decomposeMatrix", "composeMatrix", "inverseMatrix",
                  "quatToEuler", "eulerToQuat", "quatProd", "quatInvert", "quatNormalize", "quatSlerp", "curveInfo",
-                 "displayLayer", "expression"}
+                 "displayLayer", "expression", "addDoubleLinear", "multDoubleLinear", "clamp", "setRange", "remapValue",
+                 "distanceBetween", "vectorProduct", "blendTwoAttr", "blendWeighted", "choice",
+                 "animBlendNodeAdditiveDL", "animBlendNodeAdditiveDA", "animBlendNodeAdditiveRotation", "animLayer",
+                 "animCurveUA", "animCurveUL", "animCurveUU"}
 # 入力をたどらない（値を読むだけの）ノード
-_NO_INPUT_TYPES = {"displayLayer"}
+_NO_INPUT_TYPES = {"displayLayer", "animLayer"}       # animLayer はウェイトとミュートを読むだけ
 # カーブと、それを動かすノード（必要な入力だけをたどる）
-GEOMETRY_TYPES = {"nurbsCurve", "skinCluster", "tweak", "groupParts", "locator", "wire"}
+GEOMETRY_TYPES = {"nurbsCurve", "skinCluster", "tweak", "groupParts", "locator", "wire", "cluster"}
 _GEOMETRY_INPUTS = {
     "nurbsCurve": re.compile(r"^(cr|cp\[\d+\].*)$"),            # create・controlPoints
     "skinCluster": re.compile(r"^(ma\[\d+\]|pm\[\d+\]|ip\[\d+\]\.ig)$"),
     "tweak": re.compile(r"^ip\[\d+\]\.ig$"),
     "groupParts": re.compile(r"^ig$"),
     # wire: 変形するカーブ・ワイヤー（dw）・ベースワイヤー（bw）・影響範囲（dds）・スケール（sc）・回転・エンベロープ
+    "cluster": re.compile(r"^(ip\[\d+\]\.ig|ma|pm|en)$"),         # ハンドルのワールド行列・bindPreMatrix
     "wire": re.compile(r"^(ip\[\d+\]\.ig|dw\[\d+\]|bw\[\d+\]|dds\[\d+\]|sc\[\d+\]|rot|en)$"),
     "locator": None,
 }
@@ -110,7 +118,7 @@ _DEFORM_OUT = re.compile(r"^og\[(\d+)\]$")
 
 
 def wire_shapes(ms: MaScene, wire: MaNode) -> Dict[int, MaNode]:
-    """wire の出力（og[k]）の先にある、変形されるカーブ（ほかのデフォーマを経由してもよい）"""
+    """デフォーマ（wire・cluster）の出力（og[k]）の先にある、変形されるカーブ（ほかのデフォーマを経由してもよい）"""
     out: Dict[int, MaNode] = {}
     for src, sattr, dst, _dattr in ms.connections:
         m = _DEFORM_OUT.match(sattr) if src is wire else None
@@ -190,7 +198,7 @@ def discover(ms: MaScene, keep: Set[int], geometry=()) -> GraphInfo:
                         add_edge(n, key)
                 if n.type in ("nurbsCurve", "locator"):
                     need_world(n.parent)                 # ワールド空間（ws・worldPosition）は親の行列から
-                if n.type == "wire":
+                if n.type in ("wire", "cluster"):
                     for shape in wire_shapes(ms, n).values():
                         need_world(shape.parent)         # ワイヤーはワールド空間で変形する（変形するカーブの位置）
             return
@@ -392,9 +400,11 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
             entry["parent"] = out_index.get(id(n.parent), -1) if n.parent is not None else -1
             if id(n) in shape_index:
                 entry["shape"] = shape_index[id(n)]     # 表示するカーブ（共通 JSON の curves の番号）
+        if n.type.startswith("animCurveU") and id(n) in curve_index:
+            entry["curve"] = curve_index[id(n)]           # ドリブンキー（animation.curves の番号。入力 i で引く）
         if n.type == "expression" and id(n) in info.expressions:
             entry["expr"] = info.expressions[id(n)]       # 式（ビューアの expression.js で解釈する）
-        if n.type == "wire":
+        if n.type in ("wire", "cluster"):
             # 変形するカーブの transform（ワールド空間へ移して変形し、戻す）
             entry["geom"] = {str(k): out_index.get(id(shape.parent), -1) for k, shape in wire_shapes(ms, n).items()}
         if n.type == "skinCluster" and n.skin is not None:
