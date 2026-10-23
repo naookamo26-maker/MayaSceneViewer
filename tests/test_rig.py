@@ -527,6 +527,17 @@ class TestStage6(unittest.TestCase):
         self.assertIn("el: ファイル (1.0000, 0.0000, 1.0000) ／ 計算 (1.0000, 0.1000, 1.0000)", text4)
         self.assertIn("骨の長さ: ファイル [1.4142, 1.4142] ／ 計算 [1.4177, 1.4177]", text4)
         self.assertIn("極ベクトル（ワールド・計算）(0.0000, 0.0000, 1.0000)・ひねり 0.0000°・ikBlend 1.000", text4)
+        text4b = format_verification({"frame": 1, "handles": [
+            {"handle": "arm_ik", "solver": "ikRPsolver", "pv": [0, 0, 1], "twist": 0, "ok": False,
+             "chain": ["sh", "el", "wr"], "reach": 0.0, "error": 5.0, "best": None, "poleError": 5.0, "parent": None,
+             "detail": {"fileJoints": [], "evalJoints": [], "handle": [0, 0, 0], "fileLengths": [], "evalLengths": [],
+                        "pv": [0, 0, 1], "twist": 0, "ikBlend": 1,
+                        "axes": [{"name": "sh", "fileToRef": [90, 0.0, 90], "evalToRef": [90, 5.0, 85],
+                                  "fileToChain": [90, 5.0, 95], "r": [0, 20, 0], "jo": [0, 0, 0], "ra": [0, 0, 0],
+                                  "pa": None, "ro": 0}]},
+             "joints": [{"name": "sh", "angle": 5, "roll": 5, "bend": 0, "position": 0, "ok": False}]}]})
+        self.assertIn("sh: Maya [90, 0.0, 90] ／ 計算 [90, 5.0, 85] ／ Maya の 3 点の面の法線とは [90, 5.0, 95]", text4b)
+        self.assertIn("rotate [0, 20, 0]・jointOrient [0, 0, 0]・rotateAxis [0, 0, 0]・preferredAngle （なし）・回転順 0", text4b)
         text5 = format_verification({"frame": 1, "handles": [
             {"handle": "arm_ik", "solver": "ikRPsolver", "pv": [0, 0, 1], "twist": 0, "ok": False, "chain": [],
              "reach": 0.0, "error": 5.0, "best": None, "poleError": 5.0, "parent": None,

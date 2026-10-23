@@ -142,9 +142,11 @@ function averageQuat(list) {
 
 // 再現チェックで試す IK の解き方の候補（Maya の細部の解釈が分からない点の組み合わせ）
 const RP_VARIANTS = [];
-for (const twistSign of [1, -1, 0]) {
-  for (const pvSpace of ['handle', 'world', 'start']) {
-    for (const side of [1, -1]) RP_VARIANTS.push({ twistSign, pvSpace, side });
+for (const plane of ['points', 'axis']) {
+  for (const twistSign of [1, -1, 0]) {
+    for (const pvSpace of ['handle', 'world', 'start']) {
+      for (const side of [1, -1]) RP_VARIANTS.push({ plane, twistSign, pvSpace, side });
+    }
   }
 }
 const IK_VARIANTS = {
@@ -155,7 +157,8 @@ function variantLabel(v) {
   if (v.splineInterp) return v.splineInterp === 'lerp' ? 'ひねり: up ベクトルを直線で補間' : 'ひねり: 角度で配る（今の解き方）';
   const tw = { 1: 'ひねり 今の向き', '-1': 'ひねり 逆向き', 0: 'ひねり 使わない' }[v.twistSign];
   const sp = { handle: '極ベクトル ハンドルの親の空間', world: '極ベクトル ワールド空間', start: '極ベクトル 開始ジョイントの親の空間' }[v.pvSpace];
-  return `${tw}・${sp}・肘 ${v.side === 1 ? '極ベクトルの側' : '反対側'}`;
+  const pl = v.plane === 'axis' ? '面 開始ジョイントの軸（肘の回転軸）を基準面にそろえる' : '面 3 点（今の解き方）';
+  return `${pl}・${tw}・${sp}・肘 ${v.side === 1 ? '極ベクトルの側' : '反対側'}`;
 }
 
 export class RigEvaluator {
@@ -1247,13 +1250,31 @@ export class RigEvaluator {
     const frame = (dd, nn) => new Matrix4().makeBasis(dd, nn, dd.clone().cross(nn));
     const R1 = new Quaternion().setFromRotationMatrix(frame(d1, n1).multiply(frame(d0, n0).transpose()));
     const qs0 = rotationOf(Ws);
-    const qs1 = R1.clone().multiply(qs0);
+    let qs1 = R1.clone().multiply(qs0);
     // 中間ジョイント: 面の法線のまわりに回して、終端をハンドルに向ける
     const a = new Vector3().subVectors(C, B).normalize().applyQuaternion(R1);
     const b = new Vector3().subVectors(H1, B1).normalize();
     const ang = Math.atan2(n1.dot(a.clone().cross(b)), a.dot(b));
     const R2 = new Quaternion().setFromAxisAngle(n1, ang);
-    const qm1 = R2.multiply(R1).multiply(rotationOf(Wm));
+    let qm1 = R2.multiply(R1).multiply(rotationOf(Wm));
+    if (!sc && this.ikVariant && this.ikVariant.plane === 'axis') {
+      // （再現チェックの候補）3 点の面ではなく、開始ジョイントの軸（FK の形で面の法線に一番近い軸＝肘の回転軸）を
+      // 基準面の法線にそろえる: チェーン全体を、開始 → ハンドルの軸のまわりに回す（終端はハンドルに残る）
+      const axes = [0, 1, 2].map((k) => new Vector3().setFromMatrixColumn(Ws, k).normalize());
+      let bi = 0;
+      axes.forEach((ax, k) => { if (Math.abs(ax.dot(n0)) > Math.abs(axes[bi].dot(n0))) bi = k; });
+      const sgn = Math.sign(axes[bi].dot(n0)) || 1;
+      const ax = axes[bi].clone().applyQuaternion(R1);
+      const want = n1.clone().multiplyScalar(sgn);
+      ax.addScaledVector(u, -ax.dot(u));
+      want.addScaledVector(u, -want.dot(u));
+      if (ax.lengthSq() > EPS && want.lengthSq() > EPS) {
+        const phi = Math.atan2(u.dot(ax.clone().cross(want)), ax.dot(want));
+        const Rq = new Quaternion().setFromAxisAngle(u, phi);
+        qs1 = Rq.clone().multiply(qs1);
+        qm1 = Rq.clone().multiply(qm1);
+      }
+    }
     // ワールドの回転 → ジョイントの回転の値
     const pq = rotationOf(P);
     let rs = this.localEuler(s, pq.clone().invert().multiply(qs1));
@@ -1592,12 +1613,14 @@ export class RigEvaluator {
     let parentFile = this.parentWorld(chain[0]);
     let endFile = null;
     const filePos = [];
+    const fileW = [];
     for (let k = 0; k < chain.length; k++) {
       const ni = chain[k];
       const file = fileLocal(ni);
       if (!file) break;
       const Wf = parentFile.clone().multiply(file);
       filePos.push(positionOf(Wf));
+      fileW.push(Wf);
       if (k === chain.length - 1) { endFile = Wf; break; }
       const We = this.world(ni);
       const qf = rotationOf(Wf), qe = rotationOf(We);
@@ -1659,6 +1682,34 @@ export class RigEvaluator {
       twist: Math.round(this.num(g.id, 'twi', 0) * R2D * 1e4) / 1e4,
       ikBlend: this.num(g.id, 'ikb', 1),
     };
+    // ジョイントの軸と基準面（開始 → ハンドル と 極ベクトル＋ひねり の面）の法線のなす角（度）。
+    // Maya の答え（ファイル）でどれかの軸が 0° / 180° なら、Maya はその軸を基準面の法線にそろえている
+    if (g.ik.solver === 'ikRPsolver' && filePos.length) {
+      const u = H.clone().sub(filePos[0]).normalize();
+      const v = this.pvWorld(this.vec(g.id, 'pv', [0, 0, 1]), g.dag, chain[0]);
+      v.addScaledVector(u, -v.dot(u));
+      const tw = this.num(g.id, 'twi', 0) * this.twistSign();
+      if (Math.abs(tw) > EPS) v.applyQuaternion(new Quaternion().setFromAxisAngle(u, tw));
+      const nRef = u.clone().cross(v).normalize();
+      const nFile = filePos.length >= 3 ? filePos[1].clone().sub(filePos[0]).cross(filePos[2].clone().sub(filePos[1])).normalize() : null;
+      const axesTo = (W, n) => [0, 1, 2].map((a) => {
+        const ax = new Vector3().setFromMatrixColumn(W, a).normalize();
+        return Math.round(Math.acos(Math.max(-1, Math.min(1, ax.dot(n)))) * R2D * 100) / 100;
+      });
+      detail.axes = chain.slice(0, -1).map((ni, k) => {
+        const rest = this.rest(ni) || {};
+        const dg = this.dagGraph.get(ni);
+        const pa = dg && dg.attrs && Array.isArray(dg.attrs.pa) ? dg.attrs.pa : null;
+        const round = (a) => (Array.isArray(a) ? a.map((x) => Math.round(x * 1e3) / 1e3) : null);
+        return {
+          name: this.sceneNodes[ni].name,
+          fileToRef: fileW[k] ? axesTo(fileW[k], nRef) : null,
+          evalToRef: axesTo(this.world(ni), nRef),
+          fileToChain: fileW[k] && nFile ? axesTo(fileW[k], nFile) : null,
+          r: round(rest.r), jo: round(rest.jo), ra: round(rest.ra), pa: round(pa), ro: rest.ro ?? 0,
+        };
+      });
+    }
     return { joints, reach, poleError, detail, error: joints.reduce((m, j) => Math.max(m, j.angle), 0) };
   }
 

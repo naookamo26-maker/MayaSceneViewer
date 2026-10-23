@@ -356,6 +356,13 @@ def format_verification(result: Optional[dict]) -> str:
             if det.get("pv") is not None:
                 out.append("      極ベクトル（ワールド・計算）%s・ひねり %.4f°・ikBlend %.3f"
                            % (fmt3(det["pv"]), det["twist"], det["ikBlend"]))
+            if det.get("axes"):
+                out.append("      ジョイントの軸（X, Y, Z）と、基準面（開始→ハンドル と 極ベクトル＋ひねり の面）の法線のなす角（度）:")
+                for ax in det["axes"]:
+                    out.append("        %s: Maya %s ／ 計算 %s ／ Maya の 3 点の面の法線とは %s" % (
+                        ax["name"], ax["fileToRef"], ax["evalToRef"], ax["fileToChain"]))
+                    out.append("          rotate %s・jointOrient %s・rotateAxis %s・preferredAngle %s・回転順 %s" % (
+                        ax["r"], ax["jo"], ax["ra"], ax["pa"] if ax["pa"] is not None else "（なし）", ax["ro"]))
         pt = h.get("poleTargets")
         if pt and not h["ok"]:
             if not pt.get("targets"):

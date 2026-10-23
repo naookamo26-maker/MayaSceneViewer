@@ -251,3 +251,23 @@ test('極ベクトルの空間の変換: 反転（スケール -1）や不均一
   const start = rig.pivotPosition(pvc.pivot);
   assert.ok(pvW.distanceTo(tgt.sub(start)) < 1e-6, `${pvW.toArray()}`);
 });
+
+test('再現チェックの候補: Maya の答えが「開始ジョイントの軸を基準面にそろえる」解き方なら、それを見つける', () => {
+  const d = JSON.parse(JSON.stringify(data));
+  const g = d.animation.graph.find((x) => x.name === 'arm3_ik');
+  // 肘の回転軸がチェーンの面に垂直でないリグ: 肘のジョイントを開始ジョイントの Y 軸方向に持ち上げる
+  // （3 点の面の法線が、開始ジョイントの Y 軸から傾く）
+  const b = d.nodes.findIndex((n) => n.name === 'arm3_b');
+  d.animation.nodes.find((n) => n.node === b).t = [3, 0.8, 1];
+  const mk = () => new RigEvaluator(new AnimationClip(d.animation), d.nodes, (ni) => new Matrix4().fromArray(d.nodes[ni].matrix));
+  const maya = mk();
+  maya.ikVariant = { plane: 'axis', twistSign: 1, pvSpace: 'handle', side: 1 };
+  maya.evaluate(d.animation.current);
+  const answer = new Map(g.ik.chain.map((ni) => [ni, maya.localFile(ni).clone()]));
+  const rig = mk();
+  rig.evaluate(d.animation.current);
+  const h = rig.verifySaved((ni) => answer.get(ni) || rig.fileRestLocal(ni)).find((x) => x.handle === 'arm3_ik');
+  assert.ok(!h.ok, `今の解き方ではずれる: ${h.error}`);
+  assert.equal(h.best.variant.plane, 'axis', h.best.label);
+  assert.ok(h.best.error < 0.01, `${h.best.error}`);
+});
