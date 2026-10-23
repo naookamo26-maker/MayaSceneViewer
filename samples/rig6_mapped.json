@@ -352,6 +352,210 @@
    "segmentScaleCompensate":true
   },
   {
+   "name":"arm4_a",
+   "path":"|t2_0|t2_1|t2_2|t2_3|t2_4|arm4_a",
+   "type":"joint",
+   "parent":4,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    2.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    8.0,
+    2.0,
+    -10.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     2.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true
+  },
+  {
+   "name":"arm4_b",
+   "path":"|t2_0|t2_1|t2_2|t2_3|t2_4|arm4_a|arm4_b",
+   "type":"joint",
+   "parent":5,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    0.0,
+    1.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    11.0,
+    2.0,
+    -9.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     3.0,
+     0.0,
+     1.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true
+  },
+  {
+   "name":"arm4_c",
+   "path":"|t2_0|t2_1|t2_2|t2_3|t2_4|arm4_a|arm4_b|arm4_c",
+   "type":"joint",
+   "parent":6,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    0.0,
+    -1.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    14.0,
+    2.0,
+    -10.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     3.0,
+     0.0,
+     -1.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true
+  },
+  {
    "name":"t2_ik",
    "path":"|t2_ik",
    "type":"ikHandle",
@@ -668,7 +872,7 @@
    "name":"cl_tipHandle",
    "path":"|tip_ctrl|cl_tipHandle",
    "type":"transform",
-   "parent":9,
+   "parent":12,
    "matrix":[
     1.0,
     0.0,
@@ -1623,7 +1827,7 @@
    "name":"leg_knee",
    "path":"|leg_hip|leg_knee",
    "type":"joint",
-   "parent":23,
+   "parent":26,
    "matrix":[
     1.0,
     0.0,
@@ -1691,7 +1895,7 @@
    "name":"leg_ankle",
    "path":"|leg_hip|leg_knee|leg_ankle",
    "type":"joint",
-   "parent":24,
+   "parent":27,
    "matrix":[
     1.0,
     0.0,
@@ -1821,7 +2025,7 @@
    "name":"leg_ik",
    "path":"|foot_ctrl|leg_ik",
    "type":"ikHandle",
-   "parent":26,
+   "parent":29,
    "matrix":[
     1.0,
     0.0,
@@ -2158,7 +2362,7 @@
    "name":"arm2_b",
    "path":"|arm2_a|arm2_b",
    "type":"joint",
-   "parent":31,
+   "parent":34,
    "matrix":[
     1.0,
     0.0,
@@ -2226,7 +2430,7 @@
    "name":"arm2_c",
    "path":"|arm2_a|arm2_b|arm2_c",
    "type":"joint",
-   "parent":32,
+   "parent":35,
    "matrix":[
     1.0,
     0.0,
@@ -2513,7 +2717,7 @@
    "name":"arm3_b",
    "path":"|arm3_a|arm3_b",
    "type":"joint",
-   "parent":36,
+   "parent":39,
    "matrix":[
     1.0,
     0.0,
@@ -2581,7 +2785,7 @@
    "name":"arm3_c",
    "path":"|arm3_a|arm3_b|arm3_c",
    "type":"joint",
-   "parent":37,
+   "parent":40,
    "matrix":[
     1.0,
     0.0,
@@ -2782,6 +2986,68 @@
    ]
   },
   {
+   "name":"arm4_ik",
+   "path":"|arm4_ik",
+   "type":"ikHandle",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    14.0,
+    2.0,
+    -10.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    14.0,
+    2.0,
+    -10.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     14.0,
+     2.0,
+     -10.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   }
+  },
+  {
    "name":"cx_ctrl",
    "path":"|cx_ctrl",
    "type":"myCtrlTransform",
@@ -2923,7 +3189,7 @@
   {
    "name":"t2_curveShape",
    "path":"|t2_curve|t2_curveShape",
-   "transform":6,
+   "transform":9,
    "visible":true,
    "visibleSelf":true,
    "cc":[
@@ -2960,7 +3226,7 @@
   {
    "name":"t2_wireShape",
    "path":"|t2_wire|t2_wireShape",
-   "transform":7,
+   "transform":10,
    "visible":true,
    "visibleSelf":true,
    "cc":[
@@ -2997,7 +3263,7 @@
   {
    "name":"t2_wireBaseWireShape",
    "path":"|t2_wireBaseWire|t2_wireBaseWireShape",
-   "transform":8,
+   "transform":11,
    "visible":false,
    "visibleSelf":true,
    "cc":[
@@ -3039,8 +3305,8 @@
   "knee_pv: tx ← my_pv_driver（myRigNode） が接続で決まるため、ファイルに値がありません。バインドポーズの情報もないため、既定値（移動 0・回転 0）で表示しています。"
  ],
  "stats":{
-  "nodes":43,
-  "joints":25,
+  "nodes":47,
+  "joints":28,
   "meshes":0,
   "curves":3,
   "vertices":0,
@@ -3195,42 +3461,42 @@
   ],
   "channels":[
    {
-    "node":9,
+    "node":12,
     "attr":"ty",
     "curve":0
    },
    {
-    "node":11,
+    "node":14,
     "attr":"ty",
     "curve":1
    },
    {
-    "node":12,
+    "node":15,
     "attr":"tx",
     "curve":2
    },
    {
-    "node":12,
+    "node":15,
     "attr":"ty",
     "curve":3
    },
    {
-    "node":20,
+    "node":23,
     "attr":"rx",
     "curve":5
    },
    {
-    "node":34,
+    "node":37,
     "attr":"tx",
     "curve":10
    },
    {
-    "node":39,
+    "node":42,
     "attr":"tx",
     "curve":11
    },
    {
-    "node":41,
+    "node":45,
     "attr":"ty",
     "curve":12
    }
@@ -3388,11 +3654,11 @@
    },
    {
     "node":5,
-    "joint":false,
+    "joint":true,
     "ro":0,
     "t":[
      0.0,
-     0.0,
+     2.0,
      0.0
     ],
     "r":[
@@ -3406,6 +3672,11 @@
      1.0
     ],
     "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
      0.0,
      0.0,
      0.0
@@ -3413,12 +3684,12 @@
    },
    {
     "node":6,
-    "joint":false,
+    "joint":true,
     "ro":0,
     "t":[
+     3.0,
      0.0,
-     0.0,
-     0.0
+     1.0
     ],
     "r":[
      0.0,
@@ -3431,6 +3702,11 @@
      1.0
     ],
     "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
      0.0,
      0.0,
      0.0
@@ -3438,12 +3714,12 @@
    },
    {
     "node":7,
-    "joint":false,
+    "joint":true,
     "ro":0,
     "t":[
+     3.0,
      0.0,
-     0.0,
-     0.0
+     -1.0
     ],
     "r":[
      0.0,
@@ -3456,6 +3732,11 @@
      1.0
     ],
     "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
      0.0,
      0.0,
      0.0
@@ -3534,16 +3815,6 @@
      0.0,
      0.0,
      0.0
-    ],
-    "rp":[
-     8.0,
-     0.0,
-     -10.0
-    ],
-    "sp":[
-     8.0,
-     0.0,
-     -10.0
     ]
    },
    {
@@ -3603,6 +3874,91 @@
     "t":[
      0.0,
      0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rp":[
+     8.0,
+     0.0,
+     -10.0
+    ],
+    "sp":[
+     8.0,
+     0.0,
+     -10.0
+    ]
+   },
+   {
+    "node":14,
+    "joint":false,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":15,
+    "joint":false,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":16,
+    "joint":false,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
      5.0
     ],
     "r":[
@@ -3622,7 +3978,7 @@
     ]
    },
    {
-    "node":14,
+    "node":17,
     "joint":true,
     "ro":0,
     "t":[
@@ -3652,7 +4008,7 @@
     ]
    },
    {
-    "node":15,
+    "node":18,
     "joint":true,
     "ro":0,
     "t":[
@@ -3682,7 +4038,7 @@
     ]
    },
    {
-    "node":16,
+    "node":19,
     "joint":true,
     "ro":0,
     "t":[
@@ -3712,7 +4068,7 @@
     ]
    },
    {
-    "node":17,
+    "node":20,
     "joint":true,
     "ro":0,
     "t":[
@@ -3742,7 +4098,7 @@
     ]
    },
    {
-    "node":18,
+    "node":21,
     "joint":true,
     "ro":0,
     "t":[
@@ -3772,7 +4128,7 @@
     ]
    },
    {
-    "node":19,
+    "node":22,
     "joint":false,
     "ro":0,
     "t":[
@@ -3797,7 +4153,7 @@
     ]
    },
    {
-    "node":20,
+    "node":23,
     "joint":false,
     "ro":0,
     "t":[
@@ -3822,7 +4178,7 @@
     ]
    },
    {
-    "node":21,
+    "node":24,
     "joint":true,
     "ro":0,
     "t":[
@@ -3852,7 +4208,7 @@
     ]
    },
    {
-    "node":22,
+    "node":25,
     "joint":true,
     "ro":0,
     "t":[
@@ -3882,7 +4238,7 @@
     ]
    },
    {
-    "node":23,
+    "node":26,
     "joint":true,
     "ro":0,
     "t":[
@@ -3912,7 +4268,7 @@
     ]
    },
    {
-    "node":24,
+    "node":27,
     "joint":true,
     "ro":0,
     "t":[
@@ -3942,7 +4298,7 @@
     ]
    },
    {
-    "node":25,
+    "node":28,
     "joint":true,
     "ro":0,
     "t":[
@@ -3972,7 +4328,7 @@
     ]
    },
    {
-    "node":26,
+    "node":29,
     "joint":false,
     "ro":0,
     "t":[
@@ -3997,7 +4353,7 @@
     ]
    },
    {
-    "node":27,
+    "node":30,
     "joint":false,
     "ro":0,
     "t":[
@@ -4022,7 +4378,7 @@
     ]
    },
    {
-    "node":28,
+    "node":31,
     "joint":false,
     "ro":0,
     "t":[
@@ -4047,7 +4403,7 @@
     ]
    },
    {
-    "node":29,
+    "node":32,
     "joint":true,
     "ro":0,
     "t":[
@@ -4077,7 +4433,7 @@
     ]
    },
    {
-    "node":30,
+    "node":33,
     "joint":true,
     "ro":0,
     "t":[
@@ -4107,7 +4463,7 @@
     ]
    },
    {
-    "node":31,
+    "node":34,
     "joint":true,
     "ro":0,
     "t":[
@@ -4137,7 +4493,7 @@
     ]
    },
    {
-    "node":32,
+    "node":35,
     "joint":true,
     "ro":0,
     "t":[
@@ -4167,7 +4523,7 @@
     ]
    },
    {
-    "node":33,
+    "node":36,
     "joint":true,
     "ro":0,
     "t":[
@@ -4197,7 +4553,7 @@
     ]
    },
    {
-    "node":34,
+    "node":37,
     "joint":false,
     "ro":0,
     "t":[
@@ -4222,7 +4578,7 @@
     ]
    },
    {
-    "node":35,
+    "node":38,
     "joint":false,
     "ro":0,
     "t":[
@@ -4247,7 +4603,7 @@
     ]
    },
    {
-    "node":36,
+    "node":39,
     "joint":true,
     "ro":0,
     "t":[
@@ -4277,7 +4633,7 @@
     ]
    },
    {
-    "node":37,
+    "node":40,
     "joint":true,
     "ro":0,
     "t":[
@@ -4307,7 +4663,7 @@
     ]
    },
    {
-    "node":38,
+    "node":41,
     "joint":true,
     "ro":0,
     "t":[
@@ -4337,7 +4693,7 @@
     ]
    },
    {
-    "node":39,
+    "node":42,
     "joint":false,
     "ro":0,
     "t":[
@@ -4362,7 +4718,7 @@
     ]
    },
    {
-    "node":40,
+    "node":43,
     "joint":true,
     "ro":0,
     "t":[
@@ -4392,7 +4748,32 @@
     ]
    },
    {
-    "node":41,
+    "node":44,
+    "joint":false,
+    "ro":0,
+    "t":[
+     14.0,
+     2.0,
+     -10.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":45,
     "joint":false,
     "ro":0,
     "t":[
@@ -4417,7 +4798,7 @@
     ]
    },
    {
-    "node":42,
+    "node":46,
     "joint":true,
     "ro":0,
     "t":[
@@ -4482,7 +4863,7 @@
     "id":5,
     "name":"t2_ik",
     "type":"ikHandle",
-    "dag":5,
+    "dag":8,
     "attrs":{
      "roc":1.0
     },
@@ -4507,7 +4888,7 @@
     "id":6,
     "name":"t2_curve",
     "type":"transform",
-    "dag":6
+    "dag":9
    },
    {
     "id":7,
@@ -4520,7 +4901,7 @@
       "attr":"og[0]"
      }
     },
-    "parent":6,
+    "parent":9,
     "shape":0
    },
    {
@@ -4558,13 +4939,13 @@
       -10.0
      ]
     },
-    "parent":6
+    "parent":9
    },
    {
     "id":9,
     "name":"t2_wire",
     "type":"transform",
-    "dag":7
+    "dag":10
    },
    {
     "id":10,
@@ -4577,7 +4958,7 @@
       "attr":"og[0]"
      }
     },
-    "parent":7,
+    "parent":10,
     "shape":1
    },
    {
@@ -4615,13 +4996,13 @@
       -10.0
      ]
     },
-    "parent":7
+    "parent":10
    },
    {
     "id":12,
     "name":"t2_wireBaseWire",
     "type":"transform",
-    "dag":8
+    "dag":11
    },
    {
     "id":13,
@@ -4657,7 +5038,7 @@
       -10.0
      ]
     },
-    "parent":8,
+    "parent":11,
     "shape":2
    },
    {
@@ -4683,14 +5064,14 @@
      }
     },
     "geom":{
-     "0":6
+     "0":9
     }
    },
    {
     "id":15,
     "name":"tip_ctrl",
     "type":"transform",
-    "dag":9,
+    "dag":12,
     "inputs":{
      "ty":{
       "curve":0
@@ -4701,13 +5082,13 @@
     "id":16,
     "name":"cl_tipHandle",
     "type":"transform",
-    "dag":10
+    "dag":13
    },
    {
     "id":17,
     "name":"cl_midHandle",
     "type":"transform",
-    "dag":11,
+    "dag":14,
     "inputs":{
      "ty":{
       "curve":1
@@ -4754,7 +5135,7 @@
      }
     },
     "geom":{
-     "0":7
+     "0":10
     }
    },
    {
@@ -4779,14 +5160,14 @@
      }
     },
     "geom":{
-     "0":7
+     "0":10
     }
    },
    {
     "id":20,
     "name":"ctl",
     "type":"transform",
-    "dag":12,
+    "dag":15,
     "inputs":{
      "tx":{
       "curve":2
@@ -4800,13 +5181,13 @@
     "id":21,
     "name":"db_loc",
     "type":"transform",
-    "dag":13
+    "dag":16
    },
    {
     "id":22,
     "name":"u_jnt1",
     "type":"joint",
-    "dag":14,
+    "dag":17,
     "inputs":{
      "tx":{
       "node":23,
@@ -4852,7 +5233,7 @@
     "id":25,
     "name":"u_jnt2",
     "type":"joint",
-    "dag":15,
+    "dag":18,
     "inputs":{
      "tx":{
       "node":26,
@@ -4904,7 +5285,7 @@
     "id":27,
     "name":"u_jnt3",
     "type":"joint",
-    "dag":16,
+    "dag":19,
     "inputs":{
      "tx":{
       "node":28,
@@ -4994,7 +5375,7 @@
     "id":31,
     "name":"u_jnt4",
     "type":"joint",
-    "dag":17,
+    "dag":20,
     "inputs":{
      "t":{
       "node":32,
@@ -5026,7 +5407,7 @@
     "id":33,
     "name":"u_jnt5",
     "type":"joint",
-    "dag":18,
+    "dag":21,
     "inputs":{
      "tx":{
       "node":34,
@@ -5100,7 +5481,7 @@
     "id":37,
     "name":"roll_ctrl",
     "type":"transform",
-    "dag":19,
+    "dag":22,
     "inputs":{
      "roll":{
       "curve":4
@@ -5111,7 +5492,7 @@
     "id":38,
     "name":"drv2",
     "type":"transform",
-    "dag":20,
+    "dag":23,
     "inputs":{
      "rx":{
       "curve":5
@@ -5122,7 +5503,7 @@
     "id":39,
     "name":"roll_jnt",
     "type":"joint",
-    "dag":21,
+    "dag":24,
     "inputs":{
      "rz":{
       "node":40,
@@ -5201,7 +5582,7 @@
     "id":43,
     "name":"lay_jnt",
     "type":"joint",
-    "dag":22,
+    "dag":25,
     "inputs":{
      "rx":{
       "node":45,
@@ -5240,31 +5621,31 @@
     "id":46,
     "name":"leg_hip",
     "type":"joint",
-    "dag":23
+    "dag":26
    },
    {
     "id":47,
     "name":"leg_knee",
     "type":"joint",
-    "dag":24
+    "dag":27
    },
    {
     "id":48,
     "name":"leg_ankle",
     "type":"joint",
-    "dag":25
+    "dag":28
    },
    {
     "id":49,
     "name":"foot_ctrl",
     "type":"transform",
-    "dag":26
+    "dag":29
    },
    {
     "id":50,
     "name":"leg_ik",
     "type":"ikHandle",
-    "dag":27,
+    "dag":30,
     "attrs":{
      "pv":[
       0.0,
@@ -5289,9 +5670,9 @@
     "ik":{
      "solver":"ikRPsolver",
      "chain":[
-      23,
-      24,
-      25
+      26,
+      27,
+      28
      ]
     }
    },
@@ -5338,8 +5719,8 @@
       "attr":"w0"
      }
     },
-    "pivot":23,
-    "driven":27,
+    "pivot":26,
+    "driven":30,
     "targets":[
      {
       "index":0,
@@ -5351,13 +5732,13 @@
     "id":52,
     "name":"knee_pv",
     "type":"transform",
-    "dag":28
+    "dag":31
    },
    {
     "id":53,
     "name":"poc_jnt",
     "type":"joint",
-    "dag":29,
+    "dag":32,
     "inputs":{
      "t":{
       "node":54,
@@ -5385,7 +5766,7 @@
     "id":55,
     "name":"poc_jnt2",
     "type":"joint",
-    "dag":30,
+    "dag":33,
     "inputs":{
      "t":{
       "node":56,
@@ -5412,25 +5793,25 @@
     "id":57,
     "name":"arm2_a",
     "type":"joint",
-    "dag":31
+    "dag":34
    },
    {
     "id":58,
     "name":"arm2_b",
     "type":"joint",
-    "dag":32
+    "dag":35
    },
    {
     "id":59,
     "name":"arm2_c",
     "type":"joint",
-    "dag":33
+    "dag":36
    },
    {
     "id":60,
     "name":"arm2_ik",
     "type":"ikHandle",
-    "dag":34,
+    "dag":37,
     "inputs":{
      "tx":{
       "curve":10
@@ -5439,9 +5820,9 @@
     "ik":{
      "solver":"ikRPsolver",
      "chain":[
-      31,
-      32,
-      33
+      34,
+      35,
+      36
      ]
     }
    },
@@ -5449,13 +5830,13 @@
     "id":61,
     "name":"arm3_root",
     "type":"transform",
-    "dag":35
+    "dag":38
    },
    {
     "id":62,
     "name":"arm3_a",
     "type":"joint",
-    "dag":36,
+    "dag":39,
     "inputs":{
      "tx":{
       "node":63,
@@ -5514,7 +5895,7 @@
       "attr":"w0"
      }
     },
-    "driven":36,
+    "driven":39,
     "targets":[
      {
       "index":0,
@@ -5526,19 +5907,19 @@
     "id":64,
     "name":"arm3_b",
     "type":"joint",
-    "dag":37
+    "dag":40
    },
    {
     "id":65,
     "name":"arm3_c",
     "type":"joint",
-    "dag":38
+    "dag":41
    },
    {
     "id":66,
     "name":"arm3_ik",
     "type":"ikHandle",
-    "dag":39,
+    "dag":42,
     "inputs":{
      "tx":{
       "curve":11
@@ -5547,9 +5928,9 @@
     "ik":{
      "solver":"ikRPsolver",
      "chain":[
-      36,
-      37,
-      38
+      39,
+      40,
+      41
      ]
     }
    },
@@ -5584,7 +5965,7 @@
     "id":69,
     "name":"mm_jnt2",
     "type":"joint",
-    "dag":40,
+    "dag":43,
     "inputs":{
      "t":{
       "node":68,
@@ -5594,9 +5975,41 @@
    },
    {
     "id":70,
+    "name":"arm4_a",
+    "type":"joint",
+    "dag":5
+   },
+   {
+    "id":71,
+    "name":"arm4_b",
+    "type":"joint",
+    "dag":6
+   },
+   {
+    "id":72,
+    "name":"arm4_c",
+    "type":"joint",
+    "dag":7
+   },
+   {
+    "id":73,
+    "name":"arm4_ik",
+    "type":"ikHandle",
+    "dag":44,
+    "ik":{
+     "solver":"ikRPsolver",
+     "chain":[
+      5,
+      6,
+      7
+     ]
+    }
+   },
+   {
+    "id":74,
     "name":"cx_ctrl",
     "type":"myCtrlTransform",
-    "dag":41,
+    "dag":45,
     "inputs":{
      "ty":{
       "curve":12
@@ -5604,25 +6017,25 @@
     }
    },
    {
-    "id":71,
+    "id":75,
     "name":"cx_jnt",
     "type":"joint",
-    "dag":42,
+    "dag":46,
     "inputs":{
      "t":{
-      "node":72,
+      "node":76,
       "attr":"ot"
      }
     }
    },
    {
-    "id":72,
+    "id":76,
     "name":"cx_dec",
     "type":"decomposeMatrix",
     "dag":-1,
     "inputs":{
      "imat":{
-      "node":70,
+      "node":74,
       "attr":"wm"
      }
     }
@@ -5630,10 +6043,10 @@
   ],
   "fallback":[],
   "tainted":[
-   23,
-   24,
-   25,
-   28
+   26,
+   27,
+   28,
+   31
   ],
   "times":{
    "dtype":"float32",
@@ -5664,8 +6077,8 @@
    "curves":13,
    "keys":26,
    "channels":8,
-   "nodes":28,
-   "graphNodes":73,
+   "nodes":30,
+   "graphNodes":77,
    "seconds":0.0031
   }
  }

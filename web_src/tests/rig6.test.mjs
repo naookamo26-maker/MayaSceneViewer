@@ -207,3 +207,16 @@ test('自作ノードの割り当て（multMatrix として評価）: 行列を�
   }
   assert.ok(at(24).tainted.has(idx('mm_jnt2')), '設定なしでは評価できない（不明）');
 });
+
+test('再現チェック: 開始ジョイントの親のずれと、最初にずれるノード（別の IK で動くもの）を出す', () => {
+  const rig = at(data.animation.current);
+  const fl = (ni) => rig.fileRestLocal(ni);
+  const ok = rig.verifySaved(fl).find((h) => h.handle === 'arm4_ik');
+  assert.ok(ok.ok && ok.parent && ok.parent.name === 't2_4' && ok.parent.angle < 1e-3 && !ok.parent.firstBad, JSON.stringify(ok.parent));
+  // 「Maya の答え」では尻尾の t2_2 が 10° 回っていた、とする
+  const t22 = idx('t2_2');
+  const tilted = (ni) => (ni === t22 ? fl(ni).multiply(new Matrix4().makeRotationZ(10 * Math.PI / 180)) : fl(ni));
+  const h = rig.verifySaved(tilted).find((x) => x.handle === 'arm4_ik');
+  assert.ok(h.parent.angle > 9 && h.parent.firstBad && h.parent.firstBad.name === 't2_2', JSON.stringify(h.parent));
+  assert.equal(h.parent.firstBad.ik, 't2_ik');
+});

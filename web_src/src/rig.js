@@ -1570,9 +1570,14 @@ export class RigEvaluator {
     const g = this.dagGraph.get(ni);
     const keys = g && g.inputs ? Object.keys(g.inputs) : [];
     if (keys.some((k) => /^r[xyz]?$/.test(k))) return null;
+    // キー（アニメーションカーブ）で決まる成分もファイルに値がないので、評価した値を使う（カーブの評価は確か）
+    const e = this.clip.byNode.get(ni);
+    const curve = new Set((e ? e.channels : []).map((c) => c.base));
     const c = { ...rest };
-    if (keys.some((k) => /^t[xyz]?$/.test(k))) c.t = this.chan(ni, 't').t;
-    if (keys.some((k) => /^s[xyz]?$/.test(k))) c.s = this.chan(ni).s;
+    if (curve.has('r')) c.r = this.chan(ni, 'fk').r;
+    if (curve.has('t') || keys.some((k) => /^t[xyz]?$/.test(k))) c.t = this.chan(ni, 't').t;
+    if (curve.has('s') || keys.some((k) => /^s[xyz]?$/.test(k))) c.s = this.chan(ni).s;
+    if (keys.includes('opm')) c.opm = this.chan(ni).opm;           // 接続で決まる offsetParentMatrix
     return composeLocalMatrix(c, this.isScaleOf(ni), new Matrix4());
   }
 
@@ -1647,11 +1652,44 @@ export class RigEvaluator {
    * 総当たりで試して、ファイルの値に一番合うものを best に入れる。
    * 戻り値: IK ハンドルごとに { handle, solver, chain, pv（ワールド）, twist（度）, joints, reach, error, best, ok }
    */
+  /**
+   * 開始ジョイントの親が、ファイルの値（保存時の Maya の答え）からどれだけずれているか。
+   * ルートから親までを順に、評価したローカル行列とファイルのローカル行列を比べ、最初にずれるノードも探す
+   * （値が接続で決まり、ファイルに値がないノードは比べられないので飛ばす）
+   */
+  parentDrift(ni, fileLocal, tol) {
+    const chain = [];
+    for (let x = this.sceneNodes[ni].parent; x >= 0; x = this.sceneNodes[x].inheritsTransform !== false ? this.sceneNodes[x].parent : -1) chain.unshift(x);
+    if (!chain.length) return null;
+    let Wf = new Matrix4();
+    let firstBad = null;
+    for (const x of chain) {
+      const evalLocal = this.localFile(x);
+      let file = this.rest(x) ? fileLocal(x) : this.staticLocal(x);
+      if (!file) file = evalLocal;                                   // 比べられない（回転が接続で決まる）
+      Wf = Wf.clone().multiply(file);
+      if (!firstBad) {
+        const d = rotationOf(evalLocal).clone().multiply(rotationOf(file).clone().invert());
+        const ang = 2 * Math.acos(Math.min(1, Math.abs(d.w))) * R2D;
+        const pos = positionOf(evalLocal).distanceTo(positionOf(file));
+        if (ang > tol || pos > 1e-3) {
+          const ik = this.ikJoint.has(x) ? this.byId.get(this.ikJoint.get(x)).name : null;
+          firstBad = { name: this.sceneNodes[x].name, angle: ang, position: pos, ik };
+        }
+      }
+    }
+    const We = this.world(chain[chain.length - 1]);
+    const d = rotationOf(We).clone().multiply(rotationOf(Wf).clone().invert());
+    return { name: this.sceneNodes[chain[chain.length - 1]].name, angle: 2 * Math.acos(Math.min(1, Math.abs(d.w))) * R2D,
+      position: positionOf(We).distanceTo(positionOf(Wf)), firstBad };
+  }
+
   verifySaved(fileLocal, tol = 0.5) {
     const out = [];
     for (const g of this.graph) {
       if (!g.ik) continue;
       const base = this.compareChain(g, fileLocal, tol);
+      const parent = this.parentDrift(g.ik.chain[0], fileLocal, tol);
       let best = null;
       if (base.error > tol && base.joints.length) {
         for (const v of IK_VARIANTS[g.ik.solver] || []) {
@@ -1667,7 +1705,7 @@ export class RigEvaluator {
         ? new Vector3(...this.vec(g.id, 'pv', [0, 0, 1])).applyMatrix4(new Matrix4().extractRotation(this.parentWorld(g.dag))).toArray()
         : null;
       out.push({ handle: g.name, solver: g.ik.solver, chain: g.ik.chain.map((ni) => this.sceneNodes[ni].name), pv,
-        twist: this.num(g.id, 'twi', 0) * R2D, joints: base.joints, reach: base.reach, poleError: base.poleError,
+        twist: this.num(g.id, 'twi', 0) * R2D, joints: base.joints, reach: base.reach, poleError: base.poleError, parent,
         error: base.error, best,
         ok: base.joints.every((j) => j.ok) });
     }

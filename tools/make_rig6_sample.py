@@ -32,6 +32,8 @@
   * 腕 arm3_a → arm3_b → arm3_c: arm3_a の回転は ry 20°（保存時の IK の答え）、移動は arm3_root への pointConstraint、
     バインドポーズ（.bps）はまっすぐ（回転 0）。移動が接続で決まるので、表示用の行列はバインドポーズに置き換わるが、
     再現チェックはファイルに書かれた回転（20°）と比べる
+  * 尻尾の先 t2_4 の子に、2 ボーンの IK arm4_a → arm4_b → arm4_c（ハンドル arm4_ik は動かない）。
+    親（スプライン IK の尻尾）が動くと、この IK も動く（再現チェックで「親の側が原因」を見分ける確認用）
   * 自作のトランスフォームノード cx_ctrl（未知の型 myCtrlTransform。親も子もない）の ty にキー 0 → 2。
     cx_jnt.t = decomposeMatrix(cx_ctrl.wm).ot → transform として扱って評価する
   * 行列を出力する自作ノード mm_custom（未知の型 myMatrixBlend。inMatrix ← ctl.wm、outMatrix → mm_dec2 → mm_jnt2.t）。
@@ -252,6 +254,13 @@ def main():
     node("decomposeMatrix", "mm_dec2")
     node("joint", "mm_jnt2")
 
+    # --- スプライン IK の子の 2 ボーン IK ----------------------------------------------------
+    node("joint", "arm4_a", "t2_4", t=(0, 2, 0))
+    node("joint", "arm4_b", "arm4_a", t=(3, 0, 1))
+    node("joint", "arm4_c", "arm4_b", t=(3, 0, -1))
+    node("ikEffector", "arm4_eff", "arm4_b", t=(3, 0, -1), v="no")
+    node("ikHandle", "arm4_ik", t=(14, 2, -10))
+
     # --- 自作のトランスフォームノード -------------------------------------------------------
     A('createNode myCtrlTransform -n "cx_ctrl";')
     uid("cx_ctrl")
@@ -354,6 +363,11 @@ def main():
     for ax in "xyz":
         C("arm2_c.t%s" % ax, "arm2_eff.t%s" % ax)
     C("arm2_ik_translateX.o", "arm2_ik.tx")
+    C("arm4_a.msg", "arm4_ik.hsj")
+    C("arm4_eff.hp", "arm4_ik.hee")
+    C("ikRPsolver.msg", "arm4_ik.hsv")
+    for ax in "xyz":
+        C("arm4_c.t%s" % ax, "arm4_eff.t%s" % ax)
     C("ctl.wm", "mm_custom.inMatrix")
     C("mm_custom.outMatrix", "mm_dec2.imat")
     C("mm_dec2.ot", "mm_jnt2.t")

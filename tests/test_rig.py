@@ -507,6 +507,16 @@ class TestStage6(unittest.TestCase):
              "joints": [{"name": "hip", "angle": 60, "roll": 50, "bend": 30, "position": 0, "ok": False}]}]})
         self.assertIn("→ 一番合う解き方: ひねり 逆向き・極ベクトル ハンドルの親の空間・肘 極ベクトルの側（ずれ 0.01°。今の解き方は 60.00°）", text2)
         self.assertIn("にすると一致する IK: 1 個（leg_ik）", text2)
+        text3 = format_verification({"frame": 1, "handles": [
+            {"handle": "arm_ik", "solver": "ikRPsolver", "pv": [0, 0, 1], "twist": 0, "ok": False, "chain": [],
+             "reach": 0.5, "error": 12.0, "best": None, "poleError": 0.0,
+             "parent": {"name": "chest", "angle": 8.0, "position": 0.2,
+                        "firstBad": {"name": "spine_03", "angle": 3.0, "position": 0.0, "ik": "spine_ik"}},
+             "joints": [{"name": "shoulder", "angle": 12, "roll": 2, "bend": 11, "position": 0.1, "ok": False}]}]})
+        self.assertIn("★ 開始ジョイントの親 chest が Maya とずれている（向き 8.00°・位置 0.2000）。最初にずれるノード: "
+                      "spine_03（向き 3.00°・位置 0.0000。IK spine_ik で動く）（この IK ではなく、親の側が原因）", text3)
+        self.assertIn("→ 開始ジョイントの親がずれている IK: 1 個（親の側が原因）", text3)
+        self.assertIn("最初にずれるノード spine_03（IK spine_ik）: arm_ik", text3)
         self.assertIn("確認できません", format_verification(None))
 
     def test_no_false_warning_for_rig_nodes(self):

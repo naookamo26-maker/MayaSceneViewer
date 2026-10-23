@@ -323,6 +323,17 @@ def format_verification(result: Optional[dict]) -> str:
         if h.get("reach") is not None and h["reach"] > 1e-3:
             out.append("    ★ ファイルの値の終端が、評価したハンドルの位置から %.4f 離れている"
                        "（ハンドルを動かすリグの側がずれているか、Maya でも届いていなかった）" % h["reach"])
+        par = h.get("parent")
+        if par and (par["angle"] > 0.5 or par["position"] > 1e-3):
+            fb = par.get("firstBad")
+            where = ""
+            if fb:
+                where = "。最初にずれるノード: %s（向き %.2f°・位置 %.4f%s）" % (
+                    fb["name"], fb["angle"], fb["position"], "。IK %s で動く" % fb["ik"] if fb.get("ik") else "")
+            out.append("    ★ 開始ジョイントの親 %s が Maya とずれている（向き %.2f°・位置 %.4f）%s"
+                       "（この IK ではなく、親の側が原因）" % (par["name"], par["angle"], par["position"], where))
+        elif par:
+            out.append("    ✓ 開始ジョイントの親 %s は Maya と一致" % par["name"])
         pe = h.get("poleError")
         if pe is not None and not h["ok"]:
             if abs(pe) > 0.5:
@@ -347,6 +358,17 @@ def format_verification(result: Optional[dict]) -> str:
     unfit = [h["handle"] for h in handles if not h["ok"] and not (h.get("best") and h["best"]["error"] <= 0.5)]
     pole_bad = [h["handle"] for h in handles if not h["ok"] and h.get("poleError") is not None and abs(h["poleError"]) > 0.5]
     reach_bad = [h["handle"] for h in handles if not h["ok"] and h.get("reach") is not None and h["reach"] > 1e-3]
+    parent_bad = [h for h in handles if not h["ok"] and h.get("parent")
+                  and (h["parent"]["angle"] > 0.5 or h["parent"]["position"] > 1e-3)]
+    if parent_bad:
+        sources = {}
+        for h in parent_bad:
+            fb = h["parent"].get("firstBad")
+            key = (fb["name"] + ("（IK %s）" % fb["ik"] if fb.get("ik") else "")) if fb else "（不明）"
+            sources.setdefault(key, []).append(h["handle"])
+        out.append("  → 開始ジョイントの親がずれている IK: %d 個（親の側が原因）" % len(parent_bad))
+        for key, names in sorted(sources.items(), key=lambda kv: -len(kv[1])):
+            out.append("      最初にずれるノード %s: %s" % (key, "、".join(names[:8])))
     if pole_bad:
         out.append("  → 極ベクトル・ひねりの入力が Maya と違う IK: %d 個（%s）" % (len(pole_bad), "、".join(pole_bad[:8])))
     if reach_bad:
