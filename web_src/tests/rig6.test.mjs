@@ -345,3 +345,24 @@ test('再現チェック: IK の入力が、その IK で回るジョイント�
   rig3.evaluate(d.animation.current);
   assert.equal(rig3.chainCycle(g).handle, 'arm5_a');
 });
+
+test('再現チェック: Maya の姿勢に合う極ベクトルの逆算と、接続で決まるため比べられないチャンネル', () => {
+  const rig = at(data.animation.current);
+  const g = data.animation.graph.find((x) => x.name === 'arm5_ik');
+  const a = idx('arm5_a');
+  const pv = new Vector3(3, 0, 10);
+  const ok = rig.compareChain(g, (ni) => rig.fileRestLocal(ni), 0.5);
+  assert.ok(nearVec(new Vector3(...ok.detail.impliedPv), pv, 1e-3), `${ok.detail.impliedPv}`);
+  // ファイルの開始ジョイントを 開始→ハンドル の軸のまわりに 50° 回す → 逆算した極ベクトルも 50° 回る
+  const A = new Vector3().setFromMatrixPosition(rig.world(a));
+  const u = new Vector3(...ok.detail.handle).sub(A).normalize();
+  const R = new Matrix4().makeTranslation(A.x, A.y, A.z).multiply(new Matrix4().makeRotationAxis(u, 50 * Math.PI / 180))
+    .multiply(new Matrix4().makeTranslation(-A.x, -A.y, -A.z));
+  const local = rig.parentWorld(a).clone().invert().multiply(R).multiply(rig.world(a));
+  const r = rig.compareChain(g, (ni) => (ni === a ? local : rig.fileRestLocal(ni)), 0.5);
+  assert.ok(Math.abs(r.poleError - 50) < 1e-3, `${r.poleError}`);
+  assert.ok(nearVec(new Vector3(...r.detail.impliedPv), pv.clone().applyAxisAngle(u, 50 * Math.PI / 180), 1e-3));
+  // arm3_a の移動は pointConstraint で決まる
+  assert.deepEqual(rig.connectedChannels(idx('arm3_a')), [{ what: '移動', from: ['arm3_pc（pointConstraint）'] }]);
+  assert.deepEqual(rig.connectedChannels(idx('arm5_pv')), []);
+});

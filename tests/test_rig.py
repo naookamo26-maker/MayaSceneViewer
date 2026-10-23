@@ -558,6 +558,8 @@ class TestStage6(unittest.TestCase):
                                              "ps": "sh.pm"}, "targets": [
                  {"name": "arm_pv", "weight": 1.0, "position": [1, 2, 3],
                   "drift": {"name": "arm_pv", "angle": 0, "position": 2.0,
+                            "unchecked": [{"name": "arm_pv_aim", "by": [
+                                {"what": "回転", "from": ["arm_pv_aim_aimConstraint1（aimConstraint）"]}]}],
                             "firstBad": {"name": "arm_pv_space", "angle": 30.0, "position": 0.0, "ik": None}}}]},
              "joints": [{"name": "sh", "angle": 5, "roll": 5, "bend": 0, "position": 0, "ok": False}]}]})
         self.assertIn("極ベクトルの目標（arm_pvc。開始の位置 (0.0000, 0.0000, 0.0000)）", text5)
@@ -566,6 +568,17 @@ class TestStage6(unittest.TestCase):
         self.assertIn("開始の位置の材料: crp ← （接続なし: 0, 0, 0）・crt ← （接続なし: 0, 0, 0）・ps ← sh.pm", text5)
         self.assertIn("★ 極ベクトルが、この IK で回るジョイント el（またはその子）に依存している（循環", text5)
         self.assertNotIn("ハンドルの位置が、", text5)
+        self.assertIn("・arm_pv_aim の回転 は接続で決まるので比べていない（回転 ← arm_pv_aim_aimConstraint1（aimConstraint））", text5)
+        text6 = format_verification({"frame": 80, "handles": [
+            {"handle": "leg_ik", "solver": "ikRPsolver", "pv": [0, 0, 1], "twist": 0, "ok": False, "chain": [],
+             "reach": 0.0, "error": 178.0, "best": None, "poleError": -178.0, "parent": None,
+             "detail": {"fileJoints": [], "evalJoints": [], "handle": [0, 0, 0], "fileLengths": [], "evalLengths": [],
+                        "pv": [0, 0, 1], "twist": 0, "ikBlend": 1, "impliedPv": [0, 0, -1]},
+             "poleTargets": {"via": "leg_pvc", "start": [1, 2, 3], "offset": None, "targets": [
+                 {"name": "leg_pv", "weight": 1.0, "position": [1, 2, 4], "drift": None}]},
+             "joints": [{"name": "hip", "angle": 178, "roll": 178, "bend": 0, "position": 0, "ok": False}]}]})
+        self.assertIn("Maya の姿勢に合う極ベクトル（ワールド・逆算）", text6)
+        self.assertIn("Maya の姿勢に合う目標の位置（逆算。開始の位置 + 上の極ベクトル）(1.0000, 2.0000, 2.0000)", text6)
         self.assertIn("確認できません", format_verification(None))
 
     def test_no_false_warning_for_rig_nodes(self):

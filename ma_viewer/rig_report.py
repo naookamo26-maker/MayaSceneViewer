@@ -356,6 +356,11 @@ def format_verification(result: Optional[dict]) -> str:
             if det.get("pv") is not None:
                 out.append("      極ベクトル（ワールド・計算）%s・ひねり %.4f°・ikBlend %.3f"
                            % (fmt3(det["pv"]), det["twist"], det["ikBlend"]))
+                if det.get("impliedPv"):
+                    # ソルバーが同じなら、Maya はこの極ベクトルで解いている（チャンネルボックスの値と比べられる）
+                    out.append("      Maya の姿勢に合う極ベクトル（ワールド・逆算）%s（こちらの極ベクトルを 開始→ハンドル の軸のまわりに"
+                               "回したもの。ハンドルの親が回転していなければ、Maya のチャンネルボックスの Pole Vector と同じ値になるはず）"
+                               % fmt3(det["impliedPv"]))
             for key, label in (("handleParent", "ハンドルの親"), ("startParent", "開始ジョイントの親")):
                 hp = det.get(key)
                 if hp:
@@ -393,6 +398,11 @@ def format_verification(result: Optional[dict]) -> str:
                     # Maya は開始の位置を (crp + crt) · ps で求める（ふつうは crp ← 開始ジョイントの t、ps ← その pm）
                     out.append("      開始の位置の材料: crp ← %s・crt ← %s・ps ← %s" % (
                         si.get("crp", "-"), si.get("crt", "-"), si.get("ps", "-")))
+            implied = (h.get("detail") or {}).get("impliedPv")
+            if pt.get("targets") and implied and pt.get("start") and len(pt["targets"]) == 1:
+                pos = [a + b for a, b in zip(pt["start"], implied)]
+                out.append("      Maya の姿勢に合う目標の位置（逆算。開始の位置 + 上の極ベクトル）(%s)"
+                           % ", ".join("%.4f" % x for x in pos))
             for t in pt.get("targets", []):
                 d = t.get("drift")
                 fb = d.get("firstBad") if d else None
@@ -401,6 +411,11 @@ def format_verification(result: Optional[dict]) -> str:
                          if fb else "✓ ファイルの値と一致")
                 out.append("      %s（ウェイト %.3f）: 位置 (%s)・%s" % (
                     t["name"], t["weight"], ", ".join("%.4f" % x for x in t["position"]), state))
+                for u in (d or {}).get("unchecked") or []:
+                    # 接続で決まるチャンネルはファイルに確かな値がなく、評価した値で比べている（✓ でもずれていることがある）
+                    out.append("        ・%s の%s は接続で決まるので比べていない（%s）" % (
+                        u["name"], "・".join(b["what"] for b in u["by"]),
+                        "、".join("%s ← %s" % (b["what"], "・".join(b["from"])) for b in u["by"])))
         best = h.get("best")
         if best:
             out.append("    → 一番合う解き方: %s（ずれ %.2f°。今の解き方は %.2f°）" % (best["label"], best["error"], h["error"]))

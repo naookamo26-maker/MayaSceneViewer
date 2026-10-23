@@ -1689,6 +1689,7 @@ export class RigEvaluator {
     // 回転プレーン: ファイルの姿勢の「曲がる向き」（Maya が使った極ベクトル＋ひねり）と、こちらの極ベクトル＋ひねりの差。
     // 大きければ、極ベクトル・ひねりの入力（それを決めるノードの評価）が Maya と違う
     let poleError = null;
+    let impliedPv = null;
     if (g.ik.solver === 'ikRPsolver' && filePos.length === chain.length && chain.length >= 3) {
       const A = filePos[0];
       const u = H.clone().sub(A).normalize();
@@ -1699,6 +1700,7 @@ export class RigEvaluator {
       }
       const pvL = this.vec(g.id, 'pv', [0, 0, 1]);
       const pv = this.pvWorld(pvL, g.dag, chain[0]);
+      const pv0 = pv.clone();
       const want = pv.addScaledVector(u, -pv.dot(u));
       if (this.ikVariant && this.ikVariant.side === -1) want.negate();
       const tw = this.num(g.id, 'twi', 0) * this.twistSign();
@@ -1706,6 +1708,8 @@ export class RigEvaluator {
       if (side.lengthSq() > EPS && want.lengthSq() > EPS) {
         side.normalize(); want.normalize();
         poleError = Math.atan2(u.dot(want.clone().cross(side)), want.dot(side)) * R2D;   // want → side の角度（u まわり）
+        // Maya の姿勢に合う極ベクトル（ワールド）: こちらの極ベクトルを u まわりに poleError 回したもの
+        impliedPv = pv0.applyAxisAngle(u, poleError * D2R);
       }
     }
     // 詳細（ずれの原因を調べるための生の数値。ワールド空間）
@@ -1714,6 +1718,7 @@ export class RigEvaluator {
     const lens = (P) => P.slice(1).map((p, k) => Math.round(p.distanceTo(P[k]) * 1e4) / 1e4);
     const detail = {
       fileJoints: filePos.map(r3), evalJoints: evalPos.map(r3), handle: r3(H),
+      impliedPv: impliedPv ? r3(impliedPv) : null,
       fileLengths: lens(filePos), evalLengths: lens(evalPos),
       pv: g.ik.solver === 'ikRPsolver'
         ? r3(this.pvWorld(this.vec(g.id, 'pv', [0, 0, 1]), g.dag, chain[0]))
@@ -1788,8 +1793,11 @@ export class RigEvaluator {
     if (!chain.length) return null;
     let Wf = new Matrix4();
     let firstBad = null;
+    const unchecked = [];
     for (const x of chain) {
       const evalLocal = this.localFile(x);
+      const by = this.connectedChannels(x);
+      if (by.length) unchecked.push({ name: this.sceneNodes[x].name, by });
       let file = this.rest(x) ? fileLocal(x) : this.staticLocal(x);
       if (!file) file = evalLocal;                                   // 比べられない（回転が接続で決まる）
       Wf = Wf.clone().multiply(file);
@@ -1806,7 +1814,32 @@ export class RigEvaluator {
     const We = this.world(chain[chain.length - 1]);
     const d = rotationOf(We).clone().multiply(rotationOf(Wf).clone().invert());
     return { name: this.sceneNodes[chain[chain.length - 1]].name, angle: 2 * Math.acos(Math.min(1, Math.abs(d.w))) * R2D,
-      position: positionOf(We).distanceTo(positionOf(Wf)), firstBad };
+      position: positionOf(We).distanceTo(positionOf(Wf)), firstBad, unchecked };
+  }
+
+  /**
+   * 接続で決まるチャンネル（移動・回転・スケール・offsetParentMatrix）と、その接続元（ノード名と型）。
+   * これらはファイルに確かな値がないため、再現チェックでは評価した値をそのまま使う（ずれを見つけられない）
+   */
+  connectedChannels(ni) {
+    const g = this.dagGraph.get(ni);
+    if (!g || !g.inputs) return [];
+    const out = new Map();
+    for (const [k, src] of Object.entries(g.inputs)) {
+      const m = /^(t|r|s|opm)[xyz]?$/.exec(k);
+      if (!m) continue;
+      let from;
+      if (src.node === undefined) from = 'キー';
+      else {
+        const sg = this.byId.get(src.node);
+        from = sg ? `${sg.name}（${sg.type}）` : '?';
+      }
+      const label = { t: '移動', r: '回転', s: 'スケール', opm: 'offsetParentMatrix' }[m[1]];
+      if (from === 'キー') continue;                                // キーはカーブを正しく評価できる
+      if (!out.has(label)) out.set(label, new Set());
+      out.get(label).add(from);
+    }
+    return [...out].map(([what, set]) => ({ what, from: [...set] }));
   }
 
   /**
