@@ -416,6 +416,13 @@ def format_verification(result: Optional[dict]) -> str:
                     out.append("        ・%s の%s は接続で決まるので比べていない（%s）" % (
                         u["name"], "・".join(b["what"] for b in u["by"]),
                         "、".join("%s ← %s" % (b["what"], "・".join(b["from"])) for b in u["by"])))
+        modes = (pt or {}).get("aimModes") if not h["ok"] else None
+        if modes:
+            # 目標を動かす aimConstraint が aim と up が平行（ひねりが決まらない）なら、Maya がどこから測る最短の回転か
+            out.append("    目標を動かす aimConstraint の解き方の候補（aim と up が平行なとき。Maya の姿勢に合う目標の位置との距離）:")
+            top = min(modes, key=lambda m: m["distance"])
+            for m in modes:
+                out.append("      %s %s: %.4f" % ("→" if m is top else "  ", m["label"], m["distance"]))
         best = h.get("best")
         if best:
             out.append("    → 一番合う解き方: %s（ずれ %.2f°。今の解き方は %.2f°）" % (best["label"], best["error"], h["error"]))

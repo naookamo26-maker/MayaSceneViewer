@@ -148,3 +148,29 @@ test('ジョイント 4 つのシングルチェーン IK（まっすぐなチ�
     assert.ok(nearVec(pos('sc4_d'), pos('sc4_ik'), 1e-3), `フレーム ${f}`);
   }
 });
+
+test('aim と up が平行な aimConstraint: 最短の回転をどこから測るかの候補（ワールド・親の空間・レスト回転）', () => {
+  // aim_vec の up ベクトルを aim と同じ (1, 0, 0) にし、レスト回転を z 90° にする
+  const anim = withAttrs('aim_vec_aimConstraint1', { u: [1, 0, 0], rsrr: [0, 0, 90] });
+  const ni = idx('aim_vec');
+  const q = {};
+  for (const mode of ['world', 'parent', 'rest']) {
+    const rig = new RigEvaluator(new AnimationClip(anim), data.nodes, (n) => new Matrix4().fromArray(data.nodes[n].matrix));
+    rig.aimMode = mode;
+    rig.evaluate(24);
+    const W = rig.world(ni);
+    const dir = new Vector3().setFromMatrixPosition(rig.world(idx('look_tgt'))).sub(new Vector3().setFromMatrixPosition(W)).normalize();
+    assert.ok(nearVec(new Vector3().setFromMatrixColumn(W, 0).normalize(), dir), `${mode}: aim`);
+    q[mode] = new Quaternion().setFromRotationMatrix(new Matrix4().extractRotation(W));
+    q[mode].dir = dir;
+  }
+  const X = new Vector3(1, 0, 0);
+  const sameRot = (a, b) => Math.abs(Math.abs(a.dot(b)) - 1) < 1e-6;
+  assert.ok(sameRot(q.world, new Quaternion().setFromUnitVectors(X, q.world.dir)));
+  // aim_vec は親がないので、親の空間 = ワールド
+  assert.ok(sameRot(q.parent, q.world));
+  const rest = new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), Math.PI / 2);
+  const want = new Quaternion().setFromUnitVectors(X.clone().applyQuaternion(rest), q.rest.dir).multiply(rest);
+  assert.ok(sameRot(q.rest, want));
+  assert.ok(!sameRot(q.rest, q.world), 'レスト回転からの最短の回転は、ねじれが違う');
+});

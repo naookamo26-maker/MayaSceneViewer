@@ -86,6 +86,13 @@ const OUTPUTS = {
 const CHANNEL_RE = /^([trs][xyz]?|opm)$/;
 
 /** ファイルの値が度で書かれている角度の属性（内部ではラジアンで扱う） */
+/** aim と up が平行な aimConstraint の解き方の候補（最短の回転をどこから測るか） */
+const AIM_MODES = [
+  ['world', 'ワールドの軸から（今の解き方）'],
+  ['parent', '親の空間の軸から'],
+  ['rest', 'レスト回転（.restRotate）から'],
+];
+
 function isAngleAttr(type, attr) {
   switch (type) {
     case 'pairBlend': return /^ir[12][xyz]?$/.test(attr);
@@ -233,6 +240,7 @@ export class RigEvaluator {
     this.usesTime = this.graph.some((g) => g.type === 'expression' && /\b(frame|time)\b/.test(g.expr || ''));
     this.problems = new Set();               // 評価中に見つかった問題（循環など）
     this.ikVariant = null;                   // 再現チェックで試す IK の解き方の候補（ふだんは null）
+    this.aimMode = null;                     // aim と up が平行な aimConstraint の解き方（再現チェックで試す。null = world）
     this.frame = 0;
     this.poseOf = () => null;
     this.reset();
@@ -1153,7 +1161,18 @@ export class RigEvaluator {
         const uPerp = u.clone().addScaledVector(a, -u.dot(a));
         const upPerp = up ? up.clone().addScaledVector(dir, -up.dot(dir)) : null;
         if (!up || uPerp.lengthSq() < EPS || upPerp.lengthSq() < EPS) {
-          q = new Quaternion().setFromUnitVectors(a, dir);          // up を決めない: 最短の回転
+          // up を決められない（aim と up が平行・world up なし）: 最短の回転。どこからの最短かは候補（aimMode）
+          const mode = this.aimMode || 'world';
+          if (mode === 'world') q = new Quaternion().setFromUnitVectors(a, dir);
+          else {
+            const pr = rotationOf(pw);
+            const dl = dir.clone().applyQuaternion(pr.clone().invert());          // 親の空間のターゲットの向き
+            // 'parent': 回転 0 の向き（jointOrient・rotateAxis を含む）から、'rest': コンストレイントのレスト回転（.rsrr。度）から
+            const rr = mode === 'rest' ? this.vec(id, 'rsrr', [0, 0, 0]) : [0, 0, 0];
+            const base = rotationOf(composeLocalMatrix({ ...rest, t: [0, 0, 0], s: [1, 1, 1], r: rr, opm: undefined }, null, new Matrix4()));
+            const qa = new Quaternion().setFromUnitVectors(a.clone().applyQuaternion(base), dl);
+            q = pr.multiply(qa.multiply(base));
+          }
         } else {
           const frame = (x, y) => new Matrix4().makeBasis(x, y, x.clone().cross(y));
           uPerp.normalize(); upPerp.normalize();
@@ -1936,6 +1955,31 @@ export class RigEvaluator {
     };
   }
 
+  /**
+   * 極ベクトルの目標が、aim と up が平行な aimConstraint で動くとき、その解き方の候補（aimMode）ごとに目標の位置を求め、
+   * Maya の姿勢から逆算した目標の位置との距離を返す。該当しなければ null
+   */
+  tryAimModes(g, pt, detail) {
+    if (!pt || !pt.targets || pt.targets.length !== 1 || !pt.start || !detail || !detail.impliedPv) return null;
+    const uses = (pt.targets[0].drift && pt.targets[0].drift.unchecked || [])
+      .some((u) => u.by.some((b) => b.from.some((f) => f.endsWith('（aimConstraint）'))));
+    if (!uses) return null;
+    const want = new Vector3(...pt.start).add(new Vector3(...detail.impliedPv));
+    const cg = this.byId.get((g.inputs.pv || g.inputs.pvx || g.inputs.pvy || g.inputs.pvz).node);
+    const t = cg.targets.find((x) => this.byId.get(x.node) && this.byId.get(x.node).dag >= 0);
+    const ni = this.byId.get(t.node).dag;
+    const out = [];
+    for (const [mode, label] of AIM_MODES) {
+      this.aimMode = mode;
+      this.reset();
+      const pos = this.pvcTargetPosition(cg, { index: t.index, ni });
+      out.push({ mode, label, distance: Math.round(pos.distanceTo(want) * 1e4) / 1e4 });
+    }
+    this.aimMode = null;
+    this.reset();
+    return out;
+  }
+
   verifySaved(fileLocal, tol = 0.5) {
     const out = [];
     for (const g of this.graph) {
@@ -1957,6 +2001,7 @@ export class RigEvaluator {
       const pv = g.ik.solver === 'ikRPsolver'
         ? this.pvWorld(this.vec(g.id, 'pv', [0, 0, 1]), g.dag, g.ik.chain[0]).toArray()
         : null;
+      if (poleTargets) poleTargets.aimModes = this.tryAimModes(g, poleTargets, base.detail);
       out.push({ handle: g.name, solver: g.ik.solver, chain: g.ik.chain.map((ni) => this.sceneNodes[ni].name), pv,
         twist: this.num(g.id, 'twi', 0) * R2D, joints: base.joints, reach: base.reach, poleError: base.poleError, parent,
         detail: base.detail, poleTargets, cycle: this.chainCycle(g),

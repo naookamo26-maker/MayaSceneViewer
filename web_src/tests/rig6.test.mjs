@@ -365,4 +365,5 @@ test('再現チェック: Maya の姿勢に合う極ベクトルの逆算と、�
   // arm3_a の移動は pointConstraint で決まる
   assert.deepEqual(rig.connectedChannels(idx('arm3_a')), [{ what: '移動', from: ['arm3_pc（pointConstraint）'] }]);
   assert.deepEqual(rig.connectedChannels(idx('arm5_pv')), []);
+  assert.equal(rig.verifySaved((ni) => rig.fileRestLocal(ni)).find((x) => x.handle === 'arm5_ik').poleTargets.aimModes, null);
 });
