@@ -206,7 +206,7 @@ export function composeLocalMatrix(x, isScale, target = new Matrix4()) {
     if (x.jo) mul(rot(x.jo, 0));
     if (isScale) mul(_f.makeScale(isScale[0] ? 1 / isScale[0] : 1, isScale[1] ? 1 / isScale[1] : 1, isScale[2] ? 1 / isScale[2] : 1));
     mul(tr(x.t));
-    return target;
+    return withOffsetParent(x, target);
   }
   if (x.sp) mul(tr(x.sp, -1));
   mul(_f.makeScale(sc[0], sc[1], sc[2]));
@@ -219,7 +219,13 @@ export function composeLocalMatrix(x, isScale, target = new Matrix4()) {
   if (x.rp) mul(tr(x.rp));
   if (x.rpt) mul(tr(x.rpt));
   mul(tr(x.t));
-  return target;
+  return withOffsetParent(x, target);
+}
+
+/** offsetParentMatrix（Maya 2020 以降）: ワールド行列 = ローカル · opm · 親（Maya の順）。opm は 16 要素か Matrix4 */
+function withOffsetParent(x, target) {
+  if (!x.opm) return target;
+  return target.premultiply(x.opm.isMatrix4 ? x.opm : _f.fromArray(x.opm));
 }
 
 const AXIS = { x: 0, y: 1, z: 2 };

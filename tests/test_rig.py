@@ -156,5 +156,66 @@ class TestSmallRigs(unittest.TestCase):
         self.assertEqual(attrs["i3[1]"], [4.0, 5.0, 6.0])
 
 
+
+class TestStage3(unittest.TestCase):
+    """aimConstraint・シングルチェーン IK・行列ノード・offsetParentMatrix"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.scene = load_ma(os.path.join(ROOT, "samples", "rig3_sample.ma"), animation=True)
+        cls.anim = cls.scene["animation"]
+        cls.names = [n["name"] for n in cls.scene["nodes"]]
+        cls.graph = {g["name"]: g for g in cls.anim["graph"]}
+
+    def test_node_types(self):
+        types = {g["type"] for g in self.anim["graph"]}
+        for t in ("aimConstraint", "multMatrix", "decomposeMatrix", "composeMatrix", "inverseMatrix"):
+            self.assertIn(t, types)
+        self.assertEqual(self.anim["upAxis"], "y")
+
+    def test_aim_attrs(self):
+        g = self.graph["eye_aimConstraint1"]
+        self.assertEqual(g["attrs"]["wut"], 1.0)
+        self.assertEqual(g["inputs"]["wum"]["attr"], "wm")
+        self.assertIn("eye_up", self.names)                  # world up のオブジェクトも出力する
+
+    def test_single_chain_ik(self):
+        self.assertEqual([self.names[i] for i in self.graph["sc_ik"]["ik"]["chain"]], ["sc_a", "sc_b"])
+        self.assertEqual(self.graph["sc2_ik"]["ik"]["solver"], "ikSCsolver")
+        self.assertNotIn("sc4_ik", self.graph)
+        self.assertIn("sc4_ik", "\n".join(self.anim["warnings"]))
+
+    def test_matrix_attr(self):
+        m = self.graph["mm_mult"]["attrs"]["i[0]"]
+        self.assertEqual(len(m), 16)
+        self.assertEqual(m[12:15], [2.0, 0.0, 0.0])
+
+    def test_offset_parent_matrix(self):
+        """offsetParentMatrix はファイルの値（1 段階目の行列計算）にも入る"""
+        n = {x["name"]: x for x in self.scene["nodes"]}
+        self.assertEqual(n["opm_jnt"]["worldMatrix"][12:15], [6.0, 0.0, -20.0])
+        self.assertEqual(n["opm_jnt"]["matrix"][12:15], [6.0, 0.0, -20.0])
+        rest = {self.names[e["node"]]: e for e in self.anim["nodes"]}
+        self.assertEqual(rest["opm_follow"]["opm"][12:15], [0.0, 0.0, -30.0])
+        self.assertIn("opm", self.graph["opm_follow"]["inputs"])
+        # トランスフォームからの直接の接続は評価できるので、「ファイルに値がありません」の警告を出さない
+        self.assertFalse(any(w.startswith("opm_follow:") for w in self.scene["warnings"]))
+
+    def test_offset_parent_matrix_with_rotation(self):
+        """回転を含む offsetParentMatrix: ワールド行列 = ローカル · opm（Maya の行ベクトル規約）"""
+        import math
+        from ma_viewer import mathutil as M
+        c, s = math.cos(math.pi / 2), math.sin(math.pi / 2)
+        opm = [c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 10, 0, 0, 1]          # z 軸まわり 90 度 + 移動 (10, 0, 0)
+        sc, _ = from_text('createNode transform -n "x";\n\tsetAttr ".t" -type "double3" 1 0 0 ;\n'
+                          '\tsetAttr ".opm" -type "matrix" %s;\n'
+                          'createNode joint -n "j" -p "x";\n' % " ".join("%g" % v for v in opm))
+        world = sc["nodes"][0]["worldMatrix"]
+        expect = M.mul(M.translate((1, 0, 0)), opm)
+        for a, b in zip(world, expect):
+            self.assertAlmostEqual(a, b, places=9)
+        self.assertAlmostEqual(world[13], 1.0)                 # (1, 0, 0) を z 軸まわりに 90 度 → (0, 1, 0) + (10, 0, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

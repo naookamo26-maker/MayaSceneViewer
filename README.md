@@ -160,7 +160,8 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 - 対象外のもの: リファレンス（`file -r`）の中身、インスタンス（`parent -add`）、Maya バイナリ（.mb）。
 - 作業単位は cm を前提にしています。それ以外の単位では、ファイルに書かれた値のまま表示します（警告を出します）。角度は度・ラジアンのどちらにも対応します。
 - 穴付きの面は、穴を無視して表示します。
-- **接続で値が決まる属性**は、.ma に値が残っていません。アニメーションカーブと、下の「リグ」で評価できるものは、アニメーションを読み込むと評価した値で表示します。それ以外（エクスプレッション・行列ノードなど）で決まるノードは、バインドポーズの情報があれば「ファイルの値」でもその姿勢で表示し、なければ既定値（移動 0・回転 0）で表示します。どちらの場合も警告を出し、選択情報に接続元を表示します。offsetParentMatrix は未対応です。
+- **接続で値が決まる属性**は、.ma に値が残っていません。アニメーションカーブと、下の「リグ」で評価できるものは、アニメーションを読み込むと評価した値で表示します。それ以外（エクスプレッションなど）で決まるノードは、バインドポーズの情報があれば「ファイルの値」でもその姿勢で表示し、なければ既定値（移動 0・回転 0）で表示します。どちらの場合も警告を出し、選択情報に接続元を表示します。
+- **offsetParentMatrix**（Maya 2020 以降）は、ファイルの値をローカル行列のあとに掛けます（ワールド行列 = ローカル · offsetParentMatrix · 親）。接続で決まる場合は、アニメーションを読み込むと評価した値を使います。
 
 **アニメーション（.ma から読み込む場合）**
 
@@ -183,11 +184,14 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 | parentConstraint | ターゲットごとに（ターゲット · オフセットの移動 · オフセットの回転）を求め、位置と向きを重み付き平均 |
 | scaleConstraint | ターゲットのワールドのスケールの重み付き平均 × オフセット（.o） |
 | poleVectorConstraint | ターゲットの位置 − 開始ジョイントの位置（IK ハンドルの極ベクトル） |
+| aimConstraint | aim ベクトル（.a）をターゲットへ向け、up ベクトル（.u）を world up の側に向ける。world up はシーンの上・オブジェクト（.wum の位置）・オブジェクトの回転・ベクトル（.wu）・なし（最短の回転）。オフセット（.o） |
 | IK（ikRPsolver） | 2 ボーン（開始・中間・終端のジョイント）。ハンドルに届くように余弦定理で曲げ、極ベクトルの側に肘を置き、ひねり（twist）で回す。届かないときはまっすぐ伸ばす。ikBlend で FK と混ぜる。まっすぐなチェーンは優先角（.pa）で曲げる向きを決める |
+| IK（ikSCsolver） | 1 ボーンは、終端がハンドルの方を向くよう開始ジョイントを最短の回転で回す。2 ボーンは回転プレーンと同じ解き方で、極ベクトルの代わりに FK の形の中間ジョイントの側に曲げる（Maya の SC はハンドルの回転で面を決めるので、ずれることがある） |
 | 計算ノード | unitConversion・pairBlend（成分ごとのモード・四元数の補間を含む）・blendColors・multiplyDivide・plusMinusAverage（1D・2D・3D）・reverse・condition |
+| 行列ノード | multMatrix（Maya と同じく i[0] · i[1] · … の順）・decomposeMatrix（回転順 .ro）・composeMatrix（オイラー角・四元数）・inverseMatrix。DAG ノードの行列の属性（worldMatrix・parentMatrix など）も入力にできる |
 
 - ウェイトはカーブで動かせます（スペースの切り替えなど）。コントローラーの独自の属性（IK/FK の切り替えなど）も、カーブや値をそのまま使います。
-- 未対応（警告を出し、そこから先はファイルの値）: aim・tangent などほかのコンストレイント、ikSCsolver・ikSplineSolver・HumanIK、3 本以上のジョイントの IK、エクスプレッション、ドリブンキー、行列ノード（multMatrix・decomposeMatrix など）、プラグインのノード。
+- 未対応（警告を出し、そこから先はファイルの値）: tangent・normal・geometry などほかのコンストレイント、ikSplineSolver・HumanIK、回転プレーンの 3 本以上・シングルチェーンの 4 本以上のジョイントの IK、エクスプレッション、ドリブンキー、blendMatrix・pickMatrix などほかの行列ノード、プラグインのノード。
 - 循環（自分の結果を自分で使う接続）に当たったら、そこはファイルの値で打ち切り、警告を出します。
 
 **Maya 内で読み込む場合**
@@ -253,7 +257,7 @@ maya_ma_viewer/
 │  ├─ materials.py        テクスチャパスの検索・シェーダーごとの属性名
 │  ├─ extract_ma.py       .ma → 共通 JSON（行列計算・面の変換・デフォーマ経路の追跡・ウェイト）
 │  ├─ animation.py        アニメーションカーブ → 共通 JSON の animation（2 段階読み込みの 2 段階目）
-│  ├─ rig.py              リグ（コンストレイント・IK・計算ノード）の探索と animation.graph の作成
+│  ├─ rig.py              リグ（コンストレイント・IK・計算ノード・行列ノード）の探索と animation.graph の作成
 │  ├─ extract_maya.py     Maya のシーン → 共通 JSON（OpenMaya 2.0）
 │  ├─ mathutil.py         Maya の変換行列（transform / joint）
 │  ├─ schema.py           共通 JSON の定義と検証
@@ -265,7 +269,7 @@ maya_ma_viewer/
 │  └─ web/                ビューア（index.html・style.css・viewer.bundle.js）
 ├─ web_src/               ビューアの JS ソース（three.js r160）とビルド・テスト
 ├─ samples/               検証用の .ma と期待値（textured_project/ はテクスチャ確認用の Maya プロジェクト）
-├─ tools/                 検証用データの生成（make_sample_ma.py・make_textured_sample.py・make_anim_sample.py・make_rig_sample.py）
+├─ tools/                 検証用データの生成（make_sample_ma.py・make_textured_sample.py・make_anim_sample.py・make_rig_sample.py・make_rig3_sample.py）
 ├─ tests/                 テスト
 └─ docs/data_format.md    共通 JSON の仕様
 ```
@@ -291,7 +295,7 @@ python tests/qt_undo_test.py                            # 元に戻す・やり�
 python tests/qt_visibility_test.py                      # ノードの表示・非表示（目のアイコン・Ctrl+H / Shift+H）
 python tests/qt_maya_fake_test.py                       # Maya 用ウィンドウの連携（偽の Maya API を使用）
 python tests/qt_animation_test.py                       # アニメーション（2 段階読み込み・タイムライン・読み込み中の中止・JSON の往復）
-python tests/qt_rig_test.py                             # リグ（IK・コンストレイントの再生、コントローラーを動かしたときの追従と元に戻す、キーのないリグ）
+python tests/qt_rig_test.py                             # リグ（IK・コンストレイントの再生、コントローラーを動かしたときの追従と元に戻す、キーのないリグ、行列ノード・SC IK）
 ```
 
 画面のない Linux では `xvfb-run -a` を付けて実行します。
@@ -324,6 +328,7 @@ bundle は ES モジュールではなく、通常の `<script>` で読める形
 | 大きなファイル | 20 万頂点のスキン付き .ma（35 MB） | 解析 1.6 秒、表示まで約 6 秒（ソフトウェア描画の環境） |
 | アニメーション | 補間・範囲外・単位の変換（Python 15 件・Node.js 8 件）、ビューアで組み立てたローカル行列が Python の行列計算と一致すること、Qt での 2 段階読み込み・タイムライン操作・読み込み中の中止 | 合格 |
 | リグ | 保存時のフレームでファイルの値を再現すること（IK・コンストレイント・計算ノードを含む）、IK の終端がハンドルに届く・骨の長さが保たれる・肘が極ベクトルの側に曲がる（ジョイントの向き・回転順・rotateAxis を変えた場合も）、各コンストレイントの結果、計算ノードの値、ポーズ確認でコントローラーを動かしたときの追従（Python 13 件・Node.js 12 件・Qt） | 合格 |
+| リグ（第 3 段階） | aimConstraint の向き（world up の 5 種類・オフセット）、SC IK（1・2 ボーン）、multMatrix の掛ける順・decomposeMatrix・composeMatrix・inverseMatrix の結果、offsetParentMatrix（ファイルの値の行列計算・接続による親子付け・ポーズ確認での追従）、保存時のフレームでファイルの値を再現すること（Python 7 件・Node.js 10 件・Qt） | 合格 |
 | 大きなアニメーション | 200 ジョイント × 1,000 フレーム（全フレームにキー、カーブ 1,800 本・キー 180 万個、26 MB） | 1 段階目（表示まで）は変わらず 0.15 秒、2 段階目 0.7 秒（裏で実行）、転送 24 MB、ビューアの準備 0.3 秒・1 フレームの計算 0.6 ms |
 | **実際の Maya での動作** | 未確認 | Maya のない環境で開発したため |
 | **Maya が書き出した実際の .ma** | 未確認 | 実ファイルに近い書式で作ったサンプルで確認 |

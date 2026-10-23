@@ -61,6 +61,9 @@ class _Ctx:
             m = M.transform_matrix(t=n.vec3("t"), r=self.rad(n.vec3("r")), s=n.vec3("s"), ro=ro,
                                    ra=self.rad(n.vec3("ra")), rp=n.vec3("rp"), sp=n.vec3("sp"),
                                    rpt=n.vec3("rpt"), spt=n.vec3("spt"), sh=n.vec3("sh"))
+        opm = n.xattrs.get("opm")
+        if opm is not None and len(opm) == 16:
+            m = M.mul(m, opm)               # offsetParentMatrix: ワールド行列 = ローカル · opm · 親
         self.local[id(n)] = m
         return m
 

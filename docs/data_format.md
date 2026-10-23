@@ -126,12 +126,13 @@ transform・joint などの変換ノードです。**親は必ず子より前に
 | キー | 内容 |
 |---|---|
 | `fps` / `timeUnit` | 1 秒あたりのフレーム数と、.ma の時間単位（`currentUnit -t`） |
+| `upAxis` | シーンの上の軸（`y` または `z`。aimConstraint の world up「シーンの上」に使う） |
 | `start` / `end` | 再生範囲（playbackOptions の -min / -max。なければキーのある範囲） |
 | `animStart` / `animEnd` | アニメーションの範囲（playbackOptions の -ast / -aet） |
 | `current` | 読み込み直後のフレーム（time1 の .o） |
 | `curves` | カーブごとの設定。キーは `times` などの `offset` から `count` 個。`tangent` はカーブの既定の接線の種類（.tan）、`pre` / `post` は範囲外の振る舞い（0 = 一定、1 = リニア、3 = 繰り返し、4 = オフセット付き繰り返し、5 = 往復） |
 | `channels` | どのノード（nodes の番号）のどの属性（`tx`〜`sz`）をどのカーブが動かすか |
-| `nodes` | 動くノードのローカル行列の材料。アニメーションしない成分はこの値を使う。角度は度。joint は `jo`、transform は `rp`・`sp`・`rpt`・`spt`・`sh`（0 でないもの）を持つ。segmentScaleCompensate の対象のジョイントは `isNode`（.is につながったノードの番号）と `isScale`（その静的なスケール）を持つ。親のスケールが動くジョイントは、自分が動かなくても含む |
+| `nodes` | 動くノードのローカル行列の材料。アニメーションしない成分はこの値を使う。角度は度。joint は `jo`、transform は `rp`・`sp`・`rpt`・`spt`・`sh`（0 でないもの）を持つ。segmentScaleCompensate の対象のジョイントは `isNode`（.is につながったノードの番号）と `isScale`（その静的なスケール）を持つ。offsetParentMatrix が単位行列でなければ `opm`（16 要素）を持つ。親のスケールが動くジョイントは、自分が動かなくても含む |
 | `times` / `values` | キーの時刻（フレーム）と値。値は TL がファイルの長さの単位、TA が度、TU はそのまま |
 | `tangentTypes` | キーごとに（入りの種類, 出の種類）。.ma の kit / kot の値（1 = 固定、2 = リニア、3 = フラット、5 = ステップ、9 = スプライン、10 = クランプ、16 = プラトー、17 = ステップ（次）、18 = オートなど）。0 はカーブの既定 |
 | `fixedTangents` | 固定の接線。5 つずつ（キーの番号, 入りの x, 入りの y, 出の x, 出の y）。x はフレーム、y は値の単位（.ma の秒・cm・ラジアンから変換済み）。値のない側は NaN |
@@ -161,9 +162,9 @@ transform・joint などの変換ノードです。**親は必ず子より前に
 | `inputs` | 属性への接続。`{"node": id, "attr": 接続元の属性}` か、カーブなら `{"curve": curves の番号}` |
 | `driven` | コンストレイントが動かすノード（nodes の番号）。`targets` はターゲット（`{"index": tg の番号, "node": id}`） |
 | `pivot` | poleVectorConstraint の開始ジョイント（nodes の番号） |
-| `ik` | IK ハンドルのソルバーと、開始から終端までのジョイント（nodes の番号）。2 ボーン（3 つ）の ikRPsolver だけを出力する |
+| `ik` | IK ハンドルのソルバーと、開始から終端までのジョイント（nodes の番号）。ikRPsolver は 2 ボーン（3 つ）、ikSCsolver は 1〜2 ボーン（2〜3 つ）だけを出力する |
 
-値の単位は Maya の内部単位にそろえて評価します（角度はラジアン。ファイルに度で書かれた角度の属性は読むときに変換する）。
+値の単位は Maya の内部単位にそろえて評価します（角度はラジアン。ファイルに度で書かれた角度の属性は読むときに変換する）。行列の属性（`-type "matrix"`）は 16 要素の配列で、行列の規約は nodes の `matrix` と同じです。
 
 ## 行列の規約
 
@@ -186,6 +187,14 @@ M = [S] [RA] [R] [JO] [IS] [T]
 ```
 
 JO は jointOrient です。IS は segmentScaleCompensate が有効なときの、親ジョイントのスケールの逆数です（`.is` に接続された親の `.s` から求めます）。
+
+### offsetParentMatrix
+
+offsetParentMatrix（OPM。Maya 2020 以降）がある場合、nodes の `matrix` は transform・joint のどちらも次の値です。
+
+```
+matrix = M · OPM          ワールド行列 = matrix · 親のワールド行列
+```
 
 ### スキン変形
 

@@ -8,9 +8,10 @@
   ビューアが評価できる形（ノード・静的な値・接続）にする。評価そのものはビューア（web_src/src/rig.js）で行う。
 
 対応するノード:
-  * コンストレイント: point・orient・parent・scale・poleVector
-  * IK: ikRPsolver の 2 ボーン（開始ジョイント → 中間 → 終端）
+  * コンストレイント: point・orient・parent・scale・poleVector・aim
+  * IK: ikRPsolver の 2 ボーン（開始ジョイント → 中間 → 終端）、ikSCsolver の 1〜2 ボーン
   * 計算ノード: unitConversion・pairBlend・blendColors・multiplyDivide・plusMinusAverage・reverse・condition
+  * 行列ノード: multMatrix・decomposeMatrix・composeMatrix・inverseMatrix、DAG ノードの offsetParentMatrix
   * アニメーションカーブ（animCurveTL / TA / TU）
 これ以外のノード（エクスプレッション・ドリブンキー・行列ノードなど）に当たったら、そこから先は評価せず警告する。
 """
@@ -23,20 +24,22 @@ from .ma_scene import MaNode, MaScene
 from . import ma_reader as R
 
 CURVE_TYPES = {"animCurveTL", "animCurveTA", "animCurveTU"}
-CONSTRAINT_TYPES = {"pointConstraint", "orientConstraint", "parentConstraint", "scaleConstraint", "poleVectorConstraint"}
+CONSTRAINT_TYPES = {"pointConstraint", "orientConstraint", "parentConstraint", "scaleConstraint", "poleVectorConstraint",
+                    "aimConstraint"}
 UTILITY_TYPES = {"unitConversion", "pairBlend", "blendColors", "multiplyDivide", "plusMinusAverage", "reverse",
-                 "condition"}
+                 "condition", "multMatrix", "decomposeMatrix", "composeMatrix", "inverseMatrix"}
 SUPPORTED_DG = CONSTRAINT_TYPES | UTILITY_TYPES
 
 # DAG ノードの行列の属性（上流は、そのノードと祖先の移動・回転・スケールのすべて）
 _MATRIX_PLUGS = {"pm", "pim", "wm", "wim", "m", "im", "xm", "worldMatrix", "parentMatrix", "worldInverseMatrix",
                  "parentInverseMatrix", "matrix", "inverseMatrix"}
-_CHANNEL_KEYS = {"t", "tx", "ty", "tz", "r", "rx", "ry", "rz", "s", "sx", "sy", "sz"}
+_CHANNEL_KEYS = {"t", "tx", "ty", "tz", "r", "rx", "ry", "rz", "s", "sx", "sy", "sz", "opm"}
 # DAG ノードの属性のうち、ファイルの値を rest_entry で渡すもの（graph の attrs には入れない）
 _STANDARD_ATTRS = _CHANNEL_KEYS | {"jo", "jox", "joy", "joz", "ra", "rax", "ray", "raz", "rp", "rpx", "rpy", "rpz",
                                    "sp", "spx", "spy", "spz", "rpt", "spt", "sh", "ro", "v", "it", "ssc", "radi",
                                    "bps", "io", "ove", "ovv", "lodv", "hio", "dla", "dsc", "uoc", "oc", "otx", "rlio",
                                    "mnrl", "mxrl", "mnsl", "mxsl", "mntl", "mxtl", "xm", "is", "liw", "fbx"}
+# _CHANNEL_KEYS のうち、値は rest_entry で渡すもの（offsetParentMatrix も含む）
 
 _SETATTR_RE = re.compile(r"setAttr\b([^;]*);")
 _TG_RE = re.compile(r"^tg\[(\d+)\]\.(\w+)$")
@@ -53,8 +56,8 @@ def _dag_like(n: MaNode) -> bool:
 
 def _evaluable(n: MaNode) -> bool:
     """接続元として評価できるか（コンストレイントはターゲットがあるときだけ）"""
-    if n.type in CURVE_TYPES or n.type in UTILITY_TYPES:
-        return True
+    if n.type in CURVE_TYPES or n.type in UTILITY_TYPES or _dag_like(n):
+        return True                                   # DAG ノードからの直接の接続（ctrl.t → joint.t など）も評価できる
     if n.type in CONSTRAINT_TYPES:
         return any(_TG_RE.match(k) for k in n.inputs)
     return False
@@ -160,10 +163,13 @@ def discover(ms: MaScene, keep: Set[int]) -> GraphInfo:
         else:
             chain.append(start)
             entry["chain"] = list(reversed(chain))
-            if entry["solver"] != "ikRPsolver":
-                entry["problem"] = "%s は未対応です（ikRPsolver のみ）" % entry["solver"]
-            elif len(entry["chain"]) != 3:
-                entry["problem"] = "ジョイント %d 個のチェーンは未対応です（2 ボーンのみ）" % len(entry["chain"])
+            n_joints = len(entry["chain"])
+            if entry["solver"] not in ("ikRPsolver", "ikSCsolver"):
+                entry["problem"] = "%s は未対応です（ikRPsolver・ikSCsolver のみ）" % entry["solver"]
+            elif entry["solver"] == "ikRPsolver" and n_joints != 3:
+                entry["problem"] = "ジョイント %d 個の ikRPsolver は未対応です（2 ボーンのみ）" % n_joints
+            elif entry["solver"] == "ikSCsolver" and n_joints not in (2, 3):
+                entry["problem"] = "ジョイント %d 個の ikSCsolver は未対応です（1〜2 ボーンのみ）" % n_joints
         info.ik.append(entry)
         if entry["problem"]:
             continue

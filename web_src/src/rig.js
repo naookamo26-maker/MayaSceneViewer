@@ -31,6 +31,9 @@ const DEFAULTS = {
   unitConversion: { i: 0, cf: 1 },
   ikHandle: { pv: [0, 1, 0], twi: 0, ikb: 1 },
   scaleConstraint: { o: [1, 1, 1] },
+  aimConstraint: { a: [1, 0, 0], u: [0, 1, 0], wu: [0, 1, 0], wut: 3, o: [0, 0, 0] },
+  decomposeMatrix: { ro: 0 },
+  composeMatrix: { it: [0, 0, 0], ir: [0, 0, 0], is: [1, 1, 1], ish: [0, 0, 0], iro: 0, uer: 1 },
 };
 
 // 型ごとの出力の属性（これ以外の名前で計算結果を探さない。入力を読むときに自分の計算へ戻らないため）
@@ -38,14 +41,18 @@ const OUTPUTS = {
   unitConversion: /^o$/, multiplyDivide: /^o[xyz]?$/, plusMinusAverage: /^o(1|2[xy]?|3[xyz]?)$/,
   reverse: /^o[xyz]?$/, condition: /^oc[rgb]?$/, blendColors: /^op[rgb]?$/, pairBlend: /^o[tr][xyz]?$/,
   pointConstraint: /^ct[xyz]?$/, poleVectorConstraint: /^ct[xyz]?$/, orientConstraint: /^cr[xyz]?$/,
-  parentConstraint: /^c[tr][xyz]?$/, scaleConstraint: /^cs[xyz]?$/,
+  parentConstraint: /^c[tr][xyz]?$/, scaleConstraint: /^cs[xyz]?$/, aimConstraint: /^cr[xyz]?$/,
+  multMatrix: /^o$/, decomposeMatrix: /^o(t|r|s|sh)[xyz]?$|^oq[xyzw]?$/, composeMatrix: /^omat$/, inverseMatrix: /^omat$/,
 };
+// DAG ノードの、値が決まると行列が変わる属性
+const CHANNEL_RE = /^([trs][xyz]?|opm)$/;
 
 /** ファイルの値が度で書かれている角度の属性（内部ではラジアンで扱う） */
 function isAngleAttr(type, attr) {
   switch (type) {
     case 'pairBlend': return /^ir[12][xyz]?$/.test(attr);
-    case 'orientConstraint': return /^o[xyz]?$/.test(attr);
+    case 'orientConstraint': case 'aimConstraint': return /^o[xyz]?$/.test(attr);
+    case 'composeMatrix': return /^ir[xyz]?$/.test(attr);
     case 'parentConstraint': return /^tg\[\d+\]\.tor[xyz]?$/.test(attr);
     case 'ikHandle': return attr === 'twi';
     default: return false;
@@ -106,9 +113,7 @@ export class RigEvaluator {
     this.ikJoint = new Map();                // IK で回転が決まるジョイント → ハンドル（グラフの id）
     for (const g of this.graph) {
       if (!g.ik) continue;
-      const [s, m] = g.ik.chain;
-      this.ikJoint.set(s, g.id);
-      this.ikJoint.set(m, g.id);
+      for (const ni of g.ik.chain.slice(0, -1)) this.ikJoint.set(ni, g.id);      // 終端以外
     }
     // ほかのノードを動かすノード（コンストレイントのターゲット・IK ハンドル・計算ノードの入力元）とその祖先。
     // ポーズ確認でこれらを動かしたら、リグを評価し直す
@@ -134,7 +139,7 @@ export class RigEvaluator {
     const scaled = new Set();
     for (const e of clip.entries) {
       const g = this.dagGraph.get(e.node);
-      const keys = g && g.inputs ? Object.keys(g.inputs).filter((k) => /^[trs][xyz]?$/.test(k)) : [];
+      const keys = g && g.inputs ? Object.keys(g.inputs).filter((k) => CHANNEL_RE.test(k)) : [];
       if (e.channels.length || this.ikJoint.has(e.node) || keys.length) this.moving.add(e.node);
       if (e.channels.some((c) => c.base === 's') || keys.some((k) => k[0] === 's')) scaled.add(e.node);
     }
@@ -213,6 +218,12 @@ export class RigEvaluator {
       const g = this.dagGraph.get(ni);
       if (g && g.inputs) {
         for (const [key2, src] of Object.entries(g.inputs)) {
+          if (key2 === 'opm' && mode !== 't') {                 // offsetParentMatrix の接続（行列ベースの親子付け）
+            const m = this.source(src);
+            if (m && m.isMatrix4) out.opm = m.toArray();
+            else if (Array.isArray(m) && m.length === 16) out.opm = m.slice();
+            continue;
+          }
           const base = key2[0];
           if (!/^[trs][xyz]?$/.test(key2) || (mode === 't' && base !== 't') || fromCurve.has(key2)) continue;
           const v = this.source(src);
@@ -295,6 +306,10 @@ export class RigEvaluator {
       case 'rp': case 'rpt': case 'sp': case 'spt': return rest && rest[base] ? rest[base] : [0, 0, 0];
       case 'jo': case 'ra': return rest && rest[base] ? rest[base].map((v) => v * D2R) : [0, 0, 0];
       case 'ro': return rest ? rest.ro || 0 : 0;
+      case 'opm': case 'offsetParentMatrix': {
+        const c = rest ? this.chan(ni, 'full') : null;
+        return c && c.opm ? new Matrix4().fromArray(c.opm) : new Matrix4();
+      }
       default: break;
     }
     if (g) {
@@ -382,6 +397,20 @@ export class RigEvaluator {
     return undefined;
   }
 
+  /** 行列の属性（Matrix4。ファイルの値は 16 要素の配列。なければ単位行列） */
+  mat(id, attr) {
+    const v = this.plug(id, attr);
+    if (v && v.isMatrix4) return v;
+    if (Array.isArray(v) && v.length === 16) return new Matrix4().fromArray(v);
+    return new Matrix4();
+  }
+
+  /** 配列の属性の添字（接続とファイルの値の両方から） */
+  indices(g, re) {
+    const keys = [...Object.keys(g.inputs || {}), ...Object.keys(g.attrs || {})];
+    return [...new Set(keys.map((k) => re.exec(k)).filter(Boolean).map((m) => +m[1]))].sort((a, b) => a - b);
+  }
+
   num(id, attr, def = 0) {
     const v = this.plug(id, attr);
     return typeof v === 'number' && Number.isFinite(v) ? v : def;
@@ -389,7 +418,7 @@ export class RigEvaluator {
 
   vec(id, base, def = [0, 0, 0]) {
     const v = this.plug(id, base);
-    if (Array.isArray(v)) return v.map((x, i) => (Number.isFinite(x) ? x : def[i]));
+    if (Array.isArray(v)) return def.map((d, i) => (Number.isFinite(v[i]) ? v[i] : d));
     return def.slice();
   }
 
@@ -413,9 +442,37 @@ export class RigEvaluator {
       case 'blendColors': o = this.blendColors(id); break;
       case 'pairBlend': o = this.pairBlend(id); break;
       case 'pointConstraint': case 'orientConstraint': case 'parentConstraint':
-      case 'scaleConstraint': case 'poleVectorConstraint':
+      case 'scaleConstraint': case 'poleVectorConstraint': case 'aimConstraint':
         o = this.constraint(g);
         break;
+      case 'multMatrix': {
+        // Maya の o = i[0] · i[1] · …（行ベクトル）は、three.js では … · i[1] · i[0]
+        const out = new Matrix4();
+        for (const i of this.indices(g, /^i\[(\d+)\]$/)) out.premultiply(this.mat(id, `i[${i}]`));
+        o = { o: out };
+        break;
+      }
+      case 'decomposeMatrix': {
+        const t = new Vector3(), q = new Quaternion(), s = new Vector3();
+        this.mat(id, 'imat').decompose(t, q, s);
+        const e = new Euler().setFromQuaternion(q, THREE_ORDER[Math.round(this.num(id, 'ro', 0))] || 'ZYX');
+        o = { ...expand('ot', t.toArray(), XYZ), ...expand('or', [e.x, e.y, e.z], XYZ), ...expand('os', s.toArray(), XYZ),
+          ...expand('osh', [0, 0, 0], XYZ), ...expand('oq', [q.x, q.y, q.z, q.w], ['x', 'y', 'z', 'w']) };
+        break;
+      }
+      case 'composeMatrix': {
+        const t = this.vec(id, 'it'), r = this.vec(id, 'ir'), s = this.vec(id, 'is', [1, 1, 1]);
+        let q;
+        if (this.num(id, 'uer', 1) >= 0.5) {
+          q = new Quaternion().setFromEuler(new Euler(r[0], r[1], r[2], THREE_ORDER[Math.round(this.num(id, 'iro', 0))] || 'ZYX'));
+        } else {
+          const v = this.vec(id, 'iq', [0, 0, 0, 1]);
+          q = new Quaternion(v[0], v[1], v[2], v[3] ?? 1).normalize();
+        }
+        o = { omat: new Matrix4().compose(new Vector3(...t), q, new Vector3(...s)) };
+        break;
+      }
+      case 'inverseMatrix': o = { omat: this.mat(id, 'imat').clone().invert() }; break;
       default: break;
     }
     return o;
@@ -559,6 +616,37 @@ export class RigEvaluator {
         const q = averageQuat(list.map(({ m, w }) => ({ q: rotationOf(m), w })));
         return { ...expand('ct', toTranslate(pos), XYZ), ...expand('cr', toRotate(q), XYZ) };
       }
+      case 'aimConstraint': {
+        // 動かされるノードの回転ピボットから、ターゲットの方へ aim ベクトル（.a）を向け、up ベクトル（.u）を
+        // world up（.wut: 0 シーンの上・1 オブジェクト・2 オブジェクトの回転・3 ベクトル・4 なし）の側に向ける
+        const rest = this.rest(driven) || {};
+        const tt = driven >= 0 ? this.chan(driven, 't').t : [0, 0, 0];
+        const add = (a, b) => (b ? [a[0] + b[0], a[1] + b[1], a[2] + b[2]] : a);
+        const pd = new Vector3(...add(add(tt, rest.rp), rest.rpt)).applyMatrix4(pw);
+        const dir = weighted((t) => pivot(t.ni)).sub(pd);
+        if (dir.lengthSq() < EPS) return null;
+        dir.normalize();
+        const a = new Vector3(...this.vec(id, 'a', [1, 0, 0])).normalize();
+        const u = new Vector3(...this.vec(id, 'u', [0, 1, 0]));
+        const wut = Math.round(this.num(id, 'wut', 3));
+        const wu = new Vector3(...this.vec(id, 'wu', [0, 1, 0]));
+        let up = null;
+        if (wut === 0) up = (this.clip.raw.upAxis || 'y') === 'z' ? new Vector3(0, 0, 1) : new Vector3(0, 1, 0);
+        else if (wut === 1) up = positionOf(this.mat(id, 'wum')).sub(pd);
+        else if (wut === 2) up = wu.clone().applyMatrix4(new Matrix4().extractRotation(this.mat(id, 'wum')));
+        else if (wut === 3) up = wu;
+        let q;
+        const uPerp = u.clone().addScaledVector(a, -u.dot(a));
+        const upPerp = up ? up.clone().addScaledVector(dir, -up.dot(dir)) : null;
+        if (!up || uPerp.lengthSq() < EPS || upPerp.lengthSq() < EPS) {
+          q = new Quaternion().setFromUnitVectors(a, dir);          // up を決めない: 最短の回転
+        } else {
+          const frame = (x, y) => new Matrix4().makeBasis(x, y, x.clone().cross(y));
+          uPerp.normalize(); upPerp.normalize();
+          q = new Quaternion().setFromRotationMatrix(frame(dir, upPerp).multiply(frame(a, uPerp).transpose()));
+        }
+        return expand('cr', toRotate(q.multiply(radQuat(this.vec(id, 'o')))), XYZ);
+      }
       case 'scaleConstraint': {
         const s = weighted((t) => { this.world(t.ni).decompose(_v, _q, _s); return _s.clone(); });
         pw.decompose(_v, _q, _s);
@@ -593,7 +681,9 @@ export class RigEvaluator {
 
   solveIKUncached(id) {
     const g = this.byId.get(id);
+    if (g.ik.chain.length === 2) return this.solveOneBone(id);
     const [s, mid, end] = g.ik.chain;
+    const sc = g.ik.solver === 'ikSCsolver';
     if (!this.rest(s) || !this.rest(mid)) return null;
     const P = this.parentWorld(s);
     const fkS = this.chan(s, 'fk'), fkM = this.chan(mid, 'fk');
@@ -621,15 +711,16 @@ export class RigEvaluator {
     const d = u.length();
     if (d < EPS) return null;
     u.divideScalar(d);
-    // 極ベクトル（ハンドルの親の空間）→ ワールド。ひねり（twist）で u のまわりに回す
-    const pvLocal = this.vec(id, 'pv', [0, 1, 0]);
+    // 極ベクトル（ハンドルの親の空間）→ ワールド。ひねり（twist）で u のまわりに回す。
+    // シングルチェーン（SC）は極ベクトルを持たないので、FK の形の中間ジョイントの側に曲げる（面を保つ）
+    const pvLocal = sc ? [0, 0, 0] : this.vec(id, 'pv', [0, 1, 0]);
     const pvRot = new Matrix4().extractRotation(this.parentWorld(hni));
     const pv = new Vector3(pvLocal[0], pvLocal[1], pvLocal[2]).applyMatrix4(pvRot);
     let v = pv.clone().addScaledVector(u, -pv.dot(u));
     if (v.lengthSq() < EPS) v = new Vector3().subVectors(B, A).addScaledVector(u, -new Vector3().subVectors(B, A).dot(u));
     if (v.lengthSq() < EPS) v = new Vector3(0, 1, 0).cross(u).lengthSq() > EPS ? new Vector3(0, 1, 0).cross(u) : new Vector3(1, 0, 0).cross(u);
     v.normalize();
-    const twist = this.num(id, 'twi', 0);
+    const twist = sc ? 0 : this.num(id, 'twi', 0);
     if (Math.abs(twist) > EPS) v.applyQuaternion(new Quaternion().setFromAxisAngle(u, twist));
     // 余弦定理で中間ジョイントの位置
     const dc = Math.min(Math.max(d, Math.abs(l1 - l2)), l1 + l2);
@@ -672,6 +763,31 @@ export class RigEvaluator {
     return new Map([[s, rs], [mid, rm]]);
   }
 
+  /** 1 ボーン（ikSCsolver）: 開始ジョイントを最短の回転で回して、終端をハンドルの方へ向ける */
+  solveOneBone(id) {
+    const g = this.byId.get(id);
+    const [s, end] = g.ik.chain;
+    if (!this.rest(s)) return null;
+    const P = this.parentWorld(s);
+    const fkS = this.chan(s, 'fk');
+    const Ws = new Matrix4().multiplyMatrices(P, composeLocalMatrix(fkS, this.isScaleOf(s), new Matrix4()));
+    const tEnd = (this.chan(end, 't') || { t: [0, 0, 0] }).t;
+    const A = positionOf(Ws);
+    const C = new Vector3(tEnd[0], tEnd[1], tEnd[2]).applyMatrix4(Ws);
+    const H = positionOf(this.world(g.dag));
+    const from = C.sub(A), to = H.sub(A);
+    if (from.lengthSq() < EPS || to.lengthSq() < EPS) return null;
+    const R = new Quaternion().setFromUnitVectors(from.normalize(), to.normalize());
+    let rs = this.localEuler(s, rotationOf(P).invert().multiply(R.multiply(rotationOf(Ws))));
+    const blend = this.num(id, 'ikb', 1);
+    if (blend < 1 - EPS) {
+      const ro = (this.rest(s) || {}).ro || 0;
+      const e = new Euler().setFromQuaternion(eulerQuat(fkS.r, ro).slerp(eulerQuat(rs, ro), Math.max(0, blend)), THREE_ORDER[ro]);
+      rs = [e.x * R2D, e.y * R2D, e.z * R2D];
+    }
+    return new Map([[s, rs]]);
+  }
+
   isScaleOf(ni) {
     const rest = this.rest(ni);
     if (!rest || !rest.joint) return null;
@@ -686,7 +802,7 @@ export class RigEvaluator {
     const g = this.dagGraph.get(ni);
     if (g && g.inputs) {
       for (const [key, src] of Object.entries(g.inputs)) {
-        if (!/^[trs][xyz]?$/.test(key) || src.curve !== undefined) continue;
+        if (!CHANNEL_RE.test(key) || src.curve !== undefined) continue;
         const sg = this.byId.get(src.node);
         if (sg) out.push(`${key} ← ${sg.name}（${sg.type}）`);
       }

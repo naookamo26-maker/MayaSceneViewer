@@ -373,6 +373,7 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
     return {
         "fps": fps,
         "timeUnit": ms.time_unit,
+        "upAxis": ms.up_axis,
         "start": start,
         "end": end,
         "animStart": pb.get("animStart", min(start, t_first)),
@@ -404,6 +405,9 @@ def rest_entry(n: MaNode, ni: int, ang_k: float, is_src: Optional[MaNode], is_id
         "t": list(n.vec3("t")), "r": deg(n.vec3("r")), "s": list(n.vec3("s")),
         "ra": deg(n.vec3("ra")),
     }
+    opm = n.xattrs.get("opm")
+    if opm is not None and len(opm) == 16 and any(abs(a - b) > 1e-12 for a, b in zip(opm, M.identity())):
+        e["opm"] = [float(x) for x in opm]
     if n.type == "joint":
         e["jo"] = deg(n.vec3("jo"))
         if is_src is not None:
@@ -423,8 +427,10 @@ def rest_matrix(e: dict) -> List[float]:
     ro = M.ROTATE_ORDERS[e.get("ro", 0)]
     if e["joint"]:
         ips = e.get("isScale") if "isScale" in e else None
-        return M.joint_matrix(t=e["t"], r=rad(e["r"]), s=e["s"], ro=ro, ra=rad(e["ra"]), jo=rad(e.get("jo", [0, 0, 0])),
-                              inverse_parent_scale=ips)
-    z = [0.0, 0.0, 0.0]
-    return M.transform_matrix(t=e["t"], r=rad(e["r"]), s=e["s"], ro=ro, ra=rad(e["ra"]), rp=e.get("rp", z),
-                              sp=e.get("sp", z), rpt=e.get("rpt", z), spt=e.get("spt", z), sh=e.get("sh", z))
+        m = M.joint_matrix(t=e["t"], r=rad(e["r"]), s=e["s"], ro=ro, ra=rad(e["ra"]), jo=rad(e.get("jo", [0, 0, 0])),
+                           inverse_parent_scale=ips)
+    else:
+        z = [0.0, 0.0, 0.0]
+        m = M.transform_matrix(t=e["t"], r=rad(e["r"]), s=e["s"], ro=ro, ra=rad(e["ra"]), rp=e.get("rp", z),
+                               sp=e.get("sp", z), rpt=e.get("rpt", z), spt=e.get("spt", z), sh=e.get("sh", z))
+    return M.mul(m, e["opm"]) if "opm" in e else m

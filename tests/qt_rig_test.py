@@ -6,6 +6,7 @@
   1. rig_sample.ma を開くと、リグを含むアニメーションを受け取り、フレームを動かすと IK で腕が動く
   2. ポーズ確認でコントローラーを動かすと、IK・コンストレイントが追従する（元に戻すと戻る）
   3. キーがなくリグだけの .ma では、タイムラインを出さずに評価する
+  4. 第 3 段階（行列ノード・SC IK）の .ma を開き、フレームとコントローラーの操作で動く
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 RIG = os.path.join(ROOT, "samples", "rig_sample.ma")
+RIG3 = os.path.join(ROOT, "samples", "rig3_sample.ma")
 
 STATE_JS = """JSON.stringify((() => {
   const s = window.mayaViewer.getStats();
@@ -169,13 +171,37 @@ def main() -> int:
             nxt()
         wait_idle(lambda: wait_state(lambda s: s["loaded"] and s["name"] == "static_rig.ma" and s["animation"], loaded))
 
+    def s_stage3(nxt):
+        """第 3 段階: 行列ノード・aim・SC IK。コントローラーを動かすと SC IK が追従する"""
+        win.open_file(RIG3)
+        code = """JSON.stringify((() => {
+          const app = window.mayaViewer.debug.app;
+          const p = (n) => app.built.nodeObjects[app.data.nodes.findIndex((x) => x.name === n)].matrixWorld.elements
+            .slice(12, 15).map((v) => +v.toFixed(3));
+          window.mayaViewer.setFrame(48);
+          const out = { mm: p('mm_jnt'), sc2: p('sc2_c'), sc2ik: p('sc2_ik') };
+          app.setPose(app.data.nodes.findIndex((x) => x.name === 'sc2_ctrl'), { t: [-1, 1, 0], r: [0, 0, 0], s: [1, 1, 1] });
+          out.posed = p('sc2_c'); out.posedIk = p('sc2_ik');
+          out.problems = window.mayaViewer.getStats().animation.rigProblems;
+          return out;
+        })())"""
+
+        def got(r):
+            check(close(r["mm"], [-20, 0, -2]), "フレーム 48: multMatrix・decomposeMatrix の結果 %s" % r["mm"])
+            check(close(r["sc2"], r["sc2ik"]) and close(r["posed"], r["posedIk"]) and not close(r["posed"], r["sc2"]),
+                  "SC IK: ハンドルに届き、コントローラーを動かすと追従する: %s → %s" % (r["sc2"], r["posed"]))
+            check(r["problems"] == [], "評価の問題なし")
+            nxt()
+        wait_idle(lambda: wait_state(lambda s: s["loaded"] and s["name"] == "rig3_sample.ma" and s["animation"],
+                                     lambda _s: js(code, got)))
+
     def finish(_=None):
         win.a_anim.setChecked(load_setting)
         print("結果:", "OK" if ok["v"] else "NG")
         app.exit(0 if ok["v"] else 1)
 
     win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(300, lambda: run(
-        [s_open, s_frame, s_pose, s_static, finish])))
+        [s_open, s_frame, s_pose, s_static, s_stage3, finish])))
     QtCore.QTimer.singleShot(120000, lambda: (print("タイムアウト"), app.exit(2)))
     return app.exec()
 

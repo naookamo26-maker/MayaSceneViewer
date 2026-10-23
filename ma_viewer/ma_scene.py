@@ -60,7 +60,7 @@ _BOOL_ATTRS = {"v", "io", "it", "ssc", "ove", "ovv", "lodv"}
 _INT_ATTRS = {"ro"}
 _FLOAT_ATTRS = {"radi"}
 # ノードの種類ごとに使う属性（これ以外の setAttr は値を解析せずに読み飛ばす）
-_XFORM_NAMES = _VEC3_ATTRS | set(_COMPONENT_ATTRS) | _BOOL_ATTRS | _INT_ATTRS | _FLOAT_ATTRS | {"bps"}
+_XFORM_NAMES = _VEC3_ATTRS | set(_COMPONENT_ATTRS) | _BOOL_ATTRS | _INT_ATTRS | _FLOAT_ATTRS | {"bps", "opm"}
 _MESH_NAMES = _XFORM_NAMES | {"vt", "pt", "ed", "fc", "cuvs", "uvst", "iog"}
 _SKIN_NAMES = _XFORM_NAMES | {"wl", "pm", "gm", "skm", "mi", "nw", "wd"}
 _PLUG_RE = re.compile(r'"([^"]*)"')
@@ -496,6 +496,10 @@ class MaScene:
             vals = sa.values()
             if vals:
                 node.xattrs[name] = R.to_float(vals[0])
+        elif name in ("opm", "offsetParentMatrix"):
+            mats = parse_matrices(sa)          # offsetParentMatrix（Maya 2020 以降。ローカル行列のあとに掛ける）
+            if mats:
+                node.xattrs["opm"] = mats[0]
         elif name == "bps" and node.type == "joint":
             mats = parse_matrices(sa)          # バインド時のワールド行列
             if mats:

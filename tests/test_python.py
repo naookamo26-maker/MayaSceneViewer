@@ -453,12 +453,25 @@ class TestBindPose(unittest.TestCase):
         self.assertTrue(M.is_close(M.position(mid["worldMatrix"]), (2, 0.5, 0)))
         # バインド情報もない free は既定値のまま（警告）
         self.assertTrue(M.is_close(free["matrix"], M.identity()))
+        # 接続元（ctrl の直接の接続・unitConversion）はリグとして評価できるので、警告は出さず、
+        # アニメーションの読み込みで評価する（animation.graph に入る）
         warns = " ".join(self.scene["warnings"])
-        self.assertIn("mid: ", warns)
-        self.assertIn("free: ", warns)
-        self.assertIn("ジョイントの .bps", warns)
+        self.assertNotIn("mid: ", warns)
+        self.assertNotIn("free: ", warns)
         self.assertEqual(self.scene["stats"]["drivenNodes"], 2)
         self.assertEqual(schema.validate(self.scene), [])
+        from ma_viewer.animation import build_animation
+        ms = parse_ma_text(BIND_MA)
+        scene_to_dict(ms)
+        graph = {g["name"]: g for g in build_animation(ms, ms.out_index)["graph"]}
+        self.assertEqual(set(graph["mid"]["inputs"]), {"t", "r"})
+        self.assertEqual(graph["free"]["inputs"]["t"]["attr"], "t")
+
+    def test_unsupported_driver_warns(self):
+        """評価できないノード（エクスプレッション）で値が決まるノードには、従来どおり警告を出す"""
+        text = BIND_MA + 'createNode expression -n "ex";\nconnectAttr "ex.out[0]" "tip.tx";\n'
+        warns = " ".join(scene_to_dict(parse_ma_text(text))["warnings"])
+        self.assertIn("tip: ", warns)
 
     def test_xform_with_joint_orient(self):
         # rotate=0, jointOrient=Z90（四元数）, translate=(1,2,3) → joint_matrix と一致
