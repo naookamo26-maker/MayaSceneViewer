@@ -177,3 +177,33 @@ test('自作のトランスフォームノード（未知の型）を transform 
     assert.ok(near(t[1], lin(f, 0, 2)) && near(t[2], 50), `フレーム ${f}: ${t}`);
   }
 });
+
+test('再現チェック: 極ベクトルの入力が Maya と違うと、肘の向きのずれとして出す', () => {
+  const d = JSON.parse(JSON.stringify(data));
+  const mk = () => new RigEvaluator(new AnimationClip(d.animation), d.nodes, (ni) => new Matrix4().fromArray(d.nodes[ni].matrix));
+  // 「Maya の答え」: 極ベクトルが (0, 1, 0) のときの姿勢
+  const g = d.animation.graph.find((x) => x.name === 'arm2_ik');
+  g.attrs = { ...(g.attrs || {}), pv: [0, 1, 0] };
+  const maya = mk();
+  maya.evaluate(d.animation.current);
+  const answer = new Map(g.ik.chain.map((ni) => [ni, maya.localFile(ni).clone()]));
+  g.attrs.pv = [0, 0, 1];                                       // こちらは (0, 0, 1)
+  const rig = mk();
+  rig.evaluate(d.animation.current);
+  const h = rig.verifySaved((ni) => answer.get(ni) || rig.fileRestLocal(ni)).find((x) => x.handle === 'arm2_ik');
+  assert.ok(!h.ok && Math.abs(Math.abs(h.poleError) - 90) < 1, `極ベクトルの差 90°: ${h.poleError}`);
+  const ok = at(d.animation.current).verifySaved((ni) => at(d.animation.current).fileRestLocal(ni)).find((x) => x.handle === 'arm2_ik');
+  assert.ok(ok.ok && Math.abs(ok.poleError) < 1e-3);
+});
+
+test('自作ノードの割り当て（multMatrix として評価）: 行列を出す自作ノードの先も動く', () => {
+  const mapped = JSON.parse(readFileSync(path.resolve(here, '../../samples/rig6_mapped.json'), 'utf8'));
+  const i = mapped.nodes.findIndex((n) => n.name === 'mm_jnt2');
+  for (const f of FRAMES) {
+    const rig = new RigEvaluator(new AnimationClip(mapped.animation), mapped.nodes, (ni) => new Matrix4().fromArray(mapped.nodes[ni].matrix));
+    rig.evaluate(f);
+    const t = rig.chan(i).t;
+    assert.ok(near(t[0], lin(f, 0, 10)) && near(t[1], lin(f, 0, 4)), `フレーム ${f}: ${t}`);
+  }
+  assert.ok(at(24).tainted.has(idx('mm_jnt2')), '設定なしでは評価できない（不明）');
+});

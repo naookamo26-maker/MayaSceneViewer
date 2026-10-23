@@ -12,7 +12,10 @@
 """
 from __future__ import annotations
 
+import json
 from typing import List, Optional, Set
+
+from .custom_nodes import FILE_NAME, template_for
 
 from .ma_scene import MaNode, MaScene
 from .rig import (CONSTRAINT_TYPES, CURVE_TYPES, GEOMETRY_TYPES, SUPPORTED_DG, _CHANNEL_KEYS, _DISPLAY_KEYS, _MATRIX_PLUGS,
@@ -232,6 +235,20 @@ def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
                 out.append("    …ほか %d か所" % (len(items) - 8))
         for name, problem in sorted(info.expression_problems.items()):
             out.append("  expression %s: %s" % (name, problem))
+    mapped = getattr(ms, "mapped_nodes", {}) or {}
+    if mapped:
+        out.append("■ 設定ファイルで割り当てた自作ノード: %s" % "、".join(
+            "%s → %s（%s）" % (t, ms.node_map[t]["as"], "、".join(names[:5])) for t, names in sorted(mapped.items())))
+    templates = {t: template_for(ms, t) for t in sorted(info.unsupported) if t != "expression"} if info else {}
+    if templates:
+        out.append("")
+        out.append("■ 自作ノードの割り当て（設定ファイルの雛形）")
+        out.append("  評価できないノードが自作ノードなら、同じ計算をする標準ノードに割り当てると評価できます。")
+        out.append("  次を %s という名前で .ma と同じフォルダに保存し、「as」（標準ノードの型）と、属性名の対応"
+                   "（標準ノードの短い属性名）を書き換えてから開き直してください。" % FILE_NAME)
+        out.append("  例: 入力の行列を掛けて出力するノード → {\"as\": \"multMatrix\", \"attrs\": {\"inMatrix\": \"i[0]\", \"outMatrix\": \"o\"}}")
+        for line in json.dumps(templates, ensure_ascii=False, indent=2).splitlines():
+            out.append("  " + line)
     out.append("")
     out.append("■ IK ハンドル")
     if info is None or not info.ik:
@@ -306,6 +323,13 @@ def format_verification(result: Optional[dict]) -> str:
         if h.get("reach") is not None and h["reach"] > 1e-3:
             out.append("    ★ ファイルの値の終端が、評価したハンドルの位置から %.4f 離れている"
                        "（ハンドルを動かすリグの側がずれているか、Maya でも届いていなかった）" % h["reach"])
+        pe = h.get("poleError")
+        if pe is not None and not h["ok"]:
+            if abs(pe) > 0.5:
+                out.append("    ★ 肘（膝）の向き: Maya の姿勢は、こちらの極ベクトル＋ひねりから %+.2f° 回った向き"
+                           "（極ベクトル・ひねりの入力が Maya と違う。極ベクトルを決めるノードの評価を疑う）" % pe)
+            else:
+                out.append("    ✓ 肘（膝）の向き: 極ベクトル＋ひねりの入力は Maya と一致（%+.2f°）" % pe)
         best = h.get("best")
         if best:
             out.append("    → 一番合う解き方: %s（ずれ %.2f°。今の解き方は %.2f°）" % (best["label"], best["error"], h["error"]))
@@ -321,6 +345,12 @@ def format_verification(result: Optional[dict]) -> str:
     for label, names in sorted(fits.items(), key=lambda kv: -len(kv[1])):
         out.append("  → 「%s」にすると一致する IK: %d 個（%s）" % (label, len(names), "、".join(names[:8])))
     unfit = [h["handle"] for h in handles if not h["ok"] and not (h.get("best") and h["best"]["error"] <= 0.5)]
+    pole_bad = [h["handle"] for h in handles if not h["ok"] and h.get("poleError") is not None and abs(h["poleError"]) > 0.5]
+    reach_bad = [h["handle"] for h in handles if not h["ok"] and h.get("reach") is not None and h["reach"] > 1e-3]
+    if pole_bad:
+        out.append("  → 極ベクトル・ひねりの入力が Maya と違う IK: %d 個（%s）" % (len(pole_bad), "、".join(pole_bad[:8])))
+    if reach_bad:
+        out.append("  → ハンドルの位置（終端の届く先）が Maya と違う IK: %d 個（%s）" % (len(reach_bad), "、".join(reach_bad[:8])))
     if unfit:
         out.append("  → どの解き方でも一致しない IK: %s（ハンドルや極ベクトルを動かすリグの側か、ほかの原因）" % "、".join(unfit))
     return "\n".join(out)

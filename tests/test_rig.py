@@ -538,6 +538,41 @@ class TestStage6(unittest.TestCase):
         from ma_viewer.rig_report import rig_report_file
         self.assertIn("■ transform として扱った自作ノード: myCtrlTransform（cx_ctrl）", rig_report_file(self.path))
 
+    def test_custom_node_map(self):
+        """自作ノードの割り当て: 設定ファイル（.ma と同じフォルダ）を読み、標準ノードとして評価する"""
+        import json
+        import shutil
+        import tempfile
+        from ma_viewer.custom_nodes import rename_attr
+        self.assertEqual(rename_attr("inMatrix[2]", {"inMatrix": "i"}), "i[2]")
+        self.assertEqual(rename_attr("inMatrix", {"inMatrix": "i[0]"}), "i[0]")
+        self.assertEqual(rename_attr("other", {"inMatrix": "i"}), "other")
+        # 設定なし: 評価できない
+        self.assertNotIn("mm_custom", self.graph)
+        from ma_viewer.rig_report import rig_report_file
+        text = rig_report_file(self.path)
+        self.assertIn('"myMatrixBlend": {', text)
+        self.assertIn('"inMatrix": "（入力）"', text)
+        # 設定ファイルを置いて読み直す（input と ip のどちらの名前でも効く）
+        d = tempfile.mkdtemp()
+        try:
+            ma = os.path.join(d, "rig6.ma")
+            shutil.copy(self.path, ma)
+            with open(os.path.join(d, "ma_viewer_nodes.json"), "w", encoding="utf-8") as f:
+                json.dump({"myMatrixBlend": {"as": "multMatrix", "attrs": {"inMatrix": "i[0]", "outMatrix": "o"}},
+                           "myRigNode": {"as": "multDoubleLinear", "attrs": {"input": "i1", "out": "o"}}}, f)
+            sc = load_ma(ma, animation=True)
+            g = {x["name"]: x for x in sc["animation"]["graph"]}
+            self.assertEqual(g["mm_custom"]["type"], "multMatrix")
+            self.assertEqual(set(g["mm_custom"]["inputs"]), {"i[0]"})
+            self.assertEqual(g["mm_dec2"]["inputs"]["imat"], {"node": g["mm_custom"]["id"], "attr": "o"})
+            self.assertEqual(set(g["my_pv_driver"]["inputs"]), {"i1"})
+            self.assertTrue(any("myMatrixBlend（mm_custom）を、設定ファイルのとおり multMatrix" in w for w in sc["warnings"]))
+            self.assertFalse(any("myMatrixBlend" in w and "未対応" in w for w in sc["animation"]["warnings"]))
+            self.assertIn("■ 設定ファイルで割り当てた自作ノード: myMatrixBlend → multMatrix（mm_custom）", rig_report_file(ma))
+        finally:
+            shutil.rmtree(d)
+
     def test_cli(self):
         import io
         from contextlib import redirect_stdout

@@ -824,6 +824,15 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     CONVERT_TIMING.clear()
     lap = _Lap()
     ctx = _Ctx(ms)
+    # 自作ノードの割り当て（設定ファイル）: 同じ計算をする標準ノードとして扱う
+    from .custom_nodes import apply_node_map, load_node_map
+    if getattr(ms, "node_map", None) is None:
+        ms.node_map = load_node_map(ms.source_path, ms.warn)
+    ms.mapped_nodes = apply_node_map(ms, ms.node_map)
+    for t, names in sorted(ms.mapped_nodes.items()):
+        ms.warn("自作ノードの型 %s（%s%s）を、設定ファイルのとおり %s として扱います。"
+                % (t, "、".join(names[:5]), " ほか %d 個" % (len(names) - 5) if len(names) > 5 else "",
+                   ms.node_map[t]["as"]), key="#自作ノードの割り当て " + t)
     # 自作のトランスフォームノード（プラグイン）は transform として扱う
     ms.custom_transforms = promote_custom_transforms(ms)
     for t, names in sorted(ms.custom_transforms.items()):
@@ -1356,9 +1365,10 @@ def _build_skin(ms: MaScene, ctx: _Ctx, shape: MaNode, sk_node: MaNode, nverts: 
 LAST_TIMING: Dict[str, float] = {}
 
 
-def load_ma(path: str, progress: ProgressFn = None, animation: bool = False) -> dict:
-    """.ma ファイルを読み、共通 JSON（dict）を返す。animation=True ならアニメーションも読む（scene["animation"]）。"""
-    scene, load_animation = load_ma_staged(path, progress)
+def load_ma(path: str, progress: ProgressFn = None, animation: bool = False, node_map: Optional[dict] = None) -> dict:
+    """.ma ファイルを読み、共通 JSON（dict）を返す。animation=True ならアニメーションも読む（scene["animation"]）。
+    node_map: 自作ノードの割り当て（custom_nodes。省略時は設定ファイルから読む）"""
+    scene, load_animation = load_ma_staged(path, progress, node_map=node_map)
     if animation:
         anim = load_animation(progress)
         if anim is not None:
@@ -1366,7 +1376,7 @@ def load_ma(path: str, progress: ProgressFn = None, animation: bool = False) -> 
     return scene
 
 
-def load_ma_staged(path: str, progress: ProgressFn = None):
+def load_ma_staged(path: str, progress: ProgressFn = None, node_map: Optional[dict] = None):
     """.ma を 2 段階で読む。(共通 JSON, アニメーションを読む関数) を返す。
 
     1 段階目（この関数）はアニメーションカーブの中身を読まず、範囲だけを覚えておく。
@@ -1382,6 +1392,8 @@ def load_ma_staged(path: str, progress: ProgressFn = None):
     try:
         t0 = time.perf_counter()
         ms = parse_ma_file(path, progress)
+        if node_map is not None:
+            ms.node_map = node_map
         t1 = time.perf_counter()
         if progress:
             progress(1.0, "ビューア用データに変換中")

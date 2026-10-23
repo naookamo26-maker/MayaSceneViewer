@@ -356,6 +356,9 @@ def parse_attrs(text: str, node: MaNode, skip=()) -> Dict[str, object]:
                 out["%s[%d]%s" % (name, a0 + k, rest)] = v[0] if len(v) == 1 else v
             continue
         out[key] = vals[0] if len(vals) == 1 else vals
+    if node.attr_map:                                    # 自作ノードの割り当て: 属性名を標準ノードの名前に読み替える
+        from .custom_nodes import rename_attr
+        out = {rename_attr(k, node.attr_map): v for k, v in out.items()}
     return out
 
 

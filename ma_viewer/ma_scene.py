@@ -171,7 +171,7 @@ def _sparse_into(weights: Dict[int, Dict[int, float]], a: int, b: int, vals) -> 
 
 class MaNode:
     __slots__ = ("name", "type", "parent", "children", "path", "order", "is_dag",
-                 "xattrs", "mesh", "skin", "tweak", "inputs", "raw", "skip_attrs", "span")
+                 "xattrs", "mesh", "skin", "tweak", "inputs", "raw", "skip_attrs", "span", "attr_map")
 
     def __init__(self, name: str, node_type: str, parent: Optional["MaNode"], order: int):
         self.name = name
@@ -189,6 +189,7 @@ class MaNode:
         self.raw: Optional[Dict[str, List[str]]] = {} if node_type in RAW_TYPES else None
         self.skip_attrs = skips_attrs(node_type)       # setAttr をすべて読み飛ばす種類か
         self.span: Optional[Tuple[int, int]] = None     # 読み飛ばした属性の範囲（アニメーションを後から読むため）
+        self.attr_map: Optional[Dict[str, str]] = None  # 自作ノードの割り当て: 属性名の読み替え（custom_nodes）
 
     @property
     def is_shape(self) -> bool:

@@ -2711,6 +2711,77 @@
    ]
   },
   {
+   "name":"mm_jnt2",
+   "path":"|mm_jnt2",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "t ← mm_dec2（decomposeMatrix）"
+   ]
+  },
+  {
    "name":"cx_ctrl",
    "path":"|cx_ctrl",
    "type":"myCtrlTransform",
@@ -2967,8 +3038,8 @@
   "knee_pv: tx ← my_pv_driver（myRigNode） が接続で決まるため、ファイルに値がありません。バインドポーズの情報もないため、既定値（移動 0・回転 0）で表示しています。"
  ],
  "stats":{
-  "nodes":42,
-  "joints":24,
+  "nodes":43,
+  "joints":25,
   "meshes":0,
   "curves":3,
   "vertices":0,
@@ -2978,7 +3049,7 @@
   "textures":0,
   "texturesMissing":0,
   "bindPoseNodes":1,
-  "drivenNodes":19
+  "drivenNodes":20
  },
  "animation":{
   "fps":24.0,
@@ -3158,7 +3229,7 @@
     "curve":11
    },
    {
-    "node":40,
+    "node":41,
     "attr":"ty",
     "curve":12
    }
@@ -4291,6 +4362,36 @@
    },
    {
     "node":40,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":41,
     "joint":false,
     "ro":0,
     "t":[
@@ -4315,7 +4416,7 @@
     ]
    },
    {
-    "node":41,
+    "node":42,
     "joint":true,
     "ro":0,
     "t":[
@@ -5453,9 +5554,27 @@
    },
    {
     "id":67,
+    "name":"mm_dec2",
+    "type":"decomposeMatrix",
+    "dag":-1
+   },
+   {
+    "id":68,
+    "name":"mm_jnt2",
+    "type":"joint",
+    "dag":40,
+    "inputs":{
+     "t":{
+      "node":67,
+      "attr":"ot"
+     }
+    }
+   },
+   {
+    "id":69,
     "name":"cx_ctrl",
     "type":"myCtrlTransform",
-    "dag":40,
+    "dag":41,
     "inputs":{
      "ty":{
       "curve":12
@@ -5463,25 +5582,25 @@
     }
    },
    {
-    "id":68,
+    "id":70,
     "name":"cx_jnt",
     "type":"joint",
-    "dag":41,
+    "dag":42,
     "inputs":{
      "t":{
-      "node":69,
+      "node":71,
       "attr":"ot"
      }
     }
    },
    {
-    "id":69,
+    "id":71,
     "name":"cx_dec",
     "type":"decomposeMatrix",
     "dag":-1,
     "inputs":{
      "imat":{
-      "node":67,
+      "node":69,
       "attr":"wm"
      }
     }
@@ -5492,7 +5611,8 @@
    23,
    24,
    25,
-   28
+   28,
+   40
   ],
   "times":{
    "dtype":"float32",
@@ -5515,17 +5635,18 @@
    "data":""
   },
   "warnings":[
+   "アニメーション: myMatrixBlend（mm_custom など）は未対応のため、これにつながる mm_dec2 の値は再生されません。",
    "アニメーション: myRigNode（my_pv_driver など）は未対応のため、これにつながる knee_pv の値は再生されません。",
-   "アニメーション: 値を求められないノードのうち 0 個はバインドポーズの形で推定して表示し、4 個は推定できないためファイルの値（既定値）のまま表示します。",
+   "アニメーション: 値を求められないノードのうち 0 個はバインドポーズの形で推定して表示し、5 個は推定できないためファイルの値（既定値）のまま表示します。",
    "アニメーション: 表示していないノード（コントローラーなど）を動かすカーブ 1 本は読み込みません（表示するノードへの影響の有無は、リグの診断の「読み込まないカーブ」で確認できます）。"
   ],
   "stats":{
    "curves":13,
    "keys":26,
    "channels":8,
-   "nodes":27,
-   "graphNodes":70,
-   "seconds":0.0029
+   "nodes":28,
+   "graphNodes":72,
+   "seconds":0.0032
   }
  }
 }

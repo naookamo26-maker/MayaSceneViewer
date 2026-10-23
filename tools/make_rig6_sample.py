@@ -34,6 +34,9 @@
     再現チェックはファイルに書かれた回転（20°）と比べる
   * 自作のトランスフォームノード cx_ctrl（未知の型 myCtrlTransform。親も子もない）の ty にキー 0 → 2。
     cx_jnt.t = decomposeMatrix(cx_ctrl.wm).ot → transform として扱って評価する
+  * 行列を出力する自作ノード mm_custom（未知の型 myMatrixBlend。inMatrix ← ctl.wm、outMatrix → mm_dec2 → mm_jnt2.t）。
+    設定なしでは評価できない。割り当て {"myMatrixBlend": {"as": "multMatrix", "attrs": {"inMatrix": "i[0]",
+    "outMatrix": "o"}}} を使った結果は samples/rig6_mapped.json（mm_jnt2 が ctl の位置についていく）
 保存時のフレーム（1）の各ノードの値は、リグの計算結果と一致するように書く。
 """
 from __future__ import annotations
@@ -48,6 +51,8 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 OUT = os.path.join(ROOT, "samples", "rig6_sample.ma")
+# 自作ノードの割り当て（ma_viewer_nodes.json と同じ書き方）
+NODE_MAP = {"myMatrixBlend": {"as": "multMatrix", "attrs": {"inMatrix": "i[0]", "outMatrix": "o"}}}
 
 
 def fmt(v):
@@ -240,6 +245,13 @@ def main():
     node("ikHandle", "arm3_ik", t=wrist)
     anim("TL", "arm3_ik_translateX", [(1, wrist[0]), (48, wrist[0] - 2)])
 
+    # --- 行列を出力する自作ノード ---------------------------------------------------------
+    A('createNode myMatrixBlend -n "mm_custom";')
+    uid("mm_custom")
+    A('\tsetAttr ".mode" 1;')
+    node("decomposeMatrix", "mm_dec2")
+    node("joint", "mm_jnt2")
+
     # --- 自作のトランスフォームノード -------------------------------------------------------
     A('createNode myCtrlTransform -n "cx_ctrl";')
     uid("cx_ctrl")
@@ -342,6 +354,9 @@ def main():
     for ax in "xyz":
         C("arm2_c.t%s" % ax, "arm2_eff.t%s" % ax)
     C("arm2_ik_translateX.o", "arm2_ik.tx")
+    C("ctl.wm", "mm_custom.inMatrix")
+    C("mm_custom.outMatrix", "mm_dec2.imat")
+    C("mm_dec2.ot", "mm_jnt2.t")
     C("cx_ctrl_translateY.o", "cx_ctrl.ty")
     C("cx_ctrl.wm", "cx_dec.imat")
     C("cx_dec.ot", "cx_jnt.t")
@@ -369,7 +384,10 @@ def main():
     scene = load_ma(OUT, animation=True)
     with open(os.path.join(ROOT, "samples", "rig6_sample.json"), "w", encoding="utf-8") as f:
         json.dump(scene, f, ensure_ascii=False, separators=(",", ":"), indent=1)
-    print("書き出しました: rig6_sample.ma / rig6_sample.json")
+    mapped = load_ma(OUT, animation=True, node_map=NODE_MAP)
+    with open(os.path.join(ROOT, "samples", "rig6_mapped.json"), "w", encoding="utf-8") as f:
+        json.dump(mapped, f, ensure_ascii=False, separators=(",", ":"), indent=1)
+    print("書き出しました: rig6_sample.ma / rig6_sample.json / rig6_mapped.json")
 
 
 if __name__ == "__main__":

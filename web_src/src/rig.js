@@ -1582,11 +1582,13 @@ export class RigEvaluator {
     const joints = [];
     let parentFile = this.parentWorld(chain[0]);
     let endFile = null;
+    const filePos = [];
     for (let k = 0; k < chain.length; k++) {
       const ni = chain[k];
       const file = fileLocal(ni);
       if (!file) break;
       const Wf = parentFile.clone().multiply(file);
+      filePos.push(positionOf(Wf));
       if (k === chain.length - 1) { endFile = Wf; break; }
       const We = this.world(ni);
       const qf = rotationOf(Wf), qe = rotationOf(We);
@@ -1611,8 +1613,31 @@ export class RigEvaluator {
       parentFile = Wf;
     }
     // ファイルの値の終端と、評価したハンドルの位置の距離（大きければ、ハンドルを動かすリグの側の問題）
-    const reach = endFile ? positionOf(endFile).distanceTo(positionOf(this.world(g.dag))) : null;
-    return { joints, reach, error: joints.reduce((m, j) => Math.max(m, j.angle), 0) };
+    const H = positionOf(this.world(g.dag));
+    const reach = endFile ? positionOf(endFile).distanceTo(H) : null;
+    // 回転プレーン: ファイルの姿勢の「曲がる向き」（Maya が使った極ベクトル＋ひねり）と、こちらの極ベクトル＋ひねりの差。
+    // 大きければ、極ベクトル・ひねりの入力（それを決めるノードの評価）が Maya と違う
+    let poleError = null;
+    if (g.ik.solver === 'ikRPsolver' && filePos.length === chain.length && chain.length >= 3) {
+      const A = filePos[0];
+      const u = H.clone().sub(A).normalize();
+      const side = new Vector3();
+      for (let k = 1; k < filePos.length - 1; k++) {
+        const v = filePos[k].clone().sub(A);
+        side.add(v.addScaledVector(u, -v.dot(u)));
+      }
+      const pvL = this.vec(g.id, 'pv', [0, 0, 1]);
+      const pv = new Vector3(...pvL).applyMatrix4(new Matrix4().extractRotation(this.pvSpace(g.dag, chain[0])));
+      const want = pv.addScaledVector(u, -pv.dot(u));
+      if (this.ikVariant && this.ikVariant.side === -1) want.negate();
+      const tw = this.num(g.id, 'twi', 0) * this.twistSign();
+      if (Math.abs(tw) > EPS) want.applyQuaternion(new Quaternion().setFromAxisAngle(u, tw));
+      if (side.lengthSq() > EPS && want.lengthSq() > EPS) {
+        side.normalize(); want.normalize();
+        poleError = Math.atan2(u.dot(want.clone().cross(side)), want.dot(side)) * R2D;   // want → side の角度（u まわり）
+      }
+    }
+    return { joints, reach, poleError, error: joints.reduce((m, j) => Math.max(m, j.angle), 0) };
   }
 
   /**
@@ -1642,7 +1667,8 @@ export class RigEvaluator {
         ? new Vector3(...this.vec(g.id, 'pv', [0, 0, 1])).applyMatrix4(new Matrix4().extractRotation(this.parentWorld(g.dag))).toArray()
         : null;
       out.push({ handle: g.name, solver: g.ik.solver, chain: g.ik.chain.map((ni) => this.sceneNodes[ni].name), pv,
-        twist: this.num(g.id, 'twi', 0) * R2D, joints: base.joints, reach: base.reach, error: base.error, best,
+        twist: this.num(g.id, 'twi', 0) * R2D, joints: base.joints, reach: base.reach, poleError: base.poleError,
+        error: base.error, best,
         ok: base.joints.every((j) => j.ok) });
     }
     return out;
