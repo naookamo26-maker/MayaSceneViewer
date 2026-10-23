@@ -58,7 +58,7 @@ const OUTPUTS = {
   quatToEuler: /^ort[xyz]?$/, eulerToQuat: /^oq[xyzw]?$/, quatProd: /^oq[xyzw]?$/, quatInvert: /^oq[xyzw]?$/,
   quatNormalize: /^oq[xyzw]?$/, quatSlerp: /^oq[xyzw]?$/, curveInfo: /^(al|arcLength)$/,
   nurbsCurve: /^(ws|worldSpace|l|local)(\[\d+\])?$/, skinCluster: /^og(\[\d+\])?$/, tweak: /^og(\[\d+\])?$/,
-  groupParts: /^og$/, locator: /^(wp|worldPosition)(\[\d+\])?$/, expression: /^(out|output)\[\d+\]$/,
+  groupParts: /^og$/, wire: /^og(\[\d+\])?$/, locator: /^(wp|worldPosition)(\[\d+\])?$/, expression: /^(out|output)\[\d+\]$/,
   multMatrix: /^o$/, decomposeMatrix: /^o(t|r|s|sh)[xyz]?$|^oq[xyzw]?$/, composeMatrix: /^omat$/, inverseMatrix: /^omat$/,
 };
 // DAG ノードの、値が決まると行列が変わる属性
@@ -87,6 +87,7 @@ function suffixesOf(type, base) {
 }
 
 const _v = new Vector3();
+const _v2 = new Vector3();
 const _s = new Vector3();
 const _q = new Quaternion();
 const _e = new Euler();
@@ -584,6 +585,7 @@ export class RigEvaluator {
         break;
       }
       case 'skinCluster': o = this.skinCurve(g); break;
+      case 'wire': o = this.wireCurves(g); break;
       case 'expression': o = this.expression(g); break;
       case 'tweak': {                                       // 頂点の調整は反映しない（形はそのまま通す）
         const c = this.plug(id, 'ip[0].ig');
@@ -598,6 +600,67 @@ export class RigEvaluator {
       default: break;
     }
     return o;
+  }
+
+  /**
+   * wire: ワイヤー（dw[i]）とベースワイヤー（bw[i]）の差で、カーブ（ip[k].ig）の CV を動かす（ワールド空間で計算）。
+   * CV ごとにベースワイヤーの一番近い点（パラメータ u）を求め、距離 d と影響範囲 dds[i] から重み f = (1 − (d/dds)²)²。
+   *   p' = W(u) + R · (p − B(u)) · (1 + (sc − 1) · f)    （B・W はベースワイヤー・ワイヤーの点、R は接線の向きの変化 × rot · f）
+   *   移動量 = (p' − p) · f をワイヤーごとに足し、エンベロープ（en）と CV のウェイト（wl[k].w[v]）を掛ける。
+   * Maya の計算式は公開されていないので近似（tension・localInfluence・holder は使わない）
+   */
+  wireCurves(g) {
+    const id = g.id;
+    const wires = this.indices(g, /^dw\[(\d+)\]$/).map((i) => {
+      const W = this.plug(id, `dw[${i}]`), B = this.plug(id, `bw[${i}]`);
+      if (!W || !W.isCurve || !B || !B.isCurve || W.cvs.length !== B.cvs.length) return null;
+      // 同じパラメータで折れ線にする（ベースの点とワイヤーの点が対応する）
+      const pb = polyline(B, 32).pts, pw = polyline(W, 32).pts;
+      return { pb, pw, dds: this.num(id, `dds[${i}]`, 1), sc: this.num(id, `sc[${i}]`, 1) };
+    }).filter(Boolean);
+    const en = this.num(id, 'en', 1), rot = this.num(id, 'rot', 1);
+    const out = {};
+    for (const k of this.indices(g, /^ip\[(\d+)\]\.ig$/)) {
+      const c = this.plug(id, `ip[${k}].ig`);
+      if (!c || !c.isCurve) continue;
+      const gp = (g.geom || {})[k];
+      const Wg = gp >= 0 ? this.world(gp) : IDENTITY;
+      const WgInv = Wg.clone().invert();
+      const attrs = g.attrs || {};
+      const cvs = c.cvs.map((local, v) => {
+        const wv = attrs[`wl[${k}].w[${v}]`];
+        const weight = (typeof wv === 'number' ? wv : 1) * en;
+        if (!wires.length || Math.abs(weight) < EPS) return local.clone();
+        const p = local.clone().applyMatrix4(Wg);
+        const disp = new Vector3();
+        for (const { pb, pw, dds, sc } of wires) {
+          // ベースワイヤーの一番近い点（折れ線の線分 j の割合 t）
+          let best = Infinity, bj = 0, bt = 0;
+          for (let j = 0; j < pb.length - 1; j++) {
+            const ab = _v.subVectors(pb[j + 1], pb[j]);
+            const L = ab.lengthSq();
+            const t = L > EPS ? Math.min(1, Math.max(0, _v2.subVectors(p, pb[j]).dot(ab) / L)) : 0;
+            const d = _v2.copy(pb[j]).addScaledVector(ab, t).distanceToSquared(p);
+            if (d < best) { best = d; bj = j; bt = t; }
+          }
+          const d = Math.sqrt(best);
+          if (dds <= EPS || d >= dds) continue;
+          const x = d / dds;
+          const f = (1 - x * x) * (1 - x * x);
+          const Bu = new Vector3().lerpVectors(pb[bj], pb[bj + 1], bt);
+          const Wu = new Vector3().lerpVectors(pw[bj], pw[bj + 1], bt);
+          const tb = new Vector3().subVectors(pb[bj + 1], pb[bj]).normalize();
+          const tw = new Vector3().subVectors(pw[bj + 1], pw[bj]).normalize();
+          const R = new Quaternion().slerp(new Quaternion().setFromUnitVectors(tb, tw), Math.min(1, Math.max(0, rot * f)));
+          const q = new Vector3().subVectors(p, Bu).multiplyScalar(1 + (sc - 1) * f).applyQuaternion(R);
+          disp.add(Wu.add(q).sub(p).multiplyScalar(f));
+        }
+        return p.addScaledVector(disp, weight).applyMatrix4(WgInv);
+      });
+      out[`og[${k}]`] = withCvs(c, cvs);
+      if (!out.og) out.og = out[`og[${k}]`];
+    }
+    return out;
   }
 
   /** expression: 式を（最初の 1 回だけ）関数にして、このフレームの値で評価する。出力は out[n] */

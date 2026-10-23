@@ -14,7 +14,7 @@
   * 行列ノード: multMatrix・decomposeMatrix・composeMatrix・inverseMatrix、DAG ノードの offsetParentMatrix
   * 四元数ノード: quatToEuler・eulerToQuat・quatProd・quatInvert・quatNormalize・quatSlerp
   * そのほか: curveInfo（カーブの長さ）、displayLayer（値を読むだけ）
-  * カーブ: nurbsCurve と、それを動かす skinCluster・制御点（controlPoints）の接続・ロケーター（worldPosition）
+  * カーブ: nurbsCurve と、それを動かす skinCluster・wire・制御点（controlPoints）の接続・ロケーター（worldPosition）
   * アニメーションカーブ（animCurveTL / TA / TU）
 これ以外のノード（エクスプレッション・ドリブンキー・行列ノードなど）に当たったら、そこから先は評価せず警告する。
 """
@@ -36,12 +36,14 @@ UTILITY_TYPES = {"unitConversion", "pairBlend", "blendColors", "multiplyDivide",
 # 入力をたどらない（値を読むだけの）ノード
 _NO_INPUT_TYPES = {"displayLayer"}
 # カーブと、それを動かすノード（必要な入力だけをたどる）
-GEOMETRY_TYPES = {"nurbsCurve", "skinCluster", "tweak", "groupParts", "locator"}
+GEOMETRY_TYPES = {"nurbsCurve", "skinCluster", "tweak", "groupParts", "locator", "wire"}
 _GEOMETRY_INPUTS = {
     "nurbsCurve": re.compile(r"^(cr|cp\[\d+\].*)$"),            # create・controlPoints
     "skinCluster": re.compile(r"^(ma\[\d+\]|pm\[\d+\]|ip\[\d+\]\.ig)$"),
     "tweak": re.compile(r"^ip\[\d+\]\.ig$"),
     "groupParts": re.compile(r"^ig$"),
+    # wire: 変形するカーブ・ワイヤー（dw）・ベースワイヤー（bw）・影響範囲（dds）・スケール（sc）・回転・エンベロープ
+    "wire": re.compile(r"^(ip\[\d+\]\.ig|dw\[\d+\]|bw\[\d+\]|dds\[\d+\]|sc\[\d+\]|rot|en)$"),
     "locator": None,
 }
 # スプライン IK のハンドルで使う属性（カーブ・ひねり・上級ツイスト）
@@ -62,7 +64,7 @@ _STANDARD_ATTRS = _CHANNEL_KEYS | {"jo", "jox", "joy", "joz", "ra", "rax", "ray"
 _SETATTR_RE = re.compile(r"setAttr\b([^;]*);")
 _ADDATTR_RE = re.compile(r"addAttr\b([^;]*);")
 _TG_RE = re.compile(r"^tg\[(\d+)\]\.(\w+)$")
-_RANGE_RE = re.compile(r"^(\w+)\[(\d+):(\d+)\](.*)$")
+_RANGE_RE = re.compile(r"^(.*?)\[(\d+):(\d+)\](.*)$")   # 最初の範囲（wl[0].w[0:5] も）
 
 
 def _base(attr: str) -> str:
@@ -102,6 +104,30 @@ class GraphInfo:
     def empty(self) -> bool:
         return not self.dg and not self.ik and not any(
             src.type not in CURVE_TYPES for e in self.edges.values() for src, _ in e.values())
+
+
+_DEFORM_OUT = re.compile(r"^og\[(\d+)\]$")
+
+
+def wire_shapes(ms: MaScene, wire: MaNode) -> Dict[int, MaNode]:
+    """wire の出力（og[k]）の先にある、変形されるカーブ（ほかのデフォーマを経由してもよい）"""
+    out: Dict[int, MaNode] = {}
+    for src, sattr, dst, _dattr in ms.connections:
+        m = _DEFORM_OUT.match(sattr) if src is wire else None
+        if not m:
+            continue
+        x, seen = dst, set()
+        while x is not None and x.type != "nurbsCurve" and id(x) not in seen:
+            seen.add(id(x))
+            nxt = None
+            for s2, a2, d2, _ in ms.connections:
+                if s2 is x and (a2 == "og" or a2.startswith("og[")):
+                    nxt = d2
+                    break
+            x = nxt
+        if x is not None and x.type == "nurbsCurve" and x.parent is not None:
+            out[int(m.group(1))] = x
+    return out
 
 
 def discover(ms: MaScene, keep: Set[int], geometry=()) -> GraphInfo:
@@ -164,6 +190,9 @@ def discover(ms: MaScene, keep: Set[int], geometry=()) -> GraphInfo:
                         add_edge(n, key)
                 if n.type in ("nurbsCurve", "locator"):
                     need_world(n.parent)                 # ワールド空間（ws・worldPosition）は親の行列から
+                if n.type == "wire":
+                    for shape in wire_shapes(ms, n).values():
+                        need_world(shape.parent)         # ワイヤーはワールド空間で変形する（変形するカーブの位置）
             return
         if _dag_like(n):
             info.dag[id(n)] = n
@@ -365,6 +394,9 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
                 entry["shape"] = shape_index[id(n)]     # 表示するカーブ（共通 JSON の curves の番号）
         if n.type == "expression" and id(n) in info.expressions:
             entry["expr"] = info.expressions[id(n)]       # 式（ビューアの expression.js で解釈する）
+        if n.type == "wire":
+            # 変形するカーブの transform（ワールド空間へ移して変形し、戻す）
+            entry["geom"] = {str(k): out_index.get(id(shape.parent), -1) for k, shape in wire_shapes(ms, n).items()}
         if n.type == "skinCluster" and n.skin is not None:
             sk = n.skin
             entry["skin"] = {

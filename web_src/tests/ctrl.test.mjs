@@ -138,3 +138,43 @@ test('pairBlend（コンストレイント + キー）: 成分ごとの入力と
     assert.ok(near(rig.chan(idx('bo_obj')).r[2], 60 * w, 1e-6), `フレーム ${f}: bo_obj.rz ${rig.chan(idx('bo_obj')).r[2]}`);
   }
 });
+
+test('wire（尻尾）: スプライン IK のカーブがワイヤーに沿って変形し、ジョイントがついていく', async () => {
+  const { pointAt, polyline } = await import('../src/curve.js');
+  const gid = (n) => data.animation.graph.find((g) => g.name === n).id;
+  for (const f of [1, 12, 24, 36, 48]) {
+    const rig = at(data, f);
+    const wire = rig.plug(gid('tail_wireShape'), 'ws');
+    const tail = rig.plug(gid('tail_curveShape'), 'ws');
+    assert.ok(tail && tail.isCurve, 'wire で変形したカーブ');
+    // まっすぐなカーブの CV k はパラメータ k/3 の点 → ワイヤーの同じパラメータの点へ移る
+    for (let k = 0; k < 4; k++) {
+      assert.ok(nearVec(tail.cvs[k], pointAt(wire, k / 3), 2e-3), `フレーム ${f}: CV ${k} ${tail.cvs[k].toArray()} != ${pointAt(wire, k / 3).toArray()}`);
+    }
+    // ジョイントは変形したカーブの上に並ぶ（骨の長さは 2）
+    const { pts } = polyline(tail, 256);
+    const P = [0, 1, 2, 3, 4].map((i) => new Vector3().setFromMatrixPosition(rig.world(idx(`tail_${i}`))));
+    for (const p of P) assert.ok(Math.min(...pts.map((q) => q.distanceTo(p))) < 0.05, `フレーム ${f}: ジョイントがカーブの上にない`);
+    for (let i = 0; i < 4; i++) assert.ok(near(P[i].distanceTo(P[i + 1]), 2, 1e-4));
+    if (f === 48) assert.ok(P[4].y > 1, `先端が持ち上がる ${P[4].toArray()}`);
+  }
+});
+
+test('wire: 影響範囲（dds）の外の CV は動かない・ウェイト 0 は動かない', () => {
+  const d = JSON.parse(JSON.stringify(data));
+  const g = d.animation.graph.find((x) => x.name === 'tail_wireDef');
+  const rigOf = () => { const r = new RigEvaluator(new AnimationClip(d.animation), d.nodes, (ni) => new Matrix4().fromArray(d.nodes[ni].matrix)); r.evaluate(48); return r; };
+  g.attrs['wl[0].w[3]'] = 0;
+  let c = rigOf().plug(g.id, 'og[0]');
+  assert.ok(nearVec(c.cvs[3], new Vector3(8, 0, -40)), 'ウェイト 0 の CV');
+  assert.ok(c.cvs[2].y > 0.1, 'ウェイト 1 の CV は動く');
+  // CV 2 をワイヤーから 5 離す: 影響範囲 20 なら動き、影響範囲 4 なら動かない
+  const orig = d.animation.graph.find((x) => x.name === 'tail_curveShapeOrig');
+  orig.attrs.cc[13 + 2 * 3 + 1] = 5;
+  c = rigOf().plug(g.id, 'og[0]');
+  assert.ok(c.cvs[2].distanceTo(new Vector3(16 / 3, 5, -40)) > 0.1, '影響範囲の内側は動く');
+  g.attrs['dds[0]'] = 4;
+  c = rigOf().plug(g.id, 'og[0]');
+  assert.ok(nearVec(c.cvs[2], new Vector3(16 / 3, 5, -40)), '影響範囲の外は動かない');
+  assert.ok(c.cvs[1].y > 0.01, '線上の CV は影響範囲が小さくても動く');
+});

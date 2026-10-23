@@ -242,7 +242,7 @@ def main() -> int:
         })())"""
 
         def got(r):
-            check(r["curves"] == 11, "カーブを 11 本表示する（コントローラー 8・スプライン IK 3）: %s" % r["curves"])
+            check(r["curves"] == 14, "カーブを 14 本表示する（コントローラー 8・スプライン IK 3・尻尾の wire 3）: %s" % r["curves"])
             check(r["timeline"], "タイムラインを表示する")
             check(r["lineParent"], "カーブの線は transform の子")
             check(r["lineColor"] == 0xffff00 and r["selColor"] != r["lineColor"], "描画のオーバーライドの色と選択の色")

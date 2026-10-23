@@ -30,6 +30,10 @@
     → 常にコンストレイントの位置。pairBlend の入力は成分ごと（itx1・itx2 など）
   * bo_obj: bo_tgt（回転 (0, 0, 60)）への orientConstraint。blendOrient1 にキー 1 → 0 → rz = 60 · ウェイト
   * bp2_pv: bp_tgt への pointConstraint。blendPoint1 にキー 1 → 0（キーの tx は 0）
+  wire（尻尾）
+  * tail_0〜tail_4（+X 方向、骨の長さ 2、z = -40）のスプライン IK。カーブ tail_curveShape は wire（tail_wireDef）で変形する
+    （変形前の形は中間オブジェクト tail_curveShapeOrig）。ワイヤー tail_wireShape の CV はロケーター tw_loc0〜3 で動かし、
+    tw_loc3.ty にキー 0 → 3、tw_loc2.ty に 0 → 1.5。ベースワイヤー tail_wireBaseWire は非表示。影響範囲 20
 保存時のフレーム（1）の各ノードの値は、リグの計算結果と一致するように書く。
 """
 from __future__ import annotations
@@ -200,6 +204,31 @@ def main():
     anim("TU", "bo_obj_blendOrient1", [(1, 1), (48, 0)])
     anim("TL", "bp_tgt_translateY", [(1, 0), (48, 5)])
 
+    # --- wire（尻尾: スプライン IK のカーブをワイヤーで変形） ------------------------------------
+    straight = [(0, 0, -40), (8 / 3.0, 0, -40), (16 / 3.0, 0, -40), (8, 0, -40)]
+    names = []
+    for i in range(5):
+        node("joint", "tail_%d" % i, names[-1] if names else None, t=(0, 0, -40) if i == 0 else (2, 0, 0))
+        names.append("tail_%d" % i)
+    node("ikEffector", "tail_eff", "tail_3", t=(2, 0, 0), v="no")
+    node("ikHandle", "tail_ik", roc="yes")
+    node("transform", "tail_curve", it="no")
+    node("nurbsCurve", "tail_curveShape", "tail_curve")
+    shape("tail_curveShapeOrig", "tail_curve", 3, 0, [0, 0, 0, 1, 1, 1], straight, io="yes")
+    node("transform", "tail_wire")
+    shape("tail_wireShape", "tail_wire", 3, 0, [0, 0, 0, 1, 1, 1], straight)
+    node("transform", "tail_wireBaseWire", v="no")
+    shape("tail_wireBaseWireShape", "tail_wireBaseWire", 3, 0, [0, 0, 0, 1, 1, 1], straight)
+    for i, c in enumerate(straight):
+        node("transform", "tw_loc%d" % i, t=c)
+        node("locator", "tw_loc%dShape" % i, "tw_loc%d" % i)
+    A('createNode wire -n "tail_wireDef";')
+    uid("tail_wireDef")
+    A('\tsetAttr ".dds[0]" 20;')
+    A('\tsetAttr -s 4 ".wl[0].w[0:3]"  1 1 1 1;')
+    anim("TL", "tw_loc3_translateY", [(1, 0), (48, 3)])
+    anim("TL", "tw_loc2_translateY", [(1, 0), (48, 1.5)])
+
     anim("TA", "ctrl_circle_rotateY", [(1, 0), (48, 90)])
     anim("TL", "ctrl_circle_translateY", [(1, 0), (48, 5)])
 
@@ -215,6 +244,20 @@ def main():
     C("ctrl_circle_rotateY.o", "ctrl_circle.ry")
     C("ctrl_circle_translateY.o", "ctrl_circle.ty")
     C("ctrl_circle.r", "arm_a.r")
+    C("tail_0.msg", "tail_ik.hsj")
+    C("tail_eff.hp", "tail_ik.hee")
+    C("ikSplineSolver.msg", "tail_ik.hsv")
+    for ax in "xyz":
+        C("tail_4.t%s" % ax, "tail_eff.t%s" % ax)
+    C("tail_curveShape.ws", "tail_ik.ic")
+    C("tail_curveShapeOrig.ws", "tail_wireDef.ip[0].ig")
+    C("tail_wireDef.og[0]", "tail_curveShape.cr")
+    C("tail_wireShape.ws", "tail_wireDef.dw[0]")
+    C("tail_wireBaseWireShape.ws", "tail_wireDef.bw[0]")
+    for i in range(4):
+        C("tw_loc%dShape.wp" % i, "tail_wireShape.cp[%d]" % i)
+    C("tw_loc3_translateY.o", "tw_loc3.ty")
+    C("tw_loc2_translateY.o", "tw_loc2.ty")
     C("bp_tgt_translateY.o", "bp_tgt.ty")
     for pv, pb in (("bp_pv", "bp_pb"), ("bp2_pv", "bp2_pb")):
         c = pv + "_pointConstraint1"

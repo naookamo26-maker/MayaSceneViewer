@@ -407,6 +407,18 @@ class TestStage5(unittest.TestCase):
         self.assertNotIn("blendPoint1", w)                                         # リグの入力なので「再生しない」と言わない
         self.assertNotIn("pairBlend を経由", w)
 
+    def test_wire(self):
+        """wire: 変形するカーブの入力・ワイヤー・ベースワイヤー・ウェイト（範囲の展開）・変形するカーブの transform"""
+        g = self.graph["tail_wireDef"]
+        self.assertEqual(set(g["inputs"]), {"ip[0].ig", "dw[0]", "bw[0]"})
+        self.assertEqual(self.names[g["geom"]["0"]], "tail_curve")
+        self.assertEqual([g["attrs"]["wl[0].w[%d]" % i] for i in range(4)], [1.0] * 4)
+        self.assertEqual(g["attrs"]["dds[0]"], 20.0)
+        shape = self.graph["tail_curveShape"]
+        self.assertEqual(shape["inputs"]["cr"]["node"], g["id"])
+        self.assertFalse(self.curves["tail_wireBaseWireShape"]["visible"])         # ベースワイヤーは非表示
+        self.assertTrue(self.curves["tail_curveShape"].get("fromInput"))
+
     def test_check_expression(self):
         from ma_viewer.expression import check_expression
         ok = ["float $a = .I[0] * 2;\nif ($a > 1) .O[0] = $a; else .O[0] = clamp(0, 1, frame);",

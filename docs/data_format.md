@@ -183,6 +183,7 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 | `parent` | nurbsCurve・locator（シェイプ）の親のトランスフォーム（nodes の番号）。ワールド空間（ws・worldPosition）の計算に使う |
 | `shape` | nurbsCurve が表示するカーブのとき、そのトップレベルの curves の番号（inputs の `curve` が指す animation.curves とは別） |
 | `expr` | expression の式（.ixp。.I[n]・.O[n] で入出力を参照する）。出力は `out[n]`、入力は `inputs` の `in[n]`。時間（.tim）はつながず、ビューアのフレームから求める。解釈できない書き方（MEL コマンド・文字列・ベクトル・未対応の関数・.I/.O 以外の属性）を含む式は graph に入れず、未対応のノードとして警告し、つながるノードを fallback・tainted に回す（判定は `ma_viewer/expression.py`、評価は `web_src/src/expression.js`） |
+| `geom` | wire が変形するカーブの transform（`{"出力の番号 k": nodes の番号}`）。ワイヤー（`dw[i]`）・ベースワイヤー（`bw[i]`）はワールド空間なので、カーブをこの行列でワールドへ移して変形し、戻す。CV のウェイトは attrs の `wl[k].w[v]`（なければ 1） |
 | `skin` | カーブを動かす skinCluster のウェイト `[[CV の番号, インフルエンスの論理番号, 値], …]`、`pm`（論理番号 → 16 要素）、`gm`。インフルエンスは `inputs` の `ma[i]` |
 
 ### animation.fallback・animation.tainted

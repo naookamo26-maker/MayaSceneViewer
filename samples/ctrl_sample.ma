@@ -361,6 +361,104 @@ createNode animCurveTL -n "bp_tgt_translateY";
 	rename -uid "00000000-0000-0000-0005-003390852004";
 	setAttr ".tan" 2;
 	setAttr -s 2 ".ktv[0:1]"  1 0 48 5;
+createNode joint -n "tail_0";
+	rename -uid "00000000-0000-0000-0005-002570734451";
+	setAttr ".t" -type "double3" 0 0 -40 ;
+createNode joint -n "tail_1" -p "tail_0";
+	rename -uid "00000000-0000-0000-0005-003997006821";
+	setAttr ".t" -type "double3" 2 0 0 ;
+createNode joint -n "tail_2" -p "tail_1";
+	rename -uid "00000000-0000-0000-0005-001999907423";
+	setAttr ".t" -type "double3" 2 0 0 ;
+createNode joint -n "tail_3" -p "tail_2";
+	rename -uid "00000000-0000-0000-0005-000003349193";
+	setAttr ".t" -type "double3" 2 0 0 ;
+createNode joint -n "tail_4" -p "tail_3";
+	rename -uid "00000000-0000-0000-0005-002656538474";
+	setAttr ".t" -type "double3" 2 0 0 ;
+createNode ikEffector -n "tail_eff" -p "tail_3";
+	rename -uid "00000000-0000-0000-0005-001506074111";
+	setAttr ".t" -type "double3" 2 0 0 ;
+	setAttr ".v" no;
+createNode ikHandle -n "tail_ik";
+	rename -uid "00000000-0000-0000-0005-002861476749";
+	setAttr ".roc" yes;
+createNode transform -n "tail_curve";
+	rename -uid "00000000-0000-0000-0005-003101775354";
+	setAttr ".it" no;
+createNode nurbsCurve -n "tail_curveShape" -p "tail_curve";
+	rename -uid "00000000-0000-0000-0005-001721432471";
+createNode nurbsCurve -n "tail_curveShapeOrig" -p "tail_curve";
+	rename -uid "00000000-0000-0000-0005-001733441763";
+	setAttr ".io" yes;
+	setAttr ".cc" -type "nurbsCurve" 
+		3 1 0 no 3
+		6 0 0 0 1 1 1
+		4
+		0 0 -40
+		2.66666667 0 -40
+		5.33333333 0 -40
+		8 0 -40
+		;
+createNode transform -n "tail_wire";
+	rename -uid "00000000-0000-0000-0005-000493051510";
+createNode nurbsCurve -n "tail_wireShape" -p "tail_wire";
+	rename -uid "00000000-0000-0000-0005-004098663495";
+	setAttr ".cc" -type "nurbsCurve" 
+		3 1 0 no 3
+		6 0 0 0 1 1 1
+		4
+		0 0 -40
+		2.66666667 0 -40
+		5.33333333 0 -40
+		8 0 -40
+		;
+createNode transform -n "tail_wireBaseWire";
+	rename -uid "00000000-0000-0000-0005-003254237143";
+	setAttr ".v" no;
+createNode nurbsCurve -n "tail_wireBaseWireShape" -p "tail_wireBaseWire";
+	rename -uid "00000000-0000-0000-0005-003320547052";
+	setAttr ".cc" -type "nurbsCurve" 
+		3 1 0 no 3
+		6 0 0 0 1 1 1
+		4
+		0 0 -40
+		2.66666667 0 -40
+		5.33333333 0 -40
+		8 0 -40
+		;
+createNode transform -n "tw_loc0";
+	rename -uid "00000000-0000-0000-0005-001935508043";
+	setAttr ".t" -type "double3" 0 0 -40 ;
+createNode locator -n "tw_loc0Shape" -p "tw_loc0";
+	rename -uid "00000000-0000-0000-0005-000351555810";
+createNode transform -n "tw_loc1";
+	rename -uid "00000000-0000-0000-0005-000073052893";
+	setAttr ".t" -type "double3" 2.66666667 0 -40 ;
+createNode locator -n "tw_loc1Shape" -p "tw_loc1";
+	rename -uid "00000000-0000-0000-0005-003752362823";
+createNode transform -n "tw_loc2";
+	rename -uid "00000000-0000-0000-0005-002639520615";
+	setAttr ".t" -type "double3" 5.33333333 0 -40 ;
+createNode locator -n "tw_loc2Shape" -p "tw_loc2";
+	rename -uid "00000000-0000-0000-0005-001497166313";
+createNode transform -n "tw_loc3";
+	rename -uid "00000000-0000-0000-0005-003931427825";
+	setAttr ".t" -type "double3" 8 0 -40 ;
+createNode locator -n "tw_loc3Shape" -p "tw_loc3";
+	rename -uid "00000000-0000-0000-0005-002455773772";
+createNode wire -n "tail_wireDef";
+	rename -uid "00000000-0000-0000-0005-002490823494";
+	setAttr ".dds[0]" 20;
+	setAttr -s 4 ".wl[0].w[0:3]"  1 1 1 1;
+createNode animCurveTL -n "tw_loc3_translateY";
+	rename -uid "00000000-0000-0000-0005-002886772588";
+	setAttr ".tan" 2;
+	setAttr -s 2 ".ktv[0:1]"  1 0 48 3;
+createNode animCurveTL -n "tw_loc2_translateY";
+	rename -uid "00000000-0000-0000-0005-000934669059";
+	setAttr ".tan" 2;
+	setAttr -s 2 ".ktv[0:1]"  1 0 48 1.5;
 createNode animCurveTA -n "ctrl_circle_rotateY";
 	rename -uid "00000000-0000-0000-0005-001493498195";
 	setAttr ".tan" 2;
@@ -380,6 +478,23 @@ connectAttr "ctrl_layer_L.di" "ctrl_layer.do";
 connectAttr "ctrl_circle_rotateY.o" "ctrl_circle.ry";
 connectAttr "ctrl_circle_translateY.o" "ctrl_circle.ty";
 connectAttr "ctrl_circle.r" "arm_a.r";
+connectAttr "tail_0.msg" "tail_ik.hsj";
+connectAttr "tail_eff.hp" "tail_ik.hee";
+connectAttr "ikSplineSolver.msg" "tail_ik.hsv";
+connectAttr "tail_4.tx" "tail_eff.tx";
+connectAttr "tail_4.ty" "tail_eff.ty";
+connectAttr "tail_4.tz" "tail_eff.tz";
+connectAttr "tail_curveShape.ws" "tail_ik.ic";
+connectAttr "tail_curveShapeOrig.ws" "tail_wireDef.ip[0].ig";
+connectAttr "tail_wireDef.og[0]" "tail_curveShape.cr";
+connectAttr "tail_wireShape.ws" "tail_wireDef.dw[0]";
+connectAttr "tail_wireBaseWireShape.ws" "tail_wireDef.bw[0]";
+connectAttr "tw_loc0Shape.wp" "tail_wireShape.cp[0]";
+connectAttr "tw_loc1Shape.wp" "tail_wireShape.cp[1]";
+connectAttr "tw_loc2Shape.wp" "tail_wireShape.cp[2]";
+connectAttr "tw_loc3Shape.wp" "tail_wireShape.cp[3]";
+connectAttr "tw_loc3_translateY.o" "tw_loc3.ty";
+connectAttr "tw_loc2_translateY.o" "tw_loc2.ty";
 connectAttr "bp_tgt_translateY.o" "bp_tgt.ty";
 connectAttr "bp_pb.otx" "bp_pv.tx";
 connectAttr "bp_pv_pointConstraint1.ctx" "bp_pb.itx2";
