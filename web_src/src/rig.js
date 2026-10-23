@@ -88,8 +88,8 @@ const CHANNEL_RE = /^([trs][xyz]?|opm)$/;
 /** ファイルの値が度で書かれている角度の属性（内部ではラジアンで扱う） */
 /** aim と up が平行な aimConstraint の解き方の候補（最短の回転をどこから測るか） */
 const AIM_MODES = [
-  ['world', 'ワールドの軸から（今の解き方）'],
-  ['parent', '親の空間の軸から'],
+  ['parent', '親の空間の軸から（今の解き方）'],
+  ['world', 'ワールドの軸から'],
   ['rest', 'レスト回転（.restRotate）から'],
 ];
 
@@ -240,7 +240,7 @@ export class RigEvaluator {
     this.usesTime = this.graph.some((g) => g.type === 'expression' && /\b(frame|time)\b/.test(g.expr || ''));
     this.problems = new Set();               // 評価中に見つかった問題（循環など）
     this.ikVariant = null;                   // 再現チェックで試す IK の解き方の候補（ふだんは null）
-    this.aimMode = null;                     // aim と up が平行な aimConstraint の解き方（再現チェックで試す。null = world）
+    this.aimMode = null;                     // aim と up が平行な aimConstraint の解き方（再現チェックで試す。null = parent）
     this.frame = 0;
     this.poseOf = () => null;
     this.reset();
@@ -1161,8 +1161,9 @@ export class RigEvaluator {
         const uPerp = u.clone().addScaledVector(a, -u.dot(a));
         const upPerp = up ? up.clone().addScaledVector(dir, -up.dot(dir)) : null;
         if (!up || uPerp.lengthSq() < EPS || upPerp.lengthSq() < EPS) {
-          // up を決められない（aim と up が平行・world up なし）: 最短の回転。どこからの最短かは候補（aimMode）
-          const mode = this.aimMode || 'world';
+          // up を決められない（aim と up が平行・world up なし）: 最短の回転。Maya は親の空間で、回転 0 の向きから
+          // 測る（保存時の姿勢で確かめた）。再現チェックでは、ほかの候補（aimMode）も試す
+          const mode = this.aimMode || 'parent';
           if (mode === 'world') q = new Quaternion().setFromUnitVectors(a, dir);
           else {
             const pr = rotationOf(pw);

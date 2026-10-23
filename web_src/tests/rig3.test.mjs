@@ -174,3 +174,31 @@ test('aim と up が平行な aimConstraint: 最短の回転をどこから測�
   assert.ok(sameRot(q.rest, want));
   assert.ok(!sameRot(q.rest, q.world), 'レスト回転からの最短の回転は、ねじれが違う');
 });
+
+test('aim と up が平行な aimConstraint: 標準は親の空間で回転 0 の向きから測る最短の回転（Maya と同じ）', () => {
+  const anim = withAttrs('aim_vec_aimConstraint1', { u: [1, 0, 0] });
+  const nodes = JSON.parse(JSON.stringify(data.nodes));
+  // aim_vec の親を、動かないノードにして x 軸まわりに 60° 回す
+  const moving = new Set(anim.nodes.map((n) => n.node));
+  const p = nodes.findIndex((n, i) => !moving.has(i) && n.parent < 0 && i !== idx('aim_vec') && i !== idx('look_tgt'));
+  assert.ok(p >= 0);
+  nodes[p].matrix = new Matrix4().makeRotationX(Math.PI / 3).toArray();
+  nodes[idx('aim_vec')].parent = p;
+  const solve = (mode) => {
+    const rig = new RigEvaluator(new AnimationClip(anim), nodes, (n) => new Matrix4().fromArray(nodes[n].matrix));
+    rig.aimMode = mode;
+    rig.evaluate(24);
+    return rig;
+  };
+  const rig = solve(null);
+  const P = rig.parentWorld(idx('aim_vec'));
+  const W = rig.world(idx('aim_vec'));
+  const dir = new Vector3().setFromMatrixPosition(rig.world(idx('look_tgt'))).sub(new Vector3().setFromMatrixPosition(W)).normalize();
+  const pq = new Quaternion().setFromRotationMatrix(new Matrix4().extractRotation(P));
+  const local = pq.clone().invert().multiply(new Quaternion().setFromRotationMatrix(new Matrix4().extractRotation(W)));
+  const want = new Quaternion().setFromUnitVectors(new Vector3(1, 0, 0), dir.clone().applyQuaternion(pq.clone().invert()));
+  assert.ok(Math.abs(Math.abs(local.dot(want)) - 1) < 1e-6, `${local.toArray()} ${want.toArray()}`);
+  // ワールドの軸からの最短の回転とは、ねじれが違う
+  const w2 = new Quaternion().setFromRotationMatrix(new Matrix4().extractRotation(solve('world').world(idx('aim_vec'))));
+  assert.ok(Math.abs(Math.abs(w2.dot(new Quaternion().setFromRotationMatrix(new Matrix4().extractRotation(W)))) - 1) > 1e-4);
+});

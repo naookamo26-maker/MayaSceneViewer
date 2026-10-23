@@ -576,14 +576,14 @@ class TestStage6(unittest.TestCase):
                         "pv": [0, 0, 1], "twist": 0, "ikBlend": 1, "impliedPv": [0, 0, -1]},
              "poleTargets": {"via": "leg_pvc", "start": [1, 2, 3], "offset": None, "targets": [
                  {"name": "leg_pv", "weight": 1.0, "position": [1, 2, 4], "drift": None}],
-                             "aimModes": [{"mode": "world", "label": "ワールドの軸から（今の解き方）", "distance": 180.0},
-                                          {"mode": "parent", "label": "親の空間の軸から", "distance": 0.0},
+                             "aimModes": [{"mode": "parent", "label": "親の空間の軸から（今の解き方）", "distance": 0.0},
+                                          {"mode": "world", "label": "ワールドの軸から", "distance": 180.0},
                                           {"mode": "rest", "label": "レスト回転（.restRotate）から", "distance": 50.0}]},
              "joints": [{"name": "hip", "angle": 178, "roll": 178, "bend": 0, "position": 0, "ok": False}]}]})
         self.assertIn("Maya の姿勢に合う極ベクトル（ワールド・逆算）", text6)
         self.assertIn("Maya の姿勢に合う目標の位置（逆算。開始の位置 + 上の極ベクトル）(1.0000, 2.0000, 2.0000)", text6)
-        self.assertIn("→ 親の空間の軸から: 0.0000", text6)
-        self.assertIn("   ワールドの軸から（今の解き方）: 180.0000", text6)
+        self.assertIn("→ 親の空間の軸から（今の解き方）: 0.0000", text6)
+        self.assertIn("   ワールドの軸から: 180.0000", text6)
         self.assertIn("確認できません", format_verification(None))
 
     def test_no_false_warning_for_rig_nodes(self):
