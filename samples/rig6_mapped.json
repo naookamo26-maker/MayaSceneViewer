@@ -5483,7 +5483,7 @@
     "type":"transform",
     "dag":22,
     "inputs":{
-     "roll":{
+     "rol":{
       "curve":4
      }
     }
@@ -5534,7 +5534,7 @@
     "inputs":{
      "i":{
       "node":37,
-      "attr":"roll"
+      "attr":"rol"
      }
     },
     "curve":6
@@ -6079,7 +6079,7 @@
    "channels":8,
    "nodes":30,
    "graphNodes":77,
-   "seconds":0.0019
+   "seconds":0.0035
   }
  }
 }

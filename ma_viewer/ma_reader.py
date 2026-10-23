@@ -61,6 +61,21 @@ ATTR_ALIASES = {
     "dagSetMembers": "dsm", "surfaceShader": "ss", "fileTextureName": "ftn",
     "outColor": "oc", "outTransparency": "ot", "outAlpha": "oa", "uvCoord": "uv", "outUV": "o",
     "message": "msg", "members": "m", "xformMatrix": "xm",
+    # ikHandle（スクリプトで作ったリグは、長い名前で接続していることがある）
+    "poleVector": "pv", "poleVectorX": "pvx", "poleVectorY": "pvy", "poleVectorZ": "pvz",
+    "twist": "twi", "roll": "rol", "ikBlend": "ikb", "rootOnCurve": "roc",
+    "handleStartJoint": "hsj", "handleEndEffector": "hee", "ikSolver": "hsv", "inCurve": "ic",
+    "dTwistControlEnable": "dtce", "dWorldUpType": "dwut", "dWorldUpAxis": "dwua", "dForwardAxis": "dfa",
+    "dWorldUpMatrix": "dwum", "dWorldUpMatrixEnd": "dwue", "dWorldUpVector": "dwuv", "dWorldUpVectorEnd": "dwve",
+    "preferredAngle": "pa", "parentMatrix": "pm", "parentInverseMatrix": "pim", "worldInverseMatrix": "wim",
+    # コンストレイント
+    "target": "tg", "targetTranslate": "tt", "targetRotate": "tr", "targetScale": "ts", "targetParentMatrix": "tpm",
+    "targetWeight": "tw", "targetRotatePivot": "trp", "targetRotateTranslate": "trt", "targetRotateOrder": "tro",
+    "targetJointOrient": "tjo", "targetOffsetTranslate": "tot", "targetOffsetRotate": "tor",
+    "constraintTranslate": "ct", "constraintTranslateX": "ctx", "constraintTranslateY": "cty", "constraintTranslateZ": "ctz",
+    "constraintRotate": "cr", "constraintRotateX": "crx", "constraintRotateY": "cry", "constraintRotateZ": "crz",
+    "constraintScale": "cs", "constraintParentInverseMatrix": "cpim", "constraintRotatePivot": "crp",
+    "constraintRotateTranslate": "crt", "constraintRotateOrder": "cro", "constraintJointOrient": "cjo", "pivotSpace": "ps",
 }
 
 

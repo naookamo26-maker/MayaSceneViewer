@@ -362,6 +362,10 @@ def format_verification(result: Optional[dict]) -> str:
                     out.append("      %s %s: スケール %s%s" % (label, hp["name"], hp["scale"], "・反転あり" if hp["mirrored"] else ""))
             if det.get("roll"):
                 out.append("      ハンドルの roll %.4f°" % det["roll"])
+            if det.get("pvAttr") is not None:
+                out.append("      チャンネルボックスの値（Maya で同じフレームの %s と見比べてください）: Pole Vector X/Y/Z %s・Twist %.4f%s"
+                           % (h["handle"], det["pvAttr"], det["twist"],
+                              "（接続: %s）" % "・".join(det.get("twistInputs") or []) if det.get("twistInputs") else "（接続なし）"))
             if det.get("axes"):
                 out.append("      ジョイントの軸（X, Y, Z）と、基準面（開始→ハンドル と 極ベクトル＋ひねり の面）の法線のなす角（度）:")
                 for ax in det["axes"]:

@@ -1692,6 +1692,9 @@ export class RigEvaluator {
       twist: Math.round(this.num(g.id, 'twi', 0) * R2D * 1e4) / 1e4,
       ikBlend: this.num(g.id, 'ikb', 1),
       roll: Math.round(this.num(g.id, 'rol', 0) * R2D * 1e4) / 1e4,
+      // ikHandle のチャンネルボックスと同じ値（Pole Vector X/Y/Z はハンドルの親の空間。Maya と見比べる用）
+      pvAttr: g.ik.solver === 'ikRPsolver' ? this.vec(g.id, 'pv', [0, 0, 1]).map((x) => Math.round(x * 1e4) / 1e4) : null,
+      twistInputs: Object.keys(g.inputs || {}).filter((k) => /^(twi|rol|pv[xyz]?)$/.test(k)),
     };
     {
       // ハンドルの親のスケール（反転は負の値）。極ベクトルの空間の変換に関わる

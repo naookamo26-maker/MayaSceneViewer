@@ -2556,7 +2556,7 @@
    "channels":4,
    "nodes":10,
    "graphNodes":29,
-   "seconds":0.002
+   "seconds":0.0015
   }
  }
 }

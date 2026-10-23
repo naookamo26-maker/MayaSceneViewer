@@ -463,7 +463,7 @@ class TestStage6(unittest.TestCase):
         a = self.scene["animation"]
         g = self.graph["roll_jnt_rotateZ"]
         self.assertEqual(a["curves"][g["curve"]]["type"], "UA")
-        self.assertEqual(g["inputs"]["i"], {"node": self.graph["roll_ctrl"]["id"], "attr": "roll"})
+        self.assertEqual(g["inputs"]["i"], {"node": self.graph["roll_ctrl"]["id"], "attr": "rol"})   # roll は短い名前 rol に読み替える
         self.assertNotIn(g["curve"], [c["curve"] for c in a["channels"]])     # 時間では評価しない
         self.assertEqual((a["start"], a["end"]), (1.0, 48.0))
 
@@ -625,6 +625,24 @@ class TestStage6(unittest.TestCase):
             self.assertIn("■ 設定ファイルで割り当てた自作ノード: myMatrixBlend → multMatrix（mm_custom）", rig_report_file(ma))
         finally:
             shutil.rmtree(d)
+
+    def test_long_attribute_names(self):
+        """ikHandle・コンストレイントの長い属性名（スクリプトで作ったリグ）でつないだ twist・極ベクトルも読む"""
+        body = ('createNode joint -n "a";\ncreateNode joint -n "b" -p "a";\n\tsetAttr ".t" -type "double3" 3 0 1 ;\n'
+                'createNode joint -n "c" -p "b";\n\tsetAttr ".t" -type "double3" 3 0 -1 ;\n'
+                'createNode ikEffector -n "eff" -p "b";\ncreateNode ikHandle -n "ik";\n'
+                '\tsetAttr ".t" -type "double3" 6 0 0 ;\n'
+                'createNode transform -n "ctrl";\n\taddAttr -ci true -k true -sn "elbowTwist" -ln "elbowTwist" -at "double";\n'
+                'createNode ikRPsolver -n "ikRPsolver";\n'
+                'connectAttr "a.message" "ik.handleStartJoint";\nconnectAttr "eff.handlePath[0]" "ik.handleEndEffector";\n'
+                'connectAttr "ikRPsolver.message" "ik.ikSolver";\nconnectAttr "c.tx" "eff.tx";\n'
+                'connectAttr "c.ty" "eff.ty";\nconnectAttr "c.tz" "eff.tz";\n'
+                'connectAttr "ctrl.elbowTwist" "ik.twist";\nconnectAttr "ctrl.translate" "ik.poleVector";\n')
+        _sc, anim = from_text(body)
+        g = {x["name"]: x for x in anim["graph"]}
+        self.assertIn("twi", g["ik"]["inputs"])
+        self.assertIn("pv", g["ik"]["inputs"])
+        self.assertEqual(g["ik"]["ik"]["solver"], "ikRPsolver")
 
     def test_cli(self):
         import io
