@@ -25,6 +25,11 @@
     .O[0] → e_jnt2.ty（ctrl_circle.ty > 2.5 なら 2 倍、そうでなければ 0）、
     .O[1] → unitConversion → e_jnt2.rz（clamp(0, 45, frame) 度）、.O[2] → e_jnt2.tx（7 / 2 = 3）
   * expr_mel: getAttr を使う式（解釈できない）→ e_jnt3.ty
+  キーのあるノードにコンストレイントを付けたときの pairBlend（独自の属性 blendPoint1・blendOrient1 がウェイト）
+  * bp_pv: bp_tgt への pointConstraint。blendPoint1 はキーなし（addAttr の既定値 1 のまま。setAttr は書かれない）
+    → 常にコンストレイントの位置。pairBlend の入力は成分ごと（itx1・itx2 など）
+  * bo_obj: bo_tgt（回転 (0, 0, 60)）への orientConstraint。blendOrient1 にキー 1 → 0 → rz = 60 · ウェイト
+  * bp2_pv: bp_tgt への pointConstraint。blendPoint1 にキー 1 → 0（キーの tx は 0）
 保存時のフレーム（1）の各ノードの値は、リグの計算結果と一致するように書く。
 """
 from __future__ import annotations
@@ -164,6 +169,37 @@ def main():
     node("joint", "e_jnt3", t=(6, 1, -20))
     expression("expr_mel", '.O[0] = `getAttr "ctrl_circle.ty"`;', 0, 1)
 
+    # --- pairBlend（コンストレイント + キー。blendPoint1・blendOrient1） ----------------------
+    def blend_attr(name):
+        A('\taddAttr -ci true -k true -sn "%s" -ln "%s" -dv 1 -smn 0 -smx 1 -at "double";' % (name, name))
+
+    def con(kind, name, parent, target):
+        A('createNode %s -n "%s" -p "%s";' % (kind, name, parent))
+        uid(name)
+        A('\taddAttr -dcb 0 -ci true -k true -sn "w0" -ln "%sW0" -dv 1 -min 0 -at "double";' % target)
+        A('\tsetAttr -k on ".w0";')
+
+    node("transform", "bp_tgt", t=(10, 0, -30))
+    node("joint", "bp_pv", t=(10, 0, -30))
+    blend_attr("blendPoint1")
+    con("pointConstraint", "bp_pv_pointConstraint1", "bp_pv", "bp_tgt")
+    node("pairBlend", "bp_pb")
+    node("joint", "bp2_pv", t=(10, 0, -30))
+    blend_attr("blendPoint1")
+    con("pointConstraint", "bp2_pv_pointConstraint1", "bp2_pv", "bp_tgt")
+    node("pairBlend", "bp2_pb")
+    node("transform", "bo_tgt", t=(0, 0, -30), r=(0, 0, 60))
+    node("joint", "bo_obj", t=(0, 2, -30), r=(0, 0, 60))
+    blend_attr("blendOrient1")
+    con("orientConstraint", "bo_obj_orientConstraint1", "bo_obj", "bo_tgt")
+    node("pairBlend", "bo_pb")
+    anim("TL", "bp_pv_translateX", [(1, 0), (48, 0)])
+    anim("TL", "bp2_pv_translateX", [(1, 0), (48, 0)])
+    anim("TU", "bp2_pv_blendPoint1", [(1, 1), (48, 0)])
+    anim("TA", "bo_obj_rotateZ", [(1, 0), (48, 0)])
+    anim("TU", "bo_obj_blendOrient1", [(1, 1), (48, 0)])
+    anim("TL", "bp_tgt_translateY", [(1, 0), (48, 5)])
+
     anim("TA", "ctrl_circle_rotateY", [(1, 0), (48, 90)])
     anim("TL", "ctrl_circle_translateY", [(1, 0), (48, 5)])
 
@@ -179,6 +215,32 @@ def main():
     C("ctrl_circle_rotateY.o", "ctrl_circle.ry")
     C("ctrl_circle_translateY.o", "ctrl_circle.ty")
     C("ctrl_circle.r", "arm_a.r")
+    C("bp_tgt_translateY.o", "bp_tgt.ty")
+    for pv, pb in (("bp_pv", "bp_pb"), ("bp2_pv", "bp2_pb")):
+        c = pv + "_pointConstraint1"
+        for ax in "xyz":
+            C("%s.ot%s" % (pb, ax), "%s.t%s" % (pv, ax))
+            C("%s.ct%s" % (c, ax), "%s.it%s2" % (pb, ax))
+        C("%s_translateX.o" % pv, "%s.itx1" % pb)
+        C("%s.blendPoint1" % pv, "%s.w" % pb)
+        C("%s.pim" % pv, "%s.cpim" % c)
+        for src, dst in (("t", "tt"), ("rp", "trp"), ("rpt", "trt"), ("pm", "tpm")):
+            C("bp_tgt.%s" % src, "%s.tg[0].%s" % (c, dst))
+        C("%s.w0" % c, "%s.tg[0].tw" % c)
+    C("bp2_pv_blendPoint1.o", "bp2_pv.blendPoint1")
+    C("bo_pb.orz", "bo_obj.rz")
+    C("bo_obj_rotateZ.o", "bo_pb.irz1")
+    C("bo_obj_orientConstraint1.crz", "bo_pb.irz2")
+    C("bo_obj_blendOrient1.o", "bo_obj.blendOrient1")
+    C("bo_obj.blendOrient1", "bo_pb.w")
+    C("bo_obj.pim", "bo_obj_orientConstraint1.cpim")
+    C("bo_obj.jo", "bo_obj_orientConstraint1.cjo")
+    C("bo_obj.ro", "bo_obj_orientConstraint1.cro")
+    C("bo_obj.is", "bo_obj_orientConstraint1.is")
+    C("bo_tgt.r", "bo_obj_orientConstraint1.tg[0].tr")
+    C("bo_tgt.ro", "bo_obj_orientConstraint1.tg[0].tro")
+    C("bo_tgt.pm", "bo_obj_orientConstraint1.tg[0].tpm")
+    C("bo_obj_orientConstraint1.w0", "bo_obj_orientConstraint1.tg[0].tw")
     C("expr_wave.out[0]", "e_jnt1.ty")
     C(":time1.o", "expr_wave.tim")
     C("ctrl_circle.ty", "expr_logic.in[0]")

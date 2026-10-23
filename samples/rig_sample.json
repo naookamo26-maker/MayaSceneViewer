@@ -1902,6 +1902,10 @@
     "name":"arm_ik_poleVectorConstraint1",
     "type":"poleVectorConstraint",
     "dag":-1,
+    "attrs":{
+     "w0":1.0,
+     "elbow_pvW0":1.0
+    },
     "inputs":{
      "cpim":{
       "node":4,
@@ -1956,6 +1960,10 @@
     "name":"wrist_orientConstraint1",
     "type":"orientConstraint",
     "dag":-1,
+    "attrs":{
+     "w0":1.0,
+     "hand_ctrlW0":1.0
+    },
     "inputs":{
      "cro":{
       "node":2,
@@ -2040,6 +2048,8 @@
     "type":"parentConstraint",
     "dag":-1,
     "attrs":{
+     "w0":1.0,
+     "wristW0":1.0,
      "tg[0].tot":[
       2.0,
       0.0,
@@ -2164,7 +2174,10 @@
     "type":"pointConstraint",
     "dag":-1,
     "attrs":{
-     "w0":1.0
+     "w0":1.0,
+     "tgtAW0":1.0,
+     "w1":1.0,
+     "tgtBW1":1.0
     },
     "inputs":{
      "cpim":{
@@ -2266,6 +2279,10 @@
     "name":"scl_jnt_scaleConstraint1",
     "type":"scaleConstraint",
     "dag":-1,
+    "attrs":{
+     "w0":1.0,
+     "scl_ctrlW0":1.0
+    },
     "inputs":{
      "cpim":{
       "node":15,
@@ -2539,7 +2556,7 @@
    "channels":4,
    "nodes":10,
    "graphNodes":29,
-   "seconds":0.0015
+   "seconds":0.0018
   }
  }
 }

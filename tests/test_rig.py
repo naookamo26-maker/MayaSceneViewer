@@ -397,6 +397,16 @@ class TestStage5(unittest.TestCase):
         self.assertNotIn("e_jnt2:", sw)
         self.assertIn("e_jnt3:", sw)
 
+    def test_blend_attrs(self):
+        """コンストレイントとキーを混ぜる pairBlend: 独自の属性の既定値（addAttr -dv）と、カーブの警告"""
+        self.assertEqual(self.graph["bp_pv"]["attrs"]["blendPoint1"], 1.0)        # setAttr がなくても既定値 1
+        self.assertIn("curve", self.graph["bp2_pv"]["inputs"]["blendPoint1"])
+        pb = self.graph["bp_pb"]["inputs"]
+        self.assertEqual(set(pb), {"itx1", "itx2", "ity2", "itz2", "w"})           # 成分ごとの入力
+        w = "\n".join(self.scene["animation"]["warnings"])
+        self.assertNotIn("blendPoint1", w)                                         # リグの入力なので「再生しない」と言わない
+        self.assertNotIn("pairBlend を経由", w)
+
     def test_check_expression(self):
         from ma_viewer.expression import check_expression
         ok = ["float $a = .I[0] * 2;\nif ($a > 1) .O[0] = $a; else .O[0] = clamp(0, 1, frame);",

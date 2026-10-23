@@ -60,6 +60,7 @@ _STANDARD_ATTRS = _CHANNEL_KEYS | {"jo", "jox", "joy", "joz", "ra", "rax", "ray"
 # _CHANNEL_KEYS のうち、値は rest_entry で渡すもの（offsetParentMatrix も含む）
 
 _SETATTR_RE = re.compile(r"setAttr\b([^;]*);")
+_ADDATTR_RE = re.compile(r"addAttr\b([^;]*);")
 _TG_RE = re.compile(r"^tg\[(\d+)\]\.(\w+)$")
 _RANGE_RE = re.compile(r"^(\w+)\[(\d+):(\d+)\](.*)$")
 
@@ -248,12 +249,40 @@ def _value(tok: str):
     return R.to_float(tok)
 
 
+def _addattr_default(rest: str):
+    """addAttr の (短い名前, 長い名前, 既定値 -dv)。既定値のない（数値でない）属性は None"""
+    toks = R.tokenize(rest)
+    opts, _pos = R.parse_flags(toks, ["-sn", "-shortName", "-ln", "-longName", "-dv", "-defaultValue", "-at",
+                                      "-attributeType", "-dt", "-dataType", "-p", "-parent", "-nc", "-numberOfChildren",
+                                      "-min", "-max", "-smn", "-smx", "-en", "-enumName", "-h", "-k", "-ci", "-dcb"])
+    dv = opts.get("-dv", opts.get("-defaultValue"))
+    sn = opts.get("-sn") or opts.get("-shortName")
+    ln = opts.get("-ln") or opts.get("-longName")
+    if not isinstance(dv, str) or not (sn or ln):
+        return None
+    try:
+        return sn, ln, _value(dv)
+    except (ValueError, TypeError):
+        return None
+
+
 def parse_attrs(text: str, node: MaNode, skip=()) -> Dict[str, object]:
-    """ノードのブロック（span）の setAttr から、数値の属性を読む（ノード名つきのプラグは対象外）。"""
+    """ノードのブロック（span）の setAttr から、数値の属性を読む（ノード名つきのプラグは対象外）。
+
+    独自の属性（addAttr）の既定値（-dv）も入れる。Maya は既定値のままの属性を setAttr で書かないため
+    （コンストレイントを付けたときにできる blendPoint1 などのウェイト）。
+    """
     out: Dict[str, object] = {}
     if node.span is None or not text:
         return out
     a, b = node.span
+    for m in _ADDATTR_RE.finditer(text, a, b):
+        d = _addattr_default(m.group(1))
+        if d is not None:
+            sn, ln, dv = d
+            for name in (sn, ln):
+                if name and _base(name) not in skip:
+                    out[name] = dv
     for m in _SETATTR_RE.finditer(text, a, b):
         sa = R.parse_setattr(m.group(1))
         if sa is None or not sa.plug.startswith(".") or sa.type == "string":

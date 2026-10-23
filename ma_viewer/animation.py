@@ -257,7 +257,7 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         if dattr in CHANNELS:
             targets.setdefault(id(src), []).append((ni, dattr))
             curve_nodes[id(src)] = src
-        else:
+        elif id(src) not in graph_curves:                 # 独自の属性（blendPoint1 など）はリグの入力なら使う
             skipped_attr[dattr] = skipped_attr.get(dattr, 0) + 1
 
     kept_nodes = {i: n for n in ms.nodes for i in [out_index.get(id(n))] if i is not None}

@@ -760,8 +760,20 @@ export class RigEvaluator {
 
   pairBlend(id) {
     const w = this.num(id, 'w', 1);
-    const t1 = this.vec(id, 'it1'), t2 = this.vec(id, 'it2');
-    const r1 = this.vec(id, 'ir1'), r2 = this.vec(id, 'ir2');
+    // 入力の成分は「軸 → 番号」の順の名前（itx1・irz2 など）。3 つ組（it1）の接続・値もある
+    const g = this.byId.get(id);
+    const inputs = g.inputs || {}, attrs = g.attrs || {};
+    const tri = (b, k, angle) => {
+      const whole = this.vec(id, `${b}${k}`);
+      return XYZ.map((ax, i) => {
+        const key = `${b}${ax}${k}`;
+        if (inputs[key]) return this.num(id, key, 0);
+        if (typeof attrs[key] === 'number') return attrs[key] * (angle ? D2R : 1);
+        return whole[i];
+      });
+    };
+    const t1 = tri('it', 1, false), t2 = tri('it', 2, false);
+    const r1 = tri('ir', 1, true), r2 = tri('ir', 2, true);
     // 成分ごとのモード: 0 = 混ぜる、1 = 入力 1 だけ、2 = 入力 2 だけ
     const mode = (name) => Math.round(this.num(id, name, 0));
     const pick = (a, b, m) => (m === 1 ? a : m === 2 ? b : a * (1 - w) + b * w);

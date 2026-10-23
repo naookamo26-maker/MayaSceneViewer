@@ -196,7 +196,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 | expression | 式（.ixp）を解釈して評価する。入力 .I[n]・出力 .O[n]・frame・time・変数（$x。float / int）・代入（= += -= *= /= ++ --）・四則演算と %（整数どうしの割り算は切り捨て）・比較・論理・? :・if / else・for・while・数学関数（sin・cos・tan・sind など度の版・asin・acos・atan・atan2・abs・sqrt・pow・exp・log・floor・ceil・sign・min・max・clamp・smoothstep・linstep・deg_to_rad・rad_to_deg・fmod・hypot など）。フレームごとに最初から評価する。frame・time を使う式があれば、キーがなくてもタイムラインを出す |
 | そのほか | curveInfo（カーブの長さ .al。ストレッチの計算などに使う）、displayLayer（値を読むだけ） |
 
-- ウェイトはカーブで動かせます（スペースの切り替えなど）。コントローラーの独自の属性（IK/FK の切り替えなど）も、カーブや値をそのまま使います。
+- ウェイトはカーブで動かせます（スペースの切り替えなど）。コントローラーの独自の属性（IK/FK の切り替えなど）も、カーブや値をそのまま使います。値が書かれていない独自の属性は、addAttr の既定値（-dv）を使います（キーのあるノードにコンストレイントを付けたときにできる blendPoint1・blendOrient1・blendParent1 など。pairBlend のウェイトになる）。
 - 未対応（警告を出し、そこから先はファイルの値）: tangent・normal・geometry などほかのコンストレイント、ikSpringSolver・HumanIK、解釈できない expression（MEL コマンド・getAttr などの呼び出し、文字列、ベクトル、rand などの乱数、.I/.O 以外の属性の参照、フレームをまたいで値を持ち越すグローバル変数）、ドリブンキー、blendMatrix・pickMatrix などほかの行列ノード、cluster など skinCluster 以外のデフォーマで動くカーブ、プラグインのノード。
 - 循環（自分の結果を自分で使う接続）に当たったら、そこはファイルの値で打ち切り、警告を出します。
 - **値を求められないノードの推定（試作）**: 未対応のノードの影響を受けるノード（その子や、それをターゲットにするコンストレイントで動くノードも含む）は、.ma に値が残っていないため、そのままでは原点に集まります。バインドポーズの情報（skinCluster の .pm・dagPose・ジョイントの .bps）があるノードは、値を求められた一番近い祖先からの相対をバインドポーズのとおりに保って表示します（形を保ったまま、確かな部分の動きについていく）。ジョイントの表示（J）で、推定したノードは薄紫、推定もできないノード（バインドポーズの情報がない）は灰色になり、選択したノードの情報に理由を出します。推定では、そのノードの求められた成分（例: キーのある移動）も使いません。

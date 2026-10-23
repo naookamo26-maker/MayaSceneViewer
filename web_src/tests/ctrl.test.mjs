@@ -124,3 +124,17 @@ test('上級ツイストの up 軸: Closest Y は近い方（下向きのまま�
     assert.ok(nearVec(axis(rig.world(idx(`spE_${i}`)), 1), new Vector3(0, 1, 0)), `spE_${i}`);
   }
 });
+
+test('pairBlend（コンストレイント + キー）: 成分ごとの入力と、blendPoint1・blendOrient1 のウェイト', () => {
+  for (const f of [1, 12, 24, 36, 48]) {
+    const rig = at(data, f);
+    const ty = 5 * (f - 1) / 47;                           // bp_tgt.ty（キー 0 → 5）
+    const w = 1 - (f - 1) / 47;                            // blendPoint1・blendOrient1 のキー 1 → 0
+    const p = (n) => new Vector3().setFromMatrixPosition(rig.world(idx(n)));
+    // キーのない blendPoint1 は既定値 1（addAttr -dv 1）→ いつもコンストレイントの位置
+    assert.ok(nearVec(p('bp_pv'), new Vector3(10, ty, -30)), `フレーム ${f}: bp_pv ${p('bp_pv').toArray()}`);
+    // キーのある blendPoint1: キーの位置 (0, 0, z) とコンストレイントの位置を混ぜる（z は両方 -30 の成分ごとの入力）
+    assert.ok(nearVec(p('bp2_pv'), new Vector3(10 * w, ty * w, -30 * w)), `フレーム ${f}: bp2_pv ${p('bp2_pv').toArray()}`);
+    assert.ok(near(rig.chan(idx('bo_obj')).r[2], 60 * w, 1e-6), `フレーム ${f}: bo_obj.rz ${rig.chan(idx('bo_obj')).r[2]}`);
+  }
+});

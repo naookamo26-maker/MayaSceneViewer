@@ -2194,6 +2194,350 @@
    "drivenBy":[
     "ty ← expr_mel（expression）"
    ]
+  },
+  {
+   "name":"bp_tgt",
+   "path":"|bp_tgt",
+   "type":"transform",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    10.0,
+    0.0,
+    -30.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    10.0,
+    0.0,
+    -30.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     10.0,
+     0.0,
+     -30.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   },
+   "drivenBy":[
+    "ty ← bp_tgt_translateY（animCurveTL）"
+   ]
+  },
+  {
+   "name":"bp_pv",
+   "path":"|bp_pv",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    10.0,
+    0.0,
+    -30.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    10.0,
+    0.0,
+    -30.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     10.0,
+     0.0,
+     -30.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "tx ← bp_pb（pairBlend）",
+    "ty ← bp_pb（pairBlend）",
+    "tz ← bp_pb（pairBlend）"
+   ]
+  },
+  {
+   "name":"bp2_pv",
+   "path":"|bp2_pv",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    10.0,
+    0.0,
+    -30.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    10.0,
+    0.0,
+    -30.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     10.0,
+     0.0,
+     -30.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "tx ← bp2_pb（pairBlend）",
+    "ty ← bp2_pb（pairBlend）",
+    "tz ← bp2_pb（pairBlend）"
+   ]
+  },
+  {
+   "name":"bo_tgt",
+   "path":"|bo_tgt",
+   "type":"transform",
+   "parent":-1,
+   "matrix":[
+    0.5,
+    0.8660254038,
+    0.0,
+    0.0,
+    -0.8660254038,
+    0.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    -30.0,
+    1.0
+   ],
+   "worldMatrix":[
+    0.5,
+    0.8660254038,
+    0.0,
+    0.0,
+    -0.8660254038,
+    0.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    -30.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     -30.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     60.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   }
+  },
+  {
+   "name":"bo_obj",
+   "path":"|bo_obj",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    0.5,
+    0.8660254038,
+    0.0,
+    0.0,
+    -0.8660254038,
+    0.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    2.0,
+    -30.0,
+    1.0
+   ],
+   "worldMatrix":[
+    0.5,
+    0.8660254038,
+    0.0,
+    0.0,
+    -0.8660254038,
+    0.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    2.0,
+    -30.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     2.0,
+     -30.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     60.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "rz ← bo_pb（pairBlend）"
+   ]
   }
  ],
  "meshes":[],
@@ -2609,8 +2953,8 @@
   "e_jnt3: ty ← expr_mel（expression） が接続で決まるため、ファイルに値がありません。バインドポーズの情報もないため、既定値（移動 0・回転 0）で表示しています。"
  ],
  "stats":{
-  "nodes":33,
-  "joints":20,
+  "nodes":38,
+  "joints":23,
   "meshes":0,
   "curves":11,
   "vertices":0,
@@ -2620,7 +2964,7 @@
   "textures":0,
   "texturesMissing":0,
   "bindPoseNodes":0,
-  "drivenNodes":5
+  "drivenNodes":9
  },
  "animation":{
   "fps":24.0,
@@ -2633,9 +2977,69 @@
   "current":1.0,
   "curves":[
    {
+    "name":"bp_pv_translateX",
+    "type":"TL",
+    "offset":0,
+    "count":2,
+    "tangent":2,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
+    "name":"bp2_pv_translateX",
+    "type":"TL",
+    "offset":2,
+    "count":2,
+    "tangent":2,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
+    "name":"bp2_pv_blendPoint1",
+    "type":"TU",
+    "offset":4,
+    "count":2,
+    "tangent":2,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
+    "name":"bo_obj_rotateZ",
+    "type":"TA",
+    "offset":6,
+    "count":2,
+    "tangent":2,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
+    "name":"bo_obj_blendOrient1",
+    "type":"TU",
+    "offset":8,
+    "count":2,
+    "tangent":2,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
+    "name":"bp_tgt_translateY",
+    "type":"TL",
+    "offset":10,
+    "count":2,
+    "tangent":2,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
     "name":"ctrl_circle_rotateY",
     "type":"TA",
-    "offset":0,
+    "offset":12,
     "count":2,
     "tangent":2,
     "weighted":false,
@@ -2645,7 +3049,7 @@
    {
     "name":"ctrl_circle_translateY",
     "type":"TL",
-    "offset":2,
+    "offset":14,
     "count":2,
     "tangent":2,
     "weighted":false,
@@ -2657,12 +3061,17 @@
    {
     "node":0,
     "attr":"ry",
-    "curve":0
+    "curve":6
    },
    {
     "node":0,
     "attr":"ty",
-    "curve":1
+    "curve":7
+   },
+   {
+    "node":33,
+    "attr":"ty",
+    "curve":5
    }
   ],
   "nodes":[
@@ -3410,6 +3819,146 @@
      0.0,
      0.0
     ]
+   },
+   {
+    "node":33,
+    "joint":false,
+    "ro":0,
+    "t":[
+     10.0,
+     0.0,
+     -30.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":34,
+    "joint":true,
+    "ro":0,
+    "t":[
+     10.0,
+     0.0,
+     -30.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":35,
+    "joint":true,
+    "ro":0,
+    "t":[
+     10.0,
+     0.0,
+     -30.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":36,
+    "joint":false,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     -30.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     60.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":37,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     2.0,
+     -30.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     60.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
    }
   ],
   "graph":[
@@ -3420,10 +3969,10 @@
     "dag":0,
     "inputs":{
      "ry":{
-      "curve":0
+      "curve":6
      },
      "ty":{
-      "curve":1
+      "curve":7
      }
     }
    },
@@ -3827,6 +4376,300 @@
     "name":"e_jnt3",
     "type":"joint",
     "dag":32
+   },
+   {
+    "id":32,
+    "name":"bp_tgt",
+    "type":"transform",
+    "dag":33,
+    "inputs":{
+     "ty":{
+      "curve":5
+     }
+    }
+   },
+   {
+    "id":33,
+    "name":"bp_pv",
+    "type":"joint",
+    "dag":34,
+    "attrs":{
+     "blendPoint1":1.0
+    },
+    "inputs":{
+     "tx":{
+      "node":35,
+      "attr":"otx"
+     },
+     "ty":{
+      "node":35,
+      "attr":"oty"
+     },
+     "tz":{
+      "node":35,
+      "attr":"otz"
+     }
+    }
+   },
+   {
+    "id":34,
+    "name":"bp_pv_pointConstraint1",
+    "type":"pointConstraint",
+    "dag":-1,
+    "attrs":{
+     "w0":1.0,
+     "bp_tgtW0":1.0
+    },
+    "inputs":{
+     "cpim":{
+      "node":33,
+      "attr":"pim"
+     },
+     "tg[0].tt":{
+      "node":32,
+      "attr":"t"
+     },
+     "tg[0].trp":{
+      "node":32,
+      "attr":"rp"
+     },
+     "tg[0].trt":{
+      "node":32,
+      "attr":"rpt"
+     },
+     "tg[0].tpm":{
+      "node":32,
+      "attr":"pm"
+     },
+     "tg[0].tw":{
+      "node":34,
+      "attr":"w0"
+     }
+    },
+    "driven":34,
+    "targets":[
+     {
+      "index":0,
+      "node":32
+     }
+    ]
+   },
+   {
+    "id":35,
+    "name":"bp_pb",
+    "type":"pairBlend",
+    "dag":-1,
+    "inputs":{
+     "itx2":{
+      "node":34,
+      "attr":"ctx"
+     },
+     "ity2":{
+      "node":34,
+      "attr":"cty"
+     },
+     "itz2":{
+      "node":34,
+      "attr":"ctz"
+     },
+     "itx1":{
+      "curve":0
+     },
+     "w":{
+      "node":33,
+      "attr":"blendPoint1"
+     }
+    }
+   },
+   {
+    "id":36,
+    "name":"bp2_pv",
+    "type":"joint",
+    "dag":35,
+    "attrs":{
+     "blendPoint1":1.0
+    },
+    "inputs":{
+     "tx":{
+      "node":38,
+      "attr":"otx"
+     },
+     "ty":{
+      "node":38,
+      "attr":"oty"
+     },
+     "tz":{
+      "node":38,
+      "attr":"otz"
+     },
+     "blendPoint1":{
+      "curve":2
+     }
+    }
+   },
+   {
+    "id":37,
+    "name":"bp2_pv_pointConstraint1",
+    "type":"pointConstraint",
+    "dag":-1,
+    "attrs":{
+     "w0":1.0,
+     "bp_tgtW0":1.0
+    },
+    "inputs":{
+     "cpim":{
+      "node":36,
+      "attr":"pim"
+     },
+     "tg[0].tt":{
+      "node":32,
+      "attr":"t"
+     },
+     "tg[0].trp":{
+      "node":32,
+      "attr":"rp"
+     },
+     "tg[0].trt":{
+      "node":32,
+      "attr":"rpt"
+     },
+     "tg[0].tpm":{
+      "node":32,
+      "attr":"pm"
+     },
+     "tg[0].tw":{
+      "node":37,
+      "attr":"w0"
+     }
+    },
+    "driven":35,
+    "targets":[
+     {
+      "index":0,
+      "node":32
+     }
+    ]
+   },
+   {
+    "id":38,
+    "name":"bp2_pb",
+    "type":"pairBlend",
+    "dag":-1,
+    "inputs":{
+     "itx2":{
+      "node":37,
+      "attr":"ctx"
+     },
+     "ity2":{
+      "node":37,
+      "attr":"cty"
+     },
+     "itz2":{
+      "node":37,
+      "attr":"ctz"
+     },
+     "itx1":{
+      "curve":1
+     },
+     "w":{
+      "node":36,
+      "attr":"blendPoint1"
+     }
+    }
+   },
+   {
+    "id":39,
+    "name":"bo_tgt",
+    "type":"transform",
+    "dag":36
+   },
+   {
+    "id":40,
+    "name":"bo_obj",
+    "type":"joint",
+    "dag":37,
+    "attrs":{
+     "blendOrient1":1.0
+    },
+    "inputs":{
+     "rz":{
+      "node":42,
+      "attr":"orz"
+     },
+     "blendOrient1":{
+      "curve":4
+     }
+    }
+   },
+   {
+    "id":41,
+    "name":"bo_obj_orientConstraint1",
+    "type":"orientConstraint",
+    "dag":-1,
+    "attrs":{
+     "w0":1.0,
+     "bo_tgtW0":1.0
+    },
+    "inputs":{
+     "cpim":{
+      "node":40,
+      "attr":"pim"
+     },
+     "cjo":{
+      "node":40,
+      "attr":"jo"
+     },
+     "cro":{
+      "node":40,
+      "attr":"ro"
+     },
+     "is":{
+      "node":40,
+      "attr":"is"
+     },
+     "tg[0].tr":{
+      "node":39,
+      "attr":"r"
+     },
+     "tg[0].tro":{
+      "node":39,
+      "attr":"ro"
+     },
+     "tg[0].tpm":{
+      "node":39,
+      "attr":"pm"
+     },
+     "tg[0].tw":{
+      "node":41,
+      "attr":"w0"
+     }
+    },
+    "driven":37,
+    "targets":[
+     {
+      "index":0,
+      "node":39
+     }
+    ]
+   },
+   {
+    "id":42,
+    "name":"bo_pb",
+    "type":"pairBlend",
+    "dag":-1,
+    "inputs":{
+     "irz1":{
+      "curve":3
+     },
+     "irz2":{
+      "node":41,
+      "attr":"crz"
+     },
+     "w":{
+      "node":40,
+      "attr":"blendOrient1"
+     }
+    }
    }
   ],
   "fallback":[],
@@ -3835,18 +4678,18 @@
   ],
   "times":{
    "dtype":"float32",
-   "count":4,
-   "data":"AACAPwAAQEIAAIA/AABAQg=="
+   "count":16,
+   "data":"AACAPwAAQEIAAIA/AABAQgAAgD8AAEBCAACAPwAAQEIAAIA/AABAQgAAgD8AAEBCAACAPwAAQEIAAIA/AABAQg=="
   },
   "values":{
    "dtype":"float32",
-   "count":4,
-   "data":"AAAAAAAAtEIAAAAAAACgQA=="
+   "count":16,
+   "data":"AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAKBAAAAAAAAAtEIAAAAAAACgQA=="
   },
   "tangentTypes":{
    "dtype":"uint8",
-   "count":8,
-   "data":"AAAAAAAAAAA="
+   "count":32,
+   "data":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
   },
   "fixedTangents":{
    "dtype":"float32",
@@ -3859,12 +4702,12 @@
    "アニメーション: 値を求められないノードのうち 0 個はバインドポーズの形で推定して表示し、1 個は推定できないためファイルの値（既定値）のまま表示します。"
   ],
   "stats":{
-   "curves":2,
-   "keys":4,
-   "channels":2,
-   "nodes":16,
-   "graphNodes":32,
-   "seconds":0.0011
+   "curves":8,
+   "keys":16,
+   "channels":3,
+   "nodes":20,
+   "graphNodes":43,
+   "seconds":0.0016
   }
  }
 }

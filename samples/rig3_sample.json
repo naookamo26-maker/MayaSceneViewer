@@ -2598,6 +2598,8 @@
     "type":"aimConstraint",
     "dag":-1,
     "attrs":{
+     "w0":1.0,
+     "look_tgtW0":1.0,
      "wut":1.0
     },
     "inputs":{
@@ -2688,6 +2690,8 @@
     "type":"aimConstraint",
     "dag":-1,
     "attrs":{
+     "w0":1.0,
+     "look_tgtW0":1.0,
      "u":[
       0.0,
       0.0,
