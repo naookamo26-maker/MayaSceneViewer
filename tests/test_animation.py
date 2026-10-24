@@ -245,6 +245,17 @@ class TestCameraAimAndDistance(unittest.TestCase):
         self.assertAlmostEqual(shape["attrs"]["rol"], math.radians(20))
         self.assertAlmostEqual(self.graph["roll_ctrl"]["attrs"]["rol"], math.radians(20))
 
+    def test_excerpt(self):
+        # 調査用の抜き出し: lookAt と子孫のブロック・接続・1 段上流（twist のカーブ）
+        from ma_viewer.excerpt import excerpt
+        text = excerpt(os.path.join(ROOT, "samples", "camaim_sample.ma"), ["child_roll_group"])
+        self.assertIn('createNode camera -n "child_roll_camShape" -p "child_roll_cam";', text)
+        self.assertIn('createNode animCurveTA -n "child_roll_cam_twist";', text)
+        self.assertIn('connectAttr "child_roll_cam.twist" "child_roll_group.tws";', text)
+        self.assertNotIn('"aim_cam"', text)                              # ほかの lookAt は入れない
+        everything = excerpt(os.path.join(ROOT, "samples", "camaim_sample.ma"))
+        self.assertIn('createNode lookAt -n "cam_aim_group";', everything)  # 省略時は lookAt をすべて
+
     def test_distance_dimension(self):
         g = self.graph["distanceDimensionShape1"]
         self.assertEqual(sorted(g["inputs"]), ["ep", "sp"])

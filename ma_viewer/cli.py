@@ -6,6 +6,7 @@
   python -m ma_viewer export scene.ma -o scene.json   共通 JSON に変換
   python -m ma_viewer info scene.ma      内容の概要と警告を表示
   python -m ma_viewer rig scene.ma       リグの診断（評価できないノードと、IK の極ベクトルなどの上流）
+  python -m ma_viewer excerpt scene.ma [ノード名...]   指定したノード（省略時は lookAt）の部分だけを抜き出す
 """
 from __future__ import annotations
 
@@ -111,6 +112,18 @@ def cmd_rig(args) -> int:
     return 0
 
 
+def cmd_excerpt(args) -> int:
+    from .excerpt import excerpt
+    text = excerpt(args.input, args.nodes)
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+        print("書き出しました: %s" % args.output)
+    else:
+        print(text)
+    return 0
+
+
 def cmd_view(args) -> int:
     from .app import main as app_main
     return app_main([args.input] if args.input else [])
@@ -130,6 +143,10 @@ def main(argv=None) -> int:
     pr = sub.add_parser("rig", help="リグの診断（評価できないノードと IK の上流）")
     pr.add_argument("input")
     pr.add_argument("-o", "--output", help="テキストファイルに書き出す")
+    px = sub.add_parser("excerpt", help="指定したノード（省略時は lookAt）とその子孫・接続だけを抜き出す")
+    px.add_argument("input")
+    px.add_argument("nodes", nargs="*", help="ノードの名前（省略時は lookAt をすべて）")
+    px.add_argument("-o", "--output", help="テキストファイルに書き出す")
     pv = sub.add_parser("view", help="ビューアを起動")
     pv.add_argument("input", nargs="?")
     args = p.parse_args(argv)
@@ -139,6 +156,8 @@ def main(argv=None) -> int:
         return cmd_info(args)
     if args.cmd == "rig":
         return cmd_rig(args)
+    if args.cmd == "excerpt":
+        return cmd_excerpt(args)
     if args.cmd == "view":
         return cmd_view(args)
     from .app import main as app_main

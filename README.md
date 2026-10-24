@@ -85,6 +85,7 @@ python -m ma_viewer info scene.ma              # 内容の概要と警告を表�
 python -m ma_viewer export scene.ma -o out.json   # 共通 JSON に変換（アニメーションも含む。--no-animation で除く）
 python -m ma_viewer view scene.ma              # ビューアで開く
 python -m ma_viewer rig scene.ma               # リグの診断（評価できないノードと、IK の極ベクトルなどの上流）。-o で保存
+python -m ma_viewer excerpt scene.ma [ノード名...]   # 指定したノード（省略時は lookAt）とその子孫・接続・1 段上流だけを抜き出す（不具合の報告用）。-o で保存
 ```
 
 **リグの診断**: 再生した姿勢が Maya と違うとき（IK のアップベクターが反転するなど）の原因探しに使います。Qt 版は［表示］→［リグの診断…］です。次の内容を一覧にします。
@@ -382,7 +383,7 @@ bundle は ES モジュールではなく、通常の `<script>` で読める形
 
 | 項目 | 確認方法 | 結果 |
 |---|---|---|
-| 自動テストの全体 | Python 142 件・Node.js 137 件・Qt 16 本（仮想ディスプレイ上） | すべて合格 |
+| 自動テストの全体 | Python 143 件・Node.js 137 件・Qt 16 本（仮想ディスプレイ上） | すべて合格 |
 | .ma パーサ・行列計算・抽出 | 単体テスト（test_python.py ほか） | 合格 |
 | three.js のスキン変形・ポーズ計算 | Maya の式で計算した期待値と比較（Node.js。8 インフルエンス・上位 8 への絞り込みを含む） | 誤差 1e-4 未満で一致 |
 | exe 化 | PyInstaller で 1 ファイルの実行ファイルを作り、ソースのない別フォルダで起動。一時展開フォルダから画面ファイルを読み、シーン・テクスチャを表示できることを --selftest で確認（Linux で確認） | 合格 |
