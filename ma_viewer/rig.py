@@ -555,16 +555,18 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
             if is_dag and any(_base(k) in _CHANNEL_KEYS for k in inputs):
                 moving.add(out_index[id(n)])
         if n.type in CONSTRAINT_TYPES:
-            driven = out_index.get(id(n.parent)) if n.parent is not None else None
+            # 動かされるノード: Maya はどのコンストレイントでも「動かされるノード.pim → .cpim」とつなぐので、それを使う。
+            # なければ親（ふつうのコンストレイントは動かされるノードの子。lookAt は逆にカメラの親なので親は使えない）
+            driven = out_index.get(id(n.parent)) if n.parent is not None and n.type != "lookAt" else None
             for key, (src, _sattr) in n.inputs.items():
                 if n.type == "poleVectorConstraint" and key in ("crp", "ps") and id(src) in out_index:
                     entry["pivot"] = out_index[id(src)]
-                elif _base(key) in ("cpim",) and n.parent is None and id(src) in out_index:
+                elif _base(key) in ("cpim",) and id(src) in out_index:
                     driven = out_index[id(src)]
             targets = {}
             for key, (src, _sattr) in n.inputs.items():
                 m = _TG_RE.match(key)
-                if m and m.group(2) in ("tpm", "tt", "tr", "ts", "tpm") and id(src) in gid:
+                if m and m.group(2) in ("tpm", "tt", "ttx", "tty", "ttz", "tr", "ts") and id(src) in gid:
                     targets[int(m.group(1))] = gid[id(src)]
             entry["driven"] = driven if driven is not None else -1
             entry["targets"] = [{"index": i, "node": targets[i]} for i in sorted(targets)]
