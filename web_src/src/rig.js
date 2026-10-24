@@ -36,6 +36,8 @@ const DEFAULTS = {
   ikHandle: { pv: [0, 0, 1], twi: 0, ikb: 1 },              // Maya の既定の極ベクトルは Z 軸（既定値はファイルに書かれない）
   scaleConstraint: { o: [1, 1, 1] },
   aimConstraint: { a: [1, 0, 0], u: [0, 1, 0], wu: [0, 1, 0], wut: 3, o: [0, 0, 0] },
+  // カメラとエイムの lookAt: カメラは −Z を向くので aim の既定は (0, 0, −1)
+  lookAt: { a: [0, 0, -1], u: [0, 1, 0], wu: [0, 1, 0], wut: 3, o: [0, 0, 0], tws: 0, twist: 0 },
   decomposeMatrix: { ro: 0 },
   composeMatrix: { it: [0, 0, 0], ir: [0, 0, 0], is: [1, 1, 1], ish: [0, 0, 0], iro: 0, uer: 1 },
   quatToEuler: { iq: [0, 0, 0, 1], iro: 0 },
@@ -71,7 +73,8 @@ const OUTPUTS = {
   unitConversion: /^o$/, multiplyDivide: /^o[xyz]?$/, plusMinusAverage: /^o(1|2[xy]?|3[xyz]?)$/,
   reverse: /^o[xyz]?$/, condition: /^oc[rgb]?$/, blendColors: /^op[rgb]?$/, pairBlend: /^o[tr][xyz]?$/,
   pointConstraint: /^ct[xyz]?$/, poleVectorConstraint: /^ct[xyz]?$/, orientConstraint: /^cr[xyz]?$/,
-  parentConstraint: /^c[tr][xyz]?$/, scaleConstraint: /^cs[xyz]?$/, aimConstraint: /^cr[xyz]?$/,
+  parentConstraint: /^c[tr][xyz]?$/, scaleConstraint: /^cs[xyz]?$/, aimConstraint: /^cr[xyz]?$/, lookAt: /^cr[xyz]?$/,
+  distanceDimShape: /^(dist|distance)$/,
   quatToEuler: /^ort[xyz]?$/, eulerToQuat: /^oq[xyzw]?$/, quatProd: /^oq[xyzw]?$/, quatInvert: /^oq[xyzw]?$/,
   quatNormalize: /^oq[xyzw]?$/, quatSlerp: /^oq[xyzw]?$/, curveInfo: /^(al|arcLength)$/,
   nurbsCurve: /^(ws|worldSpace|l|local)(\[\d+\])?$/, skinCluster: /^og(\[\d+\])?$/, tweak: /^og(\[\d+\])?$/,
@@ -99,6 +102,7 @@ function isAngleAttr(type, attr) {
   switch (type) {
     case 'pairBlend': return /^ir[12][xyz]?$/.test(attr);
     case 'orientConstraint': case 'aimConstraint': return /^o[xyz]?$/.test(attr);
+    case 'lookAt': return /^(o[xyz]?|tws|twist)$/.test(attr);
     case 'composeMatrix': return /^ir[xyz]?$/.test(attr);
     case 'eulerToQuat': return /^irt[xyz]?$/.test(attr);
     case 'parentConstraint': return /^tg\[\d+\]\.tor[xyz]?$/.test(attr);
@@ -576,6 +580,11 @@ export class RigEvaluator {
     return [...new Set(keys.map((k) => re.exec(k)).filter(Boolean).map((m) => +m[1]))].sort((a, b) => a - b);
   }
 
+  /** 属性の名前の候補（短い名前・長い名前）のうち、接続か値があるもの（なければ最初の名前） */
+  attrName(g, names) {
+    return names.find((k) => (g.inputs && g.inputs[k]) || (g.attrs && k in g.attrs)) || names[0];
+  }
+
   num(id, attr, def = 0) {
     const v = this.plug(id, attr);
     return typeof v === 'number' && Number.isFinite(v) ? v : def;
@@ -607,9 +616,16 @@ export class RigEvaluator {
       case 'blendColors': o = this.blendColors(id); break;
       case 'pairBlend': o = this.pairBlend(id); break;
       case 'pointConstraint': case 'orientConstraint': case 'parentConstraint':
-      case 'scaleConstraint': case 'poleVectorConstraint': case 'aimConstraint':
+      case 'scaleConstraint': case 'poleVectorConstraint': case 'aimConstraint': case 'lookAt':
         o = this.constraint(g);
         break;
+      case 'distanceDimShape': {
+        // 距離の寸法: 開始点（.startPoint）と終了点（.endPoint。ふつうはロケーターの worldPosition）の距離
+        const p = (names) => new Vector3(...this.vec(id, this.attrName(g, names)));
+        const d = p(['sp', 'startPoint']).distanceTo(p(['ep', 'endPoint']));
+        o = { dist: d, distance: d };
+        break;
+      }
       case 'multMatrix': {
         // Maya の o = i[0] · i[1] · …（行ベクトル）は、three.js では … · i[1] · i[0]
         const out = new Matrix4();
@@ -1182,7 +1198,8 @@ export class RigEvaluator {
         const q = averageQuat(list.map(({ m, w }) => ({ q: rotationOf(m), w })));
         return { ...expand('ct', toTranslate(pos), XYZ), ...expand('cr', toRotate(q), XYZ) };
       }
-      case 'aimConstraint': {
+      case 'aimConstraint': case 'lookAt': {
+        // lookAt（カメラとエイム）も同じ。twist で視線のまわりに回す（world up がシーンの上・ベクトルのとき）
         // 動かされるノードの回転ピボットから、ターゲットの方へ aim ベクトル（.a）を向け、up ベクトル（.u）を
         // world up（.wut: 0 シーンの上・1 オブジェクト・2 オブジェクトの回転・3 ベクトル・4 なし）の側に向ける
         const rest = this.rest(driven) || {};
@@ -1222,6 +1239,10 @@ export class RigEvaluator {
           const frame = (x, y) => new Matrix4().makeBasis(x, y, x.clone().cross(y));
           uPerp.normalize(); upPerp.normalize();
           q = new Quaternion().setFromRotationMatrix(frame(dir, upPerp).multiply(frame(a, uPerp).transpose()));
+        }
+        if (g.type === 'lookAt' && (wut === 0 || wut === 3)) {
+          const tw = this.num(id, this.attrName(g, ['tws', 'twist']), 0);          // ラジアン
+          if (Math.abs(tw) > 1e-12) q = new Quaternion().setFromAxisAngle(dir, tw).multiply(q);
         }
         return expand('cr', toRotate(q.multiply(radQuat(this.vec(id, 'o')))), XYZ);
       }
