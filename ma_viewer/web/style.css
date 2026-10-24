@@ -497,6 +497,12 @@ body.drag-over #viewport { box-shadow: inset 0 0 0 2px var(--joint); }
 .progress i { display: block; height: 100%; width: 0; background: var(--joint); }
 /* 割合が分からないときは、帯を半分の長さで止めて表示する（アニメーションはしない） */
 .progress.indeterminate i { width: 40%; margin-left: 30%; opacity: 0.6; }
+/* 2 段目（いま読んでいるファイル）: 全体のバーより細く、控えめな色 */
+#loading-sub { margin-top: 12px; }
+#loading-sub[hidden] { display: none; }
+.progress.sub { height: 2px; margin-bottom: 6px; }
+.progress.sub i { background: var(--text-dim); }
+#loading-sub-text { margin: 0; font-size: 11px; }
 
 /* ---- カメラシーケンサ（ビューポートの上。下端のタイムラインと離して、操作を取り違えないようにする） ---- */
 #sequencer {

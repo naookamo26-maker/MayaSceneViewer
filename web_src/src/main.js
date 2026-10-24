@@ -1888,7 +1888,7 @@ window.mayaViewer = {
   setFrame(f) { app.scrubTo(+f); return app.frame; },
   play() { app.play(); },
   pause() { app.pause(); },
-  showLoading(text, frac) { app.ui.setEmpty(false); app.ui.showLoading(text, frac); },
+  showLoading(text, frac, subText, subFrac) { app.ui.setEmpty(false); app.ui.showLoading(text, frac, subText, subFrac); },
   hideLoading() { app.ui.hideLoading(); if (!app.built) app.ui.setEmpty(true); },
   showError(text) { app.ui.hideLoading(); app.ui.showError(text); },
   setMessage(text) { app.ui.setMessage(text); },

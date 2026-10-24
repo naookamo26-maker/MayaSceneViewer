@@ -10,6 +10,12 @@ const ICON = {
 };
 
 const EYE = '<svg class="on" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 7s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4Z" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="7" cy="7" r="1.8" fill="currentColor"/></svg><svg class="off" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 7s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4Z" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".5"/><path d="M2 12 12 2" stroke="currentColor" stroke-width="1.4"/></svg>';
+/** 進捗のバー（i 要素）に割合を反映する。割合が分からなければ止まった帯で表示する */
+function setBar(bar, frac) {
+  const known = typeof frac === 'number' && frac >= 0;
+  bar.parentElement.classList.toggle('indeterminate', !known);
+  bar.style.width = known ? `${Math.round(Math.min(1, frac) * 100)}%` : '';
+}
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const fmt = (v, d = 3) => {
   if (!Number.isFinite(v)) return String(v);
@@ -793,13 +799,19 @@ export class UI {
     if (text && ms) this.msgTimer = setTimeout(() => { $('status-msg').textContent = ''; }, ms);
   }
   setEmpty(on) { $('empty').hidden = !on; }
-  /** 読み込み中の表示。frac（0〜1）があれば進捗のバーに反映する（再描画は呼ばれたときだけ） */
-  showLoading(text, frac) {
+  /**
+   * 読み込み中の表示。frac（0〜1）があれば全体の進捗のバーに反映する（再描画は呼ばれたときだけ）。
+   * subText・subFrac は、いま読んでいるファイルの進み具合（リファレンスがあるときの 2 段目。なければ隠す）
+   */
+  showLoading(text, frac, subText, subFrac) {
     $('loading').hidden = false;
     $('loading-text').textContent = text || '読み込み中';
-    const known = typeof frac === 'number' && frac >= 0;
-    $('loading-bar').parentElement.classList.toggle('indeterminate', !known);
-    $('loading-bar').style.width = known ? `${Math.round(Math.min(1, frac) * 100)}%` : '';
+    setBar($('loading-bar'), frac);
+    $('loading-sub').hidden = !subText;
+    if (subText) {
+      $('loading-sub-text').textContent = subText;
+      setBar($('loading-sub-bar'), subFrac);
+    }
   }
   hideLoading() { $('loading').hidden = true; }
   showError(text) { const e = $('error'); e.hidden = false; e.textContent = text; }

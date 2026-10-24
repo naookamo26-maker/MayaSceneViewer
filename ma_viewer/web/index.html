@@ -167,6 +167,11 @@
     <div id="loading" class="overlay-msg" hidden>
       <div class="progress" aria-hidden="true"><i id="loading-bar"></i></div>
       <p id="loading-text" role="status">読み込み中</p>
+      <!-- いま読んでいるファイル（リファレンスがあるときだけ。上は全体の進捗） -->
+      <div id="loading-sub" hidden>
+        <div class="progress sub" aria-hidden="true"><i id="loading-sub-bar"></i></div>
+        <p id="loading-sub-text" class="muted"></p>
+      </div>
     </div>
     <div id="error" class="overlay-msg error" role="alert" hidden></div>
   </main>

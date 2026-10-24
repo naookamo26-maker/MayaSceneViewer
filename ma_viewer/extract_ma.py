@@ -1622,6 +1622,27 @@ def load_ma(path: str, progress: ProgressFn = None, animation: bool = False, nod
     return scene
 
 
+# 読み込みの全体の進捗のうち、解析（リファレンスを含む）の割合。残りはビューア用データへの変換
+PARSE_SHARE = 0.85
+
+
+def _stage_progress(progress: ProgressFn, lo: float, hi: float) -> ProgressFn:
+    """段階の進捗（0〜1）を、全体の進捗の lo〜hi に置き換えて通知する関数。
+    いま読んでいるファイルの進み具合（3 つめの引数）は、受け取れる関数にだけそのまま渡す"""
+    if progress is None:
+        return None
+    from .ma_scene import progress_accepts_detail
+    detail_ok = progress_accepts_detail(progress)
+
+    def report(frac, msg, detail=None):
+        f = lo + (hi - lo) * min(max(frac, 0.0), 1.0)
+        if detail is not None and detail_ok:
+            progress(f, msg, detail)
+        else:
+            progress(f, msg)
+    return report
+
+
 def load_ma_staged(path: str, progress: ProgressFn = None, node_map: Optional[dict] = None, references: bool = True):
     """.ma を 2 段階で読む。(共通 JSON, アニメーションを読む関数) を返す。
 
@@ -1637,13 +1658,14 @@ def load_ma_staged(path: str, progress: ProgressFn = None, node_map: Optional[di
     FAST.clear()
     try:
         t0 = time.perf_counter()
-        ms = parse_ma_file(path, progress, load_references=references)
+        ms = parse_ma_file(path, _stage_progress(progress, 0.0, PARSE_SHARE), load_references=references)
         if node_map is not None:
             ms.node_map = node_map
         t1 = time.perf_counter()
-        if progress:
-            progress(1.0, "ビューア用データに変換中")
-        sc = scene_to_dict(ms, progress)
+        convert = _stage_progress(progress, PARSE_SHARE, 1.0)
+        if convert:
+            convert(0.0, "ビューア用データに変換中")
+        sc = scene_to_dict(ms, convert)
     finally:
         if gc_was:
             gc.enable()

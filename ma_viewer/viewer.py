@@ -242,8 +242,9 @@ class ViewerWidget(QtWidgets.QWidget):
     def select_path(self, path: str):
         self._call("selectByPath", path)
 
-    def show_loading(self, text: str, frac: float = -1.0):
-        self._call("showLoading", text, frac)
+    def show_loading(self, text: str, frac: float = -1.0, sub_text: str = "", sub_frac: float = -1.0):
+        """読み込み中の表示。sub_text・sub_frac はいま読んでいるファイル（リファレンスがあるときの 2 段目）"""
+        self._call("showLoading", text, frac, sub_text, sub_frac)
 
     def hide_loading(self):
         self._call("hideLoading")
@@ -296,7 +297,7 @@ class ViewerWidget(QtWidgets.QWidget):
 
 class _LoadWorker(QtCore.QObject):
     """読み込みは 2 段階: シーン（finished）を先に渡して表示し、そのあとアニメーション（animationReady）を読む。"""
-    progress = Signal(float, str)
+    progress = Signal(float, str, str, float)   # 全体の割合, 文言, いま読んでいるファイルの文言・割合（なければ "", -1）
     finished = Signal(object, float)
     failed = Signal(str, str)
     animationProgress = Signal(float, str)
@@ -316,13 +317,17 @@ class _LoadWorker(QtCore.QObject):
     def cancel(self):
         self._cancel = True
 
-    def _progress(self, frac, msg):
+    def _progress(self, frac, msg, detail=None):
         if self._cancel:
             raise _Cancelled()
         now = time.time()
         if now - self._last > 0.25 or frac >= 1.0:      # 再描画の負荷を抑えるため、更新は毎秒 4 回まで
             self._last = now
-            (self.animationProgress if self.in_animation else self.progress).emit(frac, msg)
+            if self.in_animation:
+                self.animationProgress.emit(frac, msg)
+            else:
+                sub_text, sub_frac = detail if detail else ("", -1.0)
+                self.progress.emit(frac, msg, sub_text, float(sub_frac))
 
     @Slot()
     def run(self):
@@ -705,10 +710,10 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self._thread.finished.connect(self._on_thread_finished)
         self._thread.start()
 
-    @Slot(float, str)
-    def _on_progress(self, frac, msg):
-        self.viewer.show_loading(msg, frac)
-        self.statusBar().showMessage(msg)
+    @Slot(float, str, str, float)
+    def _on_progress(self, frac, msg, sub_text, sub_frac):
+        self.viewer.show_loading(msg, frac, sub_text, sub_frac)
+        self.statusBar().showMessage("%s　%s" % (msg, sub_text) if sub_text else msg)
 
     @Slot(object, float)
     def _on_loaded(self, scene, seconds):
