@@ -136,6 +136,44 @@ def main() -> int:
                 js(key("C", True), lambda _: nxt())))
         js(center % "'.menu-btn[aria-controls=\"menu-camera\"]'", lambda p: (click(*p), QtCore.QTimer.singleShot(300, lambda: opened(None))))
 
+    def s_camera_drag(nxt):
+        """カメラから見ているとき: 停止中はドラッグで視点を動かせ、フレームを動かすとカメラの位置に戻る。再生中は動かせない"""
+        drag_js = """JSON.stringify((() => {
+          const app = window.mayaViewer.debug.app, c = app.canvas, r = c.getBoundingClientRect();
+          const cam = app.activeCamera(), before = cam.position.toArray();
+          const ev = (type, x, y, buttons) => c.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y,
+            button: type === 'pointermove' ? -1 : 0, buttons, pointerId: 1, pointerType: 'mouse', isPrimary: true, bubbles: true }));
+          const x = r.left + r.width / 2, y = r.top + r.height / 2;
+          ev('pointerdown', x, y, 1);
+          for (let i = 1; i <= 8; i++) ev('pointermove', x + i * 10, y + i * 3, 1);
+          ev('pointerup', x + 80, y + 24, 0);
+          app.render();
+          const node = app.built.nodeObjects[app.cameras[app.viewCamera].transform].getWorldPosition(cam.position.clone());
+          const s = window.mayaViewer.getStats();
+          return { moved: cam.position.distanceTo(new cam.position.constructor(...before)) > 1e-3,
+                   offNode: cam.position.distanceTo(node) > 1e-3, edited: s.cameraEdited, view: s.viewCamera,
+                   state: document.getElementById('menu-camera-state').textContent };
+        })())"""
+
+        def dragged(r):
+            check(r["moved"] and r["offNode"] and r["edited"] and r["view"] == "shot_cam",
+                  "停止中はカメラのビューをドラッグで動かせる（カメラから見たまま）: %s" % r)
+            check("視点を移動中" in r["state"], "メニュー名の横に視点を移動中と表示: %s" % r["state"])
+            js("""JSON.stringify((() => { window.mayaViewer.setFrame(6); const app = window.mayaViewer.debug.app; app.render();
+                   const cam = app.activeCamera(); const node = app.built.nodeObjects[app.cameras[app.viewCamera].transform].getWorldPosition(cam.position.clone());
+                   return { back: cam.position.distanceTo(node) < 1e-4, edited: window.mayaViewer.getStats().cameraEdited }; })())""", back)
+
+        def back(r):
+            check(r["back"] and not r["edited"], "フレームを動かすとカメラの位置に戻る: %s" % r)
+            js("""JSON.stringify((() => { document.getElementById('tl-play').click();
+                   const s = window.mayaViewer.getStats(); const nav = s.navigation; document.getElementById('tl-play').click();
+                   return { nav, after: window.mayaViewer.getStats().navigation }; })())""", playing)
+
+        def playing(r):
+            check(r["nav"] is False and r["after"] is True, "再生中は視点を動かせず、止めると動かせる: %s" % r)
+            js(key("C", True), lambda _: nxt())
+        js("window.mayaViewer.setFrame(5); window.mayaViewer.debug.app.setCamera(0); 'ok'", lambda _: js(drag_js, dragged))
+
     def s_bind_key(nxt):
         js(key("b"), lambda _: state(lambda s: (
             check(s["pose"] == "bind" and s["bindPressed"] == "true", "B でバインドポーズに切り替え（ボタンも押下状態）"),
@@ -171,7 +209,7 @@ def main() -> int:
            lambda r: (check(r["n"] == 3 and r["red"], "グリッドの原点の線は軸の色（3 色・X 軸は赤系）: %s" % r), nxt()))
 
     win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(200, lambda: run(
-        [s_open, s_frame, s_camera, s_camera_menu, s_bind_key, s_inert, s_grid,
+        [s_open, s_frame, s_camera, s_camera_menu, s_camera_drag, s_bind_key, s_inert, s_grid,
          lambda _: (win.a_anim.setChecked(load_setting), app.quit())])))
     QtCore.QTimer.singleShot(90000, lambda: (print("NG タイムアウト"), ok.update(v=False), app.quit()))
     app.exec()

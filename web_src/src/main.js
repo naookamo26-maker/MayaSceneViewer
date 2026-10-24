@@ -77,6 +77,8 @@ class ViewerApp {
     this.poseSourceChosen = false;  // 読み込んでから、姿勢の基準を自分で切り替えたか（アニメーションの読み込みで自動で切り替えない）
     this.cameras = [];              // シーンのカメラ（共通 JSON の cameras）
     this.viewCamera = -1;           // いま見ているカメラ（-1 は自由視点）
+    this.camEdit = null;            // 停止中にカメラのビューを動かしたとき { ci, frame }（フレームが変わると戻す）
+    this.freeTarget = null;         // カメラから見ている間の、自由視点の注視点（戻すときに使う）
     this.cameraProps = new Map();   // カメラの番号 → アニメーション・リグで決まる属性の値（焦点距離など）
     this.sequence = null;           // カメラシーケンサ（共通 JSON の sequencer）
     this.seqFrame = 0;              // シーケンスのフレーム
@@ -138,7 +140,8 @@ class ViewerApp {
     // 慣性なし: ドラッグを離した時点でカメラを止める（three.js の既定値と同じだが明示しておく）
     this.controls.enableDamping = false;
     this.controls.zoomSpeed = 1.2;
-    this.controls.addEventListener('change', () => this.requestRender());
+    this.controls.addEventListener('change', () => { this.beginCameraEdit(); this.requestRender(); });
+    this.controls.addEventListener('start', () => this.prepareCameraEdit());   // カメラのビューの操作を始めた
 
     // 移動・回転・スケールのハンドル。ノードを直接ではなく、基準フレーム内の代理オブジェクトを動かし、
     // その変換をポーズの追加分として読む（pose.js 参照）
@@ -155,7 +158,7 @@ class ViewerApp {
     this.gizmo.addEventListener('change', () => this.requestRender());
     this.gizmo.addEventListener('dragging-changed', (e) => {
       this.gizmoDragging = e.value;
-      this.controls.enabled = !e.value;
+      this.controls.enabled = !e.value && this.canNavigate();
       // 1 回のドラッグを 1 つの操作として記録する
       if (e.value) this.beginPoseEdit([this.selected], { translate: '移動', rotate: '回転', scale: 'スケール' }[this.gizmo.mode] || '変更');
       else { this.endPoseEdit(); this.syncGizmo(); }
@@ -947,6 +950,7 @@ class ViewerApp {
   /** フレーム f の姿勢にする（ポーズ確認の追加分はそのまま上に重ねる。リグはポーズ確認の結果も使って評価する） */
   applyFrame(f, light = this.playing) {
     if (!this.clip || !this.built) return;
+    if (this.camEdit && f !== this.camEdit.frame) this.endCameraEdit();   // 動かしたカメラの視点は、フレームが変わると戻す
     this.frame = f;
     const poseOf = (ni) => (this.pose && this.pose.has(ni) ? poseMatrix(this.pose.get(ni), new Matrix4()) : null);
     const mats = this.rig.evaluate(f, poseOf);
@@ -1040,7 +1044,9 @@ class ViewerApp {
     this.ensureAnimatedPose();
     this.endPoseEdit();
     const from = this.frame >= this.clip.start && this.frame <= this.clip.end ? Math.round(this.frame) : this.clip.start;
+    this.endCameraEdit();
     this.playing = true;
+    this.updateNavigation();
     this.timeline.setPlaying(true);
     const t0 = performance.now();
     this.startFpsMeter(this.clip.fps);
@@ -1057,6 +1063,7 @@ class ViewerApp {
     if (!this.playing) return;
     this.playing = false;
     cancelAnimationFrame(this.playHandle);
+    this.updateNavigation();
     this.stopFpsMeter();
     this.timeline.setPlaying(false);
     // 再生中は省いていた、パネルの情報を更新する
@@ -1550,7 +1557,9 @@ class ViewerApp {
     if (!this.sequence || this.seqPlaying) return;
     this.pause();
     this.seqFollow = true;
+    this.endCameraEdit();
     this.seqPlaying = true;
+    this.updateNavigation();
     const fps = (this.clip && this.clip.fps) || 24;
     const { start, end } = this.sequence;
     const from = this.seqFrame >= end ? start : Math.floor(this.seqFrame);
@@ -1571,6 +1580,7 @@ class ViewerApp {
     if (!this.seqPlaying) return;
     this.seqPlaying = false;
     cancelAnimationFrame(this.seqHandle);
+    this.updateNavigation();
     this.stopFpsMeter();
     if (this.built) this.afterPoseChange();
     this.updateSequencePanel();
@@ -1589,12 +1599,15 @@ class ViewerApp {
     if (!(ci >= 0 && ci < this.cameras.length)) ci = -1;
     if (ci === this.viewCamera) return;
     if (!this.renderer) { this.viewCamera = -1; return; }
+    if (this.viewCamera < 0 && ci >= 0) this.freeTarget = this.controls.target.clone();
+    if (ci < 0 && this.freeTarget) { this.controls.target.copy(this.freeTarget); this.freeTarget = null; }
     this.viewCamera = ci;
+    this.endCameraEdit();
     const cam = this.activeCamera();
     cam.add(this.keyLight, this.keyLight.target);     // ライトは見ている視点についていく
-    this.controls.enabled = ci < 0;                     // カメラから見ている間は視点を動かさない
+    this.controls.object = cam;                         // 視点の操作の対象（カメラから見ているときはそのカメラ）
+    this.updateNavigation();
     if (this.gizmo) this.gizmo.camera = cam;
-    this.ui.setViewCamera(ci, ci >= 0 ? this.cameras[ci].name : '');
     this.updateCameraIcons();
     this.updateGate();
     if (!opts.quiet) this.ui.setMessage(ci >= 0 ? `カメラ ${this.cameras[ci].name} から表示します（Shift+C で自由視点）` : '自由視点に戻しました');
@@ -1607,9 +1620,11 @@ class ViewerApp {
     const obj = c && this.built ? this.built.nodeObjects[c.transform] : null;
     if (!obj) return;
     const cam = this.activeCamera();
-    obj.updateWorldMatrix(true, false);
-    obj.matrixWorld.decompose(cam.position, _q, _v);
-    cam.quaternion.copy(_q);
+    if (!(this.camEdit && this.camEdit.ci === this.viewCamera)) {   // 停止中に動かした視点は、フレームが変わるまで保つ
+      obj.updateWorldMatrix(true, false);
+      obj.matrixWorld.decompose(cam.position, _q, _v);
+      cam.quaternion.copy(_q);
+    }
     cam.updateMatrixWorld(true);
     const vp = document.getElementById('viewport');
     const W = Math.max(1, vp.clientWidth), H = Math.max(1, vp.clientHeight);
@@ -1623,9 +1638,52 @@ class ViewerApp {
       cam.far = fr.far;
       cam.projectionMatrix.makePerspective(fr.left, fr.right, fr.top, fr.bottom, fr.near, fr.far);
       cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
+      cam.fov = 2 * Math.atan((fr.top - fr.bottom) / 2 / fr.near) / D2R;   // 視点の操作（パンの量）に使う縦の画角
     }
     this.gateRect = fr.gate;
     this.ui.setGate(this.settings.cameraGate, fr.gate, W, H);
+  }
+
+  /** 視点を動かせるか（自由視点はいつでも、シーンのカメラから見ているときは再生していない間） */
+  canNavigate() {
+    return this.viewCamera < 0 || !(this.playing || this.seqPlaying);
+  }
+
+  updateNavigation() {
+    if (this.controls) this.controls.enabled = this.canNavigate() && !this.gizmoDragging;
+    this.ui.setViewCamera(this.viewCamera, this.viewCamera >= 0 ? this.cameras[this.viewCamera].name : '', !!this.camEdit);
+  }
+
+  /**
+   * カメラから見ているときに視点の操作を始めたら、いまの位置・向きから動かせるよう、回転の中心（注視点）を
+   * 視線の先のシーンの中心あたりに置く（中心が後ろにあれば、シーンの大きさの距離）。視点はまだ変えない
+   */
+  prepareCameraEdit() {
+    if (this.viewCamera < 0 || this.camEdit) return;
+    const cam = this.activeCamera();
+    const fwd = new Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+    const center = this.built ? computeBounds(this.built, this.settings.skin).getCenter(new Vector3()) : new Vector3();
+    const d = center.sub(cam.position).dot(fwd);
+    this.controls.target.copy(cam.position).addScaledVector(fwd, d > this.sceneRadius * 0.05 ? d : Math.max(this.sceneRadius, 1));
+  }
+
+  /**
+   * カメラから見ているときに視点が動いたら、その視点を保つ（表示だけ。フレームを動かすか再生すると、カメラの位置に戻る）
+   */
+  beginCameraEdit() {
+    if (this.viewCamera < 0 || this.camEdit) return;
+    this.camEdit = { ci: this.viewCamera, frame: this.frame };
+    this.updateNavigation();
+    this.ui.setMessage(`カメラ ${this.cameras[this.viewCamera].name} の視点を一時的に動かしています（保存しません。フレームを動かすか再生すると戻ります）`, 6000);
+  }
+
+  /** 動かしたカメラの視点を、カメラの位置に戻す */
+  endCameraEdit() {
+    if (!this.camEdit) return;
+    this.camEdit = null;
+    this.viewOrtho.zoom = 1;
+    this.updateNavigation();
+    this.requestRender();
   }
 
   updateGate() {
@@ -1709,6 +1767,7 @@ class ViewerApp {
       curves: this.curves.items.filter(Boolean).length,
       cameras: this.cameras.map((c) => c.name),
       viewCamera: this.viewCamera >= 0 ? this.cameras[this.viewCamera].name : null,
+      cameraEdited: !!this.camEdit, navigation: !!(this.controls && this.controls.enabled),
       fps: this.fpsMeter ? { current: this.currentFps(), average: this.fpsMeter.average ?? null, target: this.fpsMeter.target,
         playing: !this.fpsMeter.stopped } : null,
       sequence: this.sequence ? { frame: this.seqFrame, follow: this.seqFollow, playing: this.seqPlaying,
