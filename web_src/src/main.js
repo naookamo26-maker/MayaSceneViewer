@@ -1164,6 +1164,7 @@ class ViewerApp {
       drivenBy: n.drivenBy || null,
       animChannels: this.clip ? this.clip.channelsOf(ni) : [],
       rigDrivers: this.rig ? this.rig.driversOf(ni) : [],
+      rigStatus: this.rig ? this.rig.statusOf(ni) : null,     // 'estimated'・'unknown'（リグで求められない）・null
       animLoaded: !!this.clip,
       animValues: this.rig ? this.rigValues(ni) : null,
       frame: this.frame,

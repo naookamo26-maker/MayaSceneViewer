@@ -1718,6 +1718,388 @@
    }
   },
   {
+   "name":"bad_roll_group",
+   "path":"|bad_roll_group",
+   "type":"lookAt",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   }
+  },
+  {
+   "name":"bad_roll_cam",
+   "path":"|bad_roll_group|bad_roll_cam",
+   "type":"transform",
+   "parent":25,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    30.0,
+    10.0,
+    30.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    30.0,
+    10.0,
+    30.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     30.0,
+     10.0,
+     30.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   },
+   "drivenBy":[
+    "rx ← bad_roll_group（lookAt）",
+    "ry ← bad_roll_group（lookAt）",
+    "rz ← bad_roll_group（lookAt）"
+   ]
+  },
+  {
+   "name":"bad_roll_cam_aim",
+   "path":"|bad_roll_group|bad_roll_cam_aim",
+   "type":"transform",
+   "parent":25,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    5.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    5.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     5.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   }
+  },
+  {
+   "name":"child_roll_group",
+   "path":"|child_roll_group",
+   "type":"lookAt",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   }
+  },
+  {
+   "name":"child_roll_cam",
+   "path":"|child_roll_group|child_roll_cam",
+   "type":"transform",
+   "parent":28,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    30.0,
+    10.0,
+    30.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    30.0,
+    10.0,
+    30.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     30.0,
+     10.0,
+     30.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   },
+   "drivenBy":[
+    "rx ← child_roll_group（lookAt）",
+    "ry ← child_roll_group（lookAt）",
+    "rz ← child_roll_group（lookAt）"
+   ]
+  },
+  {
+   "name":"child_roll_cam_aim",
+   "path":"|child_roll_group|child_roll_cam_aim",
+   "type":"transform",
+   "parent":28,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    5.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    5.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     5.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   }
+  },
+  {
    "name":"roll_ctrl",
    "path":"|roll_ctrl",
    "type":"transform",
@@ -7898,6 +8280,44 @@
    "filmFit":1,
    "orthographic":false,
    "renderable":true
+  },
+  {
+   "name":"bad_roll_cam",
+   "shape":"bad_roll_camShape",
+   "path":"|bad_roll_group|bad_roll_cam|bad_roll_camShape",
+   "transform":26,
+   "focalLength":35.0,
+   "horizontalFilmAperture":1.41732,
+   "verticalFilmAperture":0.94488,
+   "nearClipPlane":0.1,
+   "farClipPlane":10000.0,
+   "orthographicWidth":30.0,
+   "lensSqueezeRatio":1.0,
+   "horizontalFilmOffset":0.0,
+   "verticalFilmOffset":0.0,
+   "cameraScale":1.0,
+   "filmFit":1,
+   "orthographic":false,
+   "renderable":true
+  },
+  {
+   "name":"child_roll_cam",
+   "shape":"child_roll_camShape",
+   "path":"|child_roll_group|child_roll_cam|child_roll_camShape",
+   "transform":29,
+   "focalLength":35.0,
+   "horizontalFilmAperture":1.41732,
+   "verticalFilmAperture":0.94488,
+   "nearClipPlane":0.1,
+   "farClipPlane":10000.0,
+   "orthographicWidth":30.0,
+   "lensSqueezeRatio":1.0,
+   "horizontalFilmOffset":0.0,
+   "verticalFilmOffset":0.0,
+   "cameraScale":1.0,
+   "filmFit":1,
+   "orthographic":false,
+   "renderable":true
   }
  ],
  "viewCamera":-1,
@@ -7913,11 +8333,11 @@
   "history_geoShape: 形状データがありません（polySphere1（polySphere） から生成されています。ヒストリを削除して保存してください）"
  ],
  "stats":{
-  "nodes":28,
+  "nodes":34,
   "joints":5,
   "meshes":3,
   "curves":0,
-  "cameras":5,
+  "cameras":7,
   "vertices":316,
   "polygons":302,
   "skinnedMeshes":1,
@@ -7925,7 +8345,7 @@
   "textures":0,
   "texturesMissing":0,
   "bindPoseNodes":5,
-  "drivenNodes":8
+  "drivenNodes":10
  },
  "animation":{
   "fps":24.0,
@@ -7956,6 +8376,16 @@
     "weighted":false,
     "pre":0,
     "post":0
+   },
+   {
+    "name":"child_roll_cam_twist",
+    "type":"TA",
+    "offset":4,
+    "count":2,
+    "tangent":2,
+    "weighted":false,
+    "pre":0,
+    "post":0
    }
   ],
   "channels":[
@@ -7965,7 +8395,7 @@
     "curve":0
    },
    {
-    "node":27,
+    "node":33,
     "attr":"tx",
     "curve":1
    }
@@ -8267,38 +8697,13 @@
     ]
    },
    {
-    "node":25,
-    "joint":false,
-    "ro":0,
-    "t":[
-     0.0,
-     0.0,
-     0.0
-    ],
-    "r":[
-     0.0,
-     0.0,
-     0.0
-    ],
-    "s":[
-     1.0,
-     1.0,
-     1.0
-    ],
-    "ra":[
-     0.0,
-     0.0,
-     0.0
-    ]
-   },
-   {
     "node":26,
     "joint":false,
     "ro":0,
     "t":[
-     0.0,
-     0.0,
-     0.0
+     30.0,
+     10.0,
+     30.0
     ],
     "r":[
      0.0,
@@ -8318,6 +8723,131 @@
    },
    {
     "node":27,
+    "joint":false,
+    "ro":0,
+    "t":[
+     0.0,
+     5.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":29,
+    "joint":false,
+    "ro":0,
+    "t":[
+     30.0,
+     10.0,
+     30.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":30,
+    "joint":false,
+    "ro":0,
+    "t":[
+     0.0,
+     5.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":31,
+    "joint":false,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":32,
+    "joint":false,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":33,
     "joint":false,
     "ro":0,
     "t":[
@@ -8350,7 +8880,7 @@
     "dag":8,
     "inputs":{
      "sx":{
-      "node":24,
+      "node":31,
       "attr":"ox"
      }
     }
@@ -8759,7 +9289,7 @@
       "attr":"pm"
      },
      "tws":{
-      "node":18,
+      "node":24,
       "attr":"rol"
      }
     },
@@ -8799,47 +9329,231 @@
    },
    {
     "id":18,
-    "name":"roll_ctrl",
-    "type":"transform",
-    "dag":25,
+    "name":"bad_roll_group",
+    "type":"lookAt",
+    "dag":-1,
     "attrs":{
-     "rol":0.3490658503988659
-    }
+     "a":[
+      0.0,
+      0.0,
+      -1.0
+     ]
+    },
+    "inputs":{
+     "cpim":{
+      "node":19,
+      "attr":"pim"
+     },
+     "ct":{
+      "node":19,
+      "attr":"t"
+     },
+     "crp":{
+      "node":19,
+      "attr":"rp"
+     },
+     "crt":{
+      "node":19,
+      "attr":"rpt"
+     },
+     "cro":{
+      "node":19,
+      "attr":"ro"
+     },
+     "tg[0].tt":{
+      "node":20,
+      "attr":"t"
+     },
+     "tg[0].trp":{
+      "node":20,
+      "attr":"rp"
+     },
+     "tg[0].trt":{
+      "node":20,
+      "attr":"rpt"
+     },
+     "tg[0].tpm":{
+      "node":20,
+      "attr":"pm"
+     }
+    },
+    "driven":26,
+    "targets":[
+     {
+      "index":0,
+      "node":20
+     }
+    ]
    },
    {
     "id":19,
-    "name":"distanceDimensionShape1",
-    "type":"distanceDimShape",
-    "dag":-1,
+    "name":"bad_roll_cam",
+    "type":"transform",
+    "dag":26,
     "inputs":{
-     "sp":{
-      "node":21,
-      "attr":"wp"
+     "rx":{
+      "node":18,
+      "attr":"crx"
      },
-     "ep":{
-      "node":23,
-      "attr":"wp"
+     "ry":{
+      "node":18,
+      "attr":"cry"
+     },
+     "rz":{
+      "node":18,
+      "attr":"crz"
      }
     }
    },
    {
     "id":20,
-    "name":"locStart",
+    "name":"bad_roll_cam_aim",
     "type":"transform",
-    "dag":26
+    "dag":27
    },
    {
     "id":21,
-    "name":"locStartShape",
-    "type":"locator",
+    "name":"child_roll_group",
+    "type":"lookAt",
     "dag":-1,
-    "parent":26
+    "attrs":{
+     "a":[
+      0.0,
+      0.0,
+      -1.0
+     ]
+    },
+    "inputs":{
+     "cpim":{
+      "node":22,
+      "attr":"pim"
+     },
+     "ct":{
+      "node":22,
+      "attr":"t"
+     },
+     "crp":{
+      "node":22,
+      "attr":"rp"
+     },
+     "crt":{
+      "node":22,
+      "attr":"rpt"
+     },
+     "cro":{
+      "node":22,
+      "attr":"ro"
+     },
+     "tws":{
+      "node":22,
+      "attr":"twi"
+     },
+     "tg[0].tt":{
+      "node":23,
+      "attr":"t"
+     },
+     "tg[0].trp":{
+      "node":23,
+      "attr":"rp"
+     },
+     "tg[0].trt":{
+      "node":23,
+      "attr":"rpt"
+     },
+     "tg[0].tpm":{
+      "node":23,
+      "attr":"pm"
+     }
+    },
+    "driven":29,
+    "targets":[
+     {
+      "index":0,
+      "node":23
+     }
+    ]
    },
    {
     "id":22,
+    "name":"child_roll_cam",
+    "type":"transform",
+    "dag":29,
+    "inputs":{
+     "rx":{
+      "node":21,
+      "attr":"crx"
+     },
+     "ry":{
+      "node":21,
+      "attr":"cry"
+     },
+     "rz":{
+      "node":21,
+      "attr":"crz"
+     },
+     "twi":{
+      "curve":2
+     }
+    }
+   },
+   {
+    "id":23,
+    "name":"child_roll_cam_aim",
+    "type":"transform",
+    "dag":30
+   },
+   {
+    "id":24,
+    "name":"roll_ctrl",
+    "type":"transform",
+    "dag":31,
+    "attrs":{
+     "rol":0.3490658503988659
+    }
+   },
+   {
+    "id":25,
+    "name":"roll_uc",
+    "type":"unitConversion",
+    "dag":-1,
+    "attrs":{
+     "cf":0.017453292519943295
+    }
+   },
+   {
+    "id":26,
+    "name":"distanceDimensionShape1",
+    "type":"distanceDimShape",
+    "dag":-1,
+    "inputs":{
+     "sp":{
+      "node":28,
+      "attr":"wp"
+     },
+     "ep":{
+      "node":30,
+      "attr":"wp"
+     }
+    }
+   },
+   {
+    "id":27,
+    "name":"locStart",
+    "type":"transform",
+    "dag":32
+   },
+   {
+    "id":28,
+    "name":"locStartShape",
+    "type":"locator",
+    "dag":-1,
+    "parent":32
+   },
+   {
+    "id":29,
     "name":"locEnd",
     "type":"transform",
-    "dag":27,
+    "dag":33,
     "inputs":{
      "tx":{
       "curve":1
@@ -8847,14 +9561,14 @@
     }
    },
    {
-    "id":23,
+    "id":30,
     "name":"locEndShape",
     "type":"locator",
     "dag":-1,
-    "parent":27
+    "parent":33
    },
    {
-    "id":24,
+    "id":31,
     "name":"stretch_md",
     "type":"multiplyDivide",
     "dag":-1,
@@ -8868,7 +9582,7 @@
     },
     "inputs":{
      "i1x":{
-      "node":19,
+      "node":26,
       "attr":"dist"
      }
     }
@@ -8879,32 +9593,34 @@
   "props":[],
   "times":{
    "dtype":"float32",
-   "count":4,
-   "data":"AACAPwAAwEEAAIA/AADAQQ=="
+   "count":6,
+   "data":"AACAPwAAwEEAAIA/AADAQQAAgD8AAMBB"
   },
   "values":{
    "dtype":"float32",
-   "count":4,
-   "data":"AAAAAAAAIEEAAEBAAAAQQQ=="
+   "count":6,
+   "data":"AAAAAAAAIEEAAEBAAAAQQQAAoEEAAHBC"
   },
   "tangentTypes":{
    "dtype":"uint8",
-   "count":8,
-   "data":"AgICAgICAgI="
+   "count":12,
+   "data":"AgICAgICAgICAgIC"
   },
   "fixedTangents":{
    "dtype":"float32",
    "count":0,
    "data":""
   },
-  "warnings":[],
+  "warnings":[
+   "アニメーション: bad_roll_group の tws は、つながる frameCache（roll_cache）が未対応のため、接続を使わずファイルの値で再生します（この値の動きは再現されません）。"
+  ],
   "stats":{
-   "curves":2,
-   "keys":4,
+   "curves":3,
+   "keys":6,
    "channels":2,
-   "nodes":8,
-   "graphNodes":25,
-   "seconds":0.0011
+   "nodes":10,
+   "graphNodes":32,
+   "seconds":0.0019
   }
  }
 }

@@ -64,6 +64,23 @@ test('twist を別のアトリビュート（カメラのシェイプ・別の�
   }
 });
 
+test('twist を子のカメラのキーのある属性からつなぐ（カメラ → lookAt → カメラ）: エイムを向き、キーの角度でロール', () => {
+  for (const [f, want] of [[1, 20], [24, 60]]) {
+    const rig = at(f);
+    const cam = rig.world(idx('child_roll_cam')), aim = rig.world(idx('child_roll_cam_aim'));
+    const look = axis(cam, 2).negate();
+    assert.ok(look.angleTo(pos(aim).sub(pos(cam)).normalize()) < 1e-6, `フレーム ${f}: エイムを向く`);
+    const roll = axis(cam, 1).angleTo(axis(rig.world(idx('roll_cam')), 1)) / D2R;
+    assert.ok(Math.abs(roll - want) < 1e-4, `フレーム ${f}: ロール ${roll} 度`);
+  }
+});
+
+test('twist が未対応のノードからつながっていても、カメラはエイムを向く（twist はファイルの値）', () => {
+  const rig = at(1);
+  const a = rig.world(idx('roll_cam')), b = rig.world(idx('bad_roll_cam'));
+  assert.ok(axis(a, 2).angleTo(axis(b, 2)) < 1e-6 && axis(a, 1).angleTo(axis(b, 1)) < 1e-6, 'twist なしのカメラと同じ向き');
+});
+
 test('距離の寸法: 2 つのロケーターの距離 ÷ 6 で box.sx が決まる', () => {
   for (const [f, d] of [[1, 3], [24, 9]]) {
     const sx = at(f).chan(idx('box')).s[0];

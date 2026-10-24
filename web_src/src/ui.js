@@ -582,8 +582,10 @@ export class UI {
       h += '</table>';
     }
     // アニメーションを読み込んだあとは、カーブ・リグで評価する値は注記から外す
-    const evaluated = /（(animCurveT[LAU]|pointConstraint|orientConstraint|parentConstraint|scaleConstraint|poleVectorConstraint|unitConversion|pairBlend|blendColors|multiplyDivide|plusMinusAverage|reverse|condition)）$/;
-    const driven = (info.drivenBy || []).filter((d) => !(info.animLoaded && evaluated.test(d)));
+    // （リグで求められたノード（推定・不明でない）は、接続で決まる値もすべて評価している）
+    const evaluated = /（animCurveT[LAU]）$/;
+    const solved = info.animLoaded && !info.rigStatus;
+    const driven = (info.drivenBy || []).filter((d) => !(solved && (rig.length || evaluated.test(d))));
     if (driven.length) {
       h += '<p class="note small">次の値は接続で決まるため、ファイルに残っていません'
         + (info.bindSource ? '（「ファイルの値」でもバインドポーズの姿勢で表示）' : '（既定値で表示）') + '：<br>'

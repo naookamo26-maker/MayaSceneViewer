@@ -12,6 +12,10 @@ samples/sample_arm.ma に、次のものを足したもの（再生範囲 1〜24
   * shape_roll_group（lookAt）: twist をカメラのシェイプの独自の属性（rollAngle、doubleAngle、20 度）からつないだカメラ
   * attr_roll_group（lookAt）: twist を別のノード（roll_ctrl）の独自の属性（roll、doubleAngle、20 度）からつないだカメラ
       （どちらも cam_aim_group と同じロールになる）
+  * child_roll_group（lookAt）: twist を子のカメラ（child_roll_cam）の独自の属性（twist、doubleAngle）からつなぎ、
+      その属性にキー（1: 20 → 24: 60）。カメラの回転は lookAt の constraintRotate から（カメラ → lookAt → カメラ）
+  * bad_roll_group（lookAt）: twist を未対応のノード（frameCache）から unitConversion を通してつないだカメラ
+      （twist の接続だけを外してファイルの値（0）にし、エイムの向きは求める）
   * distanceDimension1（distanceDimShape）: locStart（原点）と locEnd（tx にキー 1: 3 → 24: 9）の距離 →
       multiplyDivide（÷ 6）→ box.sx
 """
@@ -38,14 +42,16 @@ def curve(kind, name, keys):
             '\tsetAttr -s %d ".kot[0:%d]"  %s;' % (len(keys), len(keys) - 1, " ".join("2" for _ in keys))]
 
 
-def camera_and_aim(group, cam, aim, twist, shape_target=False, aim_pos=(0, 5, 0), shape_roll=None):
+def camera_and_aim(group, cam, aim, twist, shape_target=False, aim_pos=(0, 5, 0), shape_roll=None, cam_roll=False):
     """Maya の［作成］→［カメラ］→［カメラとエイム］と同じ形（lookAt のグループの下にカメラとエイムのロケーター）"""
     lines = ['createNode lookAt -n "%s";' % group,
              '\tsetAttr ".a" -type "double3" 0 0 -1 ;']
     if twist:
         lines.append('\tsetAttr ".tws" %g;' % twist)
-    lines += ['createNode transform -n "%s" -p "%s";' % (cam, group),
-              '\tsetAttr ".t" -type "double3" 30 10 30 ;',
+    lines += ['createNode transform -n "%s" -p "%s";' % (cam, group)]
+    if cam_roll:
+        lines.append('\taddAttr -ci true -sn "twist" -ln "twist" -at "doubleAngle";')
+    lines += ['\tsetAttr ".t" -type "double3" 30 10 30 ;',
               'createNode camera -n "%sShape" -p "%s";' % (cam, cam)]
     if shape_roll is not None:
         lines += ['\taddAttr -ci true -sn "rol" -ln "rollAngle" -at "doubleAngle";',
@@ -61,6 +67,8 @@ def camera_and_aim(group, cam, aim, twist, shape_target=False, aim_pos=(0, 5, 0)
              'connectAttr "%s.t" "%s.ct";' % (cam, group), 'connectAttr "%s.rp" "%s.crp";' % (cam, group),
              'connectAttr "%s.rpt" "%s.crt";' % (cam, group), 'connectAttr "%s.ro" "%s.cro";' % (cam, group),
              ]
+    if cam_roll:
+        conns.append('connectAttr "%s.twist" "%s.tws";' % (cam, group))
     if shape_roll is not None:
         conns.append('connectAttr "%sShape.rol" "%s.tws";' % (cam, group))
     if shape_target:
@@ -84,7 +92,9 @@ def main():
     for args, kw in ((("cam_aim_group", "aim_cam", "aim_cam_aim", 20), {}), (("roll_group", "roll_cam", "roll_cam_aim", 0), {}),
                      (("shape_group", "shape_cam", "shape_cam_aim", 0), {"shape_target": True, "aim_pos": (0, -4, 0)}),
                      (("shape_roll_group", "shape_roll_cam", "shape_roll_cam_aim", 0), {"shape_roll": 20}),
-                     (("attr_roll_group", "attr_roll_cam", "attr_roll_cam_aim", 0), {})):
+                     (("attr_roll_group", "attr_roll_cam", "attr_roll_cam_aim", 0), {}),
+                     (("bad_roll_group", "bad_roll_cam", "bad_roll_cam_aim", 0), {}),
+                     (("child_roll_group", "child_roll_cam", "child_roll_cam_aim", 0), {"cam_roll": True})):
         a, c = camera_and_aim(*args, **kw)
         out += a
         conns += c
@@ -93,7 +103,12 @@ def main():
             '\tsetAttr -k on ".roll" 20;',
             'createNode locator -n "roll_ctrlShape" -p "roll_ctrl";',
             '\tsetAttr -k off ".v";']
-    conns.append('connectAttr "roll_ctrl.roll" "attr_roll_group.tws";')
+    out += ['createNode frameCache -n "roll_cache";',
+            'createNode unitConversion -n "roll_uc";',
+            '\tsetAttr ".cf" 0.017453292519943295;']
+    conns += ['connectAttr "roll_ctrl.roll" "attr_roll_group.tws";',
+              'connectAttr "roll_cache.v" "roll_uc.i";',
+              'connectAttr "roll_uc.o" "bad_roll_group.tws";']
     out += ['createNode transform -n "distanceDimension1";',
             'createNode distanceDimShape -n "distanceDimensionShape1" -p "distanceDimension1";',
             '\tsetAttr -k off ".v";',
@@ -106,8 +121,10 @@ def main():
             '\tsetAttr ".i2" -type "float3" 6 1 1 ;']
     out += curve("TL", "aim_cam_aim_translateX", [(1, 0), (24, 10)])
     out += curve("TL", "locEnd_translateX", [(1, 3), (24, 9)])
+    out += curve("TA", "child_roll_cam_twist", [(1, 20), (24, 60)])
     conns += ['connectAttr "aim_cam_aim_translateX.o" "aim_cam_aim.tx";',
               'connectAttr "locEnd_translateX.o" "locEnd.tx";',
+              'connectAttr "child_roll_cam_twist.o" "child_roll_cam.twist";',
               'connectAttr "locStartShape.wp" "distanceDimensionShape1.sp";',
               'connectAttr "locEndShape.wp" "distanceDimensionShape1.ep";',
               'connectAttr "distanceDimensionShape1.dist" "stretch_md.i1x";',

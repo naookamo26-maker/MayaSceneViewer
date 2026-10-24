@@ -218,7 +218,16 @@ class TestCameraAimAndDistance(unittest.TestCase):
 
     def test_no_warnings(self):
         self.assertFalse(any("lookAt" in w or "自作ノード" in w for w in self.scene["warnings"]), self.scene["warnings"])
-        self.assertEqual(self.anim["warnings"], [])
+        self.assertEqual(len(self.anim["warnings"]), 1, self.anim["warnings"])
+        self.assertIn("bad_roll_group の tws", self.anim["warnings"][0])     # 未対応のノードからの twist だけ
+        self.assertEqual(self.anim["tainted"], [])
+
+    def test_unsupported_twist_source_is_dropped(self):
+        # twist が未対応のノード（frameCache）から来ていても、lookAt は評価する（twist の接続だけ外す）
+        g = self.graph["bad_roll_group"]
+        self.assertNotIn("tws", g["inputs"])
+        cam = next(x for x in self.anim["graph"] if x["dag"] == self.names.index("bad_roll_cam"))
+        self.assertEqual(cam["inputs"]["rx"], {"node": g["id"], "attr": "crx"})
 
     def test_look_at_drives_camera_rotation(self):
         g = self.graph["cam_aim_group"]
@@ -235,6 +244,17 @@ class TestCameraAimAndDistance(unittest.TestCase):
         self.assertEqual(self.graph["shape_roll_group"]["inputs"]["tws"], {"node": shape["id"], "attr": "rol"})
         self.assertAlmostEqual(shape["attrs"]["rol"], math.radians(20))
         self.assertAlmostEqual(self.graph["roll_ctrl"]["attrs"]["rol"], math.radians(20))
+
+    def test_excerpt(self):
+        # 調査用の抜き出し: lookAt と子孫のブロック・接続・1 段上流（twist のカーブ）
+        from ma_viewer.excerpt import excerpt
+        text = excerpt(os.path.join(ROOT, "samples", "camaim_sample.ma"), ["child_roll_group"])
+        self.assertIn('createNode camera -n "child_roll_camShape" -p "child_roll_cam";', text)
+        self.assertIn('createNode animCurveTA -n "child_roll_cam_twist";', text)
+        self.assertIn('connectAttr "child_roll_cam.twist" "child_roll_group.tws";', text)
+        self.assertNotIn('"aim_cam"', text)                              # ほかの lookAt は入れない
+        everything = excerpt(os.path.join(ROOT, "samples", "camaim_sample.ma"))
+        self.assertIn('createNode lookAt -n "cam_aim_group";', everything)  # 省略時は lookAt をすべて
 
     def test_distance_dimension(self):
         g = self.graph["distanceDimensionShape1"]

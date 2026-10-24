@@ -2,7 +2,7 @@
 """リグで切り替える表示・シーンのカメラ・バインドポーズのボタン・ツールバーの「効果なし」の表示の確認。
 
   python tests/qt_viscam_test.py      （画面のない Linux では xvfb-run -a を付ける）
-前提: python tools/make_vis_camera_sample.py
+前提: python tools/make_vis_camera_sample.py・python tools/make_camaim_sample.py
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 SAMPLE = os.path.join(ROOT, "samples", "vis_camera_sample.ma")
+CAMAIM = os.path.join(ROOT, "samples", "camaim_sample.ma")
 
 STATE_JS = """JSON.stringify((() => {
   const s = window.mayaViewer.getStats();
@@ -208,8 +209,29 @@ def main() -> int:
                return { n: cols.size, red: [...cols].some((s) => { const [r, g2, b] = s.split(',').map(Number); return r > g2 * 1.5 && r > b * 1.5; }) }; })())""",
            lambda r: (check(r["n"] == 3 and r["red"], "グリッドの原点の線は軸の色（3 色・X 軸は赤系）: %s" % r), nxt()))
 
+    def s_camaim(nxt):
+        # lookAt で回転が決まるカメラ: リグで求められたら「ファイルに残っていません」の注記は出さない
+        win.open_file(CAMAIM)
+        t0 = time.time()
+        info_js = """JSON.stringify((() => { const app = window.mayaViewer.debug.app; const s = window.mayaViewer.getStats();
+            if (!s.loaded || !s.animation || app.sceneName !== 'camaim_sample.ma') return { ready: false };
+            app.select(app.data.nodes.findIndex((n) => n.name === 'aim_cam'));
+            return { ready: true, text: document.getElementById('select-info').innerText }; })())"""
+
+        def poll():
+            def got(r):
+                if not r["ready"] and time.time() - t0 < 20:
+                    QtCore.QTimer.singleShot(200, poll)
+                    return
+                t = r.get("text") or ""
+                check("rx ← cam_aim_group（lookAt）" in t, "選択情報のリグに、lookAt で回転が決まることを表示")
+                check("ファイルに残っていません" not in t, "リグで求められた回転には「ファイルに残っていません」の注記を出さない")
+                nxt()
+            js(info_js, got, 0)
+        poll()
+
     win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(200, lambda: run(
-        [s_open, s_frame, s_camera, s_camera_menu, s_camera_drag, s_bind_key, s_inert, s_grid,
+        [s_open, s_frame, s_camera, s_camera_menu, s_camera_drag, s_bind_key, s_inert, s_grid, s_camaim,
          lambda _: (win.a_anim.setChecked(load_setting), app.quit())])))
     QtCore.QTimer.singleShot(90000, lambda: (print("NG タイムアウト"), ok.update(v=False), app.quit()))
     app.exec()

@@ -85,6 +85,7 @@ python -m ma_viewer info scene.ma              # 内容の概要と警告を表�
 python -m ma_viewer export scene.ma -o out.json   # 共通 JSON に変換（アニメーションも含む。--no-animation で除く）
 python -m ma_viewer view scene.ma              # ビューアで開く
 python -m ma_viewer rig scene.ma               # リグの診断（評価できないノードと、IK の極ベクトルなどの上流）。-o で保存
+python -m ma_viewer excerpt scene.ma [ノード名...]   # 指定したノード（省略時は lookAt）とその子孫・接続・1 段上流だけを抜き出す（不具合の報告用）。-o で保存
 ```
 
 **リグの診断**: 再生した姿勢が Maya と違うとき（IK のアップベクターが反転するなど）の原因探しに使います。Qt 版は［表示］→［リグの診断…］です。次の内容を一覧にします。
@@ -237,7 +238,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 | parentConstraint | ターゲットごとに（ターゲット · オフセットの移動 · オフセットの回転）を求め、位置と向きを重み付き平均 |
 | scaleConstraint | ターゲットのワールドのスケールの重み付き平均 × オフセット（.o） |
 | poleVectorConstraint | ターゲットの位置 − 開始の位置（IK ハンドルの極ベクトル）。Maya と同じく、開始の位置はコンストレイントの属性 (constraintRotatePivot + constraintRotateTranslate) を pivotSpace でワールドへ移したもの（ふつうは開始ジョイントの位置。crp がつながっていなければ親の原点などになる）、ターゲットの位置は (targetTranslate + targetRotatePivot + targetRotateTranslate) を targetParentMatrix で移したもの |
-| lookAt（カメラとエイム） | Maya の［カメラとエイム］・［カメラ、エイム、アップ］のグループ。aimConstraint と同じ解き方（aim の既定はカメラの −Z）に、world up がシーンの上・ベクトルのときは twist（.tws）で視線のまわりに回す（ロール。回る向きは Maya では未確認）。twist はキー・別のノードの属性・カメラのシェイプの独自の属性からつないでもよい（独自の角度の属性 doubleAngle の値はラジアンに直して読む） |
+| lookAt（カメラとエイム） | Maya の［カメラとエイム］・［カメラ、エイム、アップ］のグループ。aimConstraint と同じ解き方（aim の既定はカメラの −Z）に、world up がシーンの上・ベクトルのときは twist（.tws）で視線のまわりに回す（ロール。回る向きは Maya では未確認）。twist はキー・別のノードの属性・カメラのシェイプの独自の属性からつないでもよい（独自の角度の属性 doubleAngle の値はラジアンに直して読む）。twist・オフセット・up などの補助の入力が未対応のノードにつながっているときは、その接続だけを外してファイルの値で評価する（エイムの向きは求め、警告を出す） |
 | aimConstraint | aim ベクトル（.a）をターゲットへ向け、up ベクトル（.u）を world up の側に向ける。world up はシーンの上・オブジェクト（.wum の位置）・オブジェクトの回転・ベクトル（.wu）・なし。world up がなしのときと、aim と up が平行なとき（ひねりが決まらない）は、Maya と同じく親の空間で回転 0 の向き（jointOrient・rotateAxis を含む）から測る最短の回転。オフセット（.o） |
 | IK（ikRPsolver） | 2 ボーン（開始・中間・終端のジョイント）は、ハンドルに届くように余弦定理で曲げ、極ベクトル（ハンドルの親の空間。ファイルに値がなければ Maya の既定値 (0, 0, 1)）の側に肘を置き、ひねり（twist）で回す。届かないときはまっすぐ伸ばす。ikBlend で FK と混ぜる。まっすぐなチェーンは優先角（.pa）で曲げる向きを決める。3 ボーン以上は、FK の形を極ベクトルの面に合わせて回してから、面の上で FABRIK（反復の解き方）で解く（曲がり方の配分は Maya と違うことがある） |
 | IK（ikSCsolver） | 1 ボーンは、終端がハンドルの方を向くよう開始ジョイントを最短の回転で回す。2 ボーン以上は回転プレーンと同じ解き方で、極ベクトルの代わりに FK の形の側に曲げる（Maya の SC はハンドルの回転で面を決めるので、ずれることがある） |
@@ -382,7 +383,7 @@ bundle は ES モジュールではなく、通常の `<script>` で読める形
 
 | 項目 | 確認方法 | 結果 |
 |---|---|---|
-| 自動テストの全体 | Python 141 件・Node.js 135 件・Qt 16 本（仮想ディスプレイ上） | すべて合格 |
+| 自動テストの全体 | Python 143 件・Node.js 137 件・Qt 16 本（仮想ディスプレイ上） | すべて合格 |
 | .ma パーサ・行列計算・抽出 | 単体テスト（test_python.py ほか） | 合格 |
 | three.js のスキン変形・ポーズ計算 | Maya の式で計算した期待値と比較（Node.js。8 インフルエンス・上位 8 への絞り込みを含む） | 誤差 1e-4 未満で一致 |
 | exe 化 | PyInstaller で 1 ファイルの実行ファイルを作り、ソースのない別フォルダで起動。一時展開フォルダから画面ファイルを読み、シーン・テクスチャを表示できることを --selftest で確認（Linux で確認） | 合格 |
