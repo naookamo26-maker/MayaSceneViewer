@@ -112,7 +112,10 @@ export class UI {
     $('opt-axes').addEventListener('change', (e) => s('axes', e.target.value));
     $('opt-weights').addEventListener('change', (e) => s('weightMode', e.target.value));
     $('opt-alpha').addEventListener('change', (e) => s('alpha', e.target.value));
-    $('opt-pose-source').addEventListener('change', (e) => s('poseSource', e.target.value));
+    $('opt-bind').addEventListener('click', () => this.app.togglePoseSource());
+    $('opt-camera').addEventListener('change', (e) => this.app.setCamera(+e.target.value));
+    $('opt-camera-icons').addEventListener('change', (e) => s('cameraIcons', e.target.checked));
+    $('opt-camera-gate').addEventListener('change', (e) => s('cameraGate', e.target.checked));
     $('opt-lighting').addEventListener('change', (e) => s('lighting', e.target.value));
     $('opt-map-view').addEventListener('change', (e) => s('mapView', e.target.value));
     $('opt-normal-flip').addEventListener('change', (e) => s('normalFlipY', e.target.checked));
@@ -164,7 +167,9 @@ export class UI {
     $('opt-grid').setAttribute('aria-pressed', String(!!st.grid));
     $('opt-tex').setAttribute('aria-pressed', String(st.textures));
     $('opt-alpha').value = st.alpha;
-    $('opt-pose-source').value = st.poseSource;
+    $('opt-bind').setAttribute('aria-pressed', String(st.poseSource === 'bind'));
+    $('opt-camera-icons').checked = st.cameraIcons !== false;
+    $('opt-camera-gate').checked = st.cameraGate !== false;
     $('opt-lighting').value = st.lighting;
     $('opt-map-view').value = st.mapView;
     $('opt-normal-flip').checked = !!st.normalFlipY;
@@ -174,14 +179,64 @@ export class UI {
     $('opt-space').setAttribute('aria-pressed', String(st.space === 'world'));
     // メニュー名の横に、既定と違う設定を表示する
     const VIEW = { baseColor: 'ベースカラー', normal: '法線', roughness: 'ラフネス', metalness: 'メタリック', ao: 'AO', emissive: 'エミッシブ', opacity: '不透明度' };
-    const viewState = [st.lighting === 'flat' ? 'フラットライト' : '', st.shading === 'none' ? 'ワイヤーのみ' : st.shading === 'flat' ? 'フラット' : '',
-      st.poseSource === 'file' ? 'ファイルの値' : ''].filter(Boolean).join('・');
+    const viewState = [st.lighting === 'flat' ? 'フラットライト' : '', st.shading === 'none' ? 'ワイヤーのみ' : st.shading === 'flat' ? 'フラット' : '']
+      .filter(Boolean).join('・');
     $('menu-view-state').textContent = viewState;
     $('menu-maps-state').textContent = st.mapView !== 'combined' ? VIEW[st.mapView] || '' : '';
     $('menu-weights-state').textContent = { selected: 'ヒートマップ', all: '色分け' }[st.weightMode] || '';
     document.querySelectorAll('#opt-tool [data-tool]').forEach((b) => {
       b.setAttribute('aria-pressed', String(b.dataset.tool === st.tool));
     });
+  }
+
+  /**
+   * 今の表示設定では効果のない切り替えボタンを薄く表示し、理由をツールチップに足す（押すこと自体はできる）。
+   * @param hints {ボタンの id: 理由}（載っていないボタンは通常の表示）
+   */
+  setToolbarHints(hints) {
+    for (const id of ['opt-wire', 'opt-tex', 'opt-skin', 'opt-joints', 'opt-curves', 'opt-xray', 'opt-bind', 'opt-grid']) {
+      const b = $(id);
+      if (b.dataset.baseTitle === undefined) b.dataset.baseTitle = b.title;
+      const why = hints[id];
+      b.classList.toggle('inert', !!why);
+      b.title = why ? `${b.dataset.baseTitle}\n※ いまは効果がありません: ${why}` : b.dataset.baseTitle;
+    }
+  }
+
+  // ---------------------------------------------------------------- シーンのカメラ
+  setCameras(list) {
+    const sel = $('opt-camera');
+    sel.textContent = '';
+    const add = (value, text) => { const o = document.createElement('option'); o.value = String(value); o.textContent = text; sel.appendChild(o); };
+    add(-1, '自由視点（パース）');
+    list.forEach((c, i) => add(i, `${c.name}${c.orthographic ? '（平行投影）' : `（${fmt(c.focalLength, 0)}mm）`}`));
+    sel.disabled = !list.length;
+    $('camera-note').hidden = !list.length;
+    this.setViewCamera(-1, '');
+  }
+
+  setViewCamera(ci, name) {
+    $('opt-camera').value = String(ci);
+    $('menu-camera-state').textContent = ci >= 0 ? name : '';
+    $('viewport').classList.toggle('viewing-camera', ci >= 0);
+    $('vp-hint').textContent = ci >= 0
+      ? `カメラ ${name} から表示中（C: 次のカメラ　Shift+C: 自由視点に戻す）　クリック: 選択`
+      : '左ドラッグ: 回転　中ドラッグ: 移動　右ドラッグ・ホイール: ズーム　クリック: 選択';
+  }
+
+  /** 解像度ゲート（ビューポート上のピクセル）。rect が null なら隠す。mask=false なら枠だけ */
+  setGate(mask, rect, W, H) {
+    const el = $('cam-gate');
+    if (!rect) { el.hidden = true; return; }
+    el.hidden = false;
+    el.classList.toggle('no-mask', !mask);
+    const [t, b, l, r] = el.children;
+    const px = (v) => `${Math.round(v)}px`;
+    Object.assign(t.style, { left: 0, right: 0, top: 0, height: px(rect.y) });
+    Object.assign(b.style, { left: 0, right: 0, bottom: 0, height: px(H - rect.y - rect.h) });
+    Object.assign(l.style, { left: 0, top: px(rect.y), width: px(rect.x), height: px(rect.h) });
+    Object.assign(r.style, { right: 0, top: px(rect.y), width: px(W - rect.x - rect.w), height: px(rect.h) });
+    Object.assign(el.querySelector('.g-frame').style, { left: px(rect.x), top: px(rect.y), width: px(rect.w), height: px(rect.h) });
   }
 
   // ---------------------------------------------------------------- メニュー（ツールバーのドロップダウン）
@@ -237,7 +292,7 @@ export class UI {
       if (!rowEl) return;
       const row = this.rows[+rowEl.dataset.row];
       if (e.target.closest('.eye')) {
-        if (row.mesh >= 0) this.app.setMeshVisible(row.mesh, !this.app.built.meshes[row.mesh].selfVisible);
+        if (row.mesh >= 0) this.app.setMeshVisible(row.mesh, !this.app.isMeshShown(row.mesh));
         else this.app.toggleNodeVisible(row.node);
         return;
       }
@@ -317,17 +372,18 @@ export class UI {
   }
 
   /** rowIndex の行と、その下の階層をすべて開く（open=false なら閉じる） */
-  /** 目のアイコンと、親が非表示で隠れている行の表示を更新する */
-  updateVisibilityMarks(hidden, hiddenEff, meshes) {
+  /** 目のアイコンと、親が非表示で隠れている行の表示を更新する（app: isNodeHidden・isMeshShown・hiddenEff） */
+  updateVisibilityMarks(app) {
+    const meshes = app.built.meshes;
     for (const row of this.rows) {
       let on, dim;
       if (row.mesh >= 0) {
-        const e = meshes[row.mesh];
-        on = e.selfVisible;
-        dim = !e.visible;
+        on = app.isMeshShown(row.mesh);
+        dim = !meshes[row.mesh].visible;
+        this.setMeshChecked(row.mesh, on);
       } else {
-        on = !hidden.has(row.node);
-        dim = !!hiddenEff[row.node];
+        on = !app.isNodeHidden(row.node);
+        dim = !!app.hiddenEff[row.node];
       }
       row.eye.setAttribute('aria-pressed', String(on));
       row.eye.setAttribute('aria-label', on ? '表示中' : '非表示');
@@ -485,7 +541,8 @@ export class UI {
 
     const SRC = { pm: 'skinCluster の .pm', dagPose: 'dagPose', bps: 'ジョイントの .bps' };
     let h = '<table class="kv">';
-    h += `<tr><th>表示</th><td>${info.hiddenSelf ? '非表示' : info.hiddenByParent ? '親が非表示のため隠れています' : '表示中'}</td></tr>`;
+    h += `<tr><th>表示</th><td>${info.hiddenByRig ? '非表示（リグ・アニメーションで決まる値）' : info.hiddenSelf ? '非表示'
+      : info.hiddenByParent ? '親が非表示のため隠れています' : '表示中'}</td></tr>`;
     h += `<tr><th>姿勢の基準</th><td>${info.usingBind ? 'バインドポーズ' : 'ファイルの値'}</td></tr>`;
     h += `<tr><th>バインドポーズの情報</th><td>${info.bindSource ? esc(SRC[info.bindSource] || info.bindSource) : 'なし'}</td></tr>`;
     h += '</table>';

@@ -40,7 +40,7 @@ class TestStagedLoad(unittest.TestCase):
         self.assertNotIn("animation", scene)
         anim = load_animation()
         self.assertIsNotNone(anim)
-        self.assertEqual(anim["stats"]["curves"], 6)
+        self.assertEqual(anim["stats"]["curves"], 7)          # box.v の表示のカーブも読む
         schema.validate(dict(scene, animation=anim))
 
     def test_same_scene_with_and_without_animation(self):
@@ -121,11 +121,20 @@ class TestSampleAnimation(unittest.TestCase):
         # x は秒 → フレーム（24 fps）。y は cm のまま（作業単位が cm）
         self.assertEqual(first[1:], [12.0, 0.0, 36.0, 0.0])
 
+    def test_visibility_curve(self):
+        """表示のキー（box.v）は animation.props に入り、ビューアがフレームごとに評価する"""
+        names = [n["name"] for n in self.scene["nodes"]]
+        props = [p for p in self.anim["props"] if p["kind"] == "node" and names[p["index"]] == "box"]
+        self.assertEqual(len(props), 1)
+        c, *_ = self.curve("box_visibility")
+        self.assertEqual(props[0]["inputs"], {"v": {"curve": self.anim["curves"].index(c)}})
+        self.assertEqual(props[0]["static"]["v"], 1.0)
+
     def test_warnings(self):
         w = "\n".join(self.anim["warnings"])
         self.assertIn("pointConstraint", w)
         self.assertIn("forearm_twist", w)
-        self.assertIn("（v）", w)
+        self.assertNotIn("（v）", w)                          # 表示（box.v）のカーブは再生する（animation.props）
         self.assertIn("表示していないノード", w)
         # カーブで動くノードには「ファイルに値がありません」の警告を出さない（再生できるため）
         self.assertFalse(any(x.startswith("shoulder:") for x in self.scene["warnings"]))
@@ -195,6 +204,63 @@ class TestUnits(unittest.TestCase):
                 'connectAttr "j_sx.o" "j.sx";\n')
         _sc, anim = scene_from_text(body)
         self.assertEqual(anim["current"], 7.0)
+
+
+class TestVisibilityAndCameras(unittest.TestCase):
+    """リグで切り替える表示（animation.props）とシーンのカメラ（cameras）。前提: python tools/make_vis_camera_sample.py"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.scene = load_ma(os.path.join(ROOT, "samples", "vis_camera_sample.ma"), animation=True)
+        cls.anim = cls.scene["animation"]
+        cls.names = [n["name"] for n in cls.scene["nodes"]]
+        schema.validate(cls.scene)
+
+    def prop(self, kind, name):
+        if kind == "node":
+            index = self.names.index(name)
+        elif kind == "mesh":
+            index = [m["name"] for m in self.scene["meshes"]].index(name)
+        else:
+            index = [c["name"] for c in self.scene["cameras"]].index(name)
+        return next(p for p in self.anim["props"] if p["kind"] == kind and p["index"] == index)
+
+    def graph(self, name):
+        return next(g for g in self.anim["graph"] if g["name"] == name)
+
+    def test_cameras(self):
+        cams = {c["name"]: c for c in self.scene["cameras"]}
+        self.assertEqual(sorted(cams), ["ortho_cam", "shot_cam"])        # persp などの起動時のカメラは出さない
+        shot = cams["shot_cam"]
+        self.assertEqual(self.names[shot["transform"]], "shot_cam")
+        self.assertAlmostEqual(shot["horizontalFilmAperture"], 1.41732)  # .cap（2 つ組）から
+        self.assertAlmostEqual(shot["verticalFilmAperture"], 0.94488)
+        self.assertEqual((shot["nearClipPlane"], shot["filmFit"], shot["orthographic"]), (1.0, 1, False))
+        self.assertTrue(cams["ortho_cam"]["orthographic"])
+        self.assertEqual(cams["ortho_cam"]["orthographicWidth"], 40.0)
+        self.assertEqual(self.scene["render"]["width"], 1920)
+        self.assertAlmostEqual(self.scene["render"]["deviceAspectRatio"], 16 / 9, places=5)
+
+    def test_visibility_props(self):
+        # コントローラーの独自の属性 → box.v（カメラのキーと同じく animation.props に入る）
+        box = self.prop("node", "box")
+        self.assertEqual(box["inputs"], {"v": {"node": self.graph("vis_ctrl")["id"], "attr": "geoVis"}})
+        self.assertFalse(box["static"]["layerHidden"])
+        # reverse を経由してシェイプの lodv
+        arm_shape = self.prop("mesh", "arm_geoShape")
+        self.assertEqual(arm_shape["inputs"]["lodv"], {"node": self.graph("vis_rev")["id"], "attr": "ox"})
+        # キーのある独自の属性 → arm_geo.v
+        self.assertEqual(self.prop("node", "arm_geo")["inputs"]["v"]["attr"], "proxyVis")
+        self.assertIn("curve", self.graph("vis_ctrl")["inputs"]["proxyVis"])
+        self.assertEqual(self.graph("vis_ctrl")["attrs"]["geoVis"], 0.0)
+        self.assertFalse(any("（v）" in w or "lodv" in w for w in self.anim["warnings"]))
+
+    def test_camera_focal_length_curve(self):
+        fl = self.prop("camera", "shot_cam")["inputs"]["fl"]
+        self.assertEqual(self.anim["curves"][fl["curve"]]["name"], "shot_camShape_focalLength")
+
+    def test_scene_without_driven_visibility_has_no_props(self):
+        self.assertNotIn("props", load_ma(PLAIN, animation=True).get("animation") or {})
 
 
 if __name__ == "__main__":

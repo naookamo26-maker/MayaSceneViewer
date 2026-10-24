@@ -107,10 +107,13 @@ class GraphInfo:
         self.graph_driven: Set[int] = set()            # チャンネルの接続元がすべて評価できるノード
         self.expressions: Dict[int, str] = {}          # 解釈できる expression の式
         self.expression_problems: Dict[str, str] = {}  # 解釈できない expression の名前 → 理由
+        # 移動・回転・スケール以外の、接続で決まる属性: [(種類, 使う側, 属性, 元, 元の属性)]（PROP_KEYS）
+        self.props: List[Tuple[str, MaNode, str, MaNode, str]] = []
+        self.gid: Dict[int, int] = {}                  # build_graph が付けた graph の番号（id(ノード) → id）
 
     @property
     def empty(self) -> bool:
-        return not self.dg and not self.ik and not any(
+        return not self.dg and not self.ik and not self.props and not any(
             src.type not in CURVE_TYPES for e in self.edges.values() for src, _ in e.values())
 
 
@@ -118,6 +121,14 @@ class GraphInfo:
 _DISPLAY_KEYS = {"do", "drawOverride", "iog", "instObjGroups", "msg", "message"}
 
 _DEFORM_OUT = re.compile(r"^og\[(\d+)\]$")
+
+# 移動・回転・スケール以外で、リグ（接続・カーブ）で決まる値を評価する属性（animation.props）
+#   node・mesh: 表示（.v・.lodv・描画のオーバーライドの .ove / .ovv）
+#   camera: 焦点距離・フィルムバック・クリップ面・平行投影の幅など
+VIS_KEYS = ("v", "lodv", "ove", "ovv")
+VIS_DEFAULTS = {"v": 1.0, "lodv": 1.0, "ove": 0.0, "ovv": 1.0}
+CAMERA_KEYS = ("fl", "hfa", "vfa", "ncp", "fcp", "ow", "hfo", "vfo", "lsr", "cs")
+PROP_KEYS = {"node": VIS_KEYS, "mesh": VIS_KEYS, "camera": CAMERA_KEYS}
 
 
 def wire_shapes(ms: MaScene, wire: MaNode) -> Dict[int, MaNode]:
@@ -141,8 +152,11 @@ def wire_shapes(ms: MaScene, wire: MaNode) -> Dict[int, MaNode]:
     return out
 
 
-def discover(ms: MaScene, keep: Set[int], geometry=()) -> GraphInfo:
-    """表示するノード（keep）と、表示するカーブ（geometry。変形の入力を持つもの）を動かす接続を上流へたどる。"""
+def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
+    """表示するノード（keep）と、表示するカーブ（geometry。変形の入力を持つもの）を動かす接続を上流へたどる。
+
+    props は [(種類, ノード)]。PROP_KEYS の属性（表示・カメラの焦点距離など）の接続もたどる。
+    """
     info = GraphInfo()
     world_done: Set[int] = set()
     plug_done: Set[Tuple[int, str]] = set()
@@ -214,7 +228,7 @@ def discover(ms: MaScene, keep: Set[int], geometry=()) -> GraphInfo:
                 need_world(n)
             elif b in _CHANNEL_KEYS:
                 need_channels(n, b)
-            elif attr in n.inputs:                       # 独自の属性（IK/FK の切り替えなど）
+            elif attr in n.inputs:                       # 独自の属性（IK/FK の切り替えなど）・表示（.v）
                 add_edge(n, attr)
             return
         info.unsupported.setdefault(n.type, []).append((n.name, consumer.name, ckey))
@@ -226,6 +240,14 @@ def discover(ms: MaScene, keep: Set[int], geometry=()) -> GraphInfo:
             srcs = [src for key, (src, _sa) in n.inputs.items() if _base(key) in _CHANNEL_KEYS]
             if srcs and all(_evaluable(s, info) for s in srcs):
                 info.graph_driven.add(id(n))
+
+    # 表示・カメラの属性の入力（コントローラーの独自の属性 → reverse → .v など）
+    for kind, n in props:
+        for key in PROP_KEYS[kind]:
+            if key in n.inputs:
+                src, sattr = n.inputs[key]
+                info.props.append((kind, n, key, src, sattr))
+                need_plug(src, sattr, n, key)
 
     # 表示するカーブの形を決める入力（skinCluster・制御点の接続など）
     for n in geometry:
@@ -372,6 +394,7 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
         if id(n) in info.dg or id(n) in out_index:
             gid[id(n)] = len(order)
             order.append(n)
+    info.gid = gid
     ik_of = {id(e["handle"]): e for e in info.ik if not e["problem"]}
     nodes = []
     moving: Set[int] = set()
@@ -379,6 +402,12 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
         is_dag = id(n) not in info.dg
         entry = {"id": gid[id(n)], "name": n.name, "type": n.type, "dag": out_index[id(n)] if is_dag else -1}
         attrs = parse_attrs(ms.text, n, _STANDARD_ATTRS if is_dag else ())
+        if is_dag:
+            # 表示の属性（.v など）は標準の属性なので attrs に入らない。別のノードの表示の入力になるときのため、
+            # 既定と違う値だけを入れる（ビューアは、ないものを既定値とする）
+            for key, d in VIS_DEFAULTS.items():
+                if n.flag(key, d >= 0.5) != (d >= 0.5):
+                    attrs[key] = 0.0 if d >= 0.5 else 1.0
         if attrs:
             entry["attrs"] = attrs
         inputs = {}

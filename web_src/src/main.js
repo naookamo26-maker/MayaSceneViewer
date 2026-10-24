@@ -1,8 +1,8 @@
 // ビューア本体。window.mayaViewer を通じて Python（Qt）から操作される。
 import {
-  BufferGeometry, DirectionalLight, Float32BufferAttribute, GridHelper, HemisphereLight, MOUSE,
-  Matrix4, Object3D, PerspectiveCamera, Points, PointsMaterial, Raycaster, SRGBColorSpace, Scene, Vector2, Vector3, WebGLRenderer,
-  Box3,
+  BufferGeometry, Color, DirectionalLight, Float32BufferAttribute, HemisphereLight, LineBasicMaterial, LineSegments, MOUSE,
+  Matrix4, Object3D, OrthographicCamera, PerspectiveCamera, Points, PointsMaterial, Quaternion, Raycaster, SRGBColorSpace, Scene,
+  Vector2, Vector3, WebGLRenderer, Box3,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
@@ -20,9 +20,10 @@ import { connectBridge, isQtHost } from './bridge.js';
 import { History, sameChanges } from './history.js';
 import { compareGpuCpuSkinning } from './skinCheck.js';
 import { AnimationClip } from './animation.js';
-import { RigEvaluator } from './rig.js';
+import { RigEvaluator, visibleFrom } from './rig.js';
 import { Timeline } from './timeline.js';
 import { CurveOverlay } from './curveOverlay.js';
+import { CameraIcons, cameraFrustum, cameraParams } from './cameraView.js';
 
 const VERSION = '1.0.0';
 const D2R = Math.PI / 180;
@@ -37,12 +38,15 @@ const DEFAULTS = {
   maps: { normal: true, roughness: false, metalness: false, ao: false, emissive: false, opacity: false },
   normalFlipY: false,            // ノーマルマップの緑を反転（DirectX 形式）
   tool: 'select', space: 'local', gizmoSize: 1,
+  cameraIcons: true,             // シーンのカメラの形を描く
+  cameraGate: true,              // カメラから見るとき、解像度ゲートの外側を暗くする
 };
 const TOOLS = ['select', 'translate', 'rotate', 'scale'];
 const num = (n) => n.toLocaleString('ja-JP');
 
 const _v = new Vector3();
 const _v2 = new Vector3();
+const _q = new Quaternion();
 
 class ViewerApp {
   constructor() {
@@ -66,6 +70,10 @@ class ViewerApp {
     this.playing = false;
     this.sceneLoading = false;  // シーンの転送が終わり、組み立てを待っている間
     this.pendingAnimation = null;   // シーンの組み立て前に届いたアニメーション
+    this.poseSourceChosen = false;  // 読み込んでから、姿勢の基準を自分で切り替えたか（アニメーションの読み込みで自動で切り替えない）
+    this.cameras = [];              // シーンのカメラ（共通 JSON の cameras）
+    this.viewCamera = -1;           // いま見ているカメラ（-1 は自由視点）
+    this.cameraProps = new Map();   // カメラの番号 → アニメーション・リグで決まる属性の値（焦点距離など）
     this.ui = new UI(this);
     this.timeline = new Timeline(this);
     this.ui.setHost(isQtHost() ? 'qt' : 'browser');
@@ -104,6 +112,12 @@ class ViewerApp {
     key.position.set(0.4, 0.8, 1);
     key.target.position.set(0, 0, -1);
     this.camera.add(key, key.target);
+    this.keyLight = key;
+    // シーンのカメラから見るときの視点（透視投影・平行投影）。投影はカメラの属性から毎回作る
+    this.viewPersp = new PerspectiveCamera();
+    this.viewOrtho = new OrthographicCamera();
+    this.scene.add(this.viewPersp, this.viewOrtho);
+    this.cameraIcons = new CameraIcons();
 
     this.grid = null;
     this.updateGrid(new Box3(new Vector3(-10, 0, -10), new Vector3(10, 10, 10)));
@@ -176,7 +190,16 @@ class ViewerApp {
   }
 
   render() {
-    if (this.renderer) this.renderer.render(this.scene, this.camera);
+    if (!this.renderer) return;
+    if (this.viewCamera >= 0) this.syncViewCamera();
+    this.renderer.render(this.scene, this.activeCamera());
+  }
+
+  /** 描画・ピックに使うカメラ（シーンのカメラから見ているときはその視点） */
+  activeCamera() {
+    if (this.viewCamera < 0) return this.camera;
+    const cam = this.cameras[this.viewCamera];
+    return cam && cam.orthographic ? this.viewOrtho : this.viewPersp;
   }
 
   bindEvents() {
@@ -243,6 +266,11 @@ class ViewerApp {
       else if (k === '5') { set('shading', 'smooth'); set('textures', false); }   // Maya と同じ: 5 = テクスチャなし
       else if (k === '6') { set('shading', 'smooth'); set('textures', true); }    //               6 = テクスチャあり
       else if (k === 'j') set('joints', !this.settings.joints);
+      else if (k === 'b') this.togglePoseSource();
+      else if (k === 'c') {
+        if (!this.cameras.length) this.ui.setMessage('このシーンにはカメラがありません');
+        else this.setCamera(e.shiftKey ? -1 : this.nextCamera());
+      }
       else if (k === 'q') set('tool', 'select');
       else if (k === 'w') set('tool', 'translate');
       else if (k === 'e') set('tool', 'rotate');
@@ -313,6 +341,7 @@ class ViewerApp {
       this.pose = new PoseState(built, data);
       this.edit = null;
       this.history.clear();
+      this.poseSourceChosen = false;
       applyPoseSource(built, this.settings.poseSource);
       this.pose.reapplyAll();
       built.root.updateMatrixWorld(true);
@@ -323,6 +352,9 @@ class ViewerApp {
       this.sceneRadius = Math.max(bounds.getSize(_v).length() / 2, 1e-3);
       mark('範囲');
       this.overlay.build(built, data.nodes, this.sceneRadius);
+      this.cameras = data.cameras || [];
+      this.cameraIcons.build(built, this.cameras, Math.max(this.sceneRadius * 0.3, 1));
+      this.ui.setCameras(this.cameras);
       this.updateGrid(bounds);
       mark('ジョイント');
       this.ui.populate(data, built);
@@ -352,7 +384,7 @@ class ViewerApp {
       const verts = built.meshes.reduce((s, e) => s + e.vertexCount, 0);
       const nCurves = this.curves.items.filter(Boolean).length;
       this.ui.setStats(`メッシュ ${num(built.meshes.length)} ・ 頂点 ${num(verts)} ・ 三角形 ${num(tris)} ・ ジョイント ${num(built.jointIndices.length)}`
-        + (nCurves ? ` ・ カーブ ${num(nCurves)}` : ''));
+        + (nCurves ? ` ・ カーブ ${num(nCurves)}` : '') + (this.cameras.length ? ` ・ カメラ ${num(this.cameras.length)}` : ''));
       this.ui.setEmpty(false);
       this.ui.hideError();
       this.ui.hideLoading();
@@ -383,6 +415,7 @@ class ViewerApp {
       const anim = this.pendingAnimation || data.animation;
       this.pendingAnimation = null;
       if (anim) this.setAnimation(anim);
+      this.updateToolbarHints();
       return true;
     } catch (err) {
       this.ui.hideLoading();
@@ -393,6 +426,10 @@ class ViewerApp {
   }
 
   clearScene() {
+    this.setCamera(-1, { quiet: true });
+    this.cameraIcons.clear();
+    this.cameras = [];
+    this.cameraProps = new Map();
     this.textureToken = (this.textureToken || 0) + 1;   // 読み込み中のテクスチャを無効にする
     if (this.maps) this.maps.reset(null);
     if (this.built) disposeScene(this.built);
@@ -428,6 +465,8 @@ class ViewerApp {
     this.ui.showVertexInfo(null);
     this.ui.showPoseFor(-1);
     this.ui.setLegend('off');
+    this.ui.setCameras([]);
+    this.updateToolbarHints();
     this.requestRender();
   }
 
@@ -441,9 +480,7 @@ class ViewerApp {
     if (this.grid) { this.scene.remove(this.grid); this.grid.geometry.dispose(); this.grid.material.dispose(); }
     const ext = Math.max(Math.abs(bounds.min.x), Math.abs(bounds.max.x), Math.abs(bounds.min.z), Math.abs(bounds.max.z), 1e-3);
     const size = niceCeil(ext * 2.4);
-    this.grid = new GridHelper(size, 20, 0x2b2f34, 0x5d656e);
-    this.grid.material.transparent = true;
-    this.grid.material.opacity = 0.6;
+    this.grid = makeGrid(size, 20);
     this.grid.material.depthWrite = false;
     this.grid.renderOrder = -1;
     this.grid.visible = !!this.settings.grid;
@@ -458,6 +495,7 @@ class ViewerApp {
     if (key === 'space' && this.gizmo) this.gizmo.setSpace(value);
     if (key === 'grid' && this.grid) this.grid.visible = !!value;      // シーンがなくても切り替えられる
     this.ui.syncSettings(this.settings);     // ツールバーの表示（押下状態・メニューの状態）を合わせる
+    this.updateToolbarHints();
     if (!this.built) { this.requestRender(); return; }
     switch (key) {
       case 'tool':
@@ -476,6 +514,8 @@ class ViewerApp {
         if (this.picked) this.ui.showVertexInfo(this.vertexInfo());
         break;
       case 'joints': this.overlay.setVisible(value); break;
+      case 'cameraIcons': this.updateCameraIcons(); break;
+      case 'cameraGate': this.updateGate(); break;
       case 'curves': this.curves.setVisible(value); break;
       case 'xray': this.overlay.setXray(value); break;
       case 'axes': this.overlay.setAxesMode(value); break;
@@ -676,20 +716,52 @@ class ViewerApp {
   /** 読み込み時: Maya で非表示のノード・メッシュを、そのまま非表示にする */
   initVisibility() {
     this.hidden = new Set();
+    this.rigHidden = new Set();     // リグ（接続・カーブ）で決まる表示が、いまのフレームで非表示のノード
+    this.rigShown = new Set();      // そのうち、目のアイコンなどで表示し直したノード（リグより優先）
     this.data.nodes.forEach((n, i) => { if (n.visible === false) this.hidden.add(i); });
     for (const e of this.built.meshes) {
       e.selfVisible = e.data.visibleSelf !== undefined ? e.data.visibleSelf !== false : e.data.visible !== false;
+      e.rigHidden = false;
+      e.rigShown = false;
     }
     this.computeVisibility();
+  }
+
+  /** ノード自身が非表示か（目のアイコンの状態。リグで隠れている場合も含む） */
+  isNodeHidden(ni) {
+    return this.hidden.has(ni) || (this.rigHidden.has(ni) && !this.rigShown.has(ni));
+  }
+
+  /** メッシュ自身が表示されるか（親の表示状態は含まない） */
+  isMeshShown(mi) {
+    const e = this.built.meshes[mi];
+    return e.selfVisible && !(e.rigHidden && !e.rigShown);
   }
 
   /** 親を含めた実際の表示状態（Maya と同じく、親が非表示なら子も非表示） */
   computeVisibility() {
     const nodes = this.data.nodes;
     const eff = new Array(nodes.length).fill(false);
-    nodes.forEach((n, i) => { eff[i] = this.hidden.has(i) || (n.parent >= 0 && eff[n.parent]); });
+    nodes.forEach((n, i) => { eff[i] = this.isNodeHidden(i) || (n.parent >= 0 && eff[n.parent]); });
     this.hiddenEff = eff;
-    for (const e of this.built.meshes) e.visible = e.selfVisible && !eff[e.transform];
+    this.built.meshes.forEach((e, mi) => { e.visible = this.isMeshShown(mi) && !eff[e.transform]; });
+  }
+
+  /** アニメーション・リグで決まる表示（animation.props の .v など）を、いまのフレームの値にする。変わったら true */
+  applyRigVisibility(props) {
+    let changed = false;
+    for (const p of props) {
+      if (p.kind !== 'node' && p.kind !== 'mesh') continue;
+      const st = p.static || {};
+      const hide = !!st.layerHidden || !visibleFrom({ ...st, ...p.values });
+      if (p.kind === 'node') {
+        if (hide !== this.rigHidden.has(p.index)) { changed = true; if (hide) this.rigHidden.add(p.index); else this.rigHidden.delete(p.index); }
+      } else {
+        const e = this.built.meshes[p.index];
+        if (e && e.rigHidden !== hide) { changed = true; e.rigHidden = hide; }
+      }
+    }
+    return changed;
   }
 
   updateVisibility() {
@@ -697,7 +769,8 @@ class ViewerApp {
     this.computeVisibility();
     this.overlay.setHiddenNodes(this.hiddenEff);
     this.curves.setHiddenNodes(this.hiddenEff);
-    this.ui.updateVisibilityMarks(this.hidden, this.hiddenEff, this.built.meshes);
+    this.ui.updateVisibilityMarks(this);
+    this.updateCameraIcons();
     if (this.picked && !this.built.meshes[this.picked.mesh].visible) {
       this.picked = null;
       this.marker.visible = false;
@@ -711,18 +784,26 @@ class ViewerApp {
 
   setNodeVisible(ni, visible) {
     if (!this.built || ni < 0) return;
-    if (visible) this.hidden.delete(ni); else this.hidden.add(ni);
+    if (visible) {
+      this.hidden.delete(ni);
+      if (this.rigHidden.has(ni)) this.rigShown.add(ni);    // リグで隠れていても表示する
+    } else {
+      this.hidden.add(ni);
+      this.rigShown.delete(ni);
+    }
     this.updateVisibility();
     this.ui.setMessage(`${visible ? '表示' : '非表示に'}しました: ${this.data.nodes[ni].name}`);
   }
 
   toggleNodeVisible(ni) {
-    if (ni >= 0 && this.hidden) this.setNodeVisible(ni, this.hidden.has(ni));
+    if (ni >= 0 && this.hidden) this.setNodeVisible(ni, this.isNodeHidden(ni));
   }
 
   setMeshVisible(mi, v) {
     if (!this.built) return;
-    this.built.meshes[mi].selfVisible = v;
+    const e = this.built.meshes[mi];
+    e.selfVisible = v;
+    e.rigShown = v && e.rigHidden;                          // リグで隠れていても表示する
     this.ui.setMeshChecked(mi, v);
     this.updateVisibility();
   }
@@ -748,6 +829,12 @@ class ViewerApp {
     this.pause();
     this.clip = clip;
     this.data.animation = anim;
+    // 前のアニメーションで決めた表示・カメラの値を捨てる（このあとの applyFrame で評価し直す）
+    this.rigHidden.clear();
+    this.rigShown.clear();
+    for (const e of this.built.meshes) { e.rigHidden = false; e.rigShown = false; }
+    this.cameraProps = new Map();
+    this.updateVisibility();
     // リグ（コンストレイント・IK・計算ノード）を含めて評価する（上で作成）。動かないノードはファイルの値
     // 姿勢の基準が変わったときに子のスケール補正も掛け直すよう、動くノードとその子を覚えておく
     this.rig = new RigEvaluator(clip, this.data.nodes, (ni) => this.built.nodeObjects[ni].userData.fileMatrix);
@@ -777,10 +864,16 @@ class ViewerApp {
     if (!this.hasTimeline) this.timeline.setStatus('');
     this.timeline.setClip(this.hasTimeline ? clip : null);
     this.updateTimelineKeys();
+    // キーのあるアニメーションは「ファイルの値」で見る（バインドポーズのままではアニメーションが見えないため）。
+    // 読み込みのあとで自分でバインドポーズを選んでいたら、そのままにする
+    const switched = this.hasTimeline && !this.poseSourceChosen && this.settings.poseSource === 'bind' && hasBindPose(this.built);
+    if (switched) this.setSetting('poseSource', 'file');
     this.applyFrame(clip.current);
+    this.updateToolbarHints();
     const st = anim.stats || {};
     this.ui.setMessage(`アニメーションを読み込みました（カーブ ${num(st.curves ?? clip.curves.length)} 本・`
-      + `動くノード ${num(this.rig.moving.size)} 個・${clip.start}〜${clip.end} フレーム）`, 6000);
+      + `動くノード ${num(this.rig.moving.size)} 個・${clip.start}〜${clip.end} フレーム）`
+      + (switched ? '。姿勢の基準を「ファイルの値」に切り替えました（B でバインドポーズ）' : ''), 6000);
     this.log('info', `animation loaded: ${clip.curves.length} curves, ${clip.nodes.length} nodes`);
     return true;
   }
@@ -825,9 +918,27 @@ class ViewerApp {
     // カーブの形（バインドポーズの表示では変形前の形）
     const bindView = mode === 'bind' && sceneHasBind;
     for (const [ci, gid] of this.rigCurves || []) this.curves.setShape(ci, bindView ? null : this.rig.plug(gid, 'local'));
+    // 表示（.v など）・カメラの焦点距離などの、接続で決まる値（姿勢の基準によらず、いまのフレームの値）
+    if (this.rig.props.length) {
+      const props = this.rig.evaluateProps();
+      for (const p of props) if (p.kind === 'camera') this.cameraProps.set(p.index, p.values);
+      if (this.applyRigVisibility(props)) this.updateVisibility();
+    }
     this.timeline.setFrame(f);
     this.rigBusy = true;
     try { this.afterPoseChange(light); } finally { this.rigBusy = false; }
+  }
+
+  /** 姿勢の基準（バインドポーズ／ファイルの値）を切り替える（ツールバーのボタン・B キー） */
+  togglePoseSource() {
+    this.setPoseSource(this.settings.poseSource === 'bind' ? 'file' : 'bind');
+  }
+
+  setPoseSource(mode) {
+    this.poseSourceChosen = true;
+    this.setSetting('poseSource', mode);
+    if (this.built && !hasBindPose(this.built)) this.ui.setMessage('このシーンにはバインドポーズの情報がありません（ファイルの値で表示します）');
+    else this.ui.setMessage(mode === 'bind' ? 'バインドポーズで表示します' : 'ファイルの値（アニメーションのフレームの姿勢）で表示します');
   }
 
   /** タイムラインを操作したとき。バインドポーズの表示中なら「ファイルの値」に切り替える（アニメーションが見えないため） */
@@ -921,6 +1032,7 @@ class ViewerApp {
     this.selected = ni;
     this.overlay.setSelected(ni);
     this.curves.setSelected(ni);
+    this.updateCameraIcons();
     this.ui.highlightNode(ni, this.data.nodes);
     this.ui.showNodeInfo(this.nodeInfo(ni));
     this.ui.showPoseFor(ni, this.pose.get(ni));
@@ -957,6 +1069,7 @@ class ViewerApp {
     this.marker.visible = false;
     this.overlay.setSelected(-1);
     this.curves.setSelected(-1);
+    this.updateCameraIcons();
     this.ui.highlightNode(-1, this.data.nodes);
     this.ui.showNodeInfo(null);
     this.ui.showVertexInfo(null);
@@ -984,8 +1097,9 @@ class ViewerApp {
       node: n,
       worldPos: _v.setFromMatrixPosition(obj.matrixWorld).toArray(),
       usage, meshes, posed: this.pose.has(ni),
-      hiddenSelf: !!(this.hidden && this.hidden.has(ni)),
-      hiddenByParent: !!(this.hiddenEff && this.hiddenEff[ni] && !(this.hidden && this.hidden.has(ni))),
+      hiddenSelf: !!(this.hidden && this.isNodeHidden(ni)),
+      hiddenByRig: !!(this.rigHidden && this.rigHidden.has(ni) && !this.rigShown.has(ni) && !this.hidden.has(ni)),
+      hiddenByParent: !!(this.hiddenEff && this.hiddenEff[ni] && !(this.hidden && this.isNodeHidden(ni))),
       bindSource: n.bindSource || null,
       usingBind: this.settings.poseSource === 'bind' && !!n.bindMatrix,
       drivenBy: n.drivenBy || null,
@@ -1001,13 +1115,14 @@ class ViewerApp {
     if (!this.built) return;
     const rect = this.canvas.getBoundingClientRect();
     const ndc = new Vector2(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
-    this.raycaster.setFromCamera(ndc, this.camera);
+    const cam = this.activeCamera();
+    this.raycaster.setFromCamera(ndc, cam);
     if (this.settings.joints) {
       const ni = this.overlay.pick(this.raycaster);
       if (ni >= 0) { this.select(ni, { notify: true }); return; }
     }
     // カーブ: 画面上で約 5 ピクセル以内を通る線（メッシュより手前なら優先）
-    const perPx = 2 * this.camera.position.distanceTo(this.controls.target) * Math.tan(this.camera.fov * D2R / 2) / Math.max(rect.height, 1);
+    const perPx = this.pixelSize(rect.height);
     const curveHit = this.curves.pick(this.raycaster, perPx * 5);
     const useSkin = this.settings.skin;
     if (this.poseDirty) {
@@ -1178,6 +1293,7 @@ class ViewerApp {
     this.updateMarker();
     if (!light && this.picked) this.ui.showVertexInfo(this.vertexInfo());
     if (!light && this.selected >= 0) this.ui.showNodeInfo(this.nodeInfo(this.selected));
+    if (!light) this.updateToolbarHints();
     if (!this.gizmoDragging) this.syncGizmo();
     this.requestRender();
   }
@@ -1232,6 +1348,110 @@ class ViewerApp {
     this.ui.showPoseFor(this.selected, pose);
   }
 
+  // ------------------------------------------------------------------ ツールバーの状態
+  /**
+   * いまの表示設定では押しても見た目が変わらない切り替えに、理由を付けて示す（押せないのではなく、効果がない）。
+   * 例: ワイヤーのみの表示中のワイヤー、ウェイトの表示中のテクスチャ、ジョイントを隠しているときの前面表示
+   */
+  updateToolbarHints() {
+    const st = this.settings, b = this.built;
+    const hints = {};
+    if (!b) {
+      for (const id of ['opt-wire', 'opt-tex', 'opt-skin', 'opt-joints', 'opt-curves', 'opt-xray', 'opt-bind']) hints[id] = 'シーンを読み込むと使えます';
+      this.ui.setToolbarHints(hints);
+      return;
+    }
+    const hasSkin = b.meshes.some((e) => e.skinned);
+    const hasBind = hasBindPose(b);
+    if (st.shading === 'none') hints['opt-wire'] = 'ワイヤーのみの表示（4）では、常にワイヤーを表示します（5 でシェーディングに戻す）';
+    if (st.weightMode !== 'off') hints['opt-tex'] = 'ウェイトの表示中は、テクスチャとマテリアルの色を表示しません';
+    else if (st.shading === 'none') hints['opt-tex'] = 'ワイヤーのみの表示（4）では、テクスチャを表示しません';
+    else if (!(this.data.materials || []).length) hints['opt-tex'] = 'このシーンにはマテリアル・テクスチャがありません';
+    if (!hasSkin) hints['opt-skin'] = 'スキン（skinCluster）のあるメッシュがありません';
+    else if (st.poseSource === 'bind' && hasBind && !(this.pose && this.pose.size)) {
+      hints['opt-skin'] = 'バインドポーズでは、スキン変形の有無で形は変わりません（B でファイルの値にするか、ポーズ確認で動かすと違いが出ます）';
+    }
+    if (!b.jointIndices.length && !(this.overlay.controls || []).length) hints['opt-joints'] = 'ジョイントがありません';
+    if (!st.joints) hints['opt-xray'] = 'ジョイントを表示していないため効果がありません（J でジョイントを表示）';
+    if (!this.curves.items.some(Boolean)) hints['opt-curves'] = 'このシーンには NURBS カーブがありません';
+    if (!hasBind) hints['opt-bind'] = 'このシーンにはバインドポーズの情報がありません（ファイルの値で表示します）';
+    this.ui.setToolbarHints(hints);
+  }
+
+  // ------------------------------------------------------------------ シーンのカメラ
+  /** 次のカメラ（C キー）。最後のカメラの次は自由視点 */
+  nextCamera() {
+    if (!this.cameras.length) return -1;
+    return this.viewCamera + 1 < this.cameras.length ? this.viewCamera + 1 : -1;
+  }
+
+  /** シーンのカメラから見る（-1 で自由視点に戻す） */
+  setCamera(ci, opts = {}) {
+    if (!(ci >= 0 && ci < this.cameras.length)) ci = -1;
+    if (ci === this.viewCamera) return;
+    if (!this.renderer) { this.viewCamera = -1; return; }
+    this.viewCamera = ci;
+    const cam = this.activeCamera();
+    cam.add(this.keyLight, this.keyLight.target);     // ライトは見ている視点についていく
+    this.controls.enabled = ci < 0;                     // カメラから見ている間は視点を動かさない
+    if (this.gizmo) this.gizmo.camera = cam;
+    this.ui.setViewCamera(ci, ci >= 0 ? this.cameras[ci].name : '');
+    this.updateCameraIcons();
+    this.updateGate();
+    if (!opts.quiet) this.ui.setMessage(ci >= 0 ? `カメラ ${this.cameras[ci].name} から表示します（Shift+C で自由視点）` : '自由視点に戻しました');
+    this.requestRender();
+  }
+
+  /** 見ているカメラの位置・向き・投影を、いまのフレームのカメラに合わせる（描画のたびに呼ぶ） */
+  syncViewCamera() {
+    const c = this.cameras[this.viewCamera];
+    const obj = c && this.built ? this.built.nodeObjects[c.transform] : null;
+    if (!obj) return;
+    const cam = this.activeCamera();
+    obj.updateWorldMatrix(true, false);
+    obj.matrixWorld.decompose(cam.position, _q, _v);
+    cam.quaternion.copy(_q);
+    cam.updateMatrixWorld(true);
+    const vp = document.getElementById('viewport');
+    const W = Math.max(1, vp.clientWidth), H = Math.max(1, vp.clientHeight);
+    const render = (this.data && this.data.render) || {};
+    const fr = cameraFrustum(cameraParams(c, this.cameraProps.get(this.viewCamera)), W, H, render.deviceAspectRatio);
+    if (fr.ortho) {
+      Object.assign(cam, { left: fr.left, right: fr.right, top: fr.top, bottom: fr.bottom, near: fr.near, far: fr.far });
+      cam.updateProjectionMatrix();
+    } else {
+      cam.near = fr.near;
+      cam.far = fr.far;
+      cam.projectionMatrix.makePerspective(fr.left, fr.right, fr.top, fr.bottom, fr.near, fr.far);
+      cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
+    }
+    this.gateRect = fr.gate;
+    this.ui.setGate(this.settings.cameraGate, fr.gate, W, H);
+  }
+
+  updateGate() {
+    if (this.viewCamera < 0) this.ui.setGate(null);
+    else this.requestRender();                         // 描画のときに位置を合わせる
+  }
+
+  updateCameraIcons() {
+    if (!this.cameraIcons || !this.built) return;
+    this.cameraIcons.update(!!this.settings.cameraIcons, (ni) => !!(this.hiddenEff && this.hiddenEff[ni]), this.viewCamera, this.selected);
+  }
+
+  /** ビューポートの 1 ピクセルが、注視点のあたりでワールドの何単位か（カーブのピックの許容範囲） */
+  pixelSize(heightPx) {
+    const cam = this.activeCamera();
+    const h = Math.max(heightPx, 1);
+    if (cam.isOrthographicCamera) return (cam.top - cam.bottom) / cam.zoom / h;
+    if (this.viewCamera >= 0) {
+      const center = this.built ? computeBounds(this.built, this.settings.skin).getCenter(new Vector3()) : new Vector3();
+      const e = cam.projectionMatrix.elements;               // 透視投影: 視野の縦の広がり 2 / e[5]
+      return (2 / e[5]) * cam.position.distanceTo(center) / h;
+    }
+    return 2 * cam.position.distanceTo(this.controls.target) * Math.tan(cam.fov * D2R / 2) / h;
+  }
+
   // ------------------------------------------------------------------ カメラ
   frameAll(resetDirection = false) {
     if (!this.built || !this.renderer) return;
@@ -1264,6 +1484,7 @@ class ViewerApp {
   }
 
   fit(center, radius, resetDirection = false) {
+    this.setCamera(-1, { quiet: true });          // カメラから見ているときは自由視点に戻す
     const cam = this.camera;
     const dir = resetDirection ? new Vector3(1, 0.75, 1) : cam.position.clone().sub(this.controls.target);
     if (dir.lengthSq() < 1e-12) dir.set(1, 0.75, 1);
@@ -1287,6 +1508,9 @@ class ViewerApp {
       triangles: this.built.meshes.reduce((s, e) => s + e.triCount, 0),
       joints: this.built.jointIndices.length,
       curves: this.curves.items.filter(Boolean).length,
+      cameras: this.cameras.map((c) => c.name),
+      viewCamera: this.viewCamera >= 0 ? this.cameras[this.viewCamera].name : null,
+      hiddenMeshes: this.built.meshes.filter((e) => !e.visible).map((e) => e.name),
       selected: this.selected >= 0 ? this.data.nodes[this.selected].path : null,
       posedNodes: this.pose ? this.pose.size : 0,
       textures: this.textureStatusList().map((t, i) => ({ node: this.data.textures[i].node, status: t.status,
@@ -1302,6 +1526,29 @@ class ViewerApp {
       } : null,
     };
   }
+}
+
+/**
+ * 地面のグリッド（XZ 平面）。原点を通る線は軸の色にして、背景の暗い色に溶けないようにする
+ * （X 軸 = 赤、Z 軸 = 青。Maya のビューの軸の色と同じ系統）
+ */
+function makeGrid(size, divisions) {
+  const half = size / 2, step = size / divisions;
+  const line = new Color(0x5d656e), axisX = new Color(0xd0675f), axisZ = new Color(0x5f8fd8);
+  const pos = [], col = [];
+  const add = (a, b, c) => { pos.push(...a, ...b); col.push(c.r, c.g, c.b, c.r, c.g, c.b); };
+  for (let i = 0; i <= divisions; i++) {
+    const k = -half + i * step;
+    const center = Math.abs(k) < step * 1e-6;
+    add([-half, 0, k], [half, 0, k], center ? axisX : line);    // X 方向の線（中央は X 軸）
+    add([k, 0, -half], [k, 0, half], center ? axisZ : line);    // Z 方向の線（中央は Z 軸）
+  }
+  const g = new BufferGeometry();
+  g.setAttribute('position', new Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new Float32BufferAttribute(col, 3));
+  const grid = new LineSegments(g, new LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.7 }));
+  grid.name = '__grid';
+  return grid;
 }
 
 function niceCeil(x) {

@@ -67,13 +67,14 @@ def main() -> int:
           const i = app.data.nodes.findIndex((n) => n.name === 'elbow');
           const pos = () => app.built.nodeObjects[i].matrixWorld.elements.slice(12, 15).map((v) => +v.toFixed(4));
           const r = { mode: app.settings.poseSource, title: document.getElementById('vp-title').textContent, bind: pos() };
-          const sel = document.getElementById('opt-pose-source');
-          sel.value = 'file'; sel.dispatchEvent(new Event('change'));
+          const btn = document.getElementById('opt-bind');       // バインドポーズのボタン（押すとファイルの値）
+          r.pressed = btn.getAttribute('aria-pressed');
+          btn.click();
           r.file = pos(); r.title2 = document.getElementById('vp-title').textContent;
           window.mayaViewer.selectByPath('|rig_grp|shoulder|elbow');
           r.info = document.getElementById('select-info').innerText;
-          sel.value = 'bind'; sel.dispatchEvent(new Event('change'));
-          r.back = pos();
+          btn.click();
+          r.back = pos(); r.pressed2 = btn.getAttribute('aria-pressed');
           return r;
         })())"""
 
@@ -82,6 +83,8 @@ def main() -> int:
             print("姿勢:", {k: r[k] for k in ("mode", "bind", "file", "back")})
             if r["mode"] != "bind" or "バインドポーズ" not in r["title"]:
                 return fail("既定がバインドポーズになっていません")
+            if r["pressed"] != "true" or r["pressed2"] != "true":
+                return fail("バインドポーズのボタンの押下状態が姿勢の基準と合っていません")
             if r["bind"] != [6, 5, 0] or r["file"] == r["bind"] or r["back"] != r["bind"]:
                 return fail("姿勢の切り替えで骨の位置が期待どおりに変わりません")
             if "skinCluster の .pm" not in r["info"] or "ファイルの値" not in r["title2"]:

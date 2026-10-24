@@ -337,6 +337,7 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         for g in graph_nodes:
             if g["type"].endswith("Constraint") and not g.get("targets"):
                 warnings.append("アニメーション: %s にターゲットがないため、評価しません。" % g["name"])
+    props_out = build_props(ms, info, out_index, curve_index) if has_graph else []
     # 値を求められないノード: バインドポーズの形で推定する（fallback）・推定もできない（tainted）
     fallback, tainted = [], []
     if has_graph:
@@ -346,7 +347,7 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         if fallback or tainted:
             warnings.append("アニメーション: 値を求められないノードのうち %d 個はバインドポーズの形で推定して表示し、"
                             "%d 個は推定できないためファイルの値（既定値）のまま表示します。" % (len(fallback), len(tainted)))
-    if not channels_out and not moving and not fallback:
+    if not channels_out and not moving and not fallback and not props_out:
         return None
     channels_out.sort(key=lambda c: (c["node"], c["attr"]))
 
@@ -406,6 +407,7 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         "graph": graph_nodes,
         "fallback": fallback,
         "tainted": tainted,
+        "props": props_out,
         "times": _pack(times_all, "float32"),
         "values": _pack(values_all, "float32"),
         "tangentTypes": _pack(types, "uint8"),
@@ -415,6 +417,39 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
                   "nodes": len(animated), "graphNodes": len(graph_nodes),
                   "seconds": round(time.perf_counter() - t0, 4)},
     }
+
+
+def build_props(ms: MaScene, info, out_index: Dict[int, int], curve_index: Dict[int, int]) -> List[dict]:
+    """移動・回転・スケール以外で、接続で決まる属性（表示・カメラの焦点距離など）。ビューアがフレームごとに評価する。
+
+    [{"kind": "node" | "mesh" | "camera", "index": 番号, "inputs": {属性: 接続元}, "static": {...}}]。
+    接続元は graph の inputs と同じ形。評価できない接続元（未対応のノード）の属性は入れない（ファイルの値のまま）。
+    """
+    from .extract_ma import _hidden_by_layer
+    from .rig import CONSTRAINT_TYPES, VIS_DEFAULTS, _evaluable
+    index_of = {"node": out_index, "mesh": getattr(ms, "mesh_index", {}), "camera": getattr(ms, "camera_index", {})}
+    by_target: Dict[Tuple[str, int], dict] = {}
+    for kind, consumer, key, src, sattr in info.props:
+        idx = index_of[kind].get(id(consumer))
+        if idx is None:
+            continue
+        if src.type in CURVE_TYPES:
+            if id(src) not in curve_index:
+                continue
+            inp = {"curve": curve_index[id(src)]}
+        elif id(src) in info.gid and (src.type not in CONSTRAINT_TYPES or _evaluable(src)):
+            inp = {"node": info.gid[id(src)], "attr": sattr}
+        else:
+            continue
+        e = by_target.get((kind, idx))
+        if e is None:
+            e = by_target[(kind, idx)] = {"kind": kind, "index": idx, "inputs": {}}
+            if kind in ("node", "mesh"):
+                # 接続されていない表示の属性はファイルの値（ディスプレイレイヤーで隠れているかも）
+                e["static"] = {k: (1.0 if consumer.flag(k, d >= 0.5) else 0.0) for k, d in VIS_DEFAULTS.items()}
+                e["static"]["layerHidden"] = _hidden_by_layer(consumer)
+        e["inputs"][key] = inp
+    return [by_target[k] for k in sorted(by_target)]
 
 
 def rest_entry(n: MaNode, ni: int, ang_k: float, is_src: Optional[MaNode], is_idx: Optional[int]) -> dict:

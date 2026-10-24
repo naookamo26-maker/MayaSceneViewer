@@ -100,7 +100,7 @@ RAW_TYPES = {
     "file", "place2dTexture", "uvChooser", "shadingEngine", "lambert", "blinn", "phong", "phongE",
     "anisotropic", "surfaceShader", "aiStandardSurface", "standardSurface", "openPBRSurface",
     "StingrayPBS", "usdPreviewSurface", "aiFlat", "dagPose", "groupParts", "bump2d", "aiNormalMap",
-    "displayLayer",
+    "displayLayer", "camera",
 }
 
 _LINEAR_UNITS = {"mm": "mm", "millimeter": "mm", "cm": "cm", "centimeter": "cm",
@@ -229,6 +229,9 @@ class MaScene:
         self.up_axis = "y"
         self.time_unit = "film"
         self.current_time: Optional[float] = None    # time1 の .o（保存時の現在フレーム）
+        # defaultResolution（レンダーの解像度。select -ne :defaultResolution のあとの setAttr を受け取る）
+        self.resolution = MaNode("defaultResolution", "resolution", None, -1)
+        self.resolution.raw = {}
         self.text = ""                               # コメントを除いた本文（animCurve などの span はこの位置）
         self.out_index: Dict[int, int] = {}          # id(ノード) → 共通 JSON の nodes の番号（変換後に設定）
         self.graph_info = None                       # rig.GraphInfo（変換時に設定）
@@ -418,6 +421,8 @@ class MaScene:
         _, pos = R.parse_flags(toks, [])
         if pos and pos[-1].value.lstrip(":") == "time1" and self.resolve(pos[-1].value) is None:
             self.current = _TIME_NODE              # select -ne :time1; setAttr ".o" 1;
+        elif pos and pos[-1].value.lstrip(":") == "defaultResolution" and self.resolve(pos[-1].value) is None:
+            self.current = self.resolution         # select -ne :defaultResolution; setAttr ".w" 1920;
         elif pos:
             self.current = self.resolve(pos[-1].value)
         else:
