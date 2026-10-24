@@ -222,6 +222,12 @@ class TestCameraAimAndDistance(unittest.TestCase):
         self.assertIn("bad_roll_group の tws", self.anim["warnings"][0])     # 未対応のノードからの twist だけ
         self.assertEqual(self.anim["tainted"], [])
 
+    def test_look_at_with_parent_drives_its_camera(self):
+        # lookAt はカメラの親。lookAt にさらに親があっても、動かされるノードは cpim の接続元（カメラ）
+        g = self.graph["nested_group"]
+        self.assertEqual(self.names[g["driven"]], "nested_cam")
+        self.assertEqual([self.graph_name(t["node"]) for t in g["targets"]], ["nested_cam_aim"])
+
     def test_unsupported_twist_source_is_dropped(self):
         # twist が未対応のノード（frameCache）から来ていても、lookAt は評価する（twist の接続だけ外す）
         g = self.graph["bad_roll_group"]

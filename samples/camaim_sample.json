@@ -2100,6 +2100,262 @@
    }
   },
   {
+   "name":"cam_rig",
+   "path":"|cam_rig",
+   "type":"transform",
+   "parent":-1,
+   "matrix":[
+    0.3420201433,
+    0.0,
+    -0.9396926208,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.9396926208,
+    0.0,
+    0.3420201433,
+    0.0,
+    -10.0,
+    15.0,
+    5.0,
+    1.0
+   ],
+   "worldMatrix":[
+    0.3420201433,
+    0.0,
+    -0.9396926208,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.9396926208,
+    0.0,
+    0.3420201433,
+    0.0,
+    -10.0,
+    15.0,
+    5.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     -10.0,
+     15.0,
+     5.0
+    ],
+    "r":[
+     0.0,
+     70.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   }
+  },
+  {
+   "name":"nested_group",
+   "path":"|cam_rig|nested_group",
+   "type":"lookAt",
+   "parent":31,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    0.3420201433,
+    0.0,
+    -0.9396926208,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.9396926208,
+    0.0,
+    0.3420201433,
+    0.0,
+    -10.0,
+    15.0,
+    5.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   }
+  },
+  {
+   "name":"nested_cam",
+   "path":"|cam_rig|nested_group|nested_cam",
+   "type":"transform",
+   "parent":32,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    30.0,
+    10.0,
+    30.0,
+    1.0
+   ],
+   "worldMatrix":[
+    0.3420201433,
+    0.0,
+    -0.9396926208,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.9396926208,
+    0.0,
+    0.3420201433,
+    0.0,
+    28.4513829233,
+    25.0,
+    -12.9301743238,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     30.0,
+     10.0,
+     30.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   },
+   "drivenBy":[
+    "rx ← nested_group（lookAt）",
+    "ry ← nested_group（lookAt）",
+    "rz ← nested_group（lookAt）"
+   ]
+  },
+  {
+   "name":"nested_cam_aim",
+   "path":"|cam_rig|nested_group|nested_cam_aim",
+   "type":"transform",
+   "parent":32,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    5.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    0.3420201433,
+    0.0,
+    -0.9396926208,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.9396926208,
+    0.0,
+    0.3420201433,
+    0.0,
+    -10.0,
+    20.0,
+    5.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     5.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   },
+   "drivenBy":[
+    "tx ← nested_cam_aim_translateX（animCurveTL）"
+   ]
+  },
+  {
    "name":"roll_ctrl",
    "path":"|roll_ctrl",
    "type":"transform",
@@ -8318,6 +8574,25 @@
    "filmFit":1,
    "orthographic":false,
    "renderable":true
+  },
+  {
+   "name":"nested_cam",
+   "shape":"nested_camShape",
+   "path":"|cam_rig|nested_group|nested_cam|nested_camShape",
+   "transform":33,
+   "focalLength":35.0,
+   "horizontalFilmAperture":1.41732,
+   "verticalFilmAperture":0.94488,
+   "nearClipPlane":0.1,
+   "farClipPlane":10000.0,
+   "orthographicWidth":30.0,
+   "lensSqueezeRatio":1.0,
+   "horizontalFilmOffset":0.0,
+   "verticalFilmOffset":0.0,
+   "cameraScale":1.0,
+   "filmFit":1,
+   "orthographic":false,
+   "renderable":true
   }
  ],
  "viewCamera":-1,
@@ -8333,11 +8608,11 @@
   "history_geoShape: 形状データがありません（polySphere1（polySphere） から生成されています。ヒストリを削除して保存してください）"
  ],
  "stats":{
-  "nodes":34,
+  "nodes":38,
   "joints":5,
   "meshes":3,
   "curves":0,
-  "cameras":7,
+  "cameras":8,
   "vertices":316,
   "polygons":302,
   "skinnedMeshes":1,
@@ -8345,7 +8620,7 @@
   "textures":0,
   "texturesMissing":0,
   "bindPoseNodes":5,
-  "drivenNodes":10
+  "drivenNodes":12
  },
  "animation":{
   "fps":24.0,
@@ -8358,7 +8633,7 @@
   "current":1.0,
   "curves":[
    {
-    "name":"aim_cam_aim_translateX",
+    "name":"nested_cam_aim_translateX",
     "type":"TL",
     "offset":0,
     "count":2,
@@ -8368,7 +8643,7 @@
     "post":0
    },
    {
-    "name":"locEnd_translateX",
+    "name":"aim_cam_aim_translateX",
     "type":"TL",
     "offset":2,
     "count":2,
@@ -8378,9 +8653,19 @@
     "post":0
    },
    {
+    "name":"locEnd_translateX",
+    "type":"TL",
+    "offset":4,
+    "count":2,
+    "tangent":2,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
     "name":"child_roll_cam_twist",
     "type":"TA",
-    "offset":4,
+    "offset":6,
     "count":2,
     "tangent":2,
     "weighted":false,
@@ -8392,12 +8677,17 @@
    {
     "node":12,
     "attr":"tx",
+    "curve":1
+   },
+   {
+    "node":34,
+    "attr":"tx",
     "curve":0
    },
    {
-    "node":33,
+    "node":37,
     "attr":"tx",
-    "curve":1
+    "curve":2
    }
   ],
   "nodes":[
@@ -8801,8 +9091,58 @@
     "joint":false,
     "ro":0,
     "t":[
+     -10.0,
+     15.0,
+     5.0
+    ],
+    "r":[
+     0.0,
+     70.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
      0.0,
      0.0,
+     0.0
+    ]
+   },
+   {
+    "node":33,
+    "joint":false,
+    "ro":0,
+    "t":[
+     30.0,
+     10.0,
+     30.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":34,
+    "joint":false,
+    "ro":0,
+    "t":[
+     0.0,
+     5.0,
      0.0
     ],
     "r":[
@@ -8822,7 +9162,7 @@
     ]
    },
    {
-    "node":32,
+    "node":35,
     "joint":false,
     "ro":0,
     "t":[
@@ -8847,7 +9187,32 @@
     ]
    },
    {
-    "node":33,
+    "node":36,
+    "joint":false,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":37,
     "joint":false,
     "ro":0,
     "t":[
@@ -8880,7 +9245,7 @@
     "dag":8,
     "inputs":{
      "sx":{
-      "node":31,
+      "node":35,
       "attr":"ox"
      }
     }
@@ -8971,7 +9336,7 @@
     "dag":12,
     "inputs":{
      "tx":{
-      "curve":0
+      "curve":1
      }
     }
    },
@@ -9289,7 +9654,7 @@
       "attr":"pm"
      },
      "tws":{
-      "node":24,
+      "node":28,
       "attr":"rol"
      }
     },
@@ -9492,7 +9857,7 @@
       "attr":"crz"
      },
      "twi":{
-      "curve":2
+      "curve":3
      }
     }
    },
@@ -9504,15 +9869,118 @@
    },
    {
     "id":24,
+    "name":"cam_rig",
+    "type":"transform",
+    "dag":31
+   },
+   {
+    "id":25,
+    "name":"nested_group",
+    "type":"lookAt",
+    "dag":-1,
+    "attrs":{
+     "a":[
+      0.0,
+      0.0,
+      -1.0
+     ]
+    },
+    "inputs":{
+     "cpim":{
+      "node":26,
+      "attr":"pim"
+     },
+     "ct":{
+      "node":26,
+      "attr":"t"
+     },
+     "crp":{
+      "node":26,
+      "attr":"rp"
+     },
+     "crt":{
+      "node":26,
+      "attr":"rpt"
+     },
+     "cro":{
+      "node":26,
+      "attr":"ro"
+     },
+     "tg[0].ttx":{
+      "node":27,
+      "attr":"tx"
+     },
+     "tg[0].tty":{
+      "node":27,
+      "attr":"ty"
+     },
+     "tg[0].ttz":{
+      "node":27,
+      "attr":"tz"
+     },
+     "tg[0].trp":{
+      "node":27,
+      "attr":"rp"
+     },
+     "tg[0].trt":{
+      "node":27,
+      "attr":"rpt"
+     },
+     "tg[0].tpm":{
+      "node":27,
+      "attr":"pm"
+     }
+    },
+    "driven":33,
+    "targets":[
+     {
+      "index":0,
+      "node":27
+     }
+    ]
+   },
+   {
+    "id":26,
+    "name":"nested_cam",
+    "type":"transform",
+    "dag":33,
+    "inputs":{
+     "rx":{
+      "node":25,
+      "attr":"crx"
+     },
+     "ry":{
+      "node":25,
+      "attr":"cry"
+     },
+     "rz":{
+      "node":25,
+      "attr":"crz"
+     }
+    }
+   },
+   {
+    "id":27,
+    "name":"nested_cam_aim",
+    "type":"transform",
+    "dag":34,
+    "inputs":{
+     "tx":{
+      "curve":0
+     }
+    }
+   },
+   {
+    "id":28,
     "name":"roll_ctrl",
     "type":"transform",
-    "dag":31,
+    "dag":35,
     "attrs":{
      "rol":0.3490658503988659
     }
    },
    {
-    "id":25,
+    "id":29,
     "name":"roll_uc",
     "type":"unitConversion",
     "dag":-1,
@@ -9521,54 +9989,54 @@
     }
    },
    {
-    "id":26,
+    "id":30,
     "name":"distanceDimensionShape1",
     "type":"distanceDimShape",
     "dag":-1,
     "inputs":{
      "sp":{
-      "node":28,
+      "node":32,
       "attr":"wp"
      },
      "ep":{
-      "node":30,
+      "node":34,
       "attr":"wp"
      }
     }
    },
    {
-    "id":27,
+    "id":31,
     "name":"locStart",
     "type":"transform",
-    "dag":32
+    "dag":36
    },
    {
-    "id":28,
+    "id":32,
     "name":"locStartShape",
     "type":"locator",
     "dag":-1,
-    "parent":32
+    "parent":36
    },
    {
-    "id":29,
+    "id":33,
     "name":"locEnd",
     "type":"transform",
-    "dag":33,
+    "dag":37,
     "inputs":{
      "tx":{
-      "curve":1
+      "curve":2
      }
     }
    },
    {
-    "id":30,
+    "id":34,
     "name":"locEndShape",
     "type":"locator",
     "dag":-1,
-    "parent":33
+    "parent":37
    },
    {
-    "id":31,
+    "id":35,
     "name":"stretch_md",
     "type":"multiplyDivide",
     "dag":-1,
@@ -9582,7 +10050,7 @@
     },
     "inputs":{
      "i1x":{
-      "node":26,
+      "node":30,
       "attr":"dist"
      }
     }
@@ -9593,18 +10061,18 @@
   "props":[],
   "times":{
    "dtype":"float32",
-   "count":6,
-   "data":"AACAPwAAwEEAAIA/AADAQQAAgD8AAMBB"
+   "count":8,
+   "data":"AACAPwAAwEEAAIA/AADAQQAAgD8AAMBBAACAPwAAwEE="
   },
   "values":{
    "dtype":"float32",
-   "count":6,
-   "data":"AAAAAAAAIEEAAEBAAAAQQQAAoEEAAHBC"
+   "count":8,
+   "data":"AACgwQAAoEEAAAAAAAAgQQAAQEAAABBBAACgQQAAcEI="
   },
   "tangentTypes":{
    "dtype":"uint8",
-   "count":12,
-   "data":"AgICAgICAgICAgIC"
+   "count":16,
+   "data":"AgICAgICAgICAgICAgICAg=="
   },
   "fixedTangents":{
    "dtype":"float32",
@@ -9615,12 +10083,12 @@
    "アニメーション: bad_roll_group の tws は、つながる frameCache（roll_cache）が未対応のため、接続を使わずファイルの値で再生します（この値の動きは再現されません）。"
   ],
   "stats":{
-   "curves":3,
-   "keys":6,
-   "channels":2,
-   "nodes":10,
-   "graphNodes":32,
-   "seconds":0.0019
+   "curves":4,
+   "keys":8,
+   "channels":3,
+   "nodes":12,
+   "graphNodes":36,
+   "seconds":0.0022
   }
  }
 }

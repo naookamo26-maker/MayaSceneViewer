@@ -14,6 +14,9 @@ samples/sample_arm.ma に、次のものを足したもの（再生範囲 1〜24
       （どちらも cam_aim_group と同じロールになる）
   * child_roll_group（lookAt）: twist を子のカメラ（child_roll_cam）の独自の属性（twist、doubleAngle）からつなぎ、
       その属性にキー（1: 20 → 24: 60）。カメラの回転は lookAt の constraintRotate から（カメラ → lookAt → カメラ）
+  * nested_group（lookAt）: lookAt のグループに親（cam_rig。移動・回転あり）があり、エイムの位置を成分ごとに
+      （tx → tg[0].ttx など）つないだカメラ（nested_cam）。エイムの tx にキー（1: -20 → 24: 20）。
+      動かされるノードは cpim の接続元（lookAt の親ではない）
   * bad_roll_group（lookAt）: twist を未対応のノード（frameCache）から unitConversion を通してつないだカメラ
       （twist の接続だけを外してファイルの値（0）にし、エイムの向きは求める）
   * distanceDimension1（distanceDimShape）: locStart（原点）と locEnd（tx にキー 1: 3 → 24: 9）の距離 →
@@ -42,9 +45,10 @@ def curve(kind, name, keys):
             '\tsetAttr -s %d ".kot[0:%d]"  %s;' % (len(keys), len(keys) - 1, " ".join("2" for _ in keys))]
 
 
-def camera_and_aim(group, cam, aim, twist, shape_target=False, aim_pos=(0, 5, 0), shape_roll=None, cam_roll=False):
+def camera_and_aim(group, cam, aim, twist, shape_target=False, aim_pos=(0, 5, 0), shape_roll=None, cam_roll=False,
+                   parent=None, components=False):
     """Maya の［作成］→［カメラ］→［カメラとエイム］と同じ形（lookAt のグループの下にカメラとエイムのロケーター）"""
-    lines = ['createNode lookAt -n "%s";' % group,
+    lines = ['createNode lookAt -n "%s"%s;' % (group, ' -p "%s"' % parent if parent else ""),
              '\tsetAttr ".a" -type "double3" 0 0 -1 ;']
     if twist:
         lines.append('\tsetAttr ".tws" %g;' % twist)
@@ -74,7 +78,11 @@ def camera_and_aim(group, cam, aim, twist, shape_target=False, aim_pos=(0, 5, 0)
     if shape_target:
         conns.append('connectAttr "%sShape.wp" "%s.tg[0].tt";' % (aim, group))
     else:
-        conns += ['connectAttr "%s.t" "%s.tg[0].tt";' % (aim, group), 'connectAttr "%s.rp" "%s.tg[0].trp";' % (aim, group),
+        if components:
+            conns += ['connectAttr "%s.t%s" "%s.tg[0].tt%s";' % (aim, a, group, a) for a in "xyz"]
+        else:
+            conns.append('connectAttr "%s.t" "%s.tg[0].tt";' % (aim, group))
+        conns += ['connectAttr "%s.rp" "%s.tg[0].trp";' % (aim, group),
                   'connectAttr "%s.rpt" "%s.tg[0].trt";' % (aim, group), 'connectAttr "%s.pm" "%s.tg[0].tpm";' % (aim, group)]
     return lines, conns
 
@@ -98,6 +106,14 @@ def main():
         a, c = camera_and_aim(*args, **kw)
         out += a
         conns += c
+    out += ['createNode transform -n "cam_rig";',
+            '\tsetAttr ".t" -type "double3" -10 15 5 ;',
+            '\tsetAttr ".r" -type "double3" 0 70 0 ;']
+    a, c = camera_and_aim("nested_group", "nested_cam", "nested_cam_aim", 0, parent="cam_rig", components=True)
+    out += a
+    conns += c
+    out += curve("TL", "nested_cam_aim_translateX", [(1, -20), (24, 20)])
+    conns.append('connectAttr "nested_cam_aim_translateX.o" "nested_cam_aim.tx";')
     out += ['createNode transform -n "roll_ctrl";',
             '\taddAttr -ci true -sn "roll" -ln "roll" -at "doubleAngle";',
             '\tsetAttr -k on ".roll" 20;',
