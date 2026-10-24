@@ -87,11 +87,16 @@ def _dag_like(n: MaNode) -> bool:
     return n.is_dag and not n.is_shape and n.type not in SUPPORTED_DG
 
 
+def _value_shape(n: MaNode) -> bool:
+    """値を読むだけのシェイプ（カメラのシェイプの独自の属性など。形は評価しない）"""
+    return n.is_shape and n.type not in GEOMETRY_TYPES and n.type not in SUPPORTED_DG and n.type != "mesh"
+
+
 def _evaluable(n: MaNode, info: Optional["GraphInfo"] = None) -> bool:
     """接続元として評価できるか（コンストレイントはターゲットがあるときだけ。expression は式を解釈できるときだけ）"""
     if n.type == "expression":
         return info is not None and id(n) in info.expressions
-    if n.type in CURVE_TYPES or n.type in UTILITY_TYPES or _dag_like(n):
+    if n.type in CURVE_TYPES or n.type in UTILITY_TYPES or _dag_like(n) or _value_shape(n):
         return True                                   # DAG ノードからの直接の接続（ctrl.t → joint.t など）も評価できる
     if n.type in CONSTRAINT_TYPES:
         return any(_TG_RE.match(k) for k in n.inputs)
@@ -234,6 +239,12 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
                     for shape in wire_shapes(ms, n).values():
                         need_world(shape.parent)         # ワイヤーはワールド空間で変形する（変形するカーブの位置）
             return
+        if _value_shape(n):
+            # シェイプの属性（カメラのシェイプの独自の属性など）: ファイルの値を読み、接続があればたどる
+            info.dg[id(n)] = n
+            if attr in n.inputs:
+                add_edge(n, attr)
+            return
         if _dag_like(n):
             info.dag[id(n)] = n
             b = _base(attr)
@@ -332,6 +343,17 @@ def _value(tok: str):
     return R.to_float(tok)
 
 
+def _addattr_angle_names(rest: str) -> List[str]:
+    """addAttr が角度の属性（-at doubleAngle）なら、その短い名前と長い名前（違えば空）"""
+    toks = R.tokenize(rest)
+    opts, _pos = R.parse_flags(toks, ["-sn", "-shortName", "-ln", "-longName", "-at", "-attributeType", "-dv",
+                                      "-defaultValue", "-dt", "-dataType", "-p", "-parent", "-nc", "-numberOfChildren",
+                                      "-min", "-max", "-smn", "-smx", "-en", "-enumName", "-h", "-k", "-ci", "-dcb"])
+    if (opts.get("-at") or opts.get("-attributeType")) != "doubleAngle":
+        return []
+    return [x for x in (opts.get("-sn") or opts.get("-shortName"), opts.get("-ln") or opts.get("-longName")) if x]
+
+
 def _addattr_default(rest: str):
     """addAttr の (短い名前, 長い名前, 既定値 -dv)。既定値のない（数値でない）属性は None"""
     toks = R.tokenize(rest)
@@ -349,16 +371,23 @@ def _addattr_default(rest: str):
         return None
 
 
-def parse_attrs(text: str, node: MaNode, skip=()) -> Dict[str, object]:
+def parse_attrs(text: str, node: MaNode, skip=(), angle_k: Optional[float] = None) -> Dict[str, object]:
     """ノードのブロック（span）の setAttr から、数値の属性を読む（ノード名つきのプラグは対象外）。
 
     独自の属性（addAttr）の既定値（-dv）も入れる。Maya は既定値のままの属性を setAttr で書かないため
     （コンストレイントを付けたときにできる blendPoint1 などのウェイト）。
+    angle_k を渡すと、独自の角度の属性（-at doubleAngle）の値に掛ける（ファイルの角度の単位 → ラジアン）。
+    Maya の内部の値はラジアンで、角度の属性どうしの接続には unitConversion が入らないため
     """
     out: Dict[str, object] = {}
     if node.span is None or not text:
         return out
     a, b = node.span
+    angles = set()
+    if angle_k is not None:
+        for m in _ADDATTR_RE.finditer(text, a, b):
+            for name in _addattr_angle_names(m.group(1)):
+                angles.update((name, R.normalize_attr(name)))   # setAttr の属性名は読み替える（roll → rol など）
     for m in _ADDATTR_RE.finditer(text, a, b):
         d = _addattr_default(m.group(1))
         if d is not None:
@@ -391,6 +420,9 @@ def parse_attrs(text: str, node: MaNode, skip=()) -> Dict[str, object]:
                 out["%s[%d]%s" % (name, a0 + k, rest)] = v[0] if len(v) == 1 else v
             continue
         out[key] = vals[0] if len(vals) == 1 else vals
+    for k in angles:
+        if isinstance(out.get(k), (int, float)):
+            out[k] = out[k] * angle_k
     if node.attr_map:                                    # 自作ノードの割り当て: 属性名を標準ノードの名前に読み替える
         from .custom_nodes import rename_attr
         out = {rename_attr(k, node.attr_map): v for k, v in out.items()}
@@ -414,7 +446,8 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
     for n in order:
         is_dag = id(n) not in info.dg
         entry = {"id": gid[id(n)], "name": n.name, "type": n.type, "dag": out_index[id(n)] if is_dag else -1}
-        attrs = parse_attrs(ms.text, n, _STANDARD_ATTRS if is_dag else ())
+        ang_k = 1.0 if ms.angular_unit in ("rad", "radian") else 3.141592653589793 / 180.0
+        attrs = parse_attrs(ms.text, n, _STANDARD_ATTRS if is_dag else (), angle_k=ang_k)
         if is_dag:
             # 表示の属性（.v など）は標準の属性なので attrs に入らない。別のノードの表示の入力になるときのため、
             # 既定と違う値だけを入れる（ビューアは、ないものを既定値とする）
@@ -538,6 +571,9 @@ def analyze_fallback(info: GraphInfo, kept: List[MaNode], bind_ids: Set[int], ou
                 return tainted(src)
             if b in _CHANNEL_KEYS:
                 return any(k[0] == b[0] for k in unresolved(src))
+            e = info.edges.get(id(src), {}).get(sattr)
+            return bad_source(*e) if e else False
+        if _value_shape(src):                            # シェイプの属性: 接続があればその先、なければファイルの値
             e = info.edges.get(id(src), {}).get(sattr)
             return bad_source(*e) if e else False
         return True                                      # 未対応のノード

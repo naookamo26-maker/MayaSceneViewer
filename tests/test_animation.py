@@ -229,6 +229,13 @@ class TestCameraAimAndDistance(unittest.TestCase):
         cam = next(x for x in self.anim["graph"] if x["dag"] == self.names.index("aim_cam"))
         self.assertEqual(cam["inputs"]["rx"], {"node": g["id"], "attr": "crx"})
 
+    def test_twist_from_other_attributes(self):
+        # カメラのシェイプの独自の属性・別のノードの独自の角度の属性（doubleAngle）。値はラジアンにする
+        shape = self.graph["shape_roll_camShape"]
+        self.assertEqual(self.graph["shape_roll_group"]["inputs"]["tws"], {"node": shape["id"], "attr": "rol"})
+        self.assertAlmostEqual(shape["attrs"]["rol"], math.radians(20))
+        self.assertAlmostEqual(self.graph["roll_ctrl"]["attrs"]["rol"], math.radians(20))
+
     def test_distance_dimension(self):
         g = self.graph["distanceDimensionShape1"]
         self.assertEqual(sorted(g["inputs"]), ["ep", "sp"])

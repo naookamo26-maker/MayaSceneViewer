@@ -36,6 +36,15 @@ test('カメラとエイム: カメラの −Z がエイムのロケーターを
   assert.ok(Math.abs(pos(at(24).world(idx('aim_cam_aim'))).x - 10) < 1e-6);
 });
 
+test('ターゲットの位置がロケーターのシェイプ（worldPosition）からつながる場合も、カメラはエイムを向く', () => {
+  const rig = at(1);
+  const cam = rig.world(idx('shape_cam')), aim = rig.world(idx('shape_cam_aim'));
+  const want = pos(aim).sub(pos(cam)).normalize();
+  const look = axis(cam, 2).negate();
+  assert.ok(look.angleTo(want) < 1e-6, `${look.angleTo(want) / D2R} 度ずれ`);
+  assert.ok(want.y < -0.3, 'エイムはカメラより下（下を向く）');
+});
+
 test('カメラとエイム: twist（ロール）で視線のまわりに回る', () => {
   const rig = at(1);                                      // 2 台のエイムが同じ位置（twist なしのエイムはキーなし）
   const a = rig.world(idx('aim_cam')), b = rig.world(idx('roll_cam'));
@@ -44,6 +53,15 @@ test('カメラとエイム: twist（ロール）で視線のまわりに回る'
   assert.ok(Math.abs(roll - 20) < 1e-4, `ロール ${roll} 度`);
   // twist なしのカメラは、上（+Y）が world up（+Y）の側を向く（横に傾かない）
   assert.ok(Math.abs(axis(b, 0).y) < 1e-6, 'twist なしのカメラの横の軸は水平');
+});
+
+test('twist を別のアトリビュート（カメラのシェイプ・別のノードの角度の属性）からつないでも、同じロールになる', () => {
+  const rig = at(1);
+  const a = rig.world(idx('aim_cam'));
+  for (const n of ['shape_roll_cam', 'attr_roll_cam']) {
+    const b = rig.world(idx(n));
+    assert.ok(axis(a, 2).angleTo(axis(b, 2)) < 1e-6 && axis(a, 1).angleTo(axis(b, 1)) < 1e-6, `${n}: twist 20 度のカメラと同じ向き`);
+  }
 });
 
 test('距離の寸法: 2 つのロケーターの距離 ÷ 6 で box.sx が決まる', () => {

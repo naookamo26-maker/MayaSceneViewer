@@ -936,7 +936,8 @@ def read_ma_text(path: str) -> str:
 
 _BLOCK_END_RE = re.compile(r"\n(?=[^\t \n])")
 # 後から中身を読むために、属性の範囲（span）を覚えておくノード（アニメーションカーブ・再生範囲を持つ script・カーブの形）
-_SPAN_TYPES = ("animCurveTL", "animCurveTA", "animCurveTU", "script", "displayLayer", "nurbsCurve")
+# camera: 独自の属性（ロールなど）がリグの入力になることがあるため、範囲を覚えて後から読む
+_SPAN_TYPES = ("animCurveTL", "animCurveTA", "animCurveTU", "script", "displayLayer", "nurbsCurve", "camera")
 _NO_SKIP = os.environ.get("MA_VIEWER_NO_SKIP") == "1"
 
 

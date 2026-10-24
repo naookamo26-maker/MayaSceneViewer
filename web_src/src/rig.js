@@ -1138,10 +1138,14 @@ export class RigEvaluator {
   /** 出力（ct・cr・cs）は、動かされるノードの親の空間・内部単位 */
   constraint(g) {
     const id = g.id;
+    // ターゲット。ターゲットの入力が DAG ノードでない（ロケーターのシェイプの worldPosition から位置だけが
+    // つながるなど）ときは ni = -1 で、位置はコンストレイントに入ってくる値から求める（targetPosition）。
+    // 向き・スケールを使うコンストレイント（orient・parent・scale）では、そのターゲットは使えない
+    const usesOrientation = g.type === 'orientConstraint' || g.type === 'parentConstraint' || g.type === 'scaleConstraint';
     const targets = [];
     for (const t of g.targets || []) {
       const tg = this.byId.get(t.node);
-      if (!tg || tg.dag < 0) continue;
+      if (!tg || (tg.dag < 0 && usesOrientation)) continue;
       const w = this.num(id, `tg[${t.index}].tw`, 1);
       if (w > 0) targets.push({ ni: tg.dag, index: t.index, w });
     }
@@ -1150,10 +1154,11 @@ export class RigEvaluator {
     const driven = g.driven;
     const pw = driven >= 0 ? this.parentWorld(driven) : IDENTITY;
     const pwInv = pw.clone().invert();
-    const pivot = (ni) => {                                    // ターゲットの回転ピボットのワールド位置
-      const r = this.rest(ni);
+    const pivot = (t) => {                                     // ターゲットの回転ピボットのワールド位置
+      if (t.ni < 0) return this.targetPosition(id, t.index);
+      const r = this.rest(t.ni);
       const rp = r && r.rp ? r.rp : [0, 0, 0];
-      return new Vector3(rp[0], rp[1], rp[2]).applyMatrix4(this.world(ni));
+      return new Vector3(rp[0], rp[1], rp[2]).applyMatrix4(this.world(t.ni));
     };
     const weighted = (fn) => {
       const acc = new Vector3();
@@ -1172,7 +1177,7 @@ export class RigEvaluator {
     };
     switch (g.type) {
       case 'pointConstraint':
-        return expand('ct', toTranslate(weighted((t) => pivot(t.ni))), XYZ);
+        return expand('ct', toTranslate(weighted((t) => pivot(t))), XYZ);
       case 'poleVectorConstraint': {
         const target = weighted((t) => this.pvcTargetPosition(g, t));
         const start = this.pvcStartPosition(g);
@@ -1206,7 +1211,7 @@ export class RigEvaluator {
         const tt = driven >= 0 ? this.chan(driven, 't').t : [0, 0, 0];
         const add = (a, b) => (b ? [a[0] + b[0], a[1] + b[1], a[2] + b[2]] : a);
         const pd = new Vector3(...add(add(tt, rest.rp), rest.rpt)).applyMatrix4(pw);
-        const dir = weighted((t) => pivot(t.ni)).sub(pd);
+        const dir = weighted((t) => pivot(t)).sub(pd);
         if (dir.lengthSq() < EPS) return null;
         dir.normalize();
         const a = new Vector3(...this.vec(id, 'a', [1, 0, 0])).normalize();
@@ -1254,6 +1259,17 @@ export class RigEvaluator {
       }
       default: return null;
     }
+  }
+
+  /**
+   * コンストレイントに入ってくる値から求めたターゲットの位置（Maya の式: (targetTranslate + targetRotatePivot +
+   * targetRotateTranslate) を targetParentMatrix でワールドへ。つながっていない値はファイルの値か 0・単位行列）
+   */
+  targetPosition(id, index) {
+    const b = `tg[${index}]`;
+    const [tt, trp, trt] = ['tt', 'trp', 'trt'].map((k) => this.vec(id, `${b}.${k}`));
+    return new Vector3(tt[0] + trp[0] + trt[0], tt[1] + trp[1] + trt[1], tt[2] + trp[2] + trt[2])
+      .applyMatrix4(this.mat(id, `${b}.tpm`));
   }
 
   /**
