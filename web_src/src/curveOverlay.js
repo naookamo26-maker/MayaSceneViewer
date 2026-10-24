@@ -130,8 +130,9 @@ export class CurveOverlay {
   }
 
   /** レイが当たった（近くを通る）カーブの transform のノード番号（なければ -1）。threshold はワールド空間の距離 */
-  pick(raycaster, threshold) {
-    const lines = this.items.filter((it) => it && it.line.visible).map((it) => it.line);
+  /** @param allow (共通 JSON の curves の 1 件) => 選べるか（Maya で選択できないカーブを除くときなど） */
+  pick(raycaster, threshold, allow = () => true) {
+    const lines = this.items.filter((it) => it && it.line.visible && allow(it.entry)).map((it) => it.line);
     if (!lines.length) return { node: -1, distance: Infinity };
     const saved = raycaster.params.Line.threshold;
     raycaster.params.Line.threshold = threshold;

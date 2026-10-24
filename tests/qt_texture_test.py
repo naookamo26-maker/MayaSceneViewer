@@ -148,6 +148,7 @@ def main() -> int:
     def s_pick(nxt):
         code = """(() => {
           const app = __tx.app; app.frameAll(true); app.render();
+          document.querySelector('#opt-pick [data-pick="vertex"]').click();   // 頂点を選ぶ（既定はオブジェクト）
           const e = __tx.mesh('box_geoShape');
           const p = new (app.camera.position.constructor)(0, 0.6, 0.6).applyMatrix4(e.staticMesh.matrixWorld);
           app.built.root.updateMatrixWorld(true);

@@ -195,6 +195,26 @@ def curve_display(shape: MaNode, attrs: dict):
     return None, 0
 
 
+DISPLAY_TYPE_LABELS = {1: "テンプレート", 2: "リファレンス"}
+
+
+def selectability(n: MaNode, attrs: Optional[dict] = None) -> Optional[str]:
+    """Maya のビューポートでクリックして選択できないなら、その理由（できるなら None）。
+
+    テンプレート（.template。祖先が templated でも同じ）と、表示の種類がテンプレート・リファレンスのもの
+    （ディスプレイレイヤーか描画のオーバーライド。curve_display と同じく、近い方の設定）は、ビューポートでは
+    選べない（アウトライナーからは選べる）。attrs は n 自身の属性（属性を読み飛ばしたシェイプ用。省略時は xattrs）
+    """
+    x: Optional[MaNode] = n
+    while x is not None:
+        tmp = attrs.get("tmp") if (x is n and attrs is not None) else x.xattrs.get("tmp")
+        if tmp is not None and _num(tmp) >= 0.5:
+            return "テンプレート"
+        x = x.parent
+    _color, display = curve_display(n, attrs if attrs is not None else {k: v for k, v in n.xattrs.items()})
+    return DISPLAY_TYPE_LABELS.get(display)
+
+
 def curve_shape_source(ms: MaScene, shape: MaNode, attrs: dict):
     """カーブの形（.cc の値）。保存されていなければ、変形の入力（create ← skinCluster など）をたどって元の形を使う"""
     cc = attrs.get("cc")
@@ -438,6 +458,9 @@ def curve_entry(ms: MaScene, n: MaNode, a: dict, t_idx: int) -> Optional[dict]:
         "color": schema.round_list(color) if color else None,
         "display": display,
     }
+    why = selectability(n, a)
+    if why:
+        entry["unselectable"] = why           # Maya のビューポートでは選択できない（テンプレート・リファレンス）
     if tweaks:
         entry["tweaks"] = sorted(tweaks)
     if from_input:
@@ -1249,6 +1272,9 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             "visible": _visible_self(x),
             "attrs": {k: (schema.round_list(v) if isinstance(v, list) else v) for k, v in attrs.items()},
         }
+        why = selectability(x)
+        if why:
+            entry["unselectable"] = why     # Maya のビューポートでは選択できない（テンプレート・リファレンス）
         if x.type == "joint":
             entry["segmentScaleCompensate"] = x.flag("ssc", True)
         if id(x) in bind_local:
@@ -1323,6 +1349,9 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             "faceMaterials": face_mats if len(set(face_mats)) > 1 else None,
             "skin": None,
         }
+        why = selectability(n)
+        if why:
+            entry["unselectable"] = why
         if skin_node is not None:
             lap("メッシュ（その他）")
             entry["skin"] = _build_skin(ms, ctx, n, skin_node, len(pos) // 3, index_of)

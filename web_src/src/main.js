@@ -42,6 +42,8 @@ const DEFAULTS = {
   cameraIcons: true,             // シーンのカメラの形を描く
   cameraGate: true,              // カメラから見るとき、解像度ゲートの外側を暗くする
   hud: true,                     // ヘッドアップディスプレイ（再生のフレームレート）
+  pickMode: 'object',            // クリックで選ぶもの: 'object'（オブジェクト）・'vertex'（頂点とそのウェイト）
+  pickAll: false,                // Maya で選択できないもの（テンプレート・リファレンス）もクリックで選ぶ
 };
 const TOOLS = ['select', 'translate', 'rotate', 'scale'];
 const num = (n) => n.toLocaleString('ja-JP');
@@ -275,6 +277,7 @@ class ViewerApp {
       else if (k === '6') { set('shading', 'smooth'); set('textures', true); }    //               6 = テクスチャあり
       else if (k === 'j') set('joints', !this.settings.joints);
       else if (k === 'b') this.togglePoseSource();
+      else if (k === 'f8') set('pickMode', this.settings.pickMode === 'vertex' ? 'object' : 'vertex');   // Maya と同じ: F8
       else if (k === 'c') {
         if (!this.cameras.length) this.ui.setMessage('このシーンにはカメラがありません');
         else this.setCamera(e.shiftKey ? -1 : this.nextCamera());
@@ -540,6 +543,10 @@ class ViewerApp {
       case 'joints': this.overlay.setVisible(value); break;
       case 'cameraIcons': this.updateCameraIcons(); break;
       case 'hud': this.updateHud(); break;
+      case 'pickMode':
+        if (value !== 'vertex' && this.picked) { this.picked = null; this.marker.visible = false; }
+        this.ui.showVertexInfo(this.vertexInfo(), value);
+        break;
       case 'cameraGate': this.updateGate(); break;
       case 'curves': this.curves.setVisible(value); break;
       case 'xray': this.overlay.setXray(value); break;
@@ -580,17 +587,25 @@ class ViewerApp {
 
   applyShading() {
     const st = this.settings;
+    // 選択したノードとその子孫のメッシュは、選択の色のワイヤーを重ねる（Maya の選択の表示）
+    const sel = new Set();
+    if (this.selected >= 0 && this.data) {
+      sel.add(this.selected);
+      this.data.nodes.forEach((n, i) => { if (sel.has(n.parent)) sel.add(i); });
+    }
+    const weightWire = st.weightMode !== 'off' && st.shading === 'none';
     for (const e of this.built.meshes) {
       const useSkin = st.skin && !!e.skinned;
       const shaded = e.visible && st.shading !== 'none';
-      const wire = e.visible && (st.wire || st.shading === 'none');
+      const highlight = e.visible && sel.has(e.transform) && !weightWire;
+      const wire = e.visible && (st.wire || st.shading === 'none' || highlight);
       e.staticMesh.visible = shaded && !useSkin;
       if (e.skinned) e.skinned.visible = shaded && useSkin;
       e.staticWire.visible = wire && !useSkin;
       if (e.skinnedWire) e.skinnedWire.visible = wire && useSkin;
       const wireOnly = st.shading === 'none';
-      e.wireMaterial.opacity = wireOnly ? 0.95 : 0.5;
-      e.wireMaterial.color.set(wireOnly ? 0xc8d2da : 0x1d2024);
+      e.wireMaterial.opacity = highlight ? 0.9 : wireOnly ? 0.95 : 0.5;
+      e.wireMaterial.color.set(highlight ? 0xf2a93b : wireOnly ? 0xc8d2da : 0x1d2024);
     }
   }
 
@@ -1067,6 +1082,7 @@ class ViewerApp {
     this.overlay.setSelected(ni);
     this.curves.setSelected(ni);
     this.updateCameraIcons();
+    this.applyShading();
     this.ui.highlightNode(ni, this.data.nodes);
     this.ui.showNodeInfo(this.nodeInfo(ni));
     this.ui.showPoseFor(ni, this.pose.get(ni));
@@ -1104,6 +1120,7 @@ class ViewerApp {
     this.overlay.setSelected(-1);
     this.curves.setSelected(-1);
     this.updateCameraIcons();
+    this.applyShading();
     this.ui.highlightNode(-1, this.data.nodes);
     this.ui.showNodeInfo(null);
     this.ui.showVertexInfo(null);
@@ -1135,6 +1152,7 @@ class ViewerApp {
       hiddenByRig: !!(this.rigHidden && this.rigHidden.has(ni) && !this.rigShown.has(ni) && !this.hidden.has(ni)),
       hiddenByParent: !!(this.hiddenEff && this.hiddenEff[ni] && !(this.hidden && this.isNodeHidden(ni))),
       bindSource: n.bindSource || null,
+      unselectable: n.unselectable || null,
       usingBind: this.settings.poseSource === 'bind' && !!n.bindMatrix,
       drivenBy: n.drivenBy || null,
       animChannels: this.clip ? this.clip.channelsOf(ni) : [],
@@ -1151,13 +1169,17 @@ class ViewerApp {
     const ndc = new Vector2(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
     const cam = this.activeCamera();
     this.raycaster.setFromCamera(ndc, cam);
+    // Maya のビューポートで選べないもの（テンプレート・リファレンス）は、「選択の制限を無視」がオフなら選ばない
+    const force = !!this.settings.pickAll;
+    const nodes = this.data.nodes;
+    const okNode = (ni) => force || !nodes[ni].unselectable;
     if (this.settings.joints) {
       const ni = this.overlay.pick(this.raycaster);
-      if (ni >= 0) { this.select(ni, { notify: true }); return; }
+      if (ni >= 0 && okNode(ni)) { this.select(ni, { notify: true }); return; }
     }
     // カーブ: 画面上で約 5 ピクセル以内を通る線（メッシュより手前なら優先）
     const perPx = this.pixelSize(rect.height);
-    const curveHit = this.curves.pick(this.raycaster, perPx * 5);
+    const curveHit = this.curves.pick(this.raycaster, perPx * 5, (c) => force || !(c.unselectable || nodes[c.transform].unselectable));
     const useSkin = this.settings.skin;
     if (this.poseDirty) {
       for (const e of this.built.meshes) if (e.skinned) { e.skinned.boundingSphere = null; e.skinned.boundingBox = null; }
@@ -1165,7 +1187,7 @@ class ViewerApp {
     }
     const targets = [];
     for (const e of this.built.meshes) {
-      if (!e.visible) continue;
+      if (!e.visible || !(force || !e.data.unselectable)) continue;
       targets.push(useSkin && e.skinned ? e.skinned : e.staticMesh);
     }
     const hits = this.raycaster.intersectObjects(targets, false);
@@ -1176,6 +1198,13 @@ class ViewerApp {
     if (!hits.length) { this.clearSelection(); return; }
     const h = hits[0];
     const e = this.built.meshes[h.object.userData.meshIndex];
+    if (this.settings.pickMode !== 'vertex') {
+      // オブジェクトの選択: メッシュの transform を選ぶ
+      this.picked = null;
+      this.marker.visible = false;
+      this.select(e.transform, { notify: true });
+      return;
+    }
     // face の番号は表示用頂点（UV の継ぎ目で分割）なので、元の頂点番号に戻す
     let best = -1, bestD = Infinity;
     for (const rv of [h.face.a, h.face.b, h.face.c]) {
@@ -1464,7 +1493,7 @@ class ViewerApp {
         // 立ち上がり（0.5 秒）を過ぎて、目標の 9 割に届かなければ処理落ち
         cls = fps !== null && performance.now() - m.start > 500 && fps < target * 0.9 ? 'slow' : '';
       } else {
-        text = m && m.average ? `停止中（直前の再生 平均 ${f1(m.average)} / ${f1(target)} fps）` : `停止中（${f1(target)} fps）`;
+        text = m && m.average ? `直前の再生 ${f1(m.average)} / ${f1(target)} fps` : `${f1(target)} fps`;
       }
     }
     this.ui.setHud(show ? text : null, cls);

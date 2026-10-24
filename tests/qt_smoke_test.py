@@ -124,6 +124,7 @@ def main() -> int:
           const set=(id,v)=>{document.getElementById(id).querySelector('[data-value="'+v+'"]').click();};
           set('opt-weights','all'); set('opt-shading','flat');
           document.getElementById('opt-wire').click();
+          document.querySelector('#opt-pick [data-pick="vertex"]').click();   // 頂点を選ぶ（既定はオブジェクト）
           const app=window.mayaViewer.debug.app; const m=app.built.meshes[0];
           const p=m.skinned.getVertexPosition(150, app.marker.position.clone()).applyMatrix4(m.skinned.matrixWorld);
           p.project(app.camera);

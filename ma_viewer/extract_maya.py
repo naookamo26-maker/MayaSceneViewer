@@ -230,6 +230,9 @@ class _Extractor:
             "visible": bool(cmds.getAttr(path + ".visibility")),
             "attrs": attrs,
         }
+        why = _selectability(path)
+        if why:
+            entry["unselectable"] = why
         if ntype == "joint":
             entry["segmentScaleCompensate"] = bool(cmds.getAttr(path + ".segmentScaleCompensate"))
             try:
@@ -353,7 +356,9 @@ class _Extractor:
         if fn_skin is not None:
             skin = self._skin_data(name, sc_name, fn_skin, dag, nv)
 
+        why = _selectability(full)
         self.meshes.append({
+            **({"unselectable": why} if why else {}),
             "name": name,
             "path": full,
             "transform": t_idx,
@@ -653,6 +658,30 @@ class _Extractor:
                 "drivenNodes": 0,
             },
         }
+
+
+_DISPLAY_TYPE_LABELS = {1: "テンプレート", 2: "リファレンス"}
+
+
+def _selectability(path: str) -> Optional[str]:
+    """Maya のビューポートで選択できないなら、その理由（extract_ma.selectability と同じ考え方）"""
+    try:
+        x = path
+        while x:
+            if cmds.attributeQuery("template", node=x, exists=True) and cmds.getAttr(x + ".template"):
+                return "テンプレート"
+            x = x.rsplit("|", 1)[0]
+        x = path
+        while x:
+            layers = cmds.listConnections(x + ".drawOverride", source=True, destination=False, type="displayLayer") or []
+            if layers and cmds.getAttr(layers[0] + ".enabled"):
+                return _DISPLAY_TYPE_LABELS.get(int(cmds.getAttr(layers[0] + ".displayType")))
+            if cmds.getAttr(x + ".overrideEnabled"):
+                return _DISPLAY_TYPE_LABELS.get(int(cmds.getAttr(x + ".overrideDisplayType")))
+            x = x.rsplit("|", 1)[0]
+    except Exception:  # noqa: BLE001  属性がない・偽の Maya など
+        return None
+    return None
 
 
 def _unique(paths):

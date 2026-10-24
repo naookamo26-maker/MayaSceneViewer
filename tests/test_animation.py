@@ -206,6 +206,23 @@ class TestUnits(unittest.TestCase):
         self.assertEqual(anim["current"], 7.0)
 
 
+class TestSelectability(unittest.TestCase):
+    """Maya のビューポートで選択できないもの。前提: python tools/make_select_sample.py"""
+
+    def test_unselectable(self):
+        sc = load_ma(os.path.join(ROOT, "samples", "select_sample.ma"))
+        schema.validate(sc)
+        nodes = {n["name"]: n.get("unselectable") for n in sc["nodes"]}
+        meshes = {m["name"]: m.get("unselectable") for m in sc["meshes"]}
+        self.assertEqual(nodes["box"], "テンプレート")                       # .template
+        self.assertEqual(meshes["boxShape"], "テンプレート")                  # 親がテンプレート
+        self.assertEqual((nodes["arm_geo"], meshes["arm_geoShape"]), ("リファレンス", "リファレンス"))   # レイヤー
+        self.assertEqual((nodes["wrist"], nodes["wrist_end"]), ("テンプレート", "テンプレート"))  # オーバーライド（子も）
+        self.assertIsNone(nodes["forearm_twist"])
+        self.assertIsNone(meshes["hidden_geoShape"])
+        self.assertFalse(any("unselectable" in n for n in load_ma(PLAIN)["nodes"]))
+
+
 class TestSequencer(unittest.TestCase):
     """カメラシーケンサ。前提: python tools/make_sequencer_sample.py"""
 

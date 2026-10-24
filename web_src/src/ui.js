@@ -139,6 +139,10 @@ export class UI {
     document.querySelectorAll('#opt-tool [data-tool]').forEach((b) => {
       b.addEventListener('click', () => s('tool', b.dataset.tool));
     });
+    document.querySelectorAll('#opt-pick [data-pick]').forEach((b) => {
+      b.addEventListener('click', () => s('pickMode', b.dataset.pick));
+    });
+    $('opt-pick-all').addEventListener('click', (e) => s('pickAll', e.currentTarget.getAttribute('aria-pressed') !== 'true'));
     $('opt-space').addEventListener('click', (e) => s('space', e.currentTarget.getAttribute('aria-pressed') === 'true' ? 'local' : 'world'));
     this.bindMenus();
     $('btn-undo').addEventListener('click', () => this.app.undo());
@@ -178,6 +182,8 @@ export class UI {
     $('map-toggles').disabled = st.mapView !== 'combined';
     document.querySelectorAll('#map-toggles [data-map]').forEach((el) => { el.checked = !!st.maps[el.dataset.map]; });
     $('opt-space').setAttribute('aria-pressed', String(st.space === 'world'));
+    document.querySelectorAll('#opt-pick [data-pick]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.pick === st.pickMode)));
+    $('opt-pick-all').setAttribute('aria-pressed', String(!!st.pickAll));
     // メニュー名の横に、既定と違う設定を表示する
     const VIEW = { baseColor: 'ベースカラー', normal: '法線', roughness: 'ラフネス', metalness: 'メタリック', ao: 'AO', emissive: 'エミッシブ', opacity: '不透明度' };
     const viewState = [st.lighting === 'flat' ? 'フラットライト' : '', st.shading === 'none' ? 'ワイヤーのみ' : st.shading === 'flat' ? 'フラット' : '']
@@ -561,6 +567,7 @@ export class UI {
     let h = '<table class="kv">';
     h += `<tr><th>表示</th><td>${info.hiddenByRig ? '非表示（リグ・アニメーションで決まる値）' : info.hiddenSelf ? '非表示'
       : info.hiddenByParent ? '親が非表示のため隠れています' : '表示中'}</td></tr>`;
+    if (info.unselectable) h += `<tr><th>Maya での選択</th><td>ビューポートでは選択できない（${esc(info.unselectable)}）</td></tr>`;
     h += `<tr><th>姿勢の基準</th><td>${info.usingBind ? 'バインドポーズ' : 'ファイルの値'}</td></tr>`;
     h += `<tr><th>バインドポーズの情報</th><td>${info.bindSource ? esc(SRC[info.bindSource] || info.bindSource) : 'なし'}</td></tr>`;
     h += '</table>';
@@ -626,10 +633,13 @@ export class UI {
   }
 
   // ---------------------------------------------------------------- 頂点
-  showVertexInfo(info) {
+  /** @param mode 選択の対象（'object' のときは、頂点の選び方を案内する） */
+  showVertexInfo(info, mode = this.app.settings.pickMode) {
     const body = $('vertex-body');
     if (!info) {
-      body.innerHTML = '<p class="muted">メッシュをクリックすると、いちばん近い頂点のウェイトを表示します。</p>';
+      body.innerHTML = mode === 'vertex'
+        ? '<p class="muted">メッシュをクリックすると、いちばん近い頂点のウェイトを表示します。</p>'
+        : '<p class="muted">頂点のウェイトを見るには、ツールバーで「頂点を選択」に切り替えて（F8）、メッシュをクリックします。</p>';
       return;
     }
     let h = `<p class="info-title">${esc(info.meshName)}.vtx[${info.vertex}]</p>`;

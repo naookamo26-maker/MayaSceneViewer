@@ -89,7 +89,7 @@ def main() -> int:
             check(s["rows"] == ["トラック 1", "トラック 2"], "トラック 1 を一番上に、2 をその下に並べる: %s" % s["rows"])
             check(s["headBelow"], "再生ボタンなどの操作の行は、トラックの下（パネルの下側）")
             check(abs(s["seqBottom"] - s["vpTop"]) < 2, "パネルはビューポートのすぐ上（下端のタイムラインと離す）")
-            check(bool(s["hud"]) and s["hud"].startswith("停止中"), "ヘッドアップディスプレイ（停止中）: %s" % s["hud"])
+            check(s["hud"] == "24.0 fps", "ヘッドアップディスプレイ（停止中はシーンのフレームレート）: %s" % s["hud"])
             check(s["seq"]["frame"] == 1 and not s["seq"]["follow"], "最初はシーケンスに従わない（Maya のビューのカメラのまま）")
             s_open.lanes = s["lanes"]
             nxt()
@@ -130,7 +130,7 @@ def main() -> int:
 
         def stopped(s):
             check(not s["seq"]["playing"], "もう一度押すと停止")
-            check(bool(s["hud"]) and "直前の再生 平均" in s["hud"], "停止後は直前の再生の平均を表示: %s" % s["hud"])
+            check(bool(s["hud"]) and s["hud"].startswith("直前の再生 "), "停止後は直前の再生の平均を表示: %s" % s["hud"])
             js("document.querySelector('#opt-camera [data-value=\"-1\"]').click(); 'ok'", lambda _: state(free))
 
         def free(s):

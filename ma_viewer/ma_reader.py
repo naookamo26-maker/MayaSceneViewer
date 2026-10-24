@@ -46,7 +46,8 @@ ATTR_ALIASES = {
     "rotateAxisX": "rax", "rotateAxisY": "ray", "rotateAxisZ": "raz",
     "jointOrient": "jo", "jointOrientX": "jox", "jointOrientY": "joy", "jointOrientZ": "joz",
     "segmentScaleCompensate": "ssc", "inverseScale": "is", "radius": "radi",
-    "visibility": "v", "lodVisibility": "lodv", "intermediateObject": "io",
+    "visibility": "v", "lodVisibility": "lodv", "intermediateObject": "io", "template": "tmp",
+    "overrideDisplayType": "ovdt",
     "overrideEnabled": "ove", "overrideVisibility": "ovv",
     "inheritsTransform": "it", "worldMatrix": "wm",
     # 注意: "matrix" は transform では m、skinCluster では ma なので別名変換しない

@@ -46,6 +46,7 @@ transform・joint などの変換ノードです。**親は必ず子より前に
 | `bindSource` | bindMatrix の情報源: `pm`（skinCluster の .pm）・`dagPose`・`bps`（ジョイントの .bps） |
 | `drivenBy` | 移動・回転などが接続で決まっている場合の接続元（例: `r ← uc1（unitConversion）`）。この場合 .ma に値がないため、matrix はバインドポーズの姿勢（bindMatrix があれば）か既定値になる |
 | `visible` | 自身の表示状態 |
+| `unselectable` | Maya のビューポートで選択できないとき、その理由（`テンプレート`・`リファレンス`）。テンプレート（.template。祖先も含む）と、描画のオーバーライドかディスプレイレイヤーの表示の種類（近い方の設定）から決める。meshes・curves も同じ |
 | `attrs` | 表示用の値。`t`、`r`（度）、`s`、`jo`（度、joint のみ）、`ro`（`"xyz"` など） |
 
 ## meshes

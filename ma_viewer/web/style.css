@@ -138,6 +138,8 @@ body.right-collapsed #right .panel-strip {
   color: var(--text-dim);
 }
 .panel-head .collapse-btn { height: 100%; }
+/* 右パネルは、たたむボタンをパネルの左端（ビューポート側）に置く */
+#right .panel-head { justify-content: flex-start; padding-left: 0; }
 
 .tabs { display: flex; border-bottom: 1px solid var(--line); flex: none; }
 .tabs [role="tab"] {
@@ -400,17 +402,17 @@ table.kv td.l { text-align: left; }
 #cam-gate i { position: absolute; background: rgba(10, 11, 13, 0.55); }
 #cam-gate .g-frame { position: absolute; box-shadow: 0 0 0 1px rgba(242, 169, 59, 0.75); }
 #cam-gate.no-mask i { display: none; }
-/* ヘッドアップディスプレイ: 再生のフレームレート（処理落ちすると色が変わる） */
+/* ヘッドアップディスプレイ: 再生のフレームレート（右下に 1 行。ほかのビューポートの文字と同じ見た目。処理落ちすると赤） */
 #vp-hud {
-  position: absolute; left: 10px; top: 28px;
-  padding: 1px 6px; border-radius: 3px;
-  background: rgba(20, 22, 25, 0.55); color: #cfe9d2;
-  font: 11px/1.6 Consolas, "SF Mono", monospace; font-variant-numeric: tabular-nums;
+  position: absolute; right: 10px; bottom: 8px;
+  color: rgba(255, 255, 255, 0.78); font-size: 11px; font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
   pointer-events: none; white-space: nowrap;
 }
 #vp-hud[hidden] { display: none; }
-#vp-hud.slow { color: #ffb4a8; background: rgba(90, 30, 25, 0.6); }
+#vp-hud.slow { color: #ff9a8c; }
 #vp-hud.idle { color: rgba(255, 255, 255, 0.55); }
+#viewport.has-timeline #vp-hud { bottom: 48px; }
 #vp-hint {
   position: absolute; left: 10px; bottom: 8px;
   color: rgba(255, 255, 255, 0.55);
