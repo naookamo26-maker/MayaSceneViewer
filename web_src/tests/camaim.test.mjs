@@ -75,6 +75,16 @@ test('twist を子のカメラのキーのある属性からつなぐ（カメ�
   }
 });
 
+test('lookAt のグループに親があり、エイムの位置を成分ごとにつないでも、カメラはエイムを向く', () => {
+  for (const f of [1, 12, 24]) {
+    const rig = at(f);
+    const cam = rig.world(idx('nested_cam')), aim = rig.world(idx('nested_cam_aim'));
+    const look = axis(cam, 2).negate();
+    const err = look.angleTo(pos(aim).sub(pos(cam)).normalize()) / D2R;
+    assert.ok(err < 1e-4, `フレーム ${f}: ${err} 度ずれ`);
+  }
+});
+
 test('twist が未対応のノードからつながっていても、カメラはエイムを向く（twist はファイルの値）', () => {
   const rig = at(1);
   const a = rig.world(idx('roll_cam')), b = rig.world(idx('bad_roll_cam'));
