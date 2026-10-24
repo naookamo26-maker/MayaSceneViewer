@@ -36,6 +36,15 @@ test('カメラとエイム: カメラの −Z がエイムのロケーターを
   assert.ok(Math.abs(pos(at(24).world(idx('aim_cam_aim'))).x - 10) < 1e-6);
 });
 
+test('ターゲットの位置がロケーターのシェイプ（worldPosition）からつながる場合も、カメラはエイムを向く', () => {
+  const rig = at(1);
+  const cam = rig.world(idx('shape_cam')), aim = rig.world(idx('shape_cam_aim'));
+  const want = pos(aim).sub(pos(cam)).normalize();
+  const look = axis(cam, 2).negate();
+  assert.ok(look.angleTo(want) < 1e-6, `${look.angleTo(want) / D2R} 度ずれ`);
+  assert.ok(want.y < -0.3, 'エイムはカメラより下（下を向く）');
+});
+
 test('カメラとエイム: twist（ロール）で視線のまわりに回る', () => {
   const rig = at(1);                                      // 2 台のエイムが同じ位置（twist なしのエイムはキーなし）
   const a = rig.world(idx('aim_cam')), b = rig.world(idx('roll_cam'));
