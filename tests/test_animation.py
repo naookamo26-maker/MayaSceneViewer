@@ -206,6 +206,38 @@ class TestUnits(unittest.TestCase):
         self.assertEqual(anim["current"], 7.0)
 
 
+class TestCameraAimAndDistance(unittest.TestCase):
+    """カメラとエイム（lookAt）と距離の寸法（distanceDimShape）。前提: python tools/make_camaim_sample.py"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.scene = load_ma(os.path.join(ROOT, "samples", "camaim_sample.ma"), animation=True)
+        cls.anim = cls.scene["animation"]
+        cls.names = [n["name"] for n in cls.scene["nodes"]]
+        cls.graph = {g["name"]: g for g in cls.anim["graph"]}
+
+    def test_no_warnings(self):
+        self.assertFalse(any("lookAt" in w or "自作ノード" in w for w in self.scene["warnings"]), self.scene["warnings"])
+        self.assertEqual(self.anim["warnings"], [])
+
+    def test_look_at_drives_camera_rotation(self):
+        g = self.graph["cam_aim_group"]
+        self.assertEqual(g["type"], "lookAt")
+        self.assertEqual(self.names[g["driven"]], "aim_cam")               # constraintParentInverseMatrix の接続元
+        self.assertEqual([self.graph_name(t["node"]) for t in g["targets"]], ["aim_cam_aim"])
+        self.assertEqual(g["attrs"]["tws"], 20.0)
+        cam = next(x for x in self.anim["graph"] if x["dag"] == self.names.index("aim_cam"))
+        self.assertEqual(cam["inputs"]["rx"], {"node": g["id"], "attr": "crx"})
+
+    def test_distance_dimension(self):
+        g = self.graph["distanceDimensionShape1"]
+        self.assertEqual(sorted(g["inputs"]), ["ep", "sp"])
+        self.assertEqual(self.graph["stretch_md"]["inputs"]["i1x"], {"node": g["id"], "attr": "dist"})
+
+    def graph_name(self, gid):
+        return next(x["name"] for x in self.anim["graph"] if x["id"] == gid)
+
+
 class TestSelectability(unittest.TestCase):
     """Maya のビューポートで選択できないもの。前提: python tools/make_select_sample.py"""
 

@@ -239,12 +239,14 @@ export class UI {
     this.setViewCamera(-1, '');
   }
 
-  setViewCamera(ci, name) {
+  /** @param edited 停止中にカメラのビューを動かしているか */
+  setViewCamera(ci, name, edited = false) {
     this.checkChoice($('opt-camera'), ci);
-    $('menu-camera-state').textContent = ci >= 0 ? name : '';
+    $('menu-camera-state').textContent = ci >= 0 ? name + (edited ? '（視点を移動中）' : '') : '';
     $('viewport').classList.toggle('viewing-camera', ci >= 0);
     $('vp-hint').textContent = ci >= 0
-      ? `カメラ ${name} から表示中（C: 次のカメラ　Shift+C: 自由視点に戻す）　クリック: 選択`
+      ? `カメラ ${name} から表示中${edited ? '（視点を動かしています。フレームを動かすか再生すると戻ります）' : '（停止中はドラッグで視点を動かせます）'}`
+        + '　Shift+C: 自由視点に戻す'
       : '左ドラッグ: 回転　中ドラッグ: 移動　右ドラッグ・ホイール: ズーム　クリック: 選択';
   }
 
