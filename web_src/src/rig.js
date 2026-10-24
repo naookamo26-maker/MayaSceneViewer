@@ -172,6 +172,15 @@ function variantLabel(v) {
   return `${pl}・${tw}・${sp}・${cv}・肘 ${v.side === 1 ? '極ベクトルの側' : '反対側'}`;
 }
 
+// 表示の属性の既定値（.v・.lodv・描画のオーバーライドの .ove / .ovv）
+export const VIS_DEFAULTS = { v: 1, lodv: 1, ove: 0, ovv: 1 };
+
+/** 表示の属性の値（{ v, lodv, ove, ovv }。足りないものは既定値）から、表示されるか */
+export function visibleFrom(vals) {
+  const g = (k) => (typeof vals[k] === 'number' ? vals[k] : VIS_DEFAULTS[k]);
+  return g('v') >= 0.5 && g('lodv') >= 0.5 && !(g('ove') >= 0.5 && g('ovv') < 0.5);
+}
+
 export class RigEvaluator {
   /**
    * @param clip AnimationClip（カーブとノードの材料）
@@ -238,6 +247,7 @@ export class RigEvaluator {
       && ((g.attrs || {}).roc ?? 0) >= 0.5).map((g) => g.ik.chain[0]));
     // 時間で変わる expression（frame・time を使う式）があるか（キーがなくてもタイムラインを出す）
     this.usesTime = this.graph.some((g) => g.type === 'expression' && /\b(frame|time)\b/.test(g.expr || ''));
+    this.props = clip.raw.props || [];       // 表示・カメラの属性の接続（evaluateProps）
     this.problems = new Set();               // 評価中に見つかった問題（循環など）
     this.ikVariant = null;                   // 再現チェックで試す IK の解き方の候補（ふだんは null）
     this.aimMode = null;                     // aim と up が平行な aimConstraint の解き方（再現チェックで試す。null = parent）
@@ -434,6 +444,11 @@ export class RigEvaluator {
       case 'rp': case 'rpt': case 'sp': case 'spt': return rest && rest[base] ? rest[base] : [0, 0, 0];
       case 'jo': case 'ra': return rest && rest[base] ? rest[base].map((v) => v * D2R) : [0, 0, 0];
       case 'ro': return rest ? rest.ro || 0 : 0;
+      case 'v': case 'lodv': case 'ove': case 'ovv': {
+        // 表示の属性: 接続があれば評価し、なければファイルの値（Python は既定と違う値だけを attrs に入れる）
+        const v = g ? this.plug(g.id, base) : undefined;
+        return typeof v === 'number' ? v : VIS_DEFAULTS[base];
+      }
       case 'opm': case 'offsetParentMatrix': {
         const c = rest ? this.chan(ni, 'full') : null;
         return c && c.opm ? new Matrix4().fromArray(c.opm) : new Matrix4();
@@ -448,6 +463,24 @@ export class RigEvaluator {
   }
 
   // ------------------------------------------------------------------ プラグ
+  /**
+   * 移動・回転・スケール以外で接続で決まる属性（animation.props: 表示・カメラの焦点距離など）の、
+   * 現在のフレームの値。evaluate() のあとに呼ぶ。[{ kind, index, values: { 属性: 数値 }, static }]
+   */
+  evaluateProps() {
+    const out = [];
+    for (const p of this.props) {
+      const values = {};
+      for (const [attr, src] of Object.entries(p.inputs || {})) {
+        const v = this.guard(`prop ${p.kind}${p.index}.${attr}`, () => this.source(src), () => undefined);
+        const x = Array.isArray(v) ? v[0] : v;
+        if (typeof x === 'number' && Number.isFinite(x)) values[attr] = x;
+      }
+      out.push({ kind: p.kind, index: p.index, values, static: p.static || null });
+    }
+    return out;
+  }
+
   /** 接続元の値 */
   source(src) {
     if (src.curve !== undefined) {

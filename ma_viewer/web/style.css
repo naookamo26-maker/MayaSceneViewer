@@ -276,6 +276,9 @@ table.kv td.l { text-align: left; }
 #toolbar .icon-btn { width: 30px; height: 26px; background: var(--panel); }
 #toolbar .icon-btn[aria-pressed="true"] { background: #33404a; border-color: #4f6676; color: #f2f6f9; }
 #toolbar .icon-btn[aria-pressed="false"] { color: var(--text-dim); }
+/* 今の表示設定では効果のない切り替え（押せるが見た目が変わらない）: 薄く、破線の枠で示す。理由は title に出す */
+#toolbar .icon-btn.inert { opacity: 0.45; border-style: dashed; }
+#toolbar .icon-btn.inert:hover { opacity: 0.8; }
 #toolbar .warn-btn { width: auto; padding: 0 8px; gap: 5px; color: var(--select); border-color: #6b5426; }
 #toolbar .warn-btn[hidden] { display: none; }
 #warn-count { font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -363,6 +366,12 @@ table.kv td.l { text-align: left; }
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
   pointer-events: none;
 }
+/* カメラから見ているとき: 解像度ゲートの外側を暗くし、枠を描く（位置は main.js が設定する） */
+#cam-gate { position: absolute; inset: 0; pointer-events: none; }
+#cam-gate[hidden] { display: none; }
+#cam-gate i { position: absolute; background: rgba(10, 11, 13, 0.55); }
+#cam-gate .g-frame { position: absolute; box-shadow: 0 0 0 1px rgba(242, 169, 59, 0.75); }
+#cam-gate.no-mask i { display: none; }
 #vp-hint {
   position: absolute; left: 10px; bottom: 8px;
   color: rgba(255, 255, 255, 0.55);

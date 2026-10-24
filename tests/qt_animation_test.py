@@ -37,6 +37,7 @@ STATE_JS = """JSON.stringify((() => {
     pose: s.settings ? s.settings.poseSource : null,
     timeline: !tl.hidden, status: document.getElementById('tl-status').textContent,
     wrist: at('wrist'), rig: at('rig_grp'), box: at('box'),
+    bindPressed: document.getElementById('opt-bind').getAttribute('aria-pressed'),
   };
 })())"""
 
@@ -105,14 +106,20 @@ def main() -> int:
         def got(s):
             a = s["animation"] or {}
             check(s["loaded"] and s["name"] == "anim_sample.ma", "シーンを表示した")
-            check(bool(a) and a["curves"] == 6 and a["nodes"] == 6, "アニメーションをあとから受け取った（動くノード 6 = キー 5 + 推定 1）: %s" % a)
+            check(bool(a) and a["curves"] == 7 and a["nodes"] == 6,
+                  "アニメーションをあとから受け取った（カーブ 7 = 動き 6 + 表示 1・動くノード 6 = キー 5 + 推定 1）: %s" % a)
             check(s["timeline"] and s["status"] == "", "タイムラインを表示し、読み込み中の表示は消えた")
             check(a.get("frame") == 1 and (a.get("start"), a.get("end")) == (1, 24), "再生範囲 1〜24・現在 1 フレーム")
-            check(s["pose"] == "bind", "読み込み直後はバインドポーズのまま")
+            check(s["pose"] == "file", "キーのあるアニメーションを読み込むと「ファイルの値」に切り替わる")
             check("animation" in (win.current_scene or {}), "Python 側のシーンにもアニメーションを保持（書き出し用）")
             check(any(w.startswith("アニメーション:") for w in win.viewer.warnings), "アニメーションの警告を警告一覧に追加")
             check("アニメーション" in win.statusBar().currentMessage(), "ステータスバーに読み込み結果: %s"
                   % win.statusBar().currentMessage())
+            # 以降はバインドポーズ（ボタン・B キーと同じ操作）から確かめる
+            js("window.mayaViewer.debug.app.setPoseSource('bind'); 'ok'", lambda _: js(STATE_JS, bound))
+
+        def bound(s):
+            check(s["pose"] == "bind" and s["bindPressed"] == "true", "バインドポーズのボタンで戻せる")
             s_open.first = s
             wait_idle(nxt)
         wait_state(lambda s: s["loaded"] and s["animation"], got)
@@ -139,8 +146,7 @@ def main() -> int:
 
     def s_bind(nxt):
         """フレーム 12 でバインドポーズに戻しても、読み込み直後（保存時のフレーム）と同じ姿勢になる"""
-        set_pose = ("(() => { const sel = document.getElementById('opt-pose-source');"
-                    " sel.value = '%s'; sel.dispatchEvent(new Event('change')); return 'ok'; })()")
+        set_pose = "(() => { window.mayaViewer.debug.app.setPoseSource('%s'); return 'ok'; })()"
         first = s_open.first
 
         def bind12(s):
@@ -243,7 +249,7 @@ def main() -> int:
             win.open_file(path)
 
             def got(s):
-                check(s["name"] == "anim.json" and s["animation"] and s["animation"]["curves"] == 6,
+                check(s["name"] == "anim.json" and s["animation"] and s["animation"]["curves"] == 7,
                       "書き出した JSON を開くとアニメーションも読み込む")
                 nxt()
             wait_idle(lambda: wait_state(lambda s: s["loaded"] and s["name"] == "anim.json" and s["animation"], got))

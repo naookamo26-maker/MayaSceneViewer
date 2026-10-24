@@ -232,6 +232,66 @@ def collect_curves(ms: MaScene) -> List[Tuple[MaNode, dict]]:
     return out
 
 
+# Maya のカメラの既定値（.ma には既定と違う値だけが書かれる）。フィルムバックはインチ、焦点距離は mm
+_CAMERA_DEFAULTS = {"fl": 35.0, "hfa": 1.41732, "vfa": 0.94488, "ff": 1, "ncp": 0.1, "fcp": 10000.0, "o": 0,
+                    "ow": 30.0, "lsr": 1.0, "hfo": 0.0, "vfo": 0.0, "cs": 1.0}
+_STARTUP_CAMERAS = ("persp", "top", "front", "side")
+
+
+# 2 つ組で書かれる属性の成分（Maya は .cap -type "double2" 1.41732 0.94488 のように書く）
+_PAIR_PARENT = {"hfa": ("cap", 0), "vfa": ("cap", 1), "hfo": ("fio", 0), "vfo": ("fio", 1)}
+
+
+def _raw_num(n: MaNode, key: str, default: float) -> float:
+    raw = n.raw or {}
+    vals = raw.get(key)
+    k = 0
+    if not vals and key in _PAIR_PARENT:
+        parent, k = _PAIR_PARENT[key]
+        vals = raw.get(parent)
+    if not vals or len(vals) <= k:
+        return default
+    try:
+        return R.to_float(vals[k])
+    except ValueError:
+        t = str(vals[k]).lower()
+        return 1.0 if t in ("yes", "true", "on") else 0.0 if t in ("no", "false", "off") else default
+
+
+def collect_cameras(ms: MaScene) -> List[MaNode]:
+    """表示するカメラのシェイプ（中間オブジェクトと、起動時からある persp・top・front・side は除く）"""
+    out = []
+    for n in ms.nodes:
+        if n.type != "camera" or n.parent is None or _raw_num(n, "io", 0.0) >= 0.5:
+            continue
+        if n.parent.parent is None and n.parent.name in _STARTUP_CAMERAS and n.name == n.parent.name + "Shape":
+            continue
+        out.append(n)
+    return out
+
+
+def camera_entry(n: MaNode, t_idx: int) -> dict:
+    """共通 JSON の cameras の 1 件。値は Maya の単位のまま（焦点距離 mm・フィルムバック インチ・クリップ面は長さの単位）"""
+    keys = {"fl": "focalLength", "hfa": "horizontalFilmAperture", "vfa": "verticalFilmAperture",
+            "ncp": "nearClipPlane", "fcp": "farClipPlane", "ow": "orthographicWidth", "lsr": "lensSqueezeRatio",
+            "hfo": "horizontalFilmOffset", "vfo": "verticalFilmOffset", "cs": "cameraScale"}
+    entry = {"name": n.parent.name, "shape": n.name, "path": n.path, "transform": t_idx}
+    for k, long in keys.items():
+        entry[long] = round(_raw_num(n, k, _CAMERA_DEFAULTS[k]), 6)
+    entry["filmFit"] = int(_raw_num(n, "ff", _CAMERA_DEFAULTS["ff"]))
+    entry["orthographic"] = _raw_num(n, "o", 0.0) >= 0.5
+    entry["renderable"] = _raw_num(n, "rnd", 1.0) >= 0.5
+    return entry
+
+
+def render_settings(ms: MaScene) -> dict:
+    """レンダーの解像度（defaultResolution）。カメラから見るときの解像度ゲートの縦横比に使う"""
+    r = ms.resolution
+    w, h = _raw_num(r, "w", 640.0), _raw_num(r, "h", 480.0)
+    dar = _raw_num(r, "dar", w / h if h > 0 else 4.0 / 3.0)
+    return {"width": int(w), "height": int(h), "deviceAspectRatio": dar}
+
+
 def curve_entry(ms: MaScene, n: MaNode, a: dict, t_idx: int) -> Optional[dict]:
     cc, from_input = curve_shape_source(ms, n, a)
     if cc is None:
@@ -922,9 +982,16 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     curve_shapes = collect_curves(ms)
     for n, _a in curve_shapes:
         keep_chain(n.parent)
-    # リグ（コンストレイント・IK・計算ノード）の評価に必要なコントローラーなども出力する
+    # シーンのカメラ（起動時からある persp・top・front・side は除く）
+    camera_shapes = collect_cameras(ms)
+    for n in camera_shapes:
+        keep_chain(n.parent)
+    # リグ（コンストレイント・IK・計算ノード）の評価に必要なコントローラーなども出力する。
+    # 表示（.v など）・カメラの焦点距離などが接続で決まるときは、その入力もたどる
     from .rig import discover
-    graph_info = discover(ms, keep, [n for n, _a in curve_shapes])
+    props = [("node", n) for n in ms.nodes if id(n) in keep and not n.is_shape and n.is_dag]
+    props += [("mesh", n) for n, *_ in mesh_entries] + [("camera", n) for n in camera_shapes]
+    graph_info = discover(ms, keep, [n for n, _a in curve_shapes], props)
     for n in list(graph_info.dag.values()):
         keep_chain(n)
     ms.graph_info = graph_info
@@ -1075,6 +1142,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     lap("ノードの出力（行列）")
     # --- メッシュの出力 ---------------------------------------------------
     out_meshes = []
+    mesh_index: Dict[int, int] = {}
     mb = _MaterialBuilder(ms)
     total = max(len(mesh_entries), 1)
     for mi, (n, source, skin_node, geo_index, tweaks) in enumerate(mesh_entries):
@@ -1134,6 +1202,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             lap("メッシュ（その他）")
             entry["skin"] = _build_skin(ms, ctx, n, skin_node, len(pos) // 3, index_of)
             lap("スキン")
+        mesh_index[id(n)] = len(out_meshes)
         out_meshes.append(entry)
 
     # --- カーブの出力 -----------------------------------------------------
@@ -1147,6 +1216,15 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             out_curves.append(entry)
     ms.curve_shapes = curve_out
     lap("カーブ")
+    out_cameras = []
+    camera_index: Dict[int, int] = {}
+    for n in camera_shapes:
+        t_idx = index_of.get(id(n.parent))
+        if t_idx is not None:
+            camera_index[id(n)] = len(out_cameras)
+            out_cameras.append(camera_entry(n, t_idx))
+    ms.mesh_index = mesh_index          # アニメーション（animation.props）で使う、メッシュ・カメラの番号
+    ms.camera_index = camera_index
 
     ms.finalize_warnings()
     nverts = sum(len(m["positions"]) // 3 for m in out_meshes)
@@ -1166,6 +1244,8 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         "nodes": out_nodes,
         "meshes": out_meshes,
         "curves": out_curves,
+        "cameras": out_cameras,
+        "render": render_settings(ms),
         "materials": mb.materials,
         "textures": mb.textures,
         "warnings": list(ms.warnings),
@@ -1174,6 +1254,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             "joints": sum(1 for x in out_nodes if x["type"] == "joint"),
             "meshes": len(out_meshes),
             "curves": len(out_curves),
+            "cameras": len(out_cameras),
             "vertices": nverts,
             "polygons": npolys,
             "skinnedMeshes": sum(1 for m in out_meshes if m["skin"]),

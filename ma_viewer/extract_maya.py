@@ -173,6 +173,7 @@ class _Extractor:
         self.nodes: List[dict] = []
         self.index_of: Dict[str, int] = {}
         self.meshes: List[dict] = []
+        self.cameras: List[dict] = []
         self.warnings: List[str] = []
         self.progress = progress
         self.bind_pm: Dict[str, List[float]] = {}    # パス → バインド時のワールド行列（.pm の逆行列）
@@ -241,6 +242,30 @@ class _Extractor:
         self.index_of[path] = idx
         self.nodes.append(entry)
         return idx
+
+    def add_camera(self, shape: str):
+        """カメラ（シェイプ）を登録する。値は Maya の単位のまま（焦点距離 mm・フィルムバック インチ）"""
+        g = lambda a: cmds.getAttr(shape + "." + a)  # noqa: E731
+        parent = shape.rsplit("|", 1)[0]
+        entry = {"name": parent.rsplit("|", 1)[-1], "shape": shape.rsplit("|", 1)[-1], "path": shape,
+                 "transform": self.add_node(parent)}
+        for attr in ("focalLength", "horizontalFilmAperture", "verticalFilmAperture", "nearClipPlane", "farClipPlane",
+                     "orthographicWidth", "lensSqueezeRatio", "horizontalFilmOffset", "verticalFilmOffset", "cameraScale"):
+            entry[attr] = round(float(g(attr)), 6)
+        entry["filmFit"] = int(g("filmFit"))
+        entry["orthographic"] = bool(g("orthographic"))
+        entry["renderable"] = bool(g("renderable"))
+        self.cameras.append(entry)
+
+    @staticmethod
+    def _render_settings() -> dict:
+        try:
+            w = int(cmds.getAttr("defaultResolution.width"))
+            h = int(cmds.getAttr("defaultResolution.height"))
+            dar = float(cmds.getAttr("defaultResolution.deviceAspectRatio"))
+        except (RuntimeError, ValueError, TypeError, KeyError):
+            w, h, dar = 640, 480, 4.0 / 3.0
+        return {"width": w, "height": h, "deviceAspectRatio": dar}
 
     def _influence_path(self, dag) -> str:
         p = om.MDagPath(dag)
@@ -562,6 +587,8 @@ class _Extractor:
             },
             "nodes": self.nodes,
             "meshes": self.meshes,
+            "cameras": self.cameras,
+            "render": self._render_settings(),
             "materials": self.materials,
             "textures": self.textures,
             "warnings": self.warnings,
@@ -569,6 +596,7 @@ class _Extractor:
                 "nodes": len(self.nodes),
                 "joints": sum(1 for n in self.nodes if n["type"] == "joint"),
                 "meshes": len(self.meshes),
+                "cameras": len(self.cameras),
                 "vertices": nverts,
                 "polygons": sum(len(m["counts"]) for m in self.meshes),
                 "skinnedMeshes": sum(1 for m in self.meshes if m["skin"]),
@@ -613,6 +641,26 @@ def _collect(selection_only: bool) -> Tuple[List[str], List[str]]:
     return _unique(meshes), _unique(joints)
 
 
+def _collect_cameras(selection_only: bool) -> List[str]:
+    if selection_only:
+        cams: List[str] = []
+        for s in cmds.ls(selection=True, long=True, objectsOnly=True) or []:
+            if cmds.nodeType(s) == "camera":
+                cams.append(s)
+            cams += cmds.listRelatives(s, allDescendents=True, fullPath=True, type="camera") or []
+    else:
+        cams = cmds.ls(type="camera", long=True) or []
+    out = []
+    for c in _unique(cams):
+        try:
+            if cmds.getAttr(c + ".intermediateObject") or cmds.camera(c, query=True, startupCamera=True):
+                continue
+        except (RuntimeError, ValueError, AttributeError):
+            continue
+        out.append(c)
+    return out
+
+
 def extract_scene(selection_only: bool = False, progress=None) -> dict:
     """現在の Maya シーン（または選択範囲）を共通 JSON（dict）にする。"""
     meshes, joints = _collect(selection_only)
@@ -627,6 +675,12 @@ def extract_scene(selection_only: bool = False, progress=None) -> dict:
             ex.warn("%s を取得できませんでした: %s" % (m, exc))
     for j in sorted(joints, key=lambda p: p.count("|")):
         ex.add_node(j)
+    # シーンのカメラ（起動時からある persp・top・front・side は除く）。選択範囲のときは選択の下にあるものだけ
+    for c in _collect_cameras(selection_only):
+        try:
+            ex.add_camera(c)
+        except Exception as exc:  # noqa: BLE001
+            ex.warn("カメラ %s を取得できませんでした: %s" % (c, exc))
     if not ex.meshes and not ex.nodes:
         ex.warn("表示できるメッシュもジョイントもありません。")
     scene = ex.to_dict()

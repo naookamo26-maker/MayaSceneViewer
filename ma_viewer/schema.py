@@ -135,9 +135,16 @@ def validate(scene: dict) -> List[str]:
             raise SchemaError("curves[%d] の transform が不正です" % i)
         if not isinstance(c.get("cc"), list) or len(c["cc"]) < 7:
             raise SchemaError("curves[%d] の cc が不正です" % i)
+    for i, c in enumerate(scene.get("cameras") or []):
+        if not (0 <= c.get("transform", -1) < nn):
+            raise SchemaError("cameras[%d] の transform が不正です" % i)
     anim = scene.get("animation")
     if anim:
         validate_animation(anim, nn)
+        sizes = {"node": nn, "mesh": len(meshes), "camera": len(scene.get("cameras") or [])}
+        for i, p in enumerate(anim.get("props") or []):
+            if p.get("kind") not in sizes or not (0 <= p.get("index", -1) < sizes[p["kind"]]):
+                raise SchemaError("animation.props[%d] の対象が不正です" % i)
     return notes
 
 

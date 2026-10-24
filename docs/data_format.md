@@ -13,6 +13,8 @@
   "nodes":  [ ... ],
   "meshes": [ ... ],
   "curves": [ ... ],
+  "cameras": [ ... ],
+  "render": { "width": 1920, "height": 1080, "deviceAspectRatio": 1.778 },
   "materials": [ ... ],
   "textures": [ ... ],
   "warnings": [ "..." ],
@@ -21,7 +23,7 @@
 }
 ```
 
-`animation` は省略できます（アニメーションがない場合や、読み込まない設定の場合）。`curves` も省略できます（Maya 内からの抽出では出力しません）。
+`animation` は省略できます（アニメーションがない場合や、読み込まない設定の場合）。`curves` も省略できます（Maya 内からの抽出では出力しません）。`cameras`・`render` も省略できます（古い版の JSON）。
 
 `source.kind` は `"ma"`（.ma から）か `"maya"`（Maya 内から）です。
 
@@ -93,6 +95,26 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 | `display` | 表示の種類（.ovdt・レイヤーの .dt）: 0 通常・1 テンプレート（灰色で描く）・2 リファレンス |
 
 リグで形が変わるカーブ（skinCluster・制御点の接続）は、animation.graph の nurbsCurve の `shape` がこの番号を指し、ビューアは毎フレーム変形した形に差し替えます。
+
+## cameras
+
+シーンのカメラ（起動時からある persp・top・front・side と中間オブジェクトは除く）。カメラの transform は nodes に入り、アニメーション・リグで動きます。値は Maya の単位のままです。
+
+| キー | 内容 |
+|---|---|
+| `name` / `shape` / `path` | transform の名前・シェイプの名前・シェイプのフルパス |
+| `transform` | カメラの transform の nodes 番号（カメラはローカルの −Z を向き、+Y が上） |
+| `focalLength` | 焦点距離（mm） |
+| `horizontalFilmAperture` / `verticalFilmAperture` | フィルムバック（インチ。.ma では `.cap` の 2 つ組） |
+| `horizontalFilmOffset` / `verticalFilmOffset` | フィルムオフセット（インチ。.ma では `.fio`） |
+| `filmFit` | 0 = フィル・1 = 水平・2 = 垂直・3 = オーバースキャン |
+| `nearClipPlane` / `farClipPlane` | クリップ面（長さの単位） |
+| `orthographic` / `orthographicWidth` | 平行投影か、そのときの見える幅（長さの単位） |
+| `lensSqueezeRatio` / `cameraScale` / `renderable` | レンズのスクイーズ比・カメラのスケール・レンダー可能か |
+
+## render
+
+レンダーの解像度（defaultResolution）。カメラから見るときの解像度ゲートの縦横比に `deviceAspectRatio` を使います。なければ 640×480（4:3）。
 
 ## materials
 
@@ -186,6 +208,24 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 | `curve` | ドリブンキー（animCurveUA・UL・UU）のとき、animation.curves の番号。入力は `inputs` の `i` |
 | `geom` | wire・cluster が変形するカーブの transform（`{"出力の番号 k": nodes の番号}`）。ワイヤー（`dw[i]`）・ベースワイヤー（`bw[i]`）はワールド空間なので、カーブをこの行列でワールドへ移して変形し、戻す。CV のウェイトは attrs の `wl[k].w[v]`（なければ 1）。cluster は attrs の `gm[k]` があればそちらを使う |
 | `skin` | カーブを動かす skinCluster のウェイト `[[CV の番号, インフルエンスの論理番号, 値], …]`、`pm`（論理番号 → 16 要素）、`gm`。インフルエンスは `inputs` の `ma[i]` |
+
+### animation.props
+
+移動・回転・スケール以外で、接続（リグ・カーブ）で値が決まる属性です。ビューアがフレームごとに評価します（なければ空）。
+
+```json
+{ "kind": "node", "index": 8,
+  "inputs": { "v": { "node": 0, "attr": "geoVis" } },
+  "static": { "v": 1, "lodv": 1, "ove": 0, "ovv": 1, "layerHidden": false } }
+```
+
+| キー | 内容 |
+|---|---|
+| `kind` / `index` | 対象。`node`（nodes の番号）・`mesh`（meshes の番号）・`camera`（cameras の番号） |
+| `inputs` | 属性への接続（graph の `inputs` と同じ形）。node・mesh は表示の属性（`v`・`lodv`・`ove`・`ovv`）、camera は `fl`・`hfa`・`vfa`・`ncp`・`fcp`・`ow`・`hfo`・`vfo`・`lsr`・`cs` |
+| `static` | node・mesh のみ。接続されていない表示の属性のファイルの値と、ディスプレイレイヤーで隠れているか（`layerHidden`） |
+
+表示されるのは `v` と `lodv` が 0.5 以上で、`ove` が有効なら `ovv` も 0.5 以上のとき（ディスプレイレイヤーで隠れていないこと）。接続元が評価できない（未対応のノード）属性は入れず、ファイルの値のまま表示します。graph の DAG ノードは、表示の属性が既定と違う値（`v` = 0 など）なら `attrs` に持ちます（別のノードの表示の入力になるとき用）。
 
 ### animation.fallback・animation.tainted
 
