@@ -179,6 +179,7 @@ class TextureResolver:
       1. 書かれているパスそのもの（相対パスならプロジェクトのルート → シーンのフォルダを基準）
       2. Maya プロジェクトなら sourceimages フォルダ
       3. シーン（.ma）と同じフォルダ
+      （リファレンスを読み込んだら、1〜3 の後に、そのファイルのプロジェクト・sourceimages・フォルダも探す。extra_dirs）
       4. シーンと同じフォルダにあるフォルダの中（下の階層まで、ファイル名で探す）
 
     2・3 では、まずファイル名だけで探し、見つからなければ元のパスの親フォルダ名を
@@ -187,8 +188,16 @@ class TextureResolver:
     （同じなら浅いもの → パスの順）。
     """
 
-    def __init__(self, scene_path: str = "", project_root: Optional[str] = None, auto_project: bool = True):
+    def __init__(self, scene_path: str = "", project_root: Optional[str] = None, auto_project: bool = True,
+                 extra_dirs: Sequence[str] = ()):
         self.scene_dir = os.path.dirname(os.path.abspath(scene_path)) if scene_path else os.getcwd()
+        self.extra_dirs = [d for d in extra_dirs if d and d != self.scene_dir]
+        # リファレンスのファイルのプロジェクト（シーンと違うもの）: 相対パスの基準と sourceimages
+        self.extra_projects: List[str] = []
+        for d in self.extra_dirs:
+            root = find_project_root(os.path.join(d, "_")) if auto_project else None
+            if root and root != project_root and root not in self.extra_projects:
+                self.extra_projects.append(root)
         if project_root is None and auto_project and scene_path:
             project_root = find_project_root(scene_path)
         self.project_root = project_root
@@ -207,8 +216,10 @@ class TextureResolver:
             if self.project_root:
                 out.append(_norm(os.path.join(self.project_root, p)))
             out.append(_norm(os.path.join(self.scene_dir, p)))
+            out.extend(_norm(os.path.join(d, p)) for d in self.extra_projects + self.extra_dirs)
         parts = [x for x in p.split("/") if x and x not in (".", "..") and not x.endswith(":")]
-        for base in ([self.sourceimages] if self.sourceimages else []) + [self.scene_dir]:
+        extra = [sourceimages_dir(r) for r in self.extra_projects] + self.extra_dirs
+        for base in ([self.sourceimages] if self.sourceimages else []) + [self.scene_dir] + extra:
             for k in range(1, len(parts) + 1):
                 out.append(_norm(os.path.join(base, *parts[-k:])))
         seen = set()

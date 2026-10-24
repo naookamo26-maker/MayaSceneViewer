@@ -569,6 +569,10 @@ export class UI {
     let h = '<table class="kv">';
     h += `<tr><th>表示</th><td>${info.hiddenByRig ? '非表示（リグ・アニメーションで決まる値）' : info.hiddenSelf ? '非表示'
       : info.hiddenByParent ? '親が非表示のため隠れています' : '表示中'}</td></tr>`;
+    if (info.reference) {
+      const file = String(info.reference.resolved || info.reference.path).split(/[\\/]/).pop();
+      h += `<tr><th>リファレンス</th><td>${esc(info.reference.namespace)}（${esc(file)}）</td></tr>`;
+    }
     if (info.unselectable) h += `<tr><th>Maya での選択</th><td>ビューポートでは選択できない（${esc(info.unselectable)}）</td></tr>`;
     h += `<tr><th>姿勢の基準</th><td>${info.usingBind ? 'バインドポーズ' : 'ファイルの値'}</td></tr>`;
     h += `<tr><th>バインドポーズの情報</th><td>${info.bindSource ? esc(SRC[info.bindSource] || info.bindSource) : 'なし'}</td></tr>`;

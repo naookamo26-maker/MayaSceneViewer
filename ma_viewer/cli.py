@@ -45,6 +45,11 @@ def cmd_info(args) -> int:
     print("ファイル: %s" % args.input)
     print("Maya: %s / 単位: %s, %s" % (scene["source"]["mayaVersion"], scene["source"]["linearUnit"],
                                      scene["source"]["angularUnit"]))
+    for r in scene["source"].get("references") or []:
+        state = ("読み込み（ノード %d）→ %s" % (r["nodes"], r["resolved"]) if r["loaded"]
+                 else "読み込まない: %s" % r["reason"])
+        print("リファレンス %s%s: %s  [%s]" % ("  " * (r["depth"] - 1), r["namespace"] or "（名前空間なし）",
+                                         r["path"], state))
     print("ノード %d（ジョイント %d） / メッシュ %d（スキン %d） / 頂点 %d / 面 %d"
           % (st["nodes"], st["joints"], st["meshes"], st["skinnedMeshes"], st["vertices"], st["polygons"]))
     for m in scene["meshes"]:

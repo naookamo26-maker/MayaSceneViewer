@@ -762,7 +762,12 @@ class _MaterialBuilder:
 
     def __init__(self, ms: MaScene):
         self.ms = ms
-        self.resolver = TextureResolver(ms.source_path) if ms.source_path else TextureResolver("")
+        ref_dirs = []                    # 読み込んだリファレンスのフォルダ（リファレンスの中のテクスチャを探す）
+        for ri in getattr(ms, "ref_infos", []):
+            d = os.path.dirname(os.path.abspath(ri.resolved)) if ri.loaded and ri.resolved else None
+            if d and d not in ref_dirs:
+                ref_dirs.append(d)
+        self.resolver = TextureResolver(ms.source_path or "", extra_dirs=ref_dirs)
         self.materials: List[dict] = []
         self.textures: List[dict] = []
         self._mat_of: Dict[int, int] = {}
@@ -1047,9 +1052,10 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     if ms.angular_unit not in ("deg", "rad"):
         ms.warn("角度単位 %s は未対応です（度として扱います）。" % ms.angular_unit)
         ctx.ang = math.pi / 180.0
-    for ref in ms.references:
-        ms.warn("リファレンス「%s」は読み込みません（このファイル内のデータのみ表示）。" % ref,
-                key="#リファレンス", limit=5)
+    for ri in getattr(ms, "ref_infos", []):
+        if not ri.loaded:
+            ms.warn("リファレンス「%s」（名前空間 %s）を読み込みませんでした: %s。"
+                    % (ri.path, ri.namespace or "なし", ri.reason))
 
     # --- メッシュと関連情報の収集 --------------------------------------
     mesh_entries = []
@@ -1394,6 +1400,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             "linearUnit": ms.linear_unit,
             "angularUnit": ms.angular_unit,
             "upAxis": ms.up_axis,
+            "references": [ri.to_dict() for ri in getattr(ms, "ref_infos", [])],
         },
         "nodes": out_nodes,
         "meshes": out_meshes,
@@ -1602,10 +1609,12 @@ def _build_skin(ms: MaScene, ctx: _Ctx, shape: MaNode, sk_node: MaNode, nverts: 
 LAST_TIMING: Dict[str, float] = {}
 
 
-def load_ma(path: str, progress: ProgressFn = None, animation: bool = False, node_map: Optional[dict] = None) -> dict:
+def load_ma(path: str, progress: ProgressFn = None, animation: bool = False, node_map: Optional[dict] = None,
+            references: bool = True) -> dict:
     """.ma ファイルを読み、共通 JSON（dict）を返す。animation=True ならアニメーションも読む（scene["animation"]）。
-    node_map: 自作ノードの割り当て（custom_nodes。省略時は設定ファイルから読む）"""
-    scene, load_animation = load_ma_staged(path, progress, node_map=node_map)
+    node_map: 自作ノードの割り当て（custom_nodes。省略時は設定ファイルから読む）
+    references: リファレンス（file -r）を読み込むか"""
+    scene, load_animation = load_ma_staged(path, progress, node_map=node_map, references=references)
     if animation:
         anim = load_animation(progress)
         if anim is not None:
@@ -1613,7 +1622,7 @@ def load_ma(path: str, progress: ProgressFn = None, animation: bool = False, nod
     return scene
 
 
-def load_ma_staged(path: str, progress: ProgressFn = None, node_map: Optional[dict] = None):
+def load_ma_staged(path: str, progress: ProgressFn = None, node_map: Optional[dict] = None, references: bool = True):
     """.ma を 2 段階で読む。(共通 JSON, アニメーションを読む関数) を返す。
 
     1 段階目（この関数）はアニメーションカーブの中身を読まず、範囲だけを覚えておく。
@@ -1628,7 +1637,7 @@ def load_ma_staged(path: str, progress: ProgressFn = None, node_map: Optional[di
     FAST.clear()
     try:
         t0 = time.perf_counter()
-        ms = parse_ma_file(path, progress)
+        ms = parse_ma_file(path, progress, load_references=references)
         if node_map is not None:
             ms.node_map = node_map
         t1 = time.perf_counter()

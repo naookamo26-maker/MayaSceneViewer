@@ -304,10 +304,11 @@ class _LoadWorker(QtCore.QObject):
     animationFailed = Signal(str, str)
     done = Signal()
 
-    def __init__(self, path: str, animation: bool = True):
+    def __init__(self, path: str, animation: bool = True, references: bool = True):
         super().__init__()
         self.path = path
         self.animation = animation
+        self.references = references
         self.in_animation = False
         self._cancel = False
         self._last = 0.0
@@ -336,7 +337,8 @@ class _LoadWorker(QtCore.QObject):
                 scene.setdefault("source", {}).setdefault("name", os.path.basename(self.path))
             else:
                 from .extract_ma import load_ma_staged
-                scene, load_animation = load_ma_staged(self.path, progress=self._progress)
+                scene, load_animation = load_ma_staged(self.path, progress=self._progress,
+                                                       references=self.references)
             self.finished.emit(scene, time.time() - t0)
         except _Cancelled:
             self.failed.emit("中止しました", "")
@@ -381,6 +383,7 @@ C: 次のシーンのカメラから見る　Shift+C: 自由視点に戻す（�
 <b>アニメーション</b>（.ma にキーがあるとき。ビューポート下端のタイムライン）<br>
 Alt+V: 再生・停止　Alt+, / Alt+.: 前／次のフレーム　, / .: 前／次のキー　Home / End: 先頭／最後<br>
 アニメーションはシーンの表示後に読み込みます（［ファイル］→［アニメーションを読み込む］でオフにできます）。キーがあれば姿勢の基準は自動で「ファイルの値」になります。<br>
+リファレンス（file -r）の中身も、名前空間を付けて読み込みます（［ファイル］→［リファレンスを読み込む］でオフにできます）。<br>
 コンストレイント・IK・計算ノード・キャラクターセット（Trax のクリップ）も評価します。黄緑の八面体はコントローラーで、選んで W・E・R で動かすと IK などが追従します。<br>
 シーンにショットがあると、ビューポートの上にカメラシーケンサを表示します。トラックをクリックするか再生すると、ショットのカメラとフレームで表示します。<br>
 再生中はビューポートの左上に、実際に表示できたフレームレートとシーンのフレームレートを表示します（処理落ちすると赤くなります）。<br><br>
@@ -513,11 +516,15 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.a_anim = self._act("アニメーションを読み込む", self._toggle_animation, checkable=True,
                                 checked=_settings_bool("loadAnimation", True),
                                 tip=".ma のアニメーションカーブを、シーンの表示後に読み込む（次に開くファイルから有効）")
+        self.a_refs = self._act("リファレンスを読み込む", self._toggle_references, checkable=True,
+                                checked=_settings_bool("loadReferences", True),
+                                tip=".ma のリファレンス（file -r）の中身も読み込む（次に開くファイルから有効。F5 で読み直し）")
         m = mb.addMenu("ファイル")
         for a in (a_open, a_reload, a_export):
             m.addAction(a)
         m.addSeparator()
         m.addAction(self.a_anim)
+        m.addAction(self.a_refs)
         m.addSeparator()
         m.addAction(a_close)
 
@@ -685,7 +692,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.log("info", "読み込み開始: %s" % path)
 
         self._thread = QtCore.QThread(self)
-        self._worker = _LoadWorker(path, animation=self.a_anim.isChecked())
+        self._worker = _LoadWorker(path, animation=self.a_anim.isChecked(), references=self.a_refs.isChecked())
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._on_progress)
@@ -740,6 +747,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.log("error", detail)
         self.viewer.set_animation_status("アニメーションを読み込めませんでした: %s" % message)
         self.log("warn", "アニメーションを読み込めませんでした（シーンはそのまま表示します）: %s" % message)
+
+    def _toggle_references(self, on):
+        _settings_set("loadReferences", bool(on))
+        self.statusBar().showMessage("リファレンスを%s（次に開くファイルから）" % ("読み込みます" if on else "読み込みません"),
+                                     5000)
 
     def _toggle_animation(self, on):
         _settings_set("loadAnimation", bool(on))

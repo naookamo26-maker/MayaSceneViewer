@@ -71,7 +71,8 @@ def fps_of(time_unit: str) -> float:
 
 def playback_range(ms: MaScene) -> Dict[str, float]:
     """sceneConfigurationScriptNode の playbackOptions から再生範囲を読む（なければ空）。"""
-    nodes = [n for n in ms.nodes if n.type == "script" and n.span is not None]
+    # リファレンスの中の script は使わない（Maya もリファレンスの再生範囲は使わない）
+    nodes = [n for n in ms.nodes if n.type == "script" and n.span is not None and not n.ns]
     nodes.sort(key=lambda n: n.name != "sceneConfigurationScriptNode")
     for n in nodes:
         m = _PLAYBACK_RE.search(ms.text, n.span[0], n.span[1])
