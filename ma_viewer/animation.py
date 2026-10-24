@@ -278,6 +278,8 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
     if not targets and not has_graph:
         return None
 
+    # Trax のクリップのカーブ（clipLibrary につながるもの）
+    trax_curves = {id(s) for s, _sa, d, _da in ms.connections if d.type == "clipLibrary" and s.type in CURVE_TYPES}
     # --- カーブの読み込み ------------------------------------------------
     order = sorted(curve_nodes.values(), key=lambda c: c.order)
     curve_index: Dict[int, int] = {}
@@ -300,8 +302,9 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         tk = rad2deg if cv.kind in ("TA", "UA") else (1.0 / cm if cv.kind in ("TL", "UL") else 1.0)
         xk = fps if cv.kind[0] == "T" else 1.0           # 固定の接線の x: 時間は秒 → フレーム、ドリブンキーは入力の値のまま
         times_chunks.append(cv.times)
-        if cv.kind[0] == "T":
-            range_chunks.append(cv.times)
+        trax = id(node) in trax_curves
+        if cv.kind[0] == "T" and not trax:
+            range_chunks.append(cv.times)                  # Trax のクリップのキーはクリップの中の時間なので除く
         values_chunks.append(_scaled(cv.values, vk))
         chunk = bytearray(2 * n)
         for k, v in cv.kit.items():
@@ -325,6 +328,8 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         curve_index[id(node)] = index
         curves_out.append({"name": node.name, "type": cv.kind, "offset": offset, "count": n,
                            "tangent": cv.tan, "weighted": cv.weighted, "pre": cv.pre, "post": cv.post})
+        if trax:
+            curves_out[-1]["trax"] = True
         for ni, attr in targets.get(id(node), ()):
             channels_out.append({"node": ni, "attr": attr, "curve": index})
         offset += n

@@ -257,6 +257,21 @@ class _Extractor:
         entry["renderable"] = bool(g("renderable"))
         self.cameras.append(entry)
 
+    def _view_camera(self) -> int:
+        """Maya で作業中のビュー（モデルパネル）のカメラの、cameras の番号（起動時のカメラなどは -1）"""
+        try:
+            panel = cmds.getPanel(withFocus=True)
+            if not panel or cmds.getPanel(typeOf=panel) != "modelPanel":
+                panel = cmds.playblast(activeEditor=True)
+            cam = cmds.modelEditor(panel, query=True, camera=True) or ""
+            cam_long = (cmds.ls(cam, long=True) or [cam])[0]
+        except Exception:  # noqa: BLE001  ビューがない（バッチ）など
+            return -1
+        for i, c in enumerate(self.cameras):
+            if cam_long in (c["path"], c["path"].rsplit("|", 1)[0]):
+                return i
+        return -1
+
     @staticmethod
     def _render_settings() -> dict:
         try:
@@ -588,6 +603,7 @@ class _Extractor:
             "nodes": self.nodes,
             "meshes": self.meshes,
             "cameras": self.cameras,
+            "viewCamera": self._view_camera(),
             "render": self._render_settings(),
             "materials": self.materials,
             "textures": self.textures,

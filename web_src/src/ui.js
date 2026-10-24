@@ -108,21 +108,24 @@ export class UI {
   // ---------------------------------------------------------------- ツールバー
   bindToolbar() {
     const s = (key, v) => this.app.setSetting(key, v);
-    $('opt-shading').addEventListener('change', (e) => s('shading', e.target.value));
-    $('opt-axes').addEventListener('change', (e) => s('axes', e.target.value));
-    $('opt-weights').addEventListener('change', (e) => s('weightMode', e.target.value));
-    $('opt-alpha').addEventListener('change', (e) => s('alpha', e.target.value));
+    // メニューの選択肢（押すとすぐ切り替える。data-close-on-pick のメニューは選んだら閉じる）
+    document.querySelectorAll('.choices[data-setting]').forEach((group) => {
+      group.addEventListener('click', (e) => {
+        const b = e.target.closest('button[data-value]');
+        if (!b) return;
+        const key = group.dataset.setting;
+        if (key === 'camera') this.app.setCamera(+b.dataset.value);
+        else s(key, b.dataset.value);
+        if (group.closest('[data-close-on-pick]') && this.closeMenus) this.closeMenus();
+      });
+    });
     $('opt-bind').addEventListener('click', () => this.app.togglePoseSource());
-    $('opt-camera').addEventListener('change', (e) => this.app.setCamera(+e.target.value));
     $('opt-camera-icons').addEventListener('change', (e) => s('cameraIcons', e.target.checked));
     $('opt-camera-gate').addEventListener('change', (e) => s('cameraGate', e.target.checked));
-    $('opt-lighting').addEventListener('change', (e) => s('lighting', e.target.value));
-    $('opt-map-view').addEventListener('change', (e) => s('mapView', e.target.value));
     $('opt-normal-flip').addEventListener('change', (e) => s('normalFlipY', e.target.checked));
     document.querySelectorAll('#map-toggles [data-map]').forEach((el) => {
       el.addEventListener('change', () => this.app.setMapToggle(el.dataset.map, el.checked));
     });
-    $('opt-alpha-style').addEventListener('change', (e) => s('alphaStyle', e.target.value));
     $('opt-jsize').addEventListener('input', (e) => s('jointSize', parseFloat(e.target.value)));
     const toggles = { 'opt-wire': 'wire', 'opt-skin': 'skin', 'opt-joints': 'joints', 'opt-curves': 'curves', 'opt-xray': 'xray', 'opt-tex': 'textures', 'opt-grid': 'grid' };
     for (const [id, key] of Object.entries(toggles)) {
@@ -155,9 +158,9 @@ export class UI {
 
   /** キーボード操作などで変わった設定をツールバーに反映 */
   syncSettings(st) {
-    $('opt-shading').value = st.shading;
-    $('opt-axes').value = st.axes;
-    $('opt-weights').value = st.weightMode;
+    document.querySelectorAll('.choices[data-setting]').forEach((group) => {
+      if (group.dataset.setting !== 'camera') this.checkChoice(group, st[group.dataset.setting]);
+    });
     $('opt-jsize').value = st.jointSize;
     $('opt-wire').setAttribute('aria-pressed', String(st.wire));
     $('opt-skin').setAttribute('aria-pressed', String(st.skin));
@@ -166,16 +169,12 @@ export class UI {
     $('opt-xray').setAttribute('aria-pressed', String(st.xray));
     $('opt-grid').setAttribute('aria-pressed', String(!!st.grid));
     $('opt-tex').setAttribute('aria-pressed', String(st.textures));
-    $('opt-alpha').value = st.alpha;
     $('opt-bind').setAttribute('aria-pressed', String(st.poseSource === 'bind'));
     $('opt-camera-icons').checked = st.cameraIcons !== false;
     $('opt-camera-gate').checked = st.cameraGate !== false;
-    $('opt-lighting').value = st.lighting;
-    $('opt-map-view').value = st.mapView;
     $('opt-normal-flip').checked = !!st.normalFlipY;
     $('map-toggles').disabled = st.mapView !== 'combined';
     document.querySelectorAll('#map-toggles [data-map]').forEach((el) => { el.checked = !!st.maps[el.dataset.map]; });
-    $('opt-alpha-style').value = st.alphaStyle;
     $('opt-space').setAttribute('aria-pressed', String(st.space === 'world'));
     // メニュー名の横に、既定と違う設定を表示する
     const VIEW = { baseColor: 'ベースカラー', normal: '法線', roughness: 'ラフネス', metalness: 'メタリック', ao: 'AO', emissive: 'エミッシブ', opacity: '不透明度' };
@@ -204,19 +203,36 @@ export class UI {
   }
 
   // ---------------------------------------------------------------- シーンのカメラ
+  /** 選択肢のうち value のボタンを選んだ状態にする */
+  checkChoice(group, value) {
+    group.querySelectorAll('button[data-value]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.value === String(value))));
+  }
+
   setCameras(list) {
-    const sel = $('opt-camera');
-    sel.textContent = '';
-    const add = (value, text) => { const o = document.createElement('option'); o.value = String(value); o.textContent = text; sel.appendChild(o); };
+    const group = $('opt-camera');
+    group.textContent = '';
+    const add = (value, text, sub) => {
+      const b = document.createElement('button');
+      Object.assign(b, { type: 'button', textContent: text });
+      b.setAttribute('role', 'radio');
+      b.dataset.value = String(value);
+      if (sub) { const s2 = document.createElement('span'); s2.className = 'c-sub'; s2.textContent = sub; b.appendChild(s2); }
+      group.appendChild(b);
+    };
     add(-1, '自由視点（パース）');
-    list.forEach((c, i) => add(i, `${c.name}${c.orthographic ? '（平行投影）' : `（${fmt(c.focalLength, 0)}mm）`}`));
-    sel.disabled = !list.length;
+    list.forEach((c, i) => add(i, c.name, c.orthographic ? '平行投影' : `${fmt(c.focalLength, 0)}mm`));
+    if (!list.length) {
+      const p = document.createElement('p');
+      p.className = 'muted small';
+      p.textContent = 'このシーンにはカメラがありません';
+      group.appendChild(p);
+    }
     $('camera-note').hidden = !list.length;
     this.setViewCamera(-1, '');
   }
 
   setViewCamera(ci, name) {
-    $('opt-camera').value = String(ci);
+    this.checkChoice($('opt-camera'), ci);
     $('menu-camera-state').textContent = ci >= 0 ? name : '';
     $('viewport').classList.toggle('viewing-camera', ci >= 0);
     $('vp-hint').textContent = ci >= 0

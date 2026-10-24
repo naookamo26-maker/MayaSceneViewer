@@ -18,6 +18,7 @@
   * 行列ノード: multMatrix・decomposeMatrix・composeMatrix・inverseMatrix、DAG ノードの offsetParentMatrix
   * 四元数ノード: quatToEuler・eulerToQuat・quatProd・quatInvert・quatNormalize・quatSlerp
   * そのほか: curveInfo（カーブの長さ）、pointOnCurveInfo（カーブ上の点・接線・法線）、displayLayer（値を読むだけ）
+  * キャラクターセット（character）: 入力をそのまま通す。Trax のクリップ（clipLibrary・clipScheduler・animClip）は trax.py
   * カーブ: nurbsCurve と、それを動かす skinCluster・wire・cluster・制御点（controlPoints）の接続・ロケーター（worldPosition）
   * アニメーションカーブ（animCurveTL / TA / TU）
 これ以外のノード（エクスプレッション・ドリブンキー・行列ノードなど）に当たったら、そこから先は評価せず警告する。
@@ -39,7 +40,7 @@ UTILITY_TYPES = {"unitConversion", "pairBlend", "blendColors", "multiplyDivide",
                  "displayLayer", "expression", "addDoubleLinear", "multDoubleLinear", "clamp", "setRange", "remapValue",
                  "distanceBetween", "vectorProduct", "blendTwoAttr", "blendWeighted", "choice",
                  "animBlendNodeAdditiveDL", "animBlendNodeAdditiveDA", "animBlendNodeAdditiveRotation", "animLayer",
-                 "animCurveUA", "animCurveUL", "animCurveUU", "pointOnCurveInfo"}
+                 "animCurveUA", "animCurveUL", "animCurveUU", "pointOnCurveInfo", "character"}
 # 入力をたどらない（値を読むだけの）ノード
 _NO_INPUT_TYPES = {"displayLayer", "animLayer"}       # animLayer はウェイトとミュートを読むだけ
 # カーブと、それを動かすノード（必要な入力だけをたどる）
@@ -110,6 +111,7 @@ class GraphInfo:
         # 移動・回転・スケール以外の、接続で決まる属性: [(種類, 使う側, 属性, 元, 元の属性)]（PROP_KEYS）
         self.props: List[Tuple[str, MaNode, str, MaNode, str]] = []
         self.gid: Dict[int, int] = {}                  # build_graph が付けた graph の番号（id(ノード) → id）
+        self.trax_warnings: List[str] = []             # キャラクターセットのクリップを読んだときの警告
 
     @property
     def empty(self) -> bool:
@@ -200,10 +202,18 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
         if n.type in SUPPORTED_DG:
             if id(n) not in info.dg:
                 info.dg[id(n)] = n
+                if n.type == "character":
+                    from .trax import curves_of_character
+                    for c in curves_of_character(ms, n):  # Trax のクリップのカーブ
+                        info.curves[id(c)] = c
                 if n.type not in _NO_INPUT_TYPES:
                     for key in list(n.inputs):
                         if n.type == "expression" and key in ("tim", "time"):
                             continue                     # 時間はビューアのフレームから求める
+                        if n.type == "character":
+                            from .trax import skip_input
+                            if skip_input(n, key, n.inputs[key][0]):
+                                continue                 # メンバーの登録・クリップの管理用の接続
                         if _base(key) in _DISPLAY_KEYS:
                             continue                     # 表示だけの接続（コンストレイントのディスプレイレイヤーなど）
                         add_edge(n, key)
@@ -445,6 +455,11 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
                 entry["shape"] = shape_index[id(n)]     # 表示するカーブ（共通 JSON の curves の番号）
         if n.type.startswith("animCurveU") and id(n) in curve_index:
             entry["curve"] = curve_index[id(n)]           # ドリブンキー（animation.curves の番号。入力 i で引く）
+        if n.type == "character":
+            from .trax import build_trax
+            trax = build_trax(ms, n, curve_index, info.trax_warnings.append)
+            if trax:
+                entry["trax"] = trax                      # Trax のクリップ（ビューアがフレームごとに評価する）
         if n.type == "expression" and id(n) in info.expressions:
             entry["expr"] = info.expressions[id(n)]       # 式（ビューアの expression.js で解釈する）
         if n.type in ("wire", "cluster"):
@@ -572,4 +587,5 @@ def graph_warnings(info: GraphInfo) -> List[str]:
             out.append("アニメーション: IK ハンドル %s は再生されません（%s）。" % (e["handle"].name, e["problem"]))
     for name, problem in sorted(info.expression_problems.items()):
         out.append("アニメーション: expression %s を解釈できません（%s）。" % (name, problem))
+    out.extend(dict.fromkeys(info.trax_warnings))
     return out

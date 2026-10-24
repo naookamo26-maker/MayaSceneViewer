@@ -14,6 +14,7 @@
   "meshes": [ ... ],
   "curves": [ ... ],
   "cameras": [ ... ],
+  "viewCamera": 0,
   "render": { "width": 1920, "height": 1080, "deviceAspectRatio": 1.778 },
   "materials": [ ... ],
   "textures": [ ... ],
@@ -111,6 +112,10 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 | `nearClipPlane` / `farClipPlane` | クリップ面（長さの単位） |
 | `orthographic` / `orthographicWidth` | 平行投影か、そのときの見える幅（長さの単位） |
 | `lensSqueezeRatio` / `cameraScale` / `renderable` | レンズのスクイーズ比・カメラのスケール・レンダー可能か |
+
+## viewCamera
+
+保存したときに Maya のビュー（メインのパネル）で見ていたカメラの、cameras の番号です。ビューアは読み込んだときにそのカメラから表示します。persp などの起動時のカメラや、分からないときは -1（自由視点）。.ma では uiConfigurationScriptNode の「Current Layout」のパネル構成で、最初に置かれたモデルパネルのカメラ（`-cam`）を使います。Maya 内からの抽出では、作業中のモデルパネルのカメラです。
 
 ## render
 

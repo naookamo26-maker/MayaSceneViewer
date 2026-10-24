@@ -206,6 +206,49 @@ class TestUnits(unittest.TestCase):
         self.assertEqual(anim["current"], 7.0)
 
 
+class TestCharacterSets(unittest.TestCase):
+    """キャラクターセットと Trax のクリップ。前提: python tools/make_trax_sample.py"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.scene = load_ma(os.path.join(ROOT, "samples", "trax_sample.ma"), animation=True)
+        cls.anim = cls.scene["animation"]
+        schema.validate(cls.scene)
+
+    def char(self, name):
+        return next(g for g in self.anim["graph"] if g["name"] == name)
+
+    def curve_name(self, i):
+        return self.anim["curves"][i]["name"]
+
+    def test_no_unsupported_warning(self):
+        self.assertFalse(any("character" in w for w in self.anim["warnings"] + self.scene["warnings"]), self.anim["warnings"])
+
+    def test_clips(self):
+        clips = {c["name"]: c for c in self.char("character1")["trax"]["clips"]}
+        self.assertEqual(sorted(clips), ["raise1", "swing1"])
+        sw, ra = clips["swing1"], clips["raise1"]
+        self.assertEqual((sw["start"], sw["sourceStart"], sw["sourceEnd"], sw["postCycle"]), (1.0, 0.0, 10.0, 1.0))
+        self.assertEqual((ra["start"], ra["scale"], ra["track"]), (30.0, 2.0, 1.0))
+        # ソースクリップのカーブ → キャラクターの出力（angularValues[1] = shoulder.rz、linearValues[1] = box.tx）
+        self.assertEqual({k: self.curve_name(v) for k, v in sw["channels"].items()},
+                         {"av[1]": "swing_shoulder_rotateZ", "lv[1]": "swing_box_translateX"})
+        self.assertEqual({k: self.curve_name(v) for k, v in ra["channels"].items()},
+                         {"av[1]": "raise_shoulder_rotateZ", "lv[1]": "raise_box_translateX"})
+        # クリップのカーブは、キーがクリップの中の時間なので印を付ける
+        self.assertTrue(all(self.anim["curves"][v].get("trax") for v in sw["channels"].values()))
+
+    def test_members_connect_through_character(self):
+        names = [n["name"] for n in self.scene["nodes"]]
+        shoulder = next(g for g in self.anim["graph"] if g["dag"] == names.index("shoulder"))
+        self.assertEqual(shoulder["inputs"]["rz"], {"node": self.char("character1")["id"], "attr": "av[1]"})
+
+    def test_character_without_clips(self):
+        c2 = self.char("character2")
+        self.assertNotIn("trax", c2)
+        self.assertEqual(self.curve_name(c2["inputs"]["lv[0]"]["curve"]), "character2_rig_grp_translateY")
+
+
 class TestVisibilityAndCameras(unittest.TestCase):
     """リグで切り替える表示（animation.props）とシーンのカメラ（cameras）。前提: python tools/make_vis_camera_sample.py"""
 
@@ -254,6 +297,11 @@ class TestVisibilityAndCameras(unittest.TestCase):
         self.assertIn("curve", self.graph("vis_ctrl")["inputs"]["proxyVis"])
         self.assertEqual(self.graph("vis_ctrl")["attrs"]["geoVis"], 0.0)
         self.assertFalse(any("（v）" in w or "lodv" in w for w in self.anim["warnings"]))
+
+    def test_view_camera(self):
+        """保存したときに Maya のビューで見ていたカメラ（uiConfigurationScriptNode の Current Layout）"""
+        self.assertEqual(self.scene["cameras"][self.scene["viewCamera"]]["name"], "shot_cam")
+        self.assertEqual(load_ma(PLAIN)["viewCamera"], -1)        # 分からないときは -1（自由視点）
 
     def test_camera_focal_length_curve(self):
         fl = self.prop("camera", "shot_cam")["inputs"]["fl"]

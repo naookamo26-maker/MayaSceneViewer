@@ -284,6 +284,58 @@ def camera_entry(n: MaNode, t_idx: int) -> dict:
     return entry
 
 
+_MEL_STRING_RE = re.compile(r'"((?:[^"\\]|\\.)*)"')
+_VIEW_CAMERA_RE = re.compile(r'-cam(?:era)?\s+(?:\\*"([^"\\]+)\\*"|`findStartUpCamera\s+(\w+)`)')
+
+
+def _ui_script(ms: MaScene) -> str:
+    """uiConfigurationScriptNode の MEL（.b の文字列をつないで、エスケープを 1 段戻したもの）"""
+    node = next((n for n in ms.nodes if n.type == "script" and n.name == "uiConfigurationScriptNode"
+                 and n.span is not None), None)
+    text = getattr(ms, "text", "")
+    if node is None or not text:
+        return ""
+    body = text[node.span[0]:node.span[1]]
+    m = re.search(r'setAttr\s+"\.(?:b|before)"\s+-type\s+"string"\s*\(?(.*?)\)?\s*;\s*(?:\n\s*setAttr|\Z)', body, re.S)
+    if not m:
+        return ""
+    pieces = _MEL_STRING_RE.findall(m.group(1))
+    return re.sub(r"\\(.)", lambda e: {"n": "\n", "t": "\t"}.get(e.group(1), e.group(1)), "".join(pieces), flags=re.S)
+
+
+def view_camera(ms: MaScene) -> str:
+    """保存したときに Maya のビュー（メインのパネル）で見ていたカメラの名前（分からなければ空）。
+
+    uiConfigurationScriptNode の「Current Layout」のパネル構成で、最初に置かれたモデルパネルのカメラ
+    （1 画面のレイアウトなら、それが見えているビュー）。起動時のカメラ（findStartUpCamera persp）は "persp" など。
+    """
+    mel = _ui_script(ms)
+    if not mel:
+        return ""
+    i = mel.find('"Current Layout"')
+    if i >= 0:
+        j = mel.find("-ap ", i)
+        if j >= 0:
+            m = _VIEW_CAMERA_RE.search(mel, j)
+            if m:
+                return (m.group(1) or m.group(2) or "").lstrip("|")
+    # レイアウトが分からなければ、透視ビュー（Persp View）のパネルのカメラ
+    i = mel.find('"Persp View"')
+    m = _VIEW_CAMERA_RE.search(mel, i) if i >= 0 else None
+    return (m.group(1) or m.group(2) or "").lstrip("|") if m else ""
+
+
+def camera_index_of(cameras: List[dict], name: str) -> int:
+    """カメラの名前（transform・シェイプの名前かパス）から、cameras の番号（なければ -1）"""
+    if not name:
+        return -1
+    short = name.split("|")[-1]
+    for i, c in enumerate(cameras):
+        if short in (c["name"], c["shape"]) or name in (c["path"], c["path"].rsplit("|", 1)[0]):
+            return i
+    return -1
+
+
 def render_settings(ms: MaScene) -> dict:
     """レンダーの解像度（defaultResolution）。カメラから見るときの解像度ゲートの縦横比に使う"""
     r = ms.resolution
@@ -1245,6 +1297,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         "meshes": out_meshes,
         "curves": out_curves,
         "cameras": out_cameras,
+        "viewCamera": camera_index_of(out_cameras, view_camera(ms)),
         "render": render_settings(ms),
         "materials": mb.materials,
         "textures": mb.textures,

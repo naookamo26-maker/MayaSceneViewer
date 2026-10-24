@@ -37,7 +37,7 @@ window.__tx = (() => {
     gl.readPixels(px, py, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
     return [buf[0], buf[1], buf[2], buf[3]];   // 背景（何も描かれていない所）はアルファ 0
   };
-  const set = (id, v) => { const el = document.getElementById(id); el.value = v; el.dispatchEvent(new Event('change')); };
+  const set = (id, v) => { const el = document.getElementById(id); el.querySelector('[data-value="' + v + '"]').click(); };   // メニューの選択肢を押す
   const look = (path) => { window.mayaViewer.selectByPath(path); app.fit(new V().setFromMatrixPosition(
     app.built.nodeObjects[app.selected].matrixWorld), 1.6, true); app.clearSelection(); app.render(); };
   return { app, mesh, colorAt, set, look };

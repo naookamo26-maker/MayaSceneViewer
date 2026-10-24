@@ -311,10 +311,35 @@ table.kv td.l { text-align: left; }
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
 }
 .menu-panel[hidden] { display: none; }
-.menu-row { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 8px; align-items: center; margin: 5px 0; }
+.menu-row { display: grid; grid-template-columns: 124px minmax(0, 1fr); gap: 8px; align-items: center; margin: 5px 0; }
 .menu-row label { color: var(--text-dim); }
 .menu-row select, .menu-row input[type="range"] { width: 100%; }
 .menu-sep { border-top: 1px solid var(--line); margin: 8px 0; }
+/* メニューの選択肢（押すとすぐ切り替わる。row: 横並び・grid: 2 列・list: 縦の一覧） */
+.menu-label { margin: 8px 0 4px; color: var(--text-dim); }
+.menu-panel > .menu-label:first-child { margin-top: 0; }
+.choices { display: flex; gap: 0; }
+.choices button {
+  min-height: 26px; padding: 3px 8px;
+  border: 1px solid var(--line); background: var(--chrome); color: var(--text-dim);
+  cursor: pointer; text-align: left; line-height: 1.35;
+}
+.choices button:hover { background: var(--panel-2); color: var(--text); }
+.choices button[aria-checked="true"] { background: #33404a; border-color: #4f6676; color: #f2f6f9; position: relative; z-index: 1; }
+.choices.row button { flex: 1; text-align: center; margin-left: -1px; }
+.choices.row button:first-child { margin-left: 0; border-radius: var(--radius) 0 0 var(--radius); }
+.choices.row button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.choices.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; }
+.choices.grid button { border-radius: var(--radius); }
+.choices.list { flex-direction: column; gap: 2px; }
+.choices.list button { border-color: transparent; background: none; border-radius: var(--radius); padding-left: 24px; position: relative; }
+.choices.list button::before {
+  content: ""; position: absolute; left: 8px; top: 50%; width: 8px; height: 8px; margin-top: -4px;
+  border-radius: 50%; border: 1px solid var(--text-dim);
+}
+.choices.list button[aria-checked="true"] { background: rgba(94, 200, 229, 0.12); border-color: transparent; color: var(--text); }
+.choices.list button[aria-checked="true"]::before { background: var(--joint); border-color: var(--joint); }
+.choices.list .c-sub { margin-left: 6px; color: var(--text-dim); font-size: 11px; }
 .menu-panel .muted { margin: 6px 0 0; }
 .seg { display: inline-flex; }
 .seg .icon-btn { border-radius: 0; margin-left: -1px; }

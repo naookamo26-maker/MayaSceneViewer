@@ -392,11 +392,15 @@ class ViewerApp {
       this.ui.showVertexInfo(null);
       this.ui.showPoseFor(-1);
       this.frameAll(true);
+      // 保存したときに Maya のビューで見ていたカメラから表示する（persp などの起動時のカメラなら自由視点）
+      const vc = data.viewCamera ?? -1;
+      if (vc >= 0 && vc < this.cameras.length) this.setCamera(vc, { quiet: true });
       this.maps.reset(data);
       this.requestMaps();
       mark('マテリアル');
       const renderStart = performance.now();
-      this.ui.setMessage(`読み込みました（${Math.round(performance.now() - t0)} ms）`);
+      this.ui.setMessage(`読み込みました（${Math.round(performance.now() - t0)} ms）`
+        + (this.viewCamera >= 0 ? `。Maya のビューと同じく、カメラ ${this.cameras[this.viewCamera].name} から表示しています（Shift+C で自由視点）` : ''), 6000);
       this.log('info', `scene loaded: ${built.meshes.length} meshes, ${built.jointIndices.length} joints`);
       // 読み込みの内訳（ビューア側）。最初の描画が終わったところまでを測る
       const tm = this.timing || {};
@@ -899,7 +903,7 @@ class ViewerApp {
   }
 
   /** タイムラインを出すか（キーのあるカーブか、frame・time を使う expression があるとき） */
-  get hasTimeline() { return !!(this.clip && (this.clip.timeCurves.length || (this.rig && this.rig.usesTime))); }
+  get hasTimeline() { return !!(this.clip && (this.clip.timeCurves.length || (this.rig && (this.rig.usesTime || this.rig.hasTrax)))); }
 
   /** フレーム f の姿勢にする（ポーズ確認の追加分はそのまま上に重ねる。リグはポーズ確認の結果も使って評価する） */
   applyFrame(f, light = this.playing) {
