@@ -55,6 +55,15 @@ test('カメラとエイム: twist（ロール）で視線のまわりに回る'
   assert.ok(Math.abs(axis(b, 0).y) < 1e-6, 'twist なしのカメラの横の軸は水平');
 });
 
+test('twist を別のアトリビュート（カメラのシェイプ・別のノードの角度の属性）からつないでも、同じロールになる', () => {
+  const rig = at(1);
+  const a = rig.world(idx('aim_cam'));
+  for (const n of ['shape_roll_cam', 'attr_roll_cam']) {
+    const b = rig.world(idx(n));
+    assert.ok(axis(a, 2).angleTo(axis(b, 2)) < 1e-6 && axis(a, 1).angleTo(axis(b, 1)) < 1e-6, `${n}: twist 20 度のカメラと同じ向き`);
+  }
+});
+
 test('距離の寸法: 2 つのロケーターの距離 ÷ 6 で box.sx が決まる', () => {
   for (const [f, d] of [[1, 3], [24, 9]]) {
     const sx = at(f).chan(idx('box')).s[0];
