@@ -171,9 +171,9 @@ def _sparse_into(weights: Dict[int, Dict[int, float]], a: int, b: int, vals) -> 
 
 class MaNode:
     __slots__ = ("name", "type", "parent", "children", "path", "order", "is_dag",
-                 "xattrs", "mesh", "skin", "tweak", "inputs", "raw", "skip_attrs", "span", "attr_map")
+                 "xattrs", "mesh", "skin", "tweak", "inputs", "raw", "skip_attrs", "span", "attr_map", "ns", "espan")
 
-    def __init__(self, name: str, node_type: str, parent: Optional["MaNode"], order: int):
+    def __init__(self, name: str, node_type: str, parent: Optional["MaNode"], order: int, ns: str = ""):
         self.name = name
         self.type = node_type
         self.parent = parent
@@ -190,6 +190,8 @@ class MaNode:
         self.skip_attrs = skips_attrs(node_type)       # setAttr をすべて読み飛ばす種類か
         self.span: Optional[Tuple[int, int]] = None     # 読み飛ばした属性の範囲（アニメーションを後から読むため）
         self.attr_map: Optional[Dict[str, str]] = None  # 自作ノードの割り当て: 属性名の読み替え（custom_nodes）
+        self.ns = ns                                    # リファレンスから読んだノードなら、その名前の前置き（"rig:"）
+        self.espan: Optional[Tuple[int, int]] = None    # リファレンスの編集で変えた属性（setAttr を並べた範囲）
 
     @property
     def is_shape(self) -> bool:
@@ -236,7 +238,22 @@ class MaScene:
         self.out_index: Dict[int, int] = {}          # id(ノード) → 共通 JSON の nodes の番号（変換後に設定）
         self.graph_info = None                       # rig.GraphInfo（変換時に設定）
         self.bind_ids = set()                        # バインドポーズの情報を持つノードの id（変換時に設定）
-        self.references: List[str] = []
+        self.references: List[str] = []              # file -r に書かれたパス（入れ子のリファレンスも含む）
+        self.ref_infos: list = []                    # references.RefInfo（読み込んだ順）
+        self.load_references = True                  # False ならリファレンスを読み込まない（ノードは作らない）
+        self.prefix = ""                             # 解析中のファイルのノード名の前置き（リファレンスなら "rig:"）
+        self.ref_depth = 0                           # 解析中のファイルの入れ子の深さ（0 = 開いたシーン）
+        self._ref_current = None                     # 解析中のリファレンス（RefInfo）
+        self._ref_deferred: Dict[str, bool] = {}     # reference ノード名 → アンロードか（file -rdi の行。外側を優先）
+        self._ref_files: List[str] = []              # 解析中のファイルの並び（循環の検出用）
+        # 解析し終えたファイルの (前置き, reference ノード)。内側のファイルから順（編集を当てる順）
+        self._ref_segments: List[Tuple[str, List["MaNode"]]] = []
+        self._pieces: List[str] = []                 # 本文の断片（開いたシーン → リファレンス → 編集の属性）
+        self._text_len = 0
+        self._placeholders: Dict[Tuple[int, str], str] = {}  # (reference ノード, "phl[n]") → 本当のプラグ
+        self._seg_refnodes: List[List["MaNode"]] = [[]]  # 解析中のファイルごとの reference ノード
+        self._progress: ProgressFn = None
+        self._progress_frac = 0.0
         self.plugins: List[str] = []                 # requires で読み込むプラグイン（maya 以外）
         self.stats: Dict[str, int] = {}          # 文の種類ごとの数（読み込みの内訳に出す）
         # 「文の種類 ノードの種類」ごとの [秒, 文の数, 文字数]（どこに時間がかかっているかを調べる）
@@ -261,6 +278,23 @@ class MaScene:
                 self.warnings.append("（同様の警告が他に %d 件: %s）" % (n - 1, k[1:]))
 
     # ------------------------------------------------------------------
+    def qualify(self, ref: str) -> str:
+        """解析中のファイルに書かれた名前（パス）を、シーンの名前にする（リファレンスなら名前空間を付ける）。
+        ":" で始まる名前はルートの名前空間（:time1・:initialShadingGroup など）。"""
+        p = self.prefix
+        if not p or not ref:
+            return ref
+        if "|" not in ref:
+            return ref[1:] if ref[0] == ":" else p + ref
+        return "|".join(x if not x else (x[1:] if x[0] == ":" else p + x) for x in ref.split("|"))
+
+    def _qualify_plug(self, plug: str) -> str:
+        if not self.prefix or plug.startswith("."):
+            return plug
+        nname, attr = R.split_node_attr(plug)
+        q = self.qualify(nname)
+        return q + "." + attr if attr else q
+
     def resolve(self, ref: str) -> Optional[MaNode]:
         """ノード名・部分パス・フルパスからノードを引く。"""
         if not ref:
@@ -314,6 +348,12 @@ class MaScene:
             lin = opts.get("-l") or opts.get("-linear")
             ang = opts.get("-a") or opts.get("-angle")
             tim = opts.get("-t") or opts.get("-time")
+            if self.ref_depth:
+                # リファレンスの単位はシーンの単位を変えない（違えば、読み終えたあとに警告する）
+                if self._ref_current is not None and isinstance(lin, str):
+                    self._ref_current.units = (_LINEAR_UNITS.get(lin, lin),
+                                               _ANGULAR_UNITS.get(ang, ang) if isinstance(ang, str) else "deg")
+                return
             if isinstance(tim, str):
                 self.time_unit = tim
             if isinstance(lin, str):
@@ -323,22 +363,17 @@ class MaScene:
         elif cmd == "requires":
             toks = R.tokenize(rest)
             vals = [t.value for t in toks if not t.text.startswith("-")]
-            if len(vals) >= 2 and vals[0] == "maya" and self.maya_version is None:
-                self.maya_version = vals[1]
+            if len(vals) >= 2 and vals[0] == "maya":
+                if self.maya_version is None and not self.ref_depth:
+                    self.maya_version = vals[1]
             elif vals and vals[0] != "maya" and vals[0] not in self.plugins:
                 self.plugins.append(vals[0])
         elif cmd == "fileInfo":
             vals = [t.value for t in R.tokenize(rest) if t.quoted]
-            if len(vals) >= 2 and vals[0] == "upAxis":
+            if len(vals) >= 2 and vals[0] == "upAxis" and not self.ref_depth:
                 self.up_axis = vals[1]
         elif cmd == "file":
-            toks = R.tokenize(rest)
-            texts = [t.text for t in toks]
-            if "-r" in texts or "-rdi" in texts or "-reference" in texts:
-                q = [t.value for t in toks if t.quoted]
-                path = q[-1] if q else "?"
-                if path not in self.references:
-                    self.references.append(path)
+            self._file_command(rest)
         elif cmd == "parent":
             self.warn("parent コマンド（インスタンス等）は未対応のため無視しました。",
                       key="#parent コマンド")
@@ -357,7 +392,7 @@ class MaScene:
             attr = plug[1:]
         else:
             nname, attr = R.split_node_attr(plug)
-            node = self.resolve(nname)
+            node = self.resolve(self.qualify(nname))
         if node is None or node.skip_attrs:
             return False
         if node.raw is not None or node.tweak is not None:
@@ -397,6 +432,16 @@ class MaScene:
         name = opts.get("-n") or opts.get("-name") or (node_type + str(len(self.nodes)))
         parent_ref = opts.get("-p") or opts.get("-parent")
         shared = bool(opts.get("-s") or opts.get("-shared"))
+        if shared and self.ref_depth:
+            # リファレンスの中の共有ノード（persp などの起動時のカメラ・lightLinker1）は、シーンのものを使う。
+            # Maya と同じく、リファレンスからは読み込まない（続く setAttr も当てない）
+            self.current = None
+            return
+        if self.prefix:
+            if isinstance(name, str):
+                name = self.qualify(name)
+            if isinstance(parent_ref, str):
+                parent_ref = self.qualify(parent_ref)
         if shared:
             existing = self.resolve(name)
             if existing is not None:
@@ -408,7 +453,11 @@ class MaScene:
             if parent is None:
                 self.warn("親ノード「%s」が見つかりません（%s）" % (parent_ref, name),
                           key="#親ノード未検出")
-        node = MaNode(name, node_type, parent, len(self.nodes))
+        node = MaNode(name, node_type, parent, len(self.nodes), self.prefix if self.ref_depth else "")
+        if self._ref_current is not None:
+            self._ref_current.node_count += 1
+        if node_type == "reference" and self._seg_refnodes:
+            self._seg_refnodes[-1].append(node)
         if parent is not None:
             parent.children.append(node)
             parent.is_dag = True
@@ -419,7 +468,12 @@ class MaScene:
     def _select(self, rest: str):
         toks = R.tokenize(rest)
         _, pos = R.parse_flags(toks, [])
-        if pos and pos[-1].value.lstrip(":") == "time1" and self.resolve(pos[-1].value) is None:
+        if pos and self.ref_depth:
+            # リファレンスの中: シーンの時間・解像度はシーン（開いたファイル）のものを使う
+            target = pos[-1].value
+            self.current = None if target.lstrip(":") in ("time1", "defaultResolution") else \
+                self.resolve(self.qualify(target))
+        elif pos and pos[-1].value.lstrip(":") == "time1" and self.resolve(pos[-1].value) is None:
             self.current = _TIME_NODE              # select -ne :time1; setAttr ".o" 1;
         elif pos and pos[-1].value.lstrip(":") == "defaultResolution" and self.resolve(pos[-1].value) is None:
             self.current = self.resolution         # select -ne :defaultResolution; setAttr ".w" 1920;
@@ -439,8 +493,8 @@ class MaScene:
             return
         sn, sattr = R.split_node_attr(plugs[0])
         dn, dattr = R.split_node_attr(plugs[1])
-        src = self.resolve(sn)
-        dst = self.resolve(dn)
+        src = self.resolve(self.qualify(sn))
+        dst = self.resolve(self.qualify(dn))
         if src is None or dst is None:
             return
         key = R.normalize_attr(dattr)
@@ -454,6 +508,223 @@ class MaScene:
                                 if not (c[0] is src and c[1] == skey and c[2] is dst and c[3] == key)]
 
     # ------------------------------------------------------------------
+    # リファレンス（references.py に形式の説明）
+    def _file_command(self, rest: str):
+        from .references import parse_file_command
+        info = parse_file_command(rest)
+        if info is None:
+            return
+        path = info["path"]
+        if path and path not in self.references:
+            self.references.append(path)
+        rfn = self.qualify(info["rfn"]) if info["rfn"] else ""
+        if info["kind"] == "rdi":
+            # 読み込みの状態。外側のファイル（先に読む）に書かれたものを優先する
+            if rfn and rfn not in self._ref_deferred:
+                self._ref_deferred[rfn] = info["deferred"]
+            return
+        self._load_reference(info, rfn)
+
+    def _load_reference(self, info: dict, rfn: str):
+        from .references import RefInfo, default_namespace, resolve_reference_path
+        path = info["path"]
+        if info["ns"] is None and info["rpr"]:
+            local = info["rpr"] + "_"              # 古い形式（名前の前置き）
+        else:
+            ns = (info["ns"] if info["ns"] is not None else default_namespace(path)).strip(":")
+            local = ns + ":" if ns else ""         # -ns ":" はルートの名前空間
+        prefix = self.prefix + local
+        ri = RefInfo(path, prefix[:-1] if prefix.endswith(":") else prefix, prefix, rfn, self.ref_depth + 1,
+                     self._ref_current)
+        self.ref_infos.append(ri)
+        if not self.load_references:
+            ri.reason = "リファレンスを読み込まない設定です"
+            return
+        if self._ref_deferred.get(rfn):
+            ri.reason = "アンロードされています（Maya でリファレンスを読み込まない状態）"
+            return
+        if info["type"] == "mayaBinary" or path.lower().endswith(".mb"):
+            ri.reason = "Maya バイナリ（.mb）は読み込めません"
+            return
+        referencing = self._ref_files[-1] if self._ref_files else self.source_path
+        resolved, _tried = resolve_reference_path(path, referencing, self.source_path)
+        if resolved is None:
+            ri.reason = "ファイルが見つかりません"
+            return
+        ri.resolved = resolved
+        key = os.path.normcase(os.path.abspath(resolved))
+        if any(os.path.normcase(os.path.abspath(f)) == key for f in self._ref_files):
+            ri.reason = "自分自身を読み込むリファレンス（循環）です"
+            return
+        if self.ref_depth >= 32:
+            ri.reason = "入れ子が深すぎます"
+            return
+        import time
+        t0 = time.perf_counter()
+        try:
+            text = R.strip_line_comments(read_ma_text(resolved))
+        except (OSError, ValueError) as exc:
+            ri.reason = "読み込めません（%s）" % exc
+            return
+        self.read_seconds += time.perf_counter() - t0
+        base = self._text_len + 1                  # 本文の後ろにつなげる（ノードの範囲 span はつなげた本文の位置）
+        self._pieces.append("\n" + text)
+        self._text_len += 1 + len(text)
+        saved = (self.prefix, self.ref_depth, self._ref_current, self.current)
+        self.prefix, self.ref_depth, self._ref_current, self.current = prefix, self.ref_depth + 1, ri, None
+        self._ref_files.append(resolved)
+        self._seg_refnodes.append([])
+        outer = self._progress
+        label = "リファレンス %s" % os.path.basename(resolved)
+        frac = self._progress_frac
+        report = None if outer is None else (lambda f, _m: outer(frac, "%s: 解析中 %d%%" % (label, int(f * 100))))
+        try:
+            _parse_segment(self, text, base, report)
+        finally:
+            self._ref_segments.append((prefix, self._seg_refnodes.pop()))
+            self._ref_files.pop()
+            self.prefix, self.ref_depth, self._ref_current, self.current = saved
+        ri.loaded = True
+
+    def _finish_references(self):
+        """リファレンスの編集（reference ノードの .ed）を、内側のファイルのものから順に当てる。
+        そのあと、プレースホルダー（reference ノードの .phl[n]）につないだ接続を、本当の相手につなぎ直す。"""
+        from .references import EDIT_NAMES, parse_reference_edits, reference_edits_text
+        self._ref_segments.append(("", self._seg_refnodes.pop() if self._seg_refnodes else []))
+        text = "".join(self._pieces)
+        overlay: Dict[int, List[str]] = {}
+        nodes_of: Dict[int, MaNode] = {}
+        skipped: Dict[str, int] = {}
+        # 読み込まなかったリファレンスの中のノード（その編集は黙って飛ばす）
+        unloaded = [ri.prefix for ri in self.ref_infos if not ri.loaded and ri.prefix]
+        for prefix, rnodes in self._ref_segments:
+            self.prefix = prefix
+            for rn in rnodes:
+                body = reference_edits_text(text, rn.span) if rn.span is not None else None
+                if not body:
+                    continue
+                edits, bad = parse_reference_edits(body)
+                if bad:
+                    self.warn("%s: リファレンスの編集のうち %d 件を読めませんでした。" % (rn.name, bad),
+                              key="#リファレンスの編集の読み取り", limit=5)
+                for code, args in edits:
+                    missing = self._apply_edit(code, args, overlay, nodes_of)
+                    if missing is not None and not any(p in missing for p in unloaded):
+                        skipped[EDIT_NAMES[code]] = skipped.get(EDIT_NAMES[code], 0) + 1
+        self.prefix = ""
+        self.current = None
+        if overlay:
+            # 編集で変えた属性を、ノードごとの setAttr の並びとして本文の後ろに置く（範囲から属性を読む処理のため）
+            chunks = ["\n"]
+            pos = self._text_len + 1
+            for nid, lines in overlay.items():
+                body = "\n".join(lines) + "\n"
+                nodes_of[nid].espan = (pos, pos + len(body))
+                chunks.append(body)
+                pos += len(body)
+            self._pieces.append("".join(chunks))
+            self._text_len = pos
+        self._route_placeholders()
+        for ri in self.ref_infos:
+            if ri.loaded and ri.units and ri.units[0] != self.linear_unit:
+                self.warn("リファレンス「%s」の作業単位（%s）がシーン（%s）と違います。値はファイルに書かれたまま使います。"
+                          % (ri.namespace or ri.path, ri.units[0], self.linear_unit), key="#リファレンスの単位")
+        if skipped:
+            self.warn("リファレンスの編集のうち、相手のノードがないものを無視しました（%s）。"
+                      % "、".join("%s %d 件" % kv for kv in sorted(skipped.items())), key="#リファレンスの編集の相手")
+
+    def _apply_edit(self, code: int, args: List[str], overlay: Dict[int, List[str]],
+                    nodes_of: Dict[int, MaNode]) -> Optional[str]:
+        """リファレンスの編集を 1 件当てる。相手のノードがなければ、その名前（あれば None）"""
+        if code == 2:                                      # setAttr: ノード 属性 値
+            node = self.resolve(self.qualify(args[0]))
+            if node is None:
+                return self.qualify(args[0])
+            value = args[2] if args[2][:1].isspace() else " " + args[2]
+            self.current = None
+            self.handle("setAttr", '"%s.%s"%s' % (args[0], args[1], value))     # 名前空間は handle で付く
+            overlay.setdefault(id(node), []).append('setAttr ".%s"%s;' % (args[1], value))
+            nodes_of[id(node)] = node
+        elif code == 1:                                    # addAttr: ノード 長い名前 短い名前 フラグ
+            node = self.resolve(self.qualify(args[0]))
+            if node is None:
+                return self.qualify(args[0])
+            overlay.setdefault(id(node), []).append("addAttr %s;" % args[3])
+            nodes_of[id(node)] = node
+        elif code in (3, 4):                               # connectAttr / disconnectAttr: 元 先 フラグ
+            src, dst = (self._qualify_plug(p) for p in args[:2])
+            for p in (src, dst):
+                if self.resolve(R.split_node_attr(p)[0]) is None:
+                    return p
+            prefix, self.prefix = self.prefix, ""          # 名前空間は付け終えた
+            self._connect('"%s" "%s"' % (src, dst), connect=code == 3)
+            self.prefix = prefix
+        elif code == 0:                                    # parent: 子 親 フラグ
+            child = self.resolve(self.qualify(args[0]))
+            if child is None:
+                return self.qualify(args[0])
+            world = "-w" in args[2].split() or not args[1]
+            parent = None if world else self.resolve(self.qualify(args[1]))
+            if parent is None and not world:
+                return self.qualify(args[1])
+            self._reparent(child, parent)
+        elif code == 5:                                    # プレースホルダー: reference ノード プラグ プレースホルダー
+            plugs = args[1:3]
+            ph = next((p for p in plugs if ".placeHolderList[" in p or ".phl[" in p), None)
+            other = next((p for p in plugs if p is not ph), None)
+            if ph is None or other is None:
+                return ""
+            pn, pattr = R.split_node_attr(self._qualify_plug(ph))
+            rn = self.resolve(pn)
+            if rn is None:
+                return pn
+            self._placeholders[(id(rn), R.normalize_attr(pattr))] = self._qualify_plug(other)
+        return None
+
+    def _reparent(self, node: MaNode, parent: Optional[MaNode]):
+        if node.parent is parent or node is parent:
+            return
+        if node.parent is not None and node in node.parent.children:
+            node.parent.children.remove(node)
+        node.parent = parent
+        if parent is not None:
+            parent.children.append(node)
+            parent.is_dag = True
+        stack = [node]
+        while stack:
+            x = stack.pop()
+            x.path = (x.parent.path if x.parent else "") + "|" + x.name
+            stack.extend(x.children)
+
+    def _route_placeholders(self):
+        """reference ノードの .phl[n] につないだ接続を、リファレンスの中の本当のプラグにつなぎ直す"""
+        if not self._placeholders:
+            return
+        real: Dict[Tuple[int, str], Tuple[MaNode, str]] = {}
+        for key, plug in self._placeholders.items():
+            nname, attr = R.split_node_attr(plug)
+            node = self.resolve(nname)
+            if node is not None and attr:
+                real[key] = (node, R.normalize_attr(attr))
+        if not real:
+            return
+        out = []
+        for c in self.connections:
+            src, sattr, dst, dattr = c
+            s = real.get((id(src), sattr))
+            d = real.get((id(dst), dattr))
+            if s is None and d is None:
+                out.append(c)
+                continue
+            src2, sattr2 = s or (src, sattr)
+            dst2, dattr2 = d or (dst, dattr)
+            if dst.inputs.get(dattr) == (src, sattr):
+                del dst.inputs[dattr]
+            dst2.inputs[dattr2] = (src2, sattr2)
+            out.append((src2, sattr2, dst2, dattr2))
+        self.connections = out
+
+    # ------------------------------------------------------------------
     def _set_attr(self, sa: R.SetAttr):
         plug = sa.plug
         if plug.startswith("."):
@@ -461,7 +732,7 @@ class MaScene:
             attr = plug[1:]
         else:
             nname, attr = R.split_node_attr(plug)
-            node = self.resolve(nname)
+            node = self.resolve(self.qualify(nname))
         if node is None or not attr:
             return
         elems = R.parse_attr_path(attr)
@@ -947,16 +1218,36 @@ def _span_for_unknown(n: MaNode) -> bool:
             and not n.type.startswith("poly") and n.type not in ("groupId", "groupParts"))
 
 
-def parse_ma_text(text: str, source_path: str = "", progress: ProgressFn = None) -> MaScene:
+def parse_ma_text(text: str, source_path: str = "", progress: ProgressFn = None,
+                  load_references: bool = True) -> MaScene:
     """.ma の文を順に処理する。
 
     文の区切り（;）は str.find で探し、文字列の中の ; だけ引用符を数えてつなぎ直す。
     setAttr を使わない種類のノード（アニメーションカーブ・カーブの形状・ユーティリティなど）は、
     createNode のあとに字下げされて続く行（そのノードの setAttr など）を、1 文ずつ処理せずにまとめて読み飛ばす。
+
+    リファレンス（file -r）は、その文のところで読み込み、ノード名に名前空間を付けて同じシーンに入れる。
+    リファレンスの本文は、このファイルの本文の後ろにつなげる（scene.text。ノードの範囲 span はその位置）。
+    load_references=False なら、リファレンスは読み込まない（MA_VIEWER_NO_REFERENCES=1 でも同じ）。
     """
     scene = MaScene(source_path)
+    scene.load_references = load_references and os.environ.get("MA_VIEWER_NO_REFERENCES") != "1"
     text = R.strip_line_comments(text)
-    scene.text = text
+    scene._pieces = [text]
+    scene._text_len = len(text)
+    scene._ref_files = [source_path] if source_path else []
+    scene._progress = progress
+    _parse_segment(scene, text, 0, progress)
+    scene._finish_references()
+    scene.text = text if len(scene._pieces) == 1 else "".join(scene._pieces)
+    scene._pieces = []
+    if progress is not None:
+        progress(1.0, "解析完了")
+    return scene
+
+
+def _parse_segment(scene: MaScene, text: str, base: int, progress: ProgressFn) -> None:
+    """1 つのファイルの本文の文を順に処理する。base: つなげた本文（scene.text）での、この本文の開始位置"""
     n = len(text)
     total = max(n, 1)
     next_report = 0.0
@@ -983,7 +1274,8 @@ def parse_ma_text(text: str, source_path: str = "", progress: ProgressFn = None)
         c = cost.get(key)
         if c is None:
             c = cost[key] = [0.0, 0, 0]
-        c[0] += clock() - t_stmt
+        if cmd != "file":                  # file -r の時間（リファレンスの解析）は、その中の文の時間として数える
+            c[0] += clock() - t_stmt
         c[1] += 1
         c[2] += len(stmt)
         if cmd == "createNode" and scene.current is not None and (
@@ -992,25 +1284,24 @@ def parse_ma_text(text: str, source_path: str = "", progress: ProgressFn = None)
             m = _BLOCK_END_RE.search(text, pos)
             skip_to = m.start() + 1 if m else n
             # 範囲を覚えておく（アニメーションカーブ・リグの計算ノード・コントローラーの独自の属性を後から読むため）
-            scene.current.span = (pos, skip_to)
+            scene.current.span = (base + pos, base + skip_to)
             if skip_to > pos and scene.current.skip_attrs:
                 counts["読み飛ばし"] = counts.get("読み飛ばし", 0) + text.count(";", pos, skip_to)
                 pos = skip_to
         if progress is not None and pos / total >= next_report:
+            if not scene.ref_depth:
+                scene._progress_frac = min(pos / total, 1.0)
             progress(min(pos / total, 1.0), "解析中 %d%%" % int(min(pos, n) * 100 / total))
             next_report += 0.02
-    if progress is not None:
-        progress(1.0, "解析完了")
-    return scene
 
 
-def parse_ma_file(path: str, progress: ProgressFn = None) -> MaScene:
+def parse_ma_file(path: str, progress: ProgressFn = None, load_references: bool = True) -> MaScene:
     if progress:
         progress(0.0, "読み込み中: %s" % os.path.basename(path))
     import time
     t0 = time.perf_counter()
     text = read_ma_text(path)
     read_seconds = time.perf_counter() - t0
-    scene = parse_ma_text(text, path, progress)
-    scene.read_seconds = read_seconds
+    scene = parse_ma_text(text, path, progress, load_references=load_references)
+    scene.read_seconds += read_seconds          # リファレンスを読んだ時間も含む
     return scene

@@ -62,6 +62,7 @@ ATTR_ALIASES = {
     "dagSetMembers": "dsm", "surfaceShader": "ss", "fileTextureName": "ftn",
     "outColor": "oc", "outTransparency": "ot", "outAlpha": "oa", "uvCoord": "uv", "outUV": "o",
     "message": "msg", "members": "m", "xformMatrix": "xm",
+    "placeHolderList": "phl",          # reference ノードのプレースホルダー（リファレンスの中のノードとの接続）
     # ikHandle（スクリプトで作ったリグは、長い名前で接続していることがある）
     "poleVector": "pv", "poleVectorX": "pvx", "poleVectorY": "pvy", "poleVectorZ": "pvz",
     "twist": "twi", "roll": "rol", "ikBlend": "ikb", "rootOnCurve": "roc",

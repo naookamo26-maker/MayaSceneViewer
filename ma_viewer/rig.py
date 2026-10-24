@@ -467,22 +467,25 @@ def parse_attrs(text: str, node: MaNode, skip=(), angle_k: Optional[float] = Non
     Maya の内部の値はラジアンで、角度の属性どうしの接続には unitConversion が入らないため
     """
     out: Dict[str, object] = {}
-    if node.span is None or not text:
+    # ノードのブロックと、リファレンスの編集で変えた属性（あとから当てるので後ろ）
+    spans = [s for s in (node.span, node.espan) if s is not None]
+    if not spans or not text:
         return out
-    a, b = node.span
     angles = set()
     if angle_k is not None:
+        for a, b in spans:
+            for m in _ADDATTR_RE.finditer(text, a, b):
+                for name in _addattr_angle_names(m.group(1)):
+                    angles.update((name, R.normalize_attr(name)))   # setAttr の属性名は読み替える（roll → rol など）
+    for a, b in spans:
         for m in _ADDATTR_RE.finditer(text, a, b):
-            for name in _addattr_angle_names(m.group(1)):
-                angles.update((name, R.normalize_attr(name)))   # setAttr の属性名は読み替える（roll → rol など）
-    for m in _ADDATTR_RE.finditer(text, a, b):
-        d = _addattr_default(m.group(1))
-        if d is not None:
-            sn, ln, dv = d
-            for name in (sn, ln):
-                if name and _base(name) not in skip:
-                    out[name] = dv
-    for m in _SETATTR_RE.finditer(text, a, b):
+            d = _addattr_default(m.group(1))
+            if d is not None:
+                sn, ln, dv = d
+                for name in (sn, ln):
+                    if name and _base(name) not in skip:
+                        out[name] = dv
+    for m in (m for a, b in spans for m in _SETATTR_RE.finditer(text, a, b)):
         sa = R.parse_setattr(m.group(1))
         if sa is None or not sa.plug.startswith(".") or sa.type == "string":
             continue

@@ -48,6 +48,16 @@ const DEFAULTS = {
 const TOOLS = ['select', 'translate', 'rotate', 'scale'];
 const num = (n) => n.toLocaleString('ja-JP');
 
+/** ノード名の名前空間から、そのノードを読み込んだリファレンス（.ma のみ。入れ子なら内側のもの）。なければ null */
+function referenceOf(data, name) {
+  let best = null;
+  for (const r of (data.source && data.source.references) || []) {
+    if (r.loaded && r.namespace && name.startsWith(r.namespace + ':')
+        && (!best || r.namespace.length > best.namespace.length)) best = r;
+  }
+  return best;
+}
+
 const _v = new Vector3();
 const _v2 = new Vector3();
 const _q = new Quaternion();
@@ -1160,6 +1170,7 @@ class ViewerApp {
       hiddenByParent: !!(this.hiddenEff && this.hiddenEff[ni] && !(this.hidden && this.isNodeHidden(ni))),
       bindSource: n.bindSource || null,
       unselectable: n.unselectable || null,
+      reference: referenceOf(this.data, n.name),
       usingBind: this.settings.poseSource === 'bind' && !!n.bindMatrix,
       drivenBy: n.drivenBy || null,
       animChannels: this.clip ? this.clip.channelsOf(ni) : [],

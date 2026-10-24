@@ -8,7 +8,10 @@
   "schema": "maya-scene-lite",
   "version": 1,
   "source": {"kind": "ma" | "maya", "path": str, "mayaVersion": str | null,
-             "linearUnit": "cm", "angularUnit": "deg", "upAxis": "y"},
+             "linearUnit": "cm", "angularUnit": "deg", "upAxis": "y",
+             "references": [            # リファレンス（.ma のみ。省略可）
+               {"namespace": str, "path": str, "resolved": str | null, "rfn": str, "depth": int,
+                "loaded": bool, "reason": str | null, "nodes": int}]},
   "nodes": [                      # transform / joint。親が必ず子より前に並ぶ
     {"name": str, "path": str,    # path は DAG フルパス（"|grp|joint1"）
      "type": "joint" | "transform" | その他の transform 系ノード型,
