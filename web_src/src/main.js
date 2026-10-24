@@ -15,7 +15,7 @@ import { base64ToArrayBuffer } from './textures.js';
 import { MapManager, usageFor } from './mapManager.js';
 import { JointOverlay } from './jointOverlay.js';
 import { fillHeatmap, fillInfluenceBlend, fillSolid, vertexWeights } from './weights.js';
-import { UI } from './ui.js';
+import { UI, referenceOf } from './ui.js';
 import { connectBridge, isQtHost } from './bridge.js';
 import { History, sameChanges } from './history.js';
 import { compareGpuCpuSkinning } from './skinCheck.js';
@@ -48,15 +48,6 @@ const DEFAULTS = {
 const TOOLS = ['select', 'translate', 'rotate', 'scale'];
 const num = (n) => n.toLocaleString('ja-JP');
 
-/** ノード名の名前空間から、そのノードを読み込んだリファレンス（.ma のみ。入れ子なら内側のもの）。なければ null */
-function referenceOf(data, name) {
-  let best = null;
-  for (const r of (data.source && data.source.references) || []) {
-    if (r.loaded && r.namespace && name.startsWith(r.namespace + ':')
-        && (!best || r.namespace.length > best.namespace.length)) best = r;
-  }
-  return best;
-}
 
 const _v = new Vector3();
 const _v2 = new Vector3();
@@ -68,6 +59,7 @@ class ViewerApp {
     this.data = null;
     this.built = null;
     this.selected = -1;
+    this.selectedMesh = -1;     // 階層のメッシュの行から選んだメッシュ（なければ -1）
     this.picked = null;
     this.pose = null;           // PoseState（シーン読み込み時に作る）
     this.maps = new MapManager();
@@ -481,6 +473,7 @@ class ViewerApp {
     this.edit = null;
     this.history.clear();
     this.selected = -1;
+    this.selectedMesh = -1;     // 階層のメッシュの行から選んだメッシュ（なければ -1）
     this.picked = null;
     if (this.marker) this.marker.visible = false;
     this.pause();
@@ -743,7 +736,7 @@ class ViewerApp {
     const started = this.maps.ensure(keys, readViaBridge, { forceBridge: !!this.forceBridgeTextures }, (done, total) => {
       this.applyMaterials();
       if (done === total) {
-        this.ui.populateMeshes(this.data, this.built, this.textureStatusList());
+        this.showTextureState();
         if (errors.length) this.ui.addWarnings(errors);
         this.ui.setMessage(`テクスチャ ${total} 枚を読み込みました`);
         this.log('info', `textures loaded: ${total}`);
@@ -752,8 +745,14 @@ class ViewerApp {
       }
     }, (key, s) => errors.push(`${s.info.node}: テクスチャを読み込めませんでした（${s.resolved}）: ${s.message}`));
     if (started) this.ui.setMessage(`テクスチャを読み込み中（0 / ${started}）`, 0);
-    this.ui.populateMeshes(this.data, this.built, this.textureStatusList());
+    this.showTextureState();
     this.applyMaterials();
+  }
+
+  /** テクスチャの読み込み状況を、選択情報のメッシュの欄に反映する */
+  showTextureState() {
+    this.ui.setTextureState(this.textureStatusList());
+    if (this.selected >= 0) this.ui.showNodeInfo(this.nodeInfo(this.selected));
   }
 
   textureStatusList() {
@@ -857,7 +856,6 @@ class ViewerApp {
     const e = this.built.meshes[mi];
     e.selfVisible = v;
     e.rigShown = v && e.rigHidden;                          // リグで隠れていても表示する
-    this.ui.setMeshChecked(mi, v);
     this.updateVisibility();
   }
 
@@ -1093,14 +1091,16 @@ class ViewerApp {
       own ? `${this.data.nodes[this.selected].name} のキー` : 'すべてのキー');
   }
 
+  /** ノードを選ぶ。opts.mesh: 階層のメッシュの行から選んだときのメッシュの番号（その行を強調する） */
   select(ni, opts = {}) {
     if (!this.built || ni < 0 || ni >= this.data.nodes.length) return;
     this.selected = ni;
+    this.selectedMesh = opts.mesh ?? -1;
     this.overlay.setSelected(ni);
     this.curves.setSelected(ni);
     this.updateCameraIcons();
     this.applyShading();
-    this.ui.highlightNode(ni, this.data.nodes);
+    this.ui.highlightNode(ni, this.data.nodes, this.selectedMesh);
     this.ui.showNodeInfo(this.nodeInfo(ni));
     this.ui.showPoseFor(ni, this.pose.get(ni));
     this.updateGizmo();
@@ -1112,7 +1112,7 @@ class ViewerApp {
 
   selectMesh(mi) {
     if (!this.built) return;
-    this.select(this.built.meshes[mi].transform, { notify: true });
+    this.select(this.built.meshes[mi].transform, { notify: true, mesh: mi });
   }
 
   selectByPath(path) {
@@ -1120,18 +1120,20 @@ class ViewerApp {
     const nodes = this.data.nodes;
     let ni = nodes.findIndex((n) => n.path === path);
     if (ni < 0) ni = nodes.findIndex((n) => n.path.endsWith('|' + path.replace(/^\|/, '')) || n.name === path);
+    let mesh = -1;
     if (ni < 0) {
-      const mi = this.data.meshes.findIndex((m) => m.path === path || m.name === path);
-      if (mi >= 0) ni = this.data.meshes[mi].transform;
+      mesh = this.data.meshes.findIndex((m) => m.path === path || m.name === path);
+      if (mesh >= 0) ni = this.data.meshes[mesh].transform;
     }
     if (ni < 0) return false;
-    this.select(ni, { notify: false });
+    this.select(ni, { notify: false, mesh });
     return true;
   }
 
   clearSelection() {
     if (!this.built) return;
     this.selected = -1;
+    this.selectedMesh = -1;     // 階層のメッシュの行から選んだメッシュ（なければ -1）
     this.picked = null;
     this.marker.visible = false;
     this.overlay.setSelected(-1);
@@ -1156,6 +1158,7 @@ class ViewerApp {
       return { meshName: e.name, count: e.skin.stats.affected[u.slot], total: e.vertexCount };
     });
     const meshes = this.built.meshes.filter((e) => e.transform === ni).map((e) => ({
+      index: e.index, selected: e.index === this.selectedMesh,
       name: e.name, vertices: e.vertexCount, faces: e.data.counts.length,
       cluster: e.data.skin ? e.data.skin.cluster : '', skin: e.skin ? e.skin.stats : null,
       normalizeSetting: e.data.skin ? (e.data.skin.normalize ?? 1) : null,

@@ -104,24 +104,21 @@
     </div>
   </header>
 
-  <aside id="left" class="panel" aria-label="階層とメッシュ">
-    <button class="panel-strip" id="left-expand" title="左パネルを開く" aria-label="左パネルを開く" aria-controls="left" aria-expanded="false"><span class="strip-icon" aria-hidden="true">›</span><span class="strip-label">階層・メッシュ</span></button>
+  <aside id="left" class="panel" aria-label="階層">
+    <button class="panel-strip" id="left-expand" title="左パネルを開く" aria-label="左パネルを開く" aria-controls="left" aria-expanded="false"><span class="strip-icon" aria-hidden="true">›</span><span class="strip-label">階層</span></button>
     <div class="panel-content">
-      <div class="tabs" role="tablist">
-        <button role="tab" id="tab-tree" aria-selected="true" aria-controls="pane-tree">階層</button>
-        <button role="tab" id="tab-meshes" aria-selected="false" aria-controls="pane-meshes">メッシュ</button>
+      <!-- メッシュの情報（UV・マテリアル・テクスチャ）は、選んだときに右の［選択］に出す -->
+      <div class="panel-head">
+        <span id="tree-title">階層</span>
         <button class="collapse-btn" id="left-collapse" title="左パネルを最小化" aria-label="左パネルを最小化" aria-controls="left" aria-expanded="true">‹</button>
       </div>
-      <div id="pane-tree" role="tabpanel" aria-labelledby="tab-tree" class="pane">
+      <div id="pane-tree" class="pane" aria-labelledby="tree-title">
         <div class="tree-tools">
           <input type="search" id="tree-filter" placeholder="名前で絞り込み" aria-label="名前で絞り込み">
           <button class="icon-btn" id="tree-expand-all" title="すべて開く" aria-label="すべて開く"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1.5" y="1.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor"/><path d="M4 7h6M7 4v6" stroke="currentColor" stroke-width="1.4"/></svg></button>
           <button class="icon-btn" id="tree-collapse-all" title="すべて閉じる" aria-label="すべて閉じる"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1.5" y="1.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor"/><path d="M4 7h6" stroke="currentColor" stroke-width="1.4"/></svg></button>
         </div>
         <div id="tree" class="tree" role="tree" aria-label="ノード階層"></div>
-      </div>
-      <div id="pane-meshes" role="tabpanel" aria-labelledby="tab-meshes" class="pane" hidden>
-        <div id="mesh-list"></div>
       </div>
       <div class="resizer" id="left-resizer" role="separator" aria-orientation="vertical" aria-controls="left"
            aria-label="左パネルの幅" tabindex="0" title="ドラッグで幅を変更（ダブルクリックで元の幅に戻す）"></div>

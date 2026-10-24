@@ -10,6 +10,22 @@ const ICON = {
 };
 
 const EYE = '<svg class="on" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 7s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4Z" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="7" cy="7" r="1.8" fill="currentColor"/></svg><svg class="off" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 7s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4Z" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".5"/><path d="M2 12 12 2" stroke="currentColor" stroke-width="1.4"/></svg>';
+/** ノード名の名前空間から、そのノードを読み込んだリファレンス（.ma のみ。入れ子なら内側のもの）。なければ null */
+export function referenceOf(data, name) {
+  let best = null;
+  for (const r of (data.source && data.source.references) || []) {
+    if (r.loaded && r.namespace && name.startsWith(r.namespace + ':')
+        && (!best || r.namespace.length > best.namespace.length)) best = r;
+  }
+  return best;
+}
+/** パスのファイル名 */
+const fileName = (p) => String(p || '').split(/[\\/]/).pop();
+/** 階層の名前: 名前空間（armA:）は薄く表示する */
+function nameHtml(label) {
+  const k = label.lastIndexOf(':');
+  return k > 0 ? `<span class="ns">${esc(label.slice(0, k + 1))}</span>${esc(label.slice(k + 1))}` : esc(label);
+}
 /** 進捗のバー（i 要素）に割合を反映する。割合が分からなければ止まった帯で表示する */
 function setBar(bar, frac) {
   const known = typeof frac === 'number' && frac >= 0;
@@ -34,8 +50,8 @@ export class UI {
     this.selectedRow = null;
     this.filter = '';
     this.msgTimer = 0;
+    this.textureState = null;       // テクスチャの読み込み状況（選択情報のメッシュの欄に出す）
     this.bindToolbar();
-    this.bindTabs();
     this.bindTree();
     this.bindPose();
     this.bindPanels();
@@ -304,18 +320,6 @@ export class UI {
     this.closeMenus = () => close(null);
   }
 
-  bindTabs() {
-    const tabs = [['tab-tree', 'pane-tree'], ['tab-meshes', 'pane-meshes']];
-    for (const [tid, pid] of tabs) {
-      $(tid).addEventListener('click', () => {
-        for (const [t2, p2] of tabs) {
-          $(t2).setAttribute('aria-selected', String(t2 === tid));
-          $(p2).hidden = t2 !== tid;
-        }
-      });
-    }
-  }
-
   // ---------------------------------------------------------------- 階層
   bindTree() {
     const tree = $('tree');
@@ -336,7 +340,7 @@ export class UI {
         this.applyTreeVisibility();
         return;
       }
-      if (row.mesh >= 0) this.app.selectMesh(row.mesh);
+      if (row.mesh >= 0) this.app.selectMesh(row.mesh);      // メッシュの行はその行を選択状態にする
       else this.app.select(row.node, { notify: true });
     });
     $('tree-expand-all').addEventListener('click', () => this.setAllOpen(true));
@@ -352,8 +356,10 @@ export class UI {
     tree.textContent = '';
     this.rows = [];
     this.rowOfNode = new Map();
+    this.rowOfMesh = new Map();
     this.collapsed = new Set();
     this.selectedRow = null;
+    this.textureState = null;
     const meshesOf = new Map();
     data.meshes.forEach((m, mi) => {
       if (!meshesOf.has(m.transform)) meshesOf.set(m.transform, []);
@@ -363,12 +369,16 @@ export class UI {
     const collapseDeep = data.nodes.length > 400;
     const addRow = (row) => {
       const el = document.createElement('div');
-      el.className = 'row' + (row.dim ? ' dim' : '');
+      // リファレンスから読み込んだノード（名前空間から判定）は、アイコンに印を付けて名前の色を変える
+      const ref = referenceOf(data, row.label);
+      el.className = 'row' + (row.dim ? ' dim' : '') + (ref ? ' referenced' : '');
       el.setAttribute('role', 'treeitem');
       el.dataset.row = String(this.rows.length);
       el.style.setProperty('--depth', row.depth);
+      const title = row.title + (ref ? `\nリファレンス: ${ref.namespace}（${fileName(ref.resolved || ref.path)}）` : '');
       el.innerHTML = `<button class="twisty${row.hasChildren ? '' : ' leaf'}" tabindex="-1" aria-label="開閉" title="クリック: 開閉　Shift+クリック: 下の階層もまとめて開閉">▾</button>`
-        + `<span class="icon">${row.icon}</span><span class="name" title="${esc(row.title)}">${esc(row.label)}</span>`
+        + `<span class="icon">${row.icon}${ref ? '<i class="ref-badge" aria-label="リファレンス"></i>' : ''}</span>`
+        + `<span class="name" title="${esc(title)}">${nameHtml(row.label)}</span>`
         + `<button class="eye" tabindex="-1" aria-pressed="true" aria-label="表示" title="表示・非表示（H: 切り替え / Ctrl+H: 隠す / Shift+H: 表示）">${EYE}</button>`;
       row.eye = el.lastChild;
       row.el = el;
@@ -390,17 +400,16 @@ export class UI {
       if (collapseDeep && depth >= 2 && row.hasChildren) this.collapsed.add(row.key);
       for (const mi of meshKids) {
         const m = data.meshes[mi];
-        addRow({
+        this.rowOfMesh.set(mi, addRow({
           key: 'm' + mi, node: ni, mesh: mi, depth: depth + 1, label: m.name, title: m.path,
           icon: m.skin ? ICON.skin : ICON.mesh, hasChildren: false, dim: m.visible === false,
-        });
+        }));
       }
       for (const k of kids) visit(k, depth + 1);
     };
     data.nodes.forEach((n, i) => { if (n.parent < 0) visit(i, 0); });
     tree.appendChild(frag);
     this.applyTreeVisibility();
-    this.populateMeshes(data, built);
   }
 
   /** rowIndex の行と、その下の階層をすべて開く（open=false なら閉じる） */
@@ -412,7 +421,6 @@ export class UI {
       if (row.mesh >= 0) {
         on = app.isMeshShown(row.mesh);
         dim = !meshes[row.mesh].visible;
-        this.setMeshChecked(row.mesh, on);
       } else {
         on = !app.isNodeHidden(row.node);
         dim = !!app.hiddenEff[row.node];
@@ -459,10 +467,14 @@ export class UI {
     }
   }
 
-  highlightNode(ni, nodes) {
-    if (this.selectedRow) this.selectedRow.el.classList.remove('selected');
+  /** 選択中のノードの行を強調する。mesh（メッシュの番号）を渡すと、そのメッシュの行を強調する */
+  highlightNode(ni, nodes, mesh = -1) {
+    if (this.selectedRow) {
+      this.selectedRow.el.classList.remove('selected');
+      this.selectedRow.el.removeAttribute('aria-selected');
+    }
     this.selectedRow = null;
-    const row = this.rowOfNode.get(ni);
+    const row = (mesh >= 0 && this.rowOfMesh.get(mesh)) || this.rowOfNode.get(ni);
     if (!row) return;
     // 祖先を開く
     let p = nodes[ni].parent;
@@ -478,15 +490,21 @@ export class UI {
     if (!row.el.hidden) row.el.scrollIntoView({ block: 'nearest' });
   }
 
-  populateMeshes(data, built, textureState) {
-    const list = $('mesh-list');
-    list.textContent = '';
+  /** テクスチャの読み込み状況（選択情報のメッシュの欄に出す）を受け取る */
+  setTextureState(state) { this.textureState = state; }
+
+  /** 選択情報のメッシュの欄: 三角形・UV・マテリアルとテクスチャの読み込み状況 */
+  meshDetailHtml(mi) {
+    const data = this.app.data;
+    const e = this.app.built.meshes[mi];
+    const m = data.meshes[mi];
+    const textureState = this.textureState;
     const mats = data.materials || [];
     const texLabel = (ti) => {
       if (ti < 0) return '<span class="tex">テクスチャなし</span>';
       const info = (data.textures || [])[ti] || {};
       const st = (textureState && textureState[ti]) || { status: info.resolved && info.format ? 'loading' : 'missing' };
-      const name = esc(String(info.path || '').split(/[\\/]/).pop() || info.node || '?');
+      const name = esc(fileName(info.path) || info.node || '?');
       const where = esc(info.resolved || info.path || '');
       if (st.status === 'ok') {
         const size = (st.tiles > 1 ? `UDIM ${st.tiles} タイル・` : '')
@@ -498,61 +516,44 @@ export class UI {
       const why = st.status === 'error' ? '読み込めません' : (info.resolved ? '形式に未対応' : '見つかりません');
       return `<span class="tex-bad" aria-label="${why}">✕</span><span class="tex" title="${where}">${name}（${why}）</span>`;
     };
-    built.meshes.forEach((e, mi) => {
-      const m = data.meshes[mi];
-      const item = document.createElement('div');
-      item.className = 'mesh-item';
-      const id = 'mesh-vis-' + mi;
-      let meta = `頂点 ${num(e.vertexCount)} ・ 面 ${num(m.counts.length)} ・ 三角形 ${num(e.triCount)}`;
-      if (e.skin) {
-        meta += `<br>スキン ${esc(m.skin.cluster)}（インフルエンス ${e.skin.stats.influenceCount}・最大 ${e.skin.stats.maxCount}/頂点）`;
+    let h = '<table class="kv">';
+    h += `<tr><th>三角形</th><td>${num(e.triCount)}</td></tr>`;
+    if (m.visible === false) h += '<tr><th>Maya での表示</th><td>非表示</td></tr>';
+    // UV の状態（テクスチャが貼られない原因を調べるため）
+    if (m.uv) {
+      let noUv = 0, off = 0;
+      for (const c of m.counts) { for (let k = 0; k < c; k++) if (m.uv.indices[off + k] < 0) { noUv++; break; } off += c; }
+      h += `<tr><th>UV</th><td>${esc(m.uv.set)}${noUv ? `（<span class="tex-bad">UV のない面 ${num(noUv)}</span>）` : ''}</td></tr>`;
+    } else {
+      h += '<tr><th>UV</th><td>なし</td></tr>';
+    }
+    h += '</table>';
+    const perFace = m.faceMaterials || m.counts.map(() => m.material ?? -1);
+    const faceCount = new Map();
+    for (const x of perFace) faceCount.set(x, (faceCount.get(x) || 0) + 1);
+    const multi = faceCount.size > 1;
+    h += '<ul class="mats">';
+    for (const [mi2, cnt] of faceCount) {
+      const md = mats[mi2];
+      const faces = multi ? `<span class="faces">${num(cnt)} 面</span>` : '';
+      h += md
+        ? `<li><span title="${esc(md.type)}">${esc(md.name)}</span>${faces}${texLabel(md.texture)}</li>`
+        : `<li><span>既定のマテリアル</span>${faces}</li>`;
+      // ベースカラー以外のマップ（法線・ラフネスなど）の状態
+      const other = md && md.maps ? Object.entries(md.maps).filter(([k]) => k !== 'baseColor') : [];
+      if (other.length) {
+        const LABEL = { normal: '法線', roughness: 'ラフネス', metalness: 'メタリック', ao: 'AO', emissive: 'エミッシブ', opacity: '不透明度' };
+        const MARK = { ok: '<span class="tex-ok">✓</span>', loading: '<span class="tex-wait">…</span>',
+          pending: '<span class="tex-wait">–</span>', missing: '<span class="tex-bad">✕</span>', error: '<span class="tex-bad">✕</span>' };
+        const items = other.map(([k, mp]) => {
+          const st2 = (textureState && textureState[mp.texture]) || { status: 'pending' };
+          const ch = mp.channel && mp.channel !== 'rgb' ? `（${mp.channel.toUpperCase()}）` : '';
+          return `${LABEL[k] || k}${ch} ${MARK[st2.status] || ''}`;
+        });
+        h += `<li class="sub-maps">${items.join('　')}</li>`;
       }
-      if (m.visible === false) meta += '<br>Maya では非表示';
-      // UV の状態（テクスチャが貼られない原因を調べるため）
-      if (m.uv) {
-        let noUv = 0, off = 0;
-        for (const c of m.counts) { for (let k = 0; k < c; k++) if (m.uv.indices[off + k] < 0) { noUv++; break; } off += c; }
-        meta += `<br>UV ${esc(m.uv.set)}` + (noUv ? `（<span class="tex-bad">UV のない面 ${num(noUv)}</span>）` : '');
-      } else {
-        meta += '<br>UV なし';
-      }
-      const perFace = m.faceMaterials || m.counts.map(() => m.material ?? -1);
-      const faceCount = new Map();
-      for (const x of perFace) faceCount.set(x, (faceCount.get(x) || 0) + 1);
-      const multi = faceCount.size > 1;
-      let matHtml = '<ul class="mats">';
-      for (const [mi2, cnt] of faceCount) {
-        const md = mats[mi2];
-        const faces = multi ? `<span class="faces">${num(cnt)} 面</span>` : '';
-        matHtml += md
-          ? `<li><span title="${esc(md.type)}">${esc(md.name)}</span>${faces}${texLabel(md.texture)}</li>`
-          : `<li><span>既定のマテリアル</span>${faces}</li>`;
-        // ベースカラー以外のマップ（法線・ラフネスなど）の状態
-        const other = md && md.maps ? Object.entries(md.maps).filter(([k]) => k !== 'baseColor') : [];
-        if (other.length) {
-          const LABEL = { normal: '法線', roughness: 'ラフネス', metalness: 'メタリック', ao: 'AO', emissive: 'エミッシブ', opacity: '不透明度' };
-          const MARK = { ok: '<span class="tex-ok">✓</span>', loading: '<span class="tex-wait">…</span>',
-            pending: '<span class="tex-wait">–</span>', missing: '<span class="tex-bad">✕</span>', error: '<span class="tex-bad">✕</span>' };
-          const items = other.map(([k, mp]) => {
-            const st2 = (textureState && textureState[mp.texture]) || { status: 'pending' };
-            const ch = mp.channel && mp.channel !== 'rgb' ? `（${mp.channel.toUpperCase()}）` : '';
-            return `${LABEL[k] || k}${ch} ${MARK[st2.status] || ''}`;
-          });
-          matHtml += `<li class="sub-maps">${items.join('　')}</li>`;
-        }
-      }
-      matHtml += '</ul>';
-      item.innerHTML = `<input type="checkbox" id="${id}" ${e.visible ? 'checked' : ''} aria-label="${esc(m.name)} を表示">`
-        + `<label class="name" for="${id}">${esc(m.name)}</label><div class="meta">${meta}</div>${matHtml}`;
-      item.querySelector('input').addEventListener('change', (ev) => this.app.setMeshVisible(mi, ev.target.checked));
-      item.querySelector('.name').addEventListener('click', (ev) => { ev.preventDefault(); this.app.selectMesh(mi); });
-      list.appendChild(item);
-    });
-  }
-
-  setMeshChecked(mi, v) {
-    const el = $('mesh-vis-' + mi);
-    if (el) el.checked = v;
+    }
+    return h + '</ul>';
   }
 
   // ---------------------------------------------------------------- 選択情報
@@ -576,8 +577,7 @@ export class UI {
     h += `<tr><th>表示</th><td>${info.hiddenByRig ? '非表示（リグ・アニメーションで決まる値）' : info.hiddenSelf ? '非表示'
       : info.hiddenByParent ? '親が非表示のため隠れています' : '表示中'}</td></tr>`;
     if (info.reference) {
-      const file = String(info.reference.resolved || info.reference.path).split(/[\\/]/).pop();
-      h += `<tr><th>リファレンス</th><td>${esc(info.reference.namespace)}（${esc(file)}）</td></tr>`;
+      h += `<tr><th>リファレンス</th><td>${esc(info.reference.namespace)}（${esc(fileName(info.reference.resolved || info.reference.path))}）</td></tr>`;
     }
     if (info.unselectable) h += `<tr><th>Maya での選択</th><td>ビューポートでは選択できない（${esc(info.unselectable)}）</td></tr>`;
     h += `<tr><th>姿勢の基準</th><td>${info.usingBind ? 'バインドポーズ' : 'ファイルの値'}</td></tr>`;
@@ -626,7 +626,7 @@ export class UI {
     }
     if (info.meshes && info.meshes.length) {
       for (const m of info.meshes) {
-        h += `<p class="sub">メッシュ ${esc(m.name)}</p><table class="kv">`;
+        h += `<p class="sub${m.selected ? ' selected-mesh' : ''}">メッシュ ${esc(m.name)}</p><table class="kv">`;
         h += `<tr><th>頂点 / 面</th><td>${num(m.vertices)} / ${num(m.faces)}</td></tr>`;
         if (m.skin) {
           const sk = m.skin;
@@ -641,6 +641,7 @@ export class UI {
         }
         h += '</table>';
         if (m.skin && m.skin.overMax) h += '<p class="note small">9 つ以上のインフルエンスを持つ頂点は、上位 8 つで変形表示しています（ヒートマップと数値は全インフルエンス）。</p>';
+        h += this.meshDetailHtml(m.index);
       }
     }
     body.innerHTML = h;

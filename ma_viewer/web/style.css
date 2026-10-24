@@ -141,17 +141,6 @@ body.right-collapsed #right .panel-strip {
 /* 右パネルは、たたむボタンをパネルの左端（ビューポート側）に置く */
 #right .panel-head { justify-content: flex-start; padding-left: 0; }
 
-.tabs { display: flex; border-bottom: 1px solid var(--line); flex: none; }
-.tabs [role="tab"] {
-  flex: 1;
-  height: 30px;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-}
-.tabs [role="tab"][aria-selected="true"] { color: var(--text); border-bottom-color: var(--joint); }
 .pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .pane[hidden] { display: none; }
 .tree-tools { display: flex; gap: 4px; margin: 8px; flex: none; }
@@ -194,8 +183,16 @@ body.right-collapsed #right .panel-strip {
   border: none; background: none; padding: 0; cursor: pointer; line-height: 1;
 }
 .twisty.leaf { visibility: hidden; }
-.icon { width: 12px; flex: none; display: inline-flex; justify-content: center; }
+.icon { width: 12px; flex: none; display: inline-flex; justify-content: center; position: relative; }
 .icon svg { display: block; }
+/* リファレンスから読み込んだノード: Maya のアウトライナと同じく、アイコンに青い菱形の印を付ける */
+.icon .ref-badge {
+  position: absolute; right: -3px; bottom: -2px; width: 5px; height: 5px;
+  background: #4f9cf0; transform: rotate(45deg); box-shadow: 0 0 0 1px var(--panel);
+}
+.row .name .ns { color: var(--text-dim); }        /* 名前空間（armA:）は薄く */
+.row.referenced .name { color: #b9cfe6; }
+.row.referenced.dim .name { color: var(--text-dim); }
 .row .name { overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 .row .eye {
   flex: none; width: 20px; height: 18px; padding: 0; margin-left: 4px;
@@ -210,27 +207,17 @@ body.right-collapsed #right .panel-strip {
 .row .eye[aria-pressed="false"] .on { display: none; }
 .row .eye[aria-pressed="false"] .off { display: inline; }
 
-#mesh-list { padding: 6px 0; overflow-y: auto; overflow-x: hidden; }
-.mesh-item {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 2px 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--line);
-}
-.mesh-item input { margin: 2px 0 0; accent-color: var(--joint); }
-.mesh-item .meta { grid-column: 2; color: var(--text-dim); }
-.mesh-item .mats { grid-column: 2; margin: 2px 0 0; padding: 0; list-style: none; }
-.mesh-item .mats li { display: flex; gap: 6px; align-items: baseline; min-width: 0; color: var(--text-dim); }
-.mesh-item .mats li > span:first-child:not(:only-child) { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mesh-item .mats .faces { flex: none; font-variant-numeric: tabular-nums; }
-.mesh-item .mats .tex { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mesh-item .meta { overflow-wrap: anywhere; }
+/* 選択情報のメッシュ: 階層のメッシュの行から選んだメッシュの見出しは、選択の色にする */
+.sub.selected-mesh { color: var(--select); }
+/* 選択情報のメッシュのマテリアル（テクスチャの読み込み状況） */
+.mats { margin: 2px 0 6px; padding: 0; list-style: none; }
+.mats li { display: flex; gap: 6px; align-items: baseline; min-width: 0; color: var(--text-dim); }
+.mats li > span:first-child:not(:only-child) { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mats .faces { flex: none; font-variant-numeric: tabular-nums; }
+.mats .tex { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tex-ok { color: #7fd16b; }
 .tex-bad { color: var(--danger); }
 .tex-wait { color: var(--select); }
-.mesh-item .name { cursor: pointer; }
-.mesh-item .name:hover { text-decoration: underline; }
 
 /* ---- 右パネル ------------------------------------------------------ */
 details { border-bottom: 1px solid var(--line); }
