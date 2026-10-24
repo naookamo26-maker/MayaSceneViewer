@@ -206,6 +206,40 @@ class TestUnits(unittest.TestCase):
         self.assertEqual(anim["current"], 7.0)
 
 
+class TestSequencer(unittest.TestCase):
+    """カメラシーケンサ。前提: python tools/make_sequencer_sample.py"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.scene = load_ma(os.path.join(ROOT, "samples", "sequencer_sample.ma"))
+        schema.validate(cls.scene)
+        cls.shots = {s["shotName"]: s for s in cls.scene["sequencer"]["shots"]}
+
+    def cam(self, s):
+        return self.scene["cameras"][s["camera"]]["name"]
+
+    def test_shots(self):
+        self.assertEqual(sorted(self.shots), ["SH010", "SH015", "SH020", "SH030", "SH040", "SH099"])
+        s = self.shots["SH010"]
+        self.assertEqual((s["name"], self.cam(s), s["startFrame"], s["endFrame"], s["sequenceStartFrame"], s["track"]),
+                         ("shot1", "shot_cam", 1.0, 12.0, 1.0, 1))
+        self.assertEqual(self.shots["SH015"]["track"], 2)
+        self.assertTrue(self.shots["SH099"]["mute"])
+        self.assertEqual((self.scene["sequencer"]["start"], self.scene["sequencer"]["end"]), (1.0, 49.0))
+
+    def test_sequence_end_frame(self):
+        """sequenceEndFrame = 開始 + preHold + (endFrame − startFrame) × scale + postHold"""
+        s = self.shots["SH030"]
+        self.assertEqual((s["scale"], s["preHold"], s["sequenceEndFrame"]), (2.0, 2.0, 36.0))
+
+    def test_startup_camera_of_shot_is_exported(self):
+        self.assertEqual(self.cam(self.shots["SH040"]), "persp")
+        self.assertEqual([c["name"] for c in self.scene["cameras"]], ["shot_cam", "ortho_cam", "persp"])
+
+    def test_scene_without_shots(self):
+        self.assertIsNone(load_ma(PLAIN)["sequencer"])
+
+
 class TestCharacterSets(unittest.TestCase):
     """キャラクターセットと Trax のクリップ。前提: python tools/make_trax_sample.py"""
 

@@ -166,6 +166,31 @@
     <div id="error" class="overlay-msg error" role="alert" hidden></div>
   </main>
 
+  <!-- カメラシーケンサ（シーンにショットがあるときだけ表示する、ビューポートの下のパネル） -->
+  <section id="sequencer" aria-label="カメラシーケンサ" hidden>
+    <div class="seq-head">
+      <button class="collapse-btn" id="seq-collapse" aria-expanded="true" aria-controls="sequencer" title="カメラシーケンサを最小化">▾</button>
+      <span class="seq-title">カメラシーケンサ</span>
+      <div class="tl-btns" role="group" aria-label="シーケンスの操作">
+        <button class="icon-btn" id="seq-first" aria-label="シーケンスの先頭" title="シーケンスの先頭"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><rect x="1.5" y="3" width="1.5" height="8"/><path d="M8 3v8L3.5 7Z"/><path d="M12.5 3v8L8 7Z"/></svg></button>
+        <button class="icon-btn" id="seq-prev-shot" aria-label="前のショット" title="前のショット"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><path d="M8 3v8L3 7Z"/><rect x="9.5" y="3.5" width="2" height="7" rx=".5"/></svg></button>
+      </div>
+      <button class="icon-btn" id="seq-play" aria-label="シーケンスを再生" aria-pressed="false" title="シーケンスを再生"><svg class="ic-play" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M4.5 2.5v11L13.5 8Z"/></svg><svg class="ic-pause" style="display:none" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><rect x="4" y="3" width="2.8" height="10" rx="0.5"/><rect x="9.2" y="3" width="2.8" height="10" rx="0.5"/></svg></button>
+      <div class="tl-btns" role="group" aria-label="シーケンスの操作">
+        <button class="icon-btn" id="seq-next-shot" aria-label="次のショット" title="次のショット"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><rect x="2.5" y="3.5" width="2" height="7" rx=".5"/><path d="M6 3v8l5-4Z"/></svg></button>
+        <button class="icon-btn" id="seq-last" aria-label="シーケンスの最後" title="シーケンスの最後"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><path d="M1.5 3v8L6 7Z"/><path d="M6 3v8l4.5-4Z"/><rect x="11" y="3" width="1.5" height="8"/></svg></button>
+      </div>
+      <input type="number" id="seq-frame" class="tl-num tl-frame" step="1" aria-label="シーケンスのフレーム" title="シーケンスのフレーム">
+      <span id="seq-shot" class="seq-shot-info"></span>
+      <label class="check seq-follow" title="オンのとき、ビューポートはシーケンスのフレームのショットのカメラとフレームで表示する"><input type="checkbox" id="seq-follow"> シーケンスで見る</label>
+    </div>
+    <div class="seq-body">
+      <div class="seq-ruler-row"><span class="seq-track-label"></span><div id="seq-ruler"></div></div>
+      <div id="seq-rows"></div>
+      <div id="seq-lanes" title="クリック・ドラッグ: シーケンスのフレームを移動"><div id="seq-playhead"></div></div>
+    </div>
+  </section>
+
   <aside id="right" class="panel" aria-label="プロパティ">
     <button class="panel-strip" id="right-expand" title="右パネルを開く" aria-label="右パネルを開く" aria-controls="right" aria-expanded="false"><span class="strip-icon" aria-hidden="true">‹</span><span class="strip-label">選択・頂点・警告</span></button>
     <div class="panel-content">

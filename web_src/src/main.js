@@ -24,6 +24,7 @@ import { RigEvaluator, visibleFrom } from './rig.js';
 import { Timeline } from './timeline.js';
 import { CurveOverlay } from './curveOverlay.js';
 import { CameraIcons, cameraFrustum, cameraParams } from './cameraView.js';
+import { SequencerPanel, activeShot, shotTime } from './sequencer.js';
 
 const VERSION = '1.0.0';
 const D2R = Math.PI / 180;
@@ -74,8 +75,13 @@ class ViewerApp {
     this.cameras = [];              // シーンのカメラ（共通 JSON の cameras）
     this.viewCamera = -1;           // いま見ているカメラ（-1 は自由視点）
     this.cameraProps = new Map();   // カメラの番号 → アニメーション・リグで決まる属性の値（焦点距離など）
+    this.sequence = null;           // カメラシーケンサ（共通 JSON の sequencer）
+    this.seqFrame = 0;              // シーケンスのフレーム
+    this.seqFollow = false;         // ビューポートをシーケンス（ショットのカメラとフレーム）で表示するか
+    this.seqPlaying = false;
     this.ui = new UI(this);
     this.timeline = new Timeline(this);
+    this.seqPanel = new SequencerPanel(this);
     this.ui.setHost(isQtHost() ? 'qt' : 'browser');
     this.ui.syncSettings(this.settings);     // ツールバーの表示を初期設定（DEFAULTS）に合わせる
     try {
@@ -395,6 +401,11 @@ class ViewerApp {
       // 保存したときに Maya のビューで見ていたカメラから表示する（persp などの起動時のカメラなら自由視点）
       const vc = data.viewCamera ?? -1;
       if (vc >= 0 && vc < this.cameras.length) this.setCamera(vc, { quiet: true });
+      this.sequence = data.sequencer && (data.sequencer.shots || []).length ? data.sequencer : null;
+      this.seqFrame = this.sequence ? this.sequence.start : 0;
+      this.seqFollow = false;
+      this.seqPanel.build(this.sequence, this.cameras);
+      this.updateSequencePanel();
       this.maps.reset(data);
       this.requestMaps();
       mark('マテリアル');
@@ -430,6 +441,10 @@ class ViewerApp {
   }
 
   clearScene() {
+    this.pauseSequence();
+    this.sequence = null;
+    this.seqFollow = false;
+    if (this.seqPanel) this.seqPanel.build(null, []);
     this.setCamera(-1, { quiet: true });
     this.cameraIcons.clear();
     this.cameras = [];
@@ -873,6 +888,7 @@ class ViewerApp {
     const switched = this.hasTimeline && !this.poseSourceChosen && this.settings.poseSource === 'bind' && hasBindPose(this.built);
     if (switched) this.setSetting('poseSource', 'file');
     this.applyFrame(clip.current);
+    if (this.seqFollow) this.applySequence();
     this.updateToolbarHints();
     const st = anim.stats || {};
     this.ui.setMessage(`アニメーションを読み込みました（カーブ ${num(st.curves ?? clip.curves.length)} 本・`
@@ -955,6 +971,8 @@ class ViewerApp {
 
   scrubTo(f) {
     if (!this.hasTimeline) return;
+    if (this.seqFollow) this.setSequenceFollow(false);   // シーンのタイムラインを操作した
+    this.pauseSequence();
     this.pause();
     this.ensureAnimatedPose();
     this.applyFrame(f);
@@ -994,6 +1012,8 @@ class ViewerApp {
   /** 再生（実時間。間に合わないときはフレームを飛ばす。範囲の最後まで行くと先頭に戻る） */
   play() {
     if (!this.hasTimeline || this.playing) return;
+    this.pauseSequence();
+    if (this.seqFollow) this.setSequenceFollow(false);
     this.ensureAnimatedPose();
     this.endPoseEdit();
     const from = this.frame >= this.clip.start && this.frame <= this.clip.end ? Math.round(this.frame) : this.clip.start;
@@ -1382,6 +1402,81 @@ class ViewerApp {
     this.ui.setToolbarHints(hints);
   }
 
+  // ------------------------------------------------------------------ カメラシーケンサ
+  /** シーケンスのフレームを f にする。follow: true ならビューポートもシーケンスで表示する */
+  setSequenceFrame(f, opts = {}) {
+    if (!this.sequence) return;
+    this.seqFrame = Math.min(Math.max(f, this.sequence.start), this.sequence.end);
+    if (opts.follow && !this.seqFollow) this.seqFollow = true;
+    if (this.seqFollow) this.applySequence();
+    this.updateSequencePanel();
+  }
+
+  setSequenceFollow(on) {
+    this.seqFollow = !!on && !!this.sequence;
+    if (this.seqFollow) this.applySequence();
+    else this.pauseSequence();
+    this.updateSequencePanel();
+  }
+
+  /** いまのシーケンスのフレームのショットの、カメラとシーンのフレームにする */
+  applySequence() {
+    const shot = activeShot(this.sequence && this.sequence.shots, this.seqFrame);
+    if (!shot) return;
+    if (shot.camera >= 0 && shot.camera !== this.viewCamera) this.setCamera(shot.camera, { quiet: true, fromSequence: true });
+    if (this.hasTimeline) {
+      if (this.playing) this.pause();
+      this.ensureAnimatedPose();
+      this.applyFrame(shotTime(shot, this.seqFrame), this.seqPlaying);
+    } else {
+      this.requestRender();
+    }
+  }
+
+  updateSequencePanel() {
+    if (!this.sequence) return;
+    this.seqPanel.update(this.seqFrame, activeShot(this.sequence.shots, this.seqFrame), this.cameras, this.seqFollow, this.seqPlaying);
+  }
+
+  /** 前・次のショットの先頭へ（ミュートしたショットは飛ばす） */
+  stepShot(d) {
+    if (!this.sequence) return;
+    const starts = [...new Set(this.sequence.shots.filter((s) => !s.mute).map((s) => s.sequenceStartFrame))].sort((a, b) => a - b);
+    const t = d > 0 ? starts.find((x) => x > this.seqFrame + 1e-6) : [...starts].reverse().find((x) => x < this.seqFrame - 1e-6);
+    if (t !== undefined) this.setSequenceFrame(t, { follow: true });
+  }
+
+  toggleSequencePlay() { if (this.seqPlaying) this.pauseSequence(); else this.playSequence(); }
+
+  /** シーケンスを実時間で再生する（最後まで行くと先頭に戻る） */
+  playSequence() {
+    if (!this.sequence || this.seqPlaying) return;
+    this.pause();
+    this.seqFollow = true;
+    this.seqPlaying = true;
+    const fps = (this.clip && this.clip.fps) || 24;
+    const { start, end } = this.sequence;
+    const from = this.seqFrame >= end ? start : Math.floor(this.seqFrame);
+    const t0 = performance.now();
+    const tick = (now) => {
+      if (!this.seqPlaying) return;
+      const span = end - start + 1;
+      const f = start + ((from - start + Math.floor(((now - t0) / 1000) * fps)) % span);
+      if (f !== this.seqFrame) { this.seqFrame = f; this.applySequence(); this.updateSequencePanel(); }
+      this.seqHandle = requestAnimationFrame(tick);
+    };
+    this.updateSequencePanel();
+    this.seqHandle = requestAnimationFrame(tick);
+  }
+
+  pauseSequence() {
+    if (!this.seqPlaying) return;
+    this.seqPlaying = false;
+    cancelAnimationFrame(this.seqHandle);
+    if (this.built) this.afterPoseChange();
+    this.updateSequencePanel();
+  }
+
   // ------------------------------------------------------------------ シーンのカメラ
   /** 次のカメラ（C キー）。最後のカメラの次は自由視点 */
   nextCamera() {
@@ -1391,6 +1486,7 @@ class ViewerApp {
 
   /** シーンのカメラから見る（-1 で自由視点に戻す） */
   setCamera(ci, opts = {}) {
+    if (!opts.fromSequence && !opts.quiet && this.seqFollow) this.setSequenceFollow(false);   // 自分でカメラを選んだ
     if (!(ci >= 0 && ci < this.cameras.length)) ci = -1;
     if (ci === this.viewCamera) return;
     if (!this.renderer) { this.viewCamera = -1; return; }
@@ -1514,6 +1610,8 @@ class ViewerApp {
       curves: this.curves.items.filter(Boolean).length,
       cameras: this.cameras.map((c) => c.name),
       viewCamera: this.viewCamera >= 0 ? this.cameras[this.viewCamera].name : null,
+      sequence: this.sequence ? { frame: this.seqFrame, follow: this.seqFollow, playing: this.seqPlaying,
+        shot: (activeShot(this.sequence.shots, this.seqFrame) || {}).shotName || null, shots: this.sequence.shots.length } : null,
       hiddenMeshes: this.built.meshes.filter((e) => !e.visible).map((e) => e.name),
       selected: this.selected >= 0 ? this.data.nodes[this.selected].path : null,
       posedNodes: this.pose ? this.pose.size : 0,

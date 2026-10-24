@@ -270,6 +270,74 @@ def collect_cameras(ms: MaScene) -> List[MaNode]:
     return out
 
 
+# カメラシーケンサのショット（shot）の属性: (読む名前の候補, 既定値)。フレームはシーンの時間の単位のまま
+_SHOT_ATTRS = {
+    "startFrame": (("sf", "startFrame"), None),
+    "endFrame": (("ef", "endFrame"), None),
+    "sequenceStartFrame": (("ssf", "sequenceStartFrame"), None),
+    "scale": (("s", "scale"), 1.0),
+    "preHold": (("prh", "preHold"), 0.0),
+    "postHold": (("psh", "postHold"), 0.0),
+    "track": (("trk", "track"), 1.0),
+    "mute": (("mt", "mute", "smt", "selfmute"), 0.0),
+}
+_SHOT_NAME_RE = re.compile(r'setAttr\s+"\.(?:sn|shotName)"\s+-type\s+"string"\s+"((?:[^"\\]|\\.)*)"')
+
+
+def shot_camera(n: MaNode) -> Optional[MaNode]:
+    """ショットのカメラ（.currentCamera ← カメラの .message）のシェイプ"""
+    src = n.inputs.get("ccm") or n.inputs.get("currentCamera")
+    if src is None:
+        return None
+    cam = src[0]
+    if cam.type != "camera":
+        cam = next((c for c in cam.children if c.type == "camera"), None)
+    return cam
+
+
+def collect_shots(ms: MaScene) -> List[MaNode]:
+    return [n for n in ms.nodes if n.type == "shot"]
+
+
+def sequencer_entry(ms: MaScene, shots: List[MaNode], camera_index: Dict[int, int]) -> Optional[dict]:
+    """共通 JSON の sequencer（カメラシーケンサ）。ショットがなければ None。
+
+    ショットはシーンの startFrame〜endFrame を、シーケンスの sequenceStartFrame から scale 倍の長さで並べる
+    （前後に preHold・postHold のフレームだけ最初・最後のフレームを保つ）。
+    """
+    from .rig import parse_attrs
+    out = []
+    text = getattr(ms, "text", "")
+    for n in shots:
+        a = parse_attrs(text, n)
+        e = {"name": n.name}
+        for key, (names, d) in _SHOT_ATTRS.items():
+            v = next((a[k] for k in names if k in a), d)
+            if isinstance(v, list):
+                v = v[0] if v else d
+            e[key] = float(v) if v is not None else None
+        if e["startFrame"] is None or e["endFrame"] is None:
+            ms.warn("%s: ショットのフレーム範囲がないため、カメラシーケンサに出しません。" % n.name)
+            continue
+        if e["sequenceStartFrame"] is None:
+            e["sequenceStartFrame"] = e["startFrame"]
+        scale = e["scale"] if abs(e["scale"]) > 1e-9 else 1.0
+        e["sequenceEndFrame"] = (e["sequenceStartFrame"] + e["preHold"] + (e["endFrame"] - e["startFrame"]) * scale
+                                 + e["postHold"])
+        e["mute"] = e["mute"] >= 0.5
+        e["track"] = int(round(e["track"]))
+        m = _SHOT_NAME_RE.search(text, *n.span) if n.span is not None and text else None
+        e["shotName"] = m.group(1) if m else n.name
+        cam = shot_camera(n)
+        e["camera"] = camera_index.get(id(cam), -1) if cam is not None else -1
+        out.append(e)
+    if not out:
+        return None
+    out.sort(key=lambda e: (e["sequenceStartFrame"], -e["track"]))
+    return {"shots": out, "start": min(e["sequenceStartFrame"] for e in out),
+            "end": max(e["sequenceEndFrame"] for e in out)}
+
+
 def camera_entry(n: MaNode, t_idx: int) -> dict:
     """共通 JSON の cameras の 1 件。値は Maya の単位のまま（焦点距離 mm・フィルムバック インチ・クリップ面は長さの単位）"""
     keys = {"fl": "focalLength", "hfa": "horizontalFilmAperture", "vfa": "verticalFilmAperture",
@@ -1034,8 +1102,13 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     curve_shapes = collect_curves(ms)
     for n, _a in curve_shapes:
         keep_chain(n.parent)
-    # シーンのカメラ（起動時からある persp・top・front・side は除く）
+    # シーンのカメラ（起動時からある persp・top・front・side は除く。カメラシーケンサのショットのカメラは出す）
     camera_shapes = collect_cameras(ms)
+    shots = collect_shots(ms)
+    for sh in shots:                    # ショットのカメラは、起動時のカメラ（persp など）でも出す
+        cam = shot_camera(sh)
+        if cam is not None and cam.parent is not None and cam not in camera_shapes:
+            camera_shapes.append(cam)
     for n in camera_shapes:
         keep_chain(n.parent)
     # リグ（コンストレイント・IK・計算ノード）の評価に必要なコントローラーなども出力する。
@@ -1298,6 +1371,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         "curves": out_curves,
         "cameras": out_cameras,
         "viewCamera": camera_index_of(out_cameras, view_camera(ms)),
+        "sequencer": sequencer_entry(ms, shots, camera_index),
         "render": render_settings(ms),
         "materials": mb.materials,
         "textures": mb.textures,

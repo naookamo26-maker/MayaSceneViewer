@@ -257,6 +257,35 @@ class _Extractor:
         entry["renderable"] = bool(g("renderable"))
         self.cameras.append(entry)
 
+    def _sequencer(self) -> Optional[dict]:
+        """カメラシーケンサのショット（共通 JSON の sequencer。extract_ma.sequencer_entry と同じ形）"""
+        try:
+            shots = cmds.ls(type="shot") or []
+        except Exception:  # noqa: BLE001
+            return None
+        out = []
+        for sh in shots:
+            try:
+                g = lambda a: cmds.getAttr(sh + "." + a)  # noqa: E731
+                e = {"name": sh, "shotName": cmds.getAttr(sh + ".shotName") or sh,
+                     "startFrame": float(g("startFrame")), "endFrame": float(g("endFrame")),
+                     "sequenceStartFrame": float(g("sequenceStartFrame")), "sequenceEndFrame": float(g("sequenceEndFrame")),
+                     "scale": float(g("scale")), "preHold": float(g("preHold")), "postHold": float(g("postHold")),
+                     "track": int(g("track")), "mute": bool(cmds.shot(sh, query=True, mute=True))}
+                cam = cmds.shot(sh, query=True, currentCamera=True) or ""
+            except Exception as exc:  # noqa: BLE001
+                self.warn("ショット %s を取得できませんでした: %s" % (sh, exc))
+                continue
+            cam_long = (cmds.ls(cam, long=True) or [cam])[0] if cam else ""
+            e["camera"] = next((i for i, c in enumerate(self.cameras)
+                                if cam_long and cam_long in (c["path"], c["path"].rsplit("|", 1)[0])), -1)
+            out.append(e)
+        if not out:
+            return None
+        out.sort(key=lambda e: (e["sequenceStartFrame"], -e["track"]))
+        return {"shots": out, "start": min(e["sequenceStartFrame"] for e in out),
+                "end": max(e["sequenceEndFrame"] for e in out)}
+
     def _view_camera(self) -> int:
         """Maya で作業中のビュー（モデルパネル）のカメラの、cameras の番号（起動時のカメラなどは -1）"""
         try:
@@ -604,6 +633,7 @@ class _Extractor:
             "meshes": self.meshes,
             "cameras": self.cameras,
             "viewCamera": self._view_camera(),
+            "sequencer": self._sequencer(),
             "render": self._render_settings(),
             "materials": self.materials,
             "textures": self.textures,
@@ -666,10 +696,21 @@ def _collect_cameras(selection_only: bool) -> List[str]:
             cams += cmds.listRelatives(s, allDescendents=True, fullPath=True, type="camera") or []
     else:
         cams = cmds.ls(type="camera", long=True) or []
+    shot_cams = set()
+    if not selection_only:
+        try:
+            for sh in cmds.ls(type="shot") or []:
+                cam = cmds.shot(sh, query=True, currentCamera=True)
+                shapes = cmds.listRelatives(cam, shapes=True, fullPath=True, type="camera") if cam else None
+                shot_cams.update(shapes or (cmds.ls(cam, long=True) if cam else []))
+        except Exception:  # noqa: BLE001
+            pass
+        cams = list(cams) + sorted(shot_cams)
     out = []
     for c in _unique(cams):
         try:
-            if cmds.getAttr(c + ".intermediateObject") or cmds.camera(c, query=True, startupCamera=True):
+            if cmds.getAttr(c + ".intermediateObject") or (
+                    c not in shot_cams and cmds.camera(c, query=True, startupCamera=True)):
                 continue
         except (RuntimeError, ValueError, AttributeError):
             continue

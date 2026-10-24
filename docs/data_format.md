@@ -15,6 +15,7 @@
   "curves": [ ... ],
   "cameras": [ ... ],
   "viewCamera": 0,
+  "sequencer": { "start": 1, "end": 49, "shots": [ ... ] },
   "render": { "width": 1920, "height": 1080, "deviceAspectRatio": 1.778 },
   "materials": [ ... ],
   "textures": [ ... ],
@@ -117,6 +118,19 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 
 保存したときに Maya のビュー（メインのパネル）で見ていたカメラの、cameras の番号です。ビューアは読み込んだときにそのカメラから表示します。persp などの起動時のカメラや、分からないときは -1（自由視点）。.ma では uiConfigurationScriptNode の「Current Layout」のパネル構成で、最初に置かれたモデルパネルのカメラ（`-cam`）を使います。Maya 内からの抽出では、作業中のモデルパネルのカメラです。
 
+## sequencer
+
+カメラシーケンサのショット（なければ null）。`start` / `end` はシーケンスの範囲。
+
+| キー（shots の各要素） | 内容 |
+|---|---|
+| `name` / `shotName` | shot ノードの名前と、ショット名（.sn） |
+| `camera` | ショットのカメラ（.currentCamera）の cameras の番号（-1 はなし）。起動時のカメラでも cameras に入れる |
+| `startFrame` / `endFrame` | シーンのフレーム範囲 |
+| `sequenceStartFrame` / `sequenceEndFrame` | シーケンス上の範囲。終わりは 開始 + preHold + (endFrame − startFrame) × scale + postHold |
+| `scale` / `preHold` / `postHold` | シーンの範囲に掛ける倍率と、前後に最初・最後のフレームを保つフレーム数 |
+| `track` / `mute` | トラックの番号（重なるときは大きい方を使う）とミュート |
+
 ## render
 
 レンダーの解像度（defaultResolution）。カメラから見るときの解像度ゲートの縦横比に `deviceAspectRatio` を使います。なければ 640×480（4:3）。
@@ -211,6 +225,7 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 | `shape` | nurbsCurve が表示するカーブのとき、そのトップレベルの curves の番号（inputs の `curve` が指す animation.curves とは別） |
 | `expr` | expression の式（.ixp。.I[n]・.O[n] で入出力を参照する）。出力は `out[n]`、入力は `inputs` の `in[n]`。時間（.tim）はつながず、ビューアのフレームから求める。解釈できない書き方（MEL コマンド・文字列・ベクトル・未対応の関数・.I/.O 以外の属性）を含む式は graph に入れず、未対応のノードとして警告し、つながるノードを fallback・tainted に回す（判定は `ma_viewer/expression.py`、評価は `web_src/src/expression.js`） |
 | `curve` | ドリブンキー（animCurveUA・UL・UU）のとき、animation.curves の番号。入力は `inputs` の `i` |
+| `trax` | キャラクターセット（character）の Trax のクリップ `{"clips": [...]}`。各クリップは `start`・`sourceStart`・`sourceEnd`・`scale`・`weight`・`preCycle`・`postCycle`・`hold`・`enable`・`track`・`absolute` と、`channels`（キャラクターの出力の属性 `lv[i]`・`av[i]`・`uv[i]`・`tv[i]` → animation.curves の番号）。キャラクターの出力は、カーブが直接つながる属性（`inputs`）はそのまま、ほかはそのフレームで有効なクリップの値。クリップのカーブは animation.curves で `"trax": true`（キーがクリップの中の時間なので、再生範囲・キーの印には使わない） |
 | `geom` | wire・cluster が変形するカーブの transform（`{"出力の番号 k": nodes の番号}`）。ワイヤー（`dw[i]`）・ベースワイヤー（`bw[i]`）はワールド空間なので、カーブをこの行列でワールドへ移して変形し、戻す。CV のウェイトは attrs の `wl[k].w[v]`（なければ 1）。cluster は attrs の `gm[k]` があればそちらを使う |
 | `skin` | カーブを動かす skinCluster のウェイト `[[CV の番号, インフルエンスの論理番号, 値], …]`、`pm`（論理番号 → 16 要素）、`gm`。インフルエンスは `inputs` の `ma[i]` |
 
