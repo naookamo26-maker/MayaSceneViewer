@@ -6879,6 +6879,7 @@
    "renderable":true
   }
  ],
+ "viewCamera":0,
  "render":{
   "width":1920,
   "height":1080,

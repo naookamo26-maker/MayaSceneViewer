@@ -206,6 +206,100 @@ class TestUnits(unittest.TestCase):
         self.assertEqual(anim["current"], 7.0)
 
 
+class TestSelectability(unittest.TestCase):
+    """Maya のビューポートで選択できないもの。前提: python tools/make_select_sample.py"""
+
+    def test_unselectable(self):
+        sc = load_ma(os.path.join(ROOT, "samples", "select_sample.ma"))
+        schema.validate(sc)
+        nodes = {n["name"]: n.get("unselectable") for n in sc["nodes"]}
+        meshes = {m["name"]: m.get("unselectable") for m in sc["meshes"]}
+        self.assertEqual(nodes["box"], "テンプレート")                       # .template
+        self.assertEqual(meshes["boxShape"], "テンプレート")                  # 親がテンプレート
+        self.assertEqual((nodes["arm_geo"], meshes["arm_geoShape"]), ("リファレンス", "リファレンス"))   # レイヤー
+        self.assertEqual((nodes["wrist"], nodes["wrist_end"]), ("テンプレート", "テンプレート"))  # オーバーライド（子も）
+        self.assertIsNone(nodes["forearm_twist"])
+        self.assertIsNone(meshes["hidden_geoShape"])
+        self.assertFalse(any("unselectable" in n for n in load_ma(PLAIN)["nodes"]))
+
+
+class TestSequencer(unittest.TestCase):
+    """カメラシーケンサ。前提: python tools/make_sequencer_sample.py"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.scene = load_ma(os.path.join(ROOT, "samples", "sequencer_sample.ma"))
+        schema.validate(cls.scene)
+        cls.shots = {s["shotName"]: s for s in cls.scene["sequencer"]["shots"]}
+
+    def cam(self, s):
+        return self.scene["cameras"][s["camera"]]["name"]
+
+    def test_shots(self):
+        self.assertEqual(sorted(self.shots), ["SH010", "SH015", "SH020", "SH030", "SH035", "SH040", "SH099"])
+        s = self.shots["SH010"]
+        self.assertEqual((s["name"], self.cam(s), s["startFrame"], s["endFrame"], s["sequenceStartFrame"], s["track"]),
+                         ("shot1", "shot_cam", 1.0, 12.0, 1.0, 1))
+        self.assertEqual(self.shots["SH015"]["track"], 2)
+        self.assertTrue(self.shots["SH099"]["mute"])
+        self.assertEqual((self.scene["sequencer"]["start"], self.scene["sequencer"]["end"]), (1.0, 49.0))
+
+    def test_sequence_end_frame(self):
+        """sequenceEndFrame = 開始 + preHold + (endFrame − startFrame) × scale + postHold"""
+        s = self.shots["SH030"]
+        self.assertEqual((s["scale"], s["preHold"], s["sequenceEndFrame"]), (2.0, 2.0, 36.0))
+
+    def test_startup_camera_of_shot_is_exported(self):
+        self.assertEqual(self.cam(self.shots["SH040"]), "persp")
+        self.assertEqual([c["name"] for c in self.scene["cameras"]], ["shot_cam", "ortho_cam", "persp"])
+
+    def test_scene_without_shots(self):
+        self.assertIsNone(load_ma(PLAIN)["sequencer"])
+
+
+class TestCharacterSets(unittest.TestCase):
+    """キャラクターセットと Trax のクリップ。前提: python tools/make_trax_sample.py"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.scene = load_ma(os.path.join(ROOT, "samples", "trax_sample.ma"), animation=True)
+        cls.anim = cls.scene["animation"]
+        schema.validate(cls.scene)
+
+    def char(self, name):
+        return next(g for g in self.anim["graph"] if g["name"] == name)
+
+    def curve_name(self, i):
+        return self.anim["curves"][i]["name"]
+
+    def test_no_unsupported_warning(self):
+        self.assertFalse(any("character" in w for w in self.anim["warnings"] + self.scene["warnings"]), self.anim["warnings"])
+
+    def test_clips(self):
+        clips = {c["name"]: c for c in self.char("character1")["trax"]["clips"]}
+        self.assertEqual(sorted(clips), ["raise1", "swing1"])
+        sw, ra = clips["swing1"], clips["raise1"]
+        self.assertEqual((sw["start"], sw["sourceStart"], sw["sourceEnd"], sw["postCycle"]), (1.0, 0.0, 10.0, 1.0))
+        self.assertEqual((ra["start"], ra["scale"], ra["track"]), (30.0, 2.0, 1.0))
+        # ソースクリップのカーブ → キャラクターの出力（angularValues[1] = shoulder.rz、linearValues[1] = box.tx）
+        self.assertEqual({k: self.curve_name(v) for k, v in sw["channels"].items()},
+                         {"av[1]": "swing_shoulder_rotateZ", "lv[1]": "swing_box_translateX"})
+        self.assertEqual({k: self.curve_name(v) for k, v in ra["channels"].items()},
+                         {"av[1]": "raise_shoulder_rotateZ", "lv[1]": "raise_box_translateX"})
+        # クリップのカーブは、キーがクリップの中の時間なので印を付ける
+        self.assertTrue(all(self.anim["curves"][v].get("trax") for v in sw["channels"].values()))
+
+    def test_members_connect_through_character(self):
+        names = [n["name"] for n in self.scene["nodes"]]
+        shoulder = next(g for g in self.anim["graph"] if g["dag"] == names.index("shoulder"))
+        self.assertEqual(shoulder["inputs"]["rz"], {"node": self.char("character1")["id"], "attr": "av[1]"})
+
+    def test_character_without_clips(self):
+        c2 = self.char("character2")
+        self.assertNotIn("trax", c2)
+        self.assertEqual(self.curve_name(c2["inputs"]["lv[0]"]["curve"]), "character2_rig_grp_translateY")
+
+
 class TestVisibilityAndCameras(unittest.TestCase):
     """リグで切り替える表示（animation.props）とシーンのカメラ（cameras）。前提: python tools/make_vis_camera_sample.py"""
 
@@ -254,6 +348,11 @@ class TestVisibilityAndCameras(unittest.TestCase):
         self.assertIn("curve", self.graph("vis_ctrl")["inputs"]["proxyVis"])
         self.assertEqual(self.graph("vis_ctrl")["attrs"]["geoVis"], 0.0)
         self.assertFalse(any("（v）" in w or "lodv" in w for w in self.anim["warnings"]))
+
+    def test_view_camera(self):
+        """保存したときに Maya のビューで見ていたカメラ（uiConfigurationScriptNode の Current Layout）"""
+        self.assertEqual(self.scene["cameras"][self.scene["viewCamera"]]["name"], "shot_cam")
+        self.assertEqual(load_ma(PLAIN)["viewCamera"], -1)        # 分からないときは -1（自由視点）
 
     def test_camera_focal_length_curve(self):
         fl = self.prop("camera", "shot_cam")["inputs"]["fl"]

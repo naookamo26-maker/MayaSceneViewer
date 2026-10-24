@@ -100,8 +100,7 @@ def main() -> int:
         run_next()
 
     def set_weights_and_pose():
-        js = ("document.getElementById('opt-weights').value='selected';"
-              "document.getElementById('opt-weights').dispatchEvent(new Event('change'));"
+        js = ("document.querySelector('#opt-weights [data-value=\"selected\"]').click();"
               "document.getElementById('pose-rz').value='40';"
               "document.getElementById('pose-rz').dispatchEvent(new Event('input'));"
               "document.getElementById('legend').hidden");
@@ -122,9 +121,10 @@ def main() -> int:
     def click_vertex():
         # ワイヤー・フラット・色分けに切り替え、腕の頂点 150 の画面位置を実際にクリックする
         js = """(()=>{
-          const set=(id,v)=>{const e=document.getElementById(id); e.value=v; e.dispatchEvent(new Event('change'));};
+          const set=(id,v)=>{document.getElementById(id).querySelector('[data-value="'+v+'"]').click();};
           set('opt-weights','all'); set('opt-shading','flat');
           document.getElementById('opt-wire').click();
+          document.querySelector('#opt-pick [data-pick="vertex"]').click();   // 頂点を選ぶ（既定はオブジェクト）
           const app=window.mayaViewer.debug.app; const m=app.built.meshes[0];
           const p=m.skinned.getVertexPosition(150, app.marker.position.clone()).applyMatrix4(m.skinned.matrixWorld);
           p.project(app.camera);

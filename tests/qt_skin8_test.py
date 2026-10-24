@@ -121,7 +121,7 @@ def main() -> int:
     def shot(name, nxt):
         if args.shot:
             os.makedirs(args.shot, exist_ok=True)
-            js("(()=>{const s=document.getElementById('opt-weights'); s.value='all'; s.dispatchEvent(new Event('change'));"
+            js("(()=>{document.querySelector('#opt-weights [data-value=\"all\"]').click();"
                "window.mayaViewer.debug.app.render(); return 1;})()",
                lambda _: (win.grab().save(os.path.join(args.shot, name)), nxt()), 400)
         else:

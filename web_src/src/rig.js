@@ -10,6 +10,7 @@
 import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { composeLocalMatrix, evaluateCurve } from './animation.js';
 import { compileExpression } from './expression.js';
+import { evaluateTrax } from './trax.js';
 import { arcLength, domain, parseNurbsCurve, pointAt, pointAtDistance, pointAtLength, polyline, withCvs } from './curve.js';
 
 const D2R = Math.PI / 180;
@@ -80,6 +81,7 @@ const OUTPUTS = {
   animBlendNodeAdditiveDL: /^o$/, animBlendNodeAdditiveDA: /^o$/, animBlendNodeAdditiveRotation: /^o[xyz]?$/, animLayer: /^fo$/,
   cluster: /^og(\[\d+\])?$/, pointOnCurveInfo: /^(p|n|t|nn|nt|cc)[xyz]?$|^cr$/,
   animCurveUA: /^(o|output)$/, animCurveUL: /^(o|output)$/, animCurveUU: /^(o|output)$/,
+  character: /^(lv|av|uv|tv)\[\d+\]$/,
   multMatrix: /^o$/, decomposeMatrix: /^o(t|r|s|sh)[xyz]?$|^oq[xyzw]?$/, composeMatrix: /^omat$/, inverseMatrix: /^omat$/,
 };
 // DAG ノードの、値が決まると行列が変わる属性
@@ -247,6 +249,7 @@ export class RigEvaluator {
       && ((g.attrs || {}).roc ?? 0) >= 0.5).map((g) => g.ik.chain[0]));
     // 時間で変わる expression（frame・time を使う式）があるか（キーがなくてもタイムラインを出す）
     this.usesTime = this.graph.some((g) => g.type === 'expression' && /\b(frame|time)\b/.test(g.expr || ''));
+    this.hasTrax = this.graph.some((g) => g.trax);          // キャラクターセットの Trax のクリップ（時間で変わる）
     this.props = clip.raw.props || [];       // 表示・カメラの属性の接続（evaluateProps）
     this.problems = new Set();               // 評価中に見つかった問題（循環など）
     this.ikVariant = null;                   // 再現チェックで試す IK の解き方の候補（ふだんは null）
@@ -724,6 +727,14 @@ export class RigEvaluator {
         break;
       }
       case 'choice': o = { o: this.plug(id, `i[${Math.round(this.num(id, 's', 0))}]`) }; break;
+      case 'character': {
+        // キャラクターセット: カーブが直接つながる属性はそのまま（plugUncached で先に返る）。
+        // Trax のクリップがあれば、いまのフレームで有効なクリップの値。なければファイルの値
+        o = {};
+        for (const [k, v] of Object.entries(g.attrs || {})) if (OUTPUTS.character.test(k)) o[k] = v;
+        if (g.trax) Object.assign(o, evaluateTrax(g.trax, this.frame, this.clip.curves, (c, v) => (c.type === 'TA' ? v * D2R : v)));
+        break;
+      }
       case 'animBlendNodeAdditiveDL': case 'animBlendNodeAdditiveDA':
         o = { o: this.num(id, 'ia', 0) * this.num(id, 'wa', 1) + this.num(id, 'ib', 0) * this.num(id, 'wb', 1) };
         break;

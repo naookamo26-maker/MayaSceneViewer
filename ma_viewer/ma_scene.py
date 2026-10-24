@@ -56,7 +56,7 @@ for _base in ("t", "r", "s", "jo", "ra", "rp", "sp", "rpt", "spt"):
     for _i, _ax in enumerate("xyz"):
         _COMPONENT_ATTRS[_base + _ax] = (_base, _i)
 _COMPONENT_ATTRS.update({"shxy": ("sh", 0), "shxz": ("sh", 1), "shyz": ("sh", 2)})
-_BOOL_ATTRS = {"v", "io", "it", "ssc", "ove", "ovv", "lodv", "ovrgbf"}
+_BOOL_ATTRS = {"v", "io", "it", "ssc", "ove", "ovv", "lodv", "ovrgbf", "tmp"}   # tmp: テンプレート
 _INT_ATTRS = {"ro", "ovc", "ovdt"}    # ovc・ovdt: 描画のオーバーライドの色番号・表示の種類
 _FLOAT_ATTRS = {"radi"}
 # ノードの種類ごとに使う属性（これ以外の setAttr は値を解析せずに読み飛ばす）

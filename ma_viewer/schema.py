@@ -138,6 +138,12 @@ def validate(scene: dict) -> List[str]:
     for i, c in enumerate(scene.get("cameras") or []):
         if not (0 <= c.get("transform", -1) < nn):
             raise SchemaError("cameras[%d] の transform が不正です" % i)
+    ncam = len(scene.get("cameras") or [])
+    if not (-1 <= scene.get("viewCamera", -1) < ncam):
+        raise SchemaError("viewCamera が範囲外です")
+    for i, sh in enumerate((scene.get("sequencer") or {}).get("shots") or []):
+        if not (-1 <= sh.get("camera", -1) < ncam):
+            raise SchemaError("sequencer.shots[%d] の camera が範囲外です" % i)
     anim = scene.get("animation")
     if anim:
         validate_animation(anim, nn)

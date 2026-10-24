@@ -195,6 +195,26 @@ def curve_display(shape: MaNode, attrs: dict):
     return None, 0
 
 
+DISPLAY_TYPE_LABELS = {1: "テンプレート", 2: "リファレンス"}
+
+
+def selectability(n: MaNode, attrs: Optional[dict] = None) -> Optional[str]:
+    """Maya のビューポートでクリックして選択できないなら、その理由（できるなら None）。
+
+    テンプレート（.template。祖先が templated でも同じ）と、表示の種類がテンプレート・リファレンスのもの
+    （ディスプレイレイヤーか描画のオーバーライド。curve_display と同じく、近い方の設定）は、ビューポートでは
+    選べない（アウトライナーからは選べる）。attrs は n 自身の属性（属性を読み飛ばしたシェイプ用。省略時は xattrs）
+    """
+    x: Optional[MaNode] = n
+    while x is not None:
+        tmp = attrs.get("tmp") if (x is n and attrs is not None) else x.xattrs.get("tmp")
+        if tmp is not None and _num(tmp) >= 0.5:
+            return "テンプレート"
+        x = x.parent
+    _color, display = curve_display(n, attrs if attrs is not None else {k: v for k, v in n.xattrs.items()})
+    return DISPLAY_TYPE_LABELS.get(display)
+
+
 def curve_shape_source(ms: MaScene, shape: MaNode, attrs: dict):
     """カーブの形（.cc の値）。保存されていなければ、変形の入力（create ← skinCluster など）をたどって元の形を使う"""
     cc = attrs.get("cc")
@@ -270,6 +290,74 @@ def collect_cameras(ms: MaScene) -> List[MaNode]:
     return out
 
 
+# カメラシーケンサのショット（shot）の属性: (読む名前の候補, 既定値)。フレームはシーンの時間の単位のまま
+_SHOT_ATTRS = {
+    "startFrame": (("sf", "startFrame"), None),
+    "endFrame": (("ef", "endFrame"), None),
+    "sequenceStartFrame": (("ssf", "sequenceStartFrame"), None),
+    "scale": (("s", "scale"), 1.0),
+    "preHold": (("prh", "preHold"), 0.0),
+    "postHold": (("psh", "postHold"), 0.0),
+    "track": (("trk", "track"), 1.0),
+    "mute": (("mt", "mute", "smt", "selfmute"), 0.0),
+}
+_SHOT_NAME_RE = re.compile(r'setAttr\s+"\.(?:sn|shotName)"\s+-type\s+"string"\s+"((?:[^"\\]|\\.)*)"')
+
+
+def shot_camera(n: MaNode) -> Optional[MaNode]:
+    """ショットのカメラ（.currentCamera ← カメラの .message）のシェイプ"""
+    src = n.inputs.get("ccm") or n.inputs.get("currentCamera")
+    if src is None:
+        return None
+    cam = src[0]
+    if cam.type != "camera":
+        cam = next((c for c in cam.children if c.type == "camera"), None)
+    return cam
+
+
+def collect_shots(ms: MaScene) -> List[MaNode]:
+    return [n for n in ms.nodes if n.type == "shot"]
+
+
+def sequencer_entry(ms: MaScene, shots: List[MaNode], camera_index: Dict[int, int]) -> Optional[dict]:
+    """共通 JSON の sequencer（カメラシーケンサ）。ショットがなければ None。
+
+    ショットはシーンの startFrame〜endFrame を、シーケンスの sequenceStartFrame から scale 倍の長さで並べる
+    （前後に preHold・postHold のフレームだけ最初・最後のフレームを保つ）。
+    """
+    from .rig import parse_attrs
+    out = []
+    text = getattr(ms, "text", "")
+    for n in shots:
+        a = parse_attrs(text, n)
+        e = {"name": n.name}
+        for key, (names, d) in _SHOT_ATTRS.items():
+            v = next((a[k] for k in names if k in a), d)
+            if isinstance(v, list):
+                v = v[0] if v else d
+            e[key] = float(v) if v is not None else None
+        if e["startFrame"] is None or e["endFrame"] is None:
+            ms.warn("%s: ショットのフレーム範囲がないため、カメラシーケンサに出しません。" % n.name)
+            continue
+        if e["sequenceStartFrame"] is None:
+            e["sequenceStartFrame"] = e["startFrame"]
+        scale = e["scale"] if abs(e["scale"]) > 1e-9 else 1.0
+        e["sequenceEndFrame"] = (e["sequenceStartFrame"] + e["preHold"] + (e["endFrame"] - e["startFrame"]) * scale
+                                 + e["postHold"])
+        e["mute"] = e["mute"] >= 0.5
+        e["track"] = int(round(e["track"]))
+        m = _SHOT_NAME_RE.search(text, *n.span) if n.span is not None and text else None
+        e["shotName"] = m.group(1) if m else n.name
+        cam = shot_camera(n)
+        e["camera"] = camera_index.get(id(cam), -1) if cam is not None else -1
+        out.append(e)
+    if not out:
+        return None
+    out.sort(key=lambda e: (e["sequenceStartFrame"], e["track"]))
+    return {"shots": out, "start": min(e["sequenceStartFrame"] for e in out),
+            "end": max(e["sequenceEndFrame"] for e in out)}
+
+
 def camera_entry(n: MaNode, t_idx: int) -> dict:
     """共通 JSON の cameras の 1 件。値は Maya の単位のまま（焦点距離 mm・フィルムバック インチ・クリップ面は長さの単位）"""
     keys = {"fl": "focalLength", "hfa": "horizontalFilmAperture", "vfa": "verticalFilmAperture",
@@ -282,6 +370,58 @@ def camera_entry(n: MaNode, t_idx: int) -> dict:
     entry["orthographic"] = _raw_num(n, "o", 0.0) >= 0.5
     entry["renderable"] = _raw_num(n, "rnd", 1.0) >= 0.5
     return entry
+
+
+_MEL_STRING_RE = re.compile(r'"((?:[^"\\]|\\.)*)"')
+_VIEW_CAMERA_RE = re.compile(r'-cam(?:era)?\s+(?:\\*"([^"\\]+)\\*"|`findStartUpCamera\s+(\w+)`)')
+
+
+def _ui_script(ms: MaScene) -> str:
+    """uiConfigurationScriptNode の MEL（.b の文字列をつないで、エスケープを 1 段戻したもの）"""
+    node = next((n for n in ms.nodes if n.type == "script" and n.name == "uiConfigurationScriptNode"
+                 and n.span is not None), None)
+    text = getattr(ms, "text", "")
+    if node is None or not text:
+        return ""
+    body = text[node.span[0]:node.span[1]]
+    m = re.search(r'setAttr\s+"\.(?:b|before)"\s+-type\s+"string"\s*\(?(.*?)\)?\s*;\s*(?:\n\s*setAttr|\Z)', body, re.S)
+    if not m:
+        return ""
+    pieces = _MEL_STRING_RE.findall(m.group(1))
+    return re.sub(r"\\(.)", lambda e: {"n": "\n", "t": "\t"}.get(e.group(1), e.group(1)), "".join(pieces), flags=re.S)
+
+
+def view_camera(ms: MaScene) -> str:
+    """保存したときに Maya のビュー（メインのパネル）で見ていたカメラの名前（分からなければ空）。
+
+    uiConfigurationScriptNode の「Current Layout」のパネル構成で、最初に置かれたモデルパネルのカメラ
+    （1 画面のレイアウトなら、それが見えているビュー）。起動時のカメラ（findStartUpCamera persp）は "persp" など。
+    """
+    mel = _ui_script(ms)
+    if not mel:
+        return ""
+    i = mel.find('"Current Layout"')
+    if i >= 0:
+        j = mel.find("-ap ", i)
+        if j >= 0:
+            m = _VIEW_CAMERA_RE.search(mel, j)
+            if m:
+                return (m.group(1) or m.group(2) or "").lstrip("|")
+    # レイアウトが分からなければ、透視ビュー（Persp View）のパネルのカメラ
+    i = mel.find('"Persp View"')
+    m = _VIEW_CAMERA_RE.search(mel, i) if i >= 0 else None
+    return (m.group(1) or m.group(2) or "").lstrip("|") if m else ""
+
+
+def camera_index_of(cameras: List[dict], name: str) -> int:
+    """カメラの名前（transform・シェイプの名前かパス）から、cameras の番号（なければ -1）"""
+    if not name:
+        return -1
+    short = name.split("|")[-1]
+    for i, c in enumerate(cameras):
+        if short in (c["name"], c["shape"]) or name in (c["path"], c["path"].rsplit("|", 1)[0]):
+            return i
+    return -1
 
 
 def render_settings(ms: MaScene) -> dict:
@@ -318,6 +458,9 @@ def curve_entry(ms: MaScene, n: MaNode, a: dict, t_idx: int) -> Optional[dict]:
         "color": schema.round_list(color) if color else None,
         "display": display,
     }
+    why = selectability(n, a)
+    if why:
+        entry["unselectable"] = why           # Maya のビューポートでは選択できない（テンプレート・リファレンス）
     if tweaks:
         entry["tweaks"] = sorted(tweaks)
     if from_input:
@@ -982,8 +1125,13 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     curve_shapes = collect_curves(ms)
     for n, _a in curve_shapes:
         keep_chain(n.parent)
-    # シーンのカメラ（起動時からある persp・top・front・side は除く）
+    # シーンのカメラ（起動時からある persp・top・front・side は除く。カメラシーケンサのショットのカメラは出す）
     camera_shapes = collect_cameras(ms)
+    shots = collect_shots(ms)
+    for sh in shots:                    # ショットのカメラは、起動時のカメラ（persp など）でも出す
+        cam = shot_camera(sh)
+        if cam is not None and cam.parent is not None and cam not in camera_shapes:
+            camera_shapes.append(cam)
     for n in camera_shapes:
         keep_chain(n.parent)
     # リグ（コンストレイント・IK・計算ノード）の評価に必要なコントローラーなども出力する。
@@ -1124,6 +1272,9 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             "visible": _visible_self(x),
             "attrs": {k: (schema.round_list(v) if isinstance(v, list) else v) for k, v in attrs.items()},
         }
+        why = selectability(x)
+        if why:
+            entry["unselectable"] = why     # Maya のビューポートでは選択できない（テンプレート・リファレンス）
         if x.type == "joint":
             entry["segmentScaleCompensate"] = x.flag("ssc", True)
         if id(x) in bind_local:
@@ -1198,6 +1349,9 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             "faceMaterials": face_mats if len(set(face_mats)) > 1 else None,
             "skin": None,
         }
+        why = selectability(n)
+        if why:
+            entry["unselectable"] = why
         if skin_node is not None:
             lap("メッシュ（その他）")
             entry["skin"] = _build_skin(ms, ctx, n, skin_node, len(pos) // 3, index_of)
@@ -1245,6 +1399,8 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         "meshes": out_meshes,
         "curves": out_curves,
         "cameras": out_cameras,
+        "viewCamera": camera_index_of(out_cameras, view_camera(ms)),
+        "sequencer": sequencer_entry(ms, shots, camera_index),
         "render": render_settings(ms),
         "materials": mb.materials,
         "textures": mb.textures,

@@ -79,7 +79,9 @@ def main() -> int:
                     check(sorted(s["hidden"]) == ["boxShape", "hidden_geoShape"],
                           "フレーム 1: コントローラーの属性で隠れる箱は非表示、腕は表示: %s" % s["hidden"])
                     check(s["cameras"] == ["shot_cam", "ortho_cam"], "シーンのカメラ: %s" % s["cameras"])
-                    nxt()
+                    check(s["view"] == "shot_cam" and s["gate"],
+                          "保存したときに Maya のビューで見ていたカメラ（shot_cam）から表示する: %s" % s["view"])
+                    js(key("C", True), lambda _: nxt())          # 以降は自由視点から
                 else:
                     QtCore.QTimer.singleShot(200, poll)
             state(got)
@@ -112,6 +114,27 @@ def main() -> int:
             check(s["view"] is None and not s["gate"], "Shift+C で自由視点に戻す")
             nxt()
         js(key("c"), lambda _: state(cam1))
+
+    def s_camera_menu(nxt):
+        """［カメラ］を開いて、カメラの名前を押す（2 クリック）だけで切り替わり、メニューは閉じる"""
+        target = win.viewer.view.focusProxy() or win.viewer.view
+
+        def click(x, y):
+            QtTest.QTest.mouseClick(target, QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.KeyboardModifier.NoModifier,
+                                    QtCore.QPoint(int(x), int(y)))
+
+        center = ("JSON.stringify((() => { const r = document.querySelector(%s).getBoundingClientRect();"
+                  " return [r.x + r.width / 2, r.y + r.height / 2]; })())")
+
+        def opened(_):
+            js(center % "'#opt-camera [data-value=\"1\"]'", lambda p: (click(*p), QtCore.QTimer.singleShot(300, lambda: state(done))))
+
+        def done(s):
+            js("document.getElementById('menu-camera').hidden", lambda hidden: (
+                check(s["view"] == "ortho_cam" and hidden is True,
+                      "［カメラ］→ カメラの名前の 2 クリックで切り替わり、メニューが閉じる: %s" % s["view"]),
+                js(key("C", True), lambda _: nxt())))
+        js(center % "'.menu-btn[aria-controls=\"menu-camera\"]'", lambda p: (click(*p), QtCore.QTimer.singleShot(300, lambda: opened(None))))
 
     def s_bind_key(nxt):
         js(key("b"), lambda _: state(lambda s: (
@@ -148,7 +171,7 @@ def main() -> int:
            lambda r: (check(r["n"] == 3 and r["red"], "グリッドの原点の線は軸の色（3 色・X 軸は赤系）: %s" % r), nxt()))
 
     win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(200, lambda: run(
-        [s_open, s_frame, s_camera, s_bind_key, s_inert, s_grid,
+        [s_open, s_frame, s_camera, s_camera_menu, s_bind_key, s_inert, s_grid,
          lambda _: (win.a_anim.setChecked(load_setting), app.quit())])))
     QtCore.QTimer.singleShot(90000, lambda: (print("NG タイムアウト"), ok.update(v=False), app.quit()))
     app.exec()

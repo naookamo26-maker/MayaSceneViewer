@@ -14,6 +14,8 @@
   "meshes": [ ... ],
   "curves": [ ... ],
   "cameras": [ ... ],
+  "viewCamera": 0,
+  "sequencer": { "start": 1, "end": 49, "shots": [ ... ] },
   "render": { "width": 1920, "height": 1080, "deviceAspectRatio": 1.778 },
   "materials": [ ... ],
   "textures": [ ... ],
@@ -44,6 +46,7 @@ transform・joint などの変換ノードです。**親は必ず子より前に
 | `bindSource` | bindMatrix の情報源: `pm`（skinCluster の .pm）・`dagPose`・`bps`（ジョイントの .bps） |
 | `drivenBy` | 移動・回転などが接続で決まっている場合の接続元（例: `r ← uc1（unitConversion）`）。この場合 .ma に値がないため、matrix はバインドポーズの姿勢（bindMatrix があれば）か既定値になる |
 | `visible` | 自身の表示状態 |
+| `unselectable` | Maya のビューポートで選択できないとき、その理由（`テンプレート`・`リファレンス`）。テンプレート（.template。祖先も含む）と、描画のオーバーライドかディスプレイレイヤーの表示の種類（近い方の設定）から決める。meshes・curves も同じ |
 | `attrs` | 表示用の値。`t`、`r`（度）、`s`、`jo`（度、joint のみ）、`ro`（`"xyz"` など） |
 
 ## meshes
@@ -111,6 +114,23 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 | `nearClipPlane` / `farClipPlane` | クリップ面（長さの単位） |
 | `orthographic` / `orthographicWidth` | 平行投影か、そのときの見える幅（長さの単位） |
 | `lensSqueezeRatio` / `cameraScale` / `renderable` | レンズのスクイーズ比・カメラのスケール・レンダー可能か |
+
+## viewCamera
+
+保存したときに Maya のビュー（メインのパネル）で見ていたカメラの、cameras の番号です。ビューアは読み込んだときにそのカメラから表示します。persp などの起動時のカメラや、分からないときは -1（自由視点）。.ma では uiConfigurationScriptNode の「Current Layout」のパネル構成で、最初に置かれたモデルパネルのカメラ（`-cam`）を使います。Maya 内からの抽出では、作業中のモデルパネルのカメラです。
+
+## sequencer
+
+カメラシーケンサのショット（なければ null）。`start` / `end` はシーケンスの範囲。
+
+| キー（shots の各要素） | 内容 |
+|---|---|
+| `name` / `shotName` | shot ノードの名前と、ショット名（.sn） |
+| `camera` | ショットのカメラ（.currentCamera）の cameras の番号（-1 はなし）。起動時のカメラでも cameras に入れる |
+| `startFrame` / `endFrame` | シーンのフレーム範囲 |
+| `sequenceStartFrame` / `sequenceEndFrame` | シーケンス上の範囲。終わりは 開始 + preHold + (endFrame − startFrame) × scale + postHold |
+| `scale` / `preHold` / `postHold` | シーンの範囲に掛ける倍率と、前後に最初・最後のフレームを保つフレーム数 |
+| `track` / `mute` | トラックの番号（1 が一番上の段。重なるときは番号の小さい方を使う）とミュート |
 
 ## render
 
@@ -206,6 +226,7 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 | `shape` | nurbsCurve が表示するカーブのとき、そのトップレベルの curves の番号（inputs の `curve` が指す animation.curves とは別） |
 | `expr` | expression の式（.ixp。.I[n]・.O[n] で入出力を参照する）。出力は `out[n]`、入力は `inputs` の `in[n]`。時間（.tim）はつながず、ビューアのフレームから求める。解釈できない書き方（MEL コマンド・文字列・ベクトル・未対応の関数・.I/.O 以外の属性）を含む式は graph に入れず、未対応のノードとして警告し、つながるノードを fallback・tainted に回す（判定は `ma_viewer/expression.py`、評価は `web_src/src/expression.js`） |
 | `curve` | ドリブンキー（animCurveUA・UL・UU）のとき、animation.curves の番号。入力は `inputs` の `i` |
+| `trax` | キャラクターセット（character）の Trax のクリップ `{"clips": [...]}`。各クリップは `start`・`sourceStart`・`sourceEnd`・`scale`・`weight`・`preCycle`・`postCycle`・`hold`・`enable`・`track`・`absolute` と、`channels`（キャラクターの出力の属性 `lv[i]`・`av[i]`・`uv[i]`・`tv[i]` → animation.curves の番号）。キャラクターの出力は、カーブが直接つながる属性（`inputs`）はそのまま、ほかはそのフレームで有効なクリップの値。クリップのカーブは animation.curves で `"trax": true`（キーがクリップの中の時間なので、再生範囲・キーの印には使わない） |
 | `geom` | wire・cluster が変形するカーブの transform（`{"出力の番号 k": nodes の番号}`）。ワイヤー（`dw[i]`）・ベースワイヤー（`bw[i]`）はワールド空間なので、カーブをこの行列でワールドへ移して変形し、戻す。CV のウェイトは attrs の `wl[k].w[v]`（なければ 1）。cluster は attrs の `gm[k]` があればそちらを使う |
 | `skin` | カーブを動かす skinCluster のウェイト `[[CV の番号, インフルエンスの論理番号, 値], …]`、`pm`（論理番号 → 16 要素）、`gm`。インフルエンスは `inputs` の `ma[i]` |
 

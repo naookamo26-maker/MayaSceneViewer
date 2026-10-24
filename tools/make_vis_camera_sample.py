@@ -11,10 +11,12 @@ samples/sample_arm.ma に、次のものを足したもの（再生範囲 1〜24
   * shot_cam: 透視投影のカメラ（焦点距離にキー: 1 → 35mm、24 → 85mm。フィルムバック 36×24mm 相当・フィルムフィット水平）
   * ortho_cam: 平行投影のカメラ（真上から。orthographicWidth 40）
   * レンダーの解像度（defaultResolution）: 1920×1080
+  * 保存したときの Maya のビュー（uiConfigurationScriptNode の Current Layout）: shot_cam から見ていた
 """
 from __future__ import annotations
 
 import os
+import re
 import sys
 import zlib
 
@@ -42,6 +44,15 @@ def main():
     body, tail = (text[:end], text[end:]) if end >= 0 else (text, "")
     body = body.replace('//Name: sample_arm.ma', '//Name: vis_camera_sample.ma')
 
+    # Maya が書き出す画面構成のスクリプト（1 画面のレイアウトで、透視ビューのパネルから shot_cam を見ている）
+    ui = r'''createNode script -n "uiConfigurationScriptNode";
+	setAttr ".b" -type "string" (
+		"// Maya Mel UI Configuration File.\n//\n\nglobal string $gMainPane;\nif (`paneLayout -exists $gMainPane`) {\n\t$panelName = `sceneUIReplacement -getNextPanel \"modelPanel\" (localizedPanelLabel(\"Top View\")) `;\n\tif (\"\" != $panelName) {\n        modelEditor -e \n            -camera \"|top\" \n\t}\n"
+		+ "\t\tpanelConfiguration -edit -label (localizedPanelLabel(\"Current Layout\")) \n\t\t\t-userCreated false\n\t\t\t-configString \"global string $gMainPane; paneLayout -e -cn \\\"single\\\" -ps 1 100 100 $gMainPane;\"\n\t\t\t-removeAllPanels\n\t\t\t-ap false\n\t\t\t\t(localizedPanelLabel(\"Persp View\")) \n\t\t\t\t\"modelPanel\"\n"
+		+ "\t\t\t\t\"$panelName = `modelPanel -unParent -l (localizedPanelLabel(\\\"Persp View\\\")) -mbv $menusOkayInPanels `;\\n$editorName = $panelName;\\nmodelEditor -e \\n    -cam \\\"|shot_cam\\\" \\n\"\n"
+		+ "\t\t\t\t$configName;\n}\n");
+	setAttr ".st" 3;'''
+    body = re.sub(r'createNode script -n "uiConfigurationScriptNode";.*?setAttr ".st" 3;', lambda _m: ui, body, count=1, flags=re.S)
     out = [
         'createNode script -n "sceneConfigurationScriptNode";',
         '\tsetAttr ".b" -type "string" "playbackOptions -min 1 -max 24 -ast 1 -aet 24 ";',

@@ -1662,8 +1662,11 @@ createNode mesh -n "history_geoShape" -p "history_geo";
 createNode lightLinker -s -n "lightLinker1";
 	setAttr -s 2 ".lnk";
 createNode script -n "uiConfigurationScriptNode";
-	setAttr ".b" -type "string" ("// Maya Mel UI Configuration File.\n// x; y //\n"
-		+ "if (`panel -q -exists $p`) {; print \"a;b\"; }\n");
+	setAttr ".b" -type "string" (
+		"// Maya Mel UI Configuration File.\n//\n\nglobal string $gMainPane;\nif (`paneLayout -exists $gMainPane`) {\n\t$panelName = `sceneUIReplacement -getNextPanel \"modelPanel\" (localizedPanelLabel(\"Top View\")) `;\n\tif (\"\" != $panelName) {\n        modelEditor -e \n            -camera \"|top\" \n\t}\n"
+		+ "\t\tpanelConfiguration -edit -label (localizedPanelLabel(\"Current Layout\")) \n\t\t\t-userCreated false\n\t\t\t-configString \"global string $gMainPane; paneLayout -e -cn \\\"single\\\" -ps 1 100 100 $gMainPane;\"\n\t\t\t-removeAllPanels\n\t\t\t-ap false\n\t\t\t\t(localizedPanelLabel(\"Persp View\")) \n\t\t\t\t\"modelPanel\"\n"
+		+ "\t\t\t\t\"$panelName = `modelPanel -unParent -l (localizedPanelLabel(\\\"Persp View\\\")) -mbv $menusOkayInPanels `;\\n$editorName = $panelName;\\nmodelEditor -e \\n    -cam \\\"|shot_cam\\\" \\n\"\n"
+		+ "\t\t\t\t$configName;\n}\n");
 	setAttr ".st" 3;
 createNode polySphere -n "polySphere1";
 	setAttr ".sa" 12;

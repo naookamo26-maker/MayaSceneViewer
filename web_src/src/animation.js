@@ -104,7 +104,7 @@ export function prepareCurve(meta, times, values, types, fixedOf) {
     }
   }
   return {
-    name: meta.name, type: meta.type, n, t, v, inSlope, outSlope, inW, outW, step, weighted,
+    name: meta.name, type: meta.type, trax: !!meta.trax, n, t, v, inSlope, outSlope, inW, outW, step, weighted,
     pre: meta.pre || 0, post: meta.post || 0, last: 0,
   };
 }
@@ -247,7 +247,8 @@ export class AnimationClip {
     for (let i = 0; i + 4 < fixed.length; i += 5) fixedOf.set(fixed[i], [fixed[i + 1], fixed[i + 2], fixed[i + 3], fixed[i + 4]]);
     this.curves = (anim.curves || []).map((c) => prepareCurve(c, times, values, types, fixedOf));
     // 時間のカーブ（ドリブンキー UA・UL・UU を除く。キーの目盛りとタイムラインに使う）
-    this.timeCurves = this.curves.filter((c) => !c.type || c.type[0] === 'T');
+    // 時間で引くカーブ（Trax のクリップのカーブは、キーがクリップの中の時間なので除く）
+    this.timeCurves = this.curves.filter((c) => (!c.type || c.type[0] === 'T') && !c.trax);
     this.warnings = (anim.warnings || []).slice();
     // ノードごとの材料と、動かす属性
     const byNode = new Map();

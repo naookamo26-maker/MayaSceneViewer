@@ -230,6 +230,9 @@ class _Extractor:
             "visible": bool(cmds.getAttr(path + ".visibility")),
             "attrs": attrs,
         }
+        why = _selectability(path)
+        if why:
+            entry["unselectable"] = why
         if ntype == "joint":
             entry["segmentScaleCompensate"] = bool(cmds.getAttr(path + ".segmentScaleCompensate"))
             try:
@@ -256,6 +259,50 @@ class _Extractor:
         entry["orthographic"] = bool(g("orthographic"))
         entry["renderable"] = bool(g("renderable"))
         self.cameras.append(entry)
+
+    def _sequencer(self) -> Optional[dict]:
+        """カメラシーケンサのショット（共通 JSON の sequencer。extract_ma.sequencer_entry と同じ形）"""
+        try:
+            shots = cmds.ls(type="shot") or []
+        except Exception:  # noqa: BLE001
+            return None
+        out = []
+        for sh in shots:
+            try:
+                g = lambda a: cmds.getAttr(sh + "." + a)  # noqa: E731
+                e = {"name": sh, "shotName": cmds.getAttr(sh + ".shotName") or sh,
+                     "startFrame": float(g("startFrame")), "endFrame": float(g("endFrame")),
+                     "sequenceStartFrame": float(g("sequenceStartFrame")), "sequenceEndFrame": float(g("sequenceEndFrame")),
+                     "scale": float(g("scale")), "preHold": float(g("preHold")), "postHold": float(g("postHold")),
+                     "track": int(g("track")), "mute": bool(cmds.shot(sh, query=True, mute=True))}
+                cam = cmds.shot(sh, query=True, currentCamera=True) or ""
+            except Exception as exc:  # noqa: BLE001
+                self.warn("ショット %s を取得できませんでした: %s" % (sh, exc))
+                continue
+            cam_long = (cmds.ls(cam, long=True) or [cam])[0] if cam else ""
+            e["camera"] = next((i for i, c in enumerate(self.cameras)
+                                if cam_long and cam_long in (c["path"], c["path"].rsplit("|", 1)[0])), -1)
+            out.append(e)
+        if not out:
+            return None
+        out.sort(key=lambda e: (e["sequenceStartFrame"], e["track"]))
+        return {"shots": out, "start": min(e["sequenceStartFrame"] for e in out),
+                "end": max(e["sequenceEndFrame"] for e in out)}
+
+    def _view_camera(self) -> int:
+        """Maya で作業中のビュー（モデルパネル）のカメラの、cameras の番号（起動時のカメラなどは -1）"""
+        try:
+            panel = cmds.getPanel(withFocus=True)
+            if not panel or cmds.getPanel(typeOf=panel) != "modelPanel":
+                panel = cmds.playblast(activeEditor=True)
+            cam = cmds.modelEditor(panel, query=True, camera=True) or ""
+            cam_long = (cmds.ls(cam, long=True) or [cam])[0]
+        except Exception:  # noqa: BLE001  ビューがない（バッチ）など
+            return -1
+        for i, c in enumerate(self.cameras):
+            if cam_long in (c["path"], c["path"].rsplit("|", 1)[0]):
+                return i
+        return -1
 
     @staticmethod
     def _render_settings() -> dict:
@@ -309,7 +356,9 @@ class _Extractor:
         if fn_skin is not None:
             skin = self._skin_data(name, sc_name, fn_skin, dag, nv)
 
+        why = _selectability(full)
         self.meshes.append({
+            **({"unselectable": why} if why else {}),
             "name": name,
             "path": full,
             "transform": t_idx,
@@ -588,6 +637,8 @@ class _Extractor:
             "nodes": self.nodes,
             "meshes": self.meshes,
             "cameras": self.cameras,
+            "viewCamera": self._view_camera(),
+            "sequencer": self._sequencer(),
             "render": self._render_settings(),
             "materials": self.materials,
             "textures": self.textures,
@@ -607,6 +658,30 @@ class _Extractor:
                 "drivenNodes": 0,
             },
         }
+
+
+_DISPLAY_TYPE_LABELS = {1: "テンプレート", 2: "リファレンス"}
+
+
+def _selectability(path: str) -> Optional[str]:
+    """Maya のビューポートで選択できないなら、その理由（extract_ma.selectability と同じ考え方）"""
+    try:
+        x = path
+        while x:
+            if cmds.attributeQuery("template", node=x, exists=True) and cmds.getAttr(x + ".template"):
+                return "テンプレート"
+            x = x.rsplit("|", 1)[0]
+        x = path
+        while x:
+            layers = cmds.listConnections(x + ".drawOverride", source=True, destination=False, type="displayLayer") or []
+            if layers and cmds.getAttr(layers[0] + ".enabled"):
+                return _DISPLAY_TYPE_LABELS.get(int(cmds.getAttr(layers[0] + ".displayType")))
+            if cmds.getAttr(x + ".overrideEnabled"):
+                return _DISPLAY_TYPE_LABELS.get(int(cmds.getAttr(x + ".overrideDisplayType")))
+            x = x.rsplit("|", 1)[0]
+    except Exception:  # noqa: BLE001  属性がない・偽の Maya など
+        return None
+    return None
 
 
 def _unique(paths):
@@ -650,10 +725,21 @@ def _collect_cameras(selection_only: bool) -> List[str]:
             cams += cmds.listRelatives(s, allDescendents=True, fullPath=True, type="camera") or []
     else:
         cams = cmds.ls(type="camera", long=True) or []
+    shot_cams = set()
+    if not selection_only:
+        try:
+            for sh in cmds.ls(type="shot") or []:
+                cam = cmds.shot(sh, query=True, currentCamera=True)
+                shapes = cmds.listRelatives(cam, shapes=True, fullPath=True, type="camera") if cam else None
+                shot_cams.update(shapes or (cmds.ls(cam, long=True) if cam else []))
+        except Exception:  # noqa: BLE001
+            pass
+        cams = list(cams) + sorted(shot_cams)
     out = []
     for c in _unique(cams):
         try:
-            if cmds.getAttr(c + ".intermediateObject") or cmds.camera(c, query=True, startupCamera=True):
+            if cmds.getAttr(c + ".intermediateObject") or (
+                    c not in shot_cams and cmds.camera(c, query=True, startupCamera=True)):
                 continue
         except (RuntimeError, ValueError, AttributeError):
             continue

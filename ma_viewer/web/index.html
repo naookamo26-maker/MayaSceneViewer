@@ -20,6 +20,8 @@
         <button class="icon-btn" data-tool="rotate" aria-pressed="false" aria-label="回転" title="回転（E）"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 5.5A5 5 0 1 0 13 9"/><path d="M13 2.5v3h-3"/></svg></button>
         <button class="icon-btn" data-tool="scale" aria-pressed="false" aria-label="スケール" title="スケール（R）"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="7" height="7"/><path d="M8 8 13.5 2.5M10 2.5h3.5V6"/></svg></button>
       </div>
+      <div class="seg" id="opt-pick" role="group" aria-label="選択の対象"><button class="icon-btn" data-pick="object" aria-pressed="true" aria-label="オブジェクトを選択" title="オブジェクトを選択（F8 で頂点と切り替え）"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.2 13.5 5v6L8 13.8 2.5 11V5Z"/><path d="M2.5 5 8 7.8 13.5 5M8 7.8v6"/></svg></button><button class="icon-btn" data-pick="vertex" aria-pressed="false" aria-label="頂点を選択" title="頂点を選択してウェイトを表示（F8 でオブジェクトと切り替え）"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12.5 8 3.5l5 9Z" opacity=".55"/><circle cx="3" cy="12.5" r="1.6" fill="currentColor"/><circle cx="8" cy="3.5" r="1.6" fill="currentColor"/><circle cx="13" cy="12.5" r="1.6" fill="currentColor"/></svg></button></div>
+      <button class="icon-btn" id="opt-pick-all" aria-pressed="false" aria-label="選択の制限を無視" title="Maya のビューポートで選択できないもの（テンプレート・リファレンス）も、クリックで選択する"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7.5" width="10" height="6.5" rx="1"/><path d="M5.5 7.5V5a2.5 2.5 0 0 1 4.9-.7"/></svg></button>
       <button class="icon-btn" id="opt-space" aria-pressed="false" aria-label="ハンドルをワールドの向きにする" title="ハンドルの向き: オンでワールド、オフでローカル（スケールは常にローカル）"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c-2 2-2 9 0 11M8 2.5c2 2 2 9 0 11"/></svg></button>
       <button class="icon-btn" id="btn-undo" aria-label="元に戻す" title="元に戻す（Ctrl+Z / Z）" disabled><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 3.5 2.5 6.5l3 3"/><path d="M3 6.5h7a3.5 3.5 0 0 1 0 7H7"/></svg></button>
       <button class="icon-btn" id="btn-redo" aria-label="やり直す" title="やり直す（Ctrl+Y / Shift+Z）" disabled><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="m10.5 3.5 3 3-3 3"/><path d="M13 6.5H6a3.5 3.5 0 0 0 0 7h3"/></svg></button>
@@ -37,29 +39,28 @@
     </div>
     <span class="tb-sep" aria-hidden="true"></span>
     <div class="tb-group menus">
+      <!-- メニューは「開く → 選ぶ」の 2 クリックで済むよう、選択肢を直接押せるボタンで並べる -->
       <div class="menu">
         <button class="menu-btn" aria-haspopup="true" aria-expanded="false" aria-controls="menu-view">表示 <span class="state" id="menu-view-state"></span><svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M1 2.5 4 5.5 7 2.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></button>
         <div class="menu-panel" id="menu-view" hidden>
-          <div class="menu-row"><label for="opt-shading">シェーディング</label>
-            <select id="opt-shading" title="4: なし / 5: スムーズ"><option value="smooth">スムーズ</option><option value="flat">フラット</option><option value="none">なし（ワイヤーのみ）</option></select></div>
-          <div class="menu-row"><label for="opt-lighting">ライト</label>
-            <select id="opt-lighting" title="フラット: ライトの影響をなくし、テクスチャやマテリアルの色をそのまま表示（Maya のフラットライト）"><option value="standard">標準</option><option value="flat">フラット（ライトなし）</option></select></div>
+          <p class="menu-label">シェーディング</p>
+          <div class="choices row" id="opt-shading" role="radiogroup" aria-label="シェーディング" data-setting="shading" title="4: ワイヤーのみ / 5: スムーズ"><button type="button" role="radio" aria-checked="false" data-value="smooth">スムーズ</button><button type="button" role="radio" aria-checked="false" data-value="flat">フラット</button><button type="button" role="radio" aria-checked="false" data-value="none">ワイヤーのみ</button></div>
+          <p class="menu-label">ライト</p>
+          <div class="choices row" id="opt-lighting" role="radiogroup" aria-label="ライト" data-setting="lighting" title="フラット: ライトの影響をなくし、テクスチャやマテリアルの色をそのまま表示（Maya のフラットライト）"><button type="button" role="radio" aria-checked="false" data-value="standard">標準</button><button type="button" role="radio" aria-checked="false" data-value="flat">フラット（ライトなし）</button></div>
           <div class="menu-sep"></div>
-          <div class="menu-row"><label for="opt-axes">ジョイントの軸</label>
-            <select id="opt-axes"><option value="none">表示しない</option><option value="selected" selected>選択中のみ</option><option value="all">すべて</option></select></div>
+          <p class="menu-label">ジョイントの軸</p>
+          <div class="choices row" id="opt-axes" role="radiogroup" aria-label="ジョイントの軸" data-setting="axes"><button type="button" role="radio" aria-checked="false" data-value="none">表示しない</button><button type="button" role="radio" aria-checked="false" data-value="selected">選択中のみ</button><button type="button" role="radio" aria-checked="false" data-value="all">すべて</button></div>
           <div class="menu-row"><label for="opt-jsize">ジョイントの大きさ</label>
             <input type="range" id="opt-jsize" min="0.2" max="4" step="0.1" value="1"></div>
+          <div class="menu-sep"></div>
+          <label class="check"><input type="checkbox" id="opt-hud" checked> 再生のフレームレートを表示（ヘッドアップディスプレイ）</label>
         </div>
       </div>
       <div class="menu">
         <button class="menu-btn" aria-haspopup="true" aria-expanded="false" aria-controls="menu-maps">マップ <span class="state" id="menu-maps-state"></span><svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M1 2.5 4 5.5 7 2.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></button>
         <div class="menu-panel" id="menu-maps" hidden>
-          <div class="menu-row"><label for="opt-map-view">表示</label>
-            <select id="opt-map-view">
-              <option value="combined">合成（PBR）</option><option value="baseColor">ベースカラーのみ</option><option value="normal">法線マップのみ</option>
-              <option value="roughness">ラフネスのみ</option><option value="metalness">メタリックのみ</option><option value="ao">AO のみ</option>
-              <option value="emissive">エミッシブのみ</option><option value="opacity">不透明度のみ</option>
-            </select></div>
+          <p class="menu-label">表示</p>
+          <div class="choices grid" id="opt-map-view" role="radiogroup" aria-label="マップの表示" data-setting="mapView"><button type="button" role="radio" aria-checked="false" data-value="combined">合成（PBR）</button><button type="button" role="radio" aria-checked="false" data-value="baseColor">ベースカラー</button><button type="button" role="radio" aria-checked="false" data-value="normal">法線</button><button type="button" role="radio" aria-checked="false" data-value="roughness">ラフネス</button><button type="button" role="radio" aria-checked="false" data-value="metalness">メタリック</button><button type="button" role="radio" aria-checked="false" data-value="ao">AO</button><button type="button" role="radio" aria-checked="false" data-value="emissive">エミッシブ</button><button type="button" role="radio" aria-checked="false" data-value="opacity">不透明度</button></div>
           <fieldset id="map-toggles" class="map-toggles">
             <legend>合成に使うマップ</legend>
             <label><input type="checkbox" data-map="normal" checked> 法線</label>
@@ -71,18 +72,18 @@
           </fieldset>
           <label class="check"><input type="checkbox" id="opt-normal-flip"> 法線マップの緑を反転（DirectX 形式）</label>
           <div class="menu-sep"></div>
-          <div class="menu-row"><label for="opt-alpha">アルファの透過</label>
-            <select id="opt-alpha"><option value="material">マテリアルの設定に従う</option><option value="all">アルファのある画像すべて</option><option value="none">透過しない</option></select></div>
-          <div class="menu-row"><label for="opt-alpha-style">透過の方式</label>
-            <select id="opt-alpha-style"><option value="cutout">切り抜き</option><option value="blend">半透明</option></select></div>
+          <p class="menu-label">アルファの透過</p>
+          <div class="choices list" id="opt-alpha" role="radiogroup" aria-label="アルファの透過" data-setting="alpha"><button type="button" role="radio" aria-checked="false" data-value="material">マテリアルに従う</button><button type="button" role="radio" aria-checked="false" data-value="all">アルファのある画像すべて</button><button type="button" role="radio" aria-checked="false" data-value="none">透過しない</button></div>
+          <p class="menu-label">透過の方式</p>
+          <div class="choices row" id="opt-alpha-style" role="radiogroup" aria-label="透過の方式" data-setting="alphaStyle"><button type="button" role="radio" aria-checked="false" data-value="cutout">切り抜き</button><button type="button" role="radio" aria-checked="false" data-value="blend">半透明</button></div>
           <p class="muted small">ベースカラー・法線以外は、オンにしたときに読み込みます。単独表示はライトの影響なしで、マップの値をそのまま表示します。</p>
         </div>
       </div>
       <div class="menu">
         <button class="menu-btn" aria-haspopup="true" aria-expanded="false" aria-controls="menu-camera">カメラ <span class="state" id="menu-camera-state"></span><svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M1 2.5 4 5.5 7 2.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></button>
-        <div class="menu-panel" id="menu-camera" hidden>
-          <div class="menu-row"><label for="opt-camera">視点</label>
-            <select id="opt-camera" title="シーンのカメラから見る（C: 次のカメラ / Shift+C: 自由視点に戻す）"><option value="-1">自由視点（パース）</option></select></div>
+        <div class="menu-panel" id="menu-camera" hidden data-close-on-pick>
+          <div class="choices list" id="opt-camera" role="radiogroup" aria-label="視点" data-setting="camera" title="C: 次のカメラ / Shift+C: 自由視点に戻す"><button type="button" role="radio" aria-checked="true" data-value="-1">自由視点（パース）</button></div>
+          <div class="menu-sep"></div>
           <label class="check"><input type="checkbox" id="opt-camera-icons" checked> シーンのカメラを表示（形と視野）</label>
           <label class="check"><input type="checkbox" id="opt-camera-gate" checked> 解像度ゲートの外側を暗くする</label>
           <p class="muted small" id="camera-note">カメラから見ている間は、ドラッグでの視点操作はできません（自由視点に戻すと操作できます）。焦点距離・フィルムバック・フィルムフィット・クリップ面・平行投影を再現します。</p>
@@ -90,9 +91,8 @@
       </div>
       <div class="menu">
         <button class="menu-btn" aria-haspopup="true" aria-expanded="false" aria-controls="menu-weights">ウェイト <span class="state" id="menu-weights-state"></span><svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M1 2.5 4 5.5 7 2.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></button>
-        <div class="menu-panel" id="menu-weights" hidden>
-          <div class="menu-row"><label for="opt-weights">表示</label>
-            <select id="opt-weights"><option value="off">表示しない</option><option value="selected">選択ジョイントのヒートマップ</option><option value="all">インフルエンスごとに色分け</option></select></div>
+        <div class="menu-panel" id="menu-weights" hidden data-close-on-pick>
+          <div class="choices list" id="opt-weights" role="radiogroup" aria-label="ウェイトの表示" data-setting="weightMode"><button type="button" role="radio" aria-checked="false" data-value="off">表示しない</button><button type="button" role="radio" aria-checked="false" data-value="selected">選択ジョイントのヒートマップ</button><button type="button" role="radio" aria-checked="false" data-value="all">インフルエンスごとに色分け</button></div>
           <p class="muted small">ウェイトは変形時に常に正規化します（合計が 0 の頂点は、skinCluster の「ウェイトの分配」に合わせて割り当て）。</p>
         </div>
       </div>
@@ -132,6 +132,7 @@
     <canvas id="canvas"></canvas>
     <div id="cam-gate" hidden><i class="g-top"></i><i class="g-bottom"></i><i class="g-left"></i><i class="g-right"></i><span class="g-frame"></span></div>
     <div id="vp-title"></div>
+    <div id="vp-hud" hidden role="status" aria-live="off" title="再生中に実際に表示できたフレーム数（1 秒あたり）と、シーンのフレームレート"></div>
     <div id="legend" hidden></div>
     <div id="vp-hint">左ドラッグ: 回転　中ドラッグ: 移動　右ドラッグ・ホイール: ズーム　クリック: 選択</div>
     <div id="timeline" role="group" aria-label="タイムライン" hidden>
@@ -170,10 +171,36 @@
     <div id="error" class="overlay-msg error" role="alert" hidden></div>
   </main>
 
+  <!-- カメラシーケンサ（シーンにショットがあるときだけ表示する、ビューポートの上のパネル）。
+       再生ボタンなどの操作の行はパネルの下側に置き、ツールバーのボタンとも、下端のタイムラインとも離す -->
+  <section id="sequencer" aria-label="カメラシーケンサ" hidden>
+    <div class="seq-body">
+      <div class="seq-ruler-row"><span class="seq-track-label"></span><div id="seq-ruler"></div></div>
+      <div id="seq-rows"></div>
+      <div id="seq-lanes" title="クリック・ドラッグ: シーケンスのフレームを移動"><div id="seq-playhead"></div></div>
+    </div>
+    <div class="seq-head">
+      <button class="collapse-btn" id="seq-collapse" aria-expanded="true" aria-controls="sequencer" title="カメラシーケンサを最小化">▴</button>
+      <span class="seq-title">カメラシーケンサ</span>
+      <div class="tl-btns" role="group" aria-label="シーケンスの操作">
+        <button class="icon-btn" id="seq-first" aria-label="シーケンスの先頭" title="シーケンスの先頭"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><rect x="1.5" y="3" width="1.5" height="8"/><path d="M8 3v8L3.5 7Z"/><path d="M12.5 3v8L8 7Z"/></svg></button>
+        <button class="icon-btn" id="seq-prev-shot" aria-label="前のショット" title="前のショット"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><path d="M8 3v8L3 7Z"/><rect x="9.5" y="3.5" width="2" height="7" rx=".5"/></svg></button>
+      </div>
+      <button class="icon-btn" id="seq-play" aria-label="シーケンスを再生" aria-pressed="false" title="シーケンスを再生"><svg class="ic-play" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M4.5 2.5v11L13.5 8Z"/></svg><svg class="ic-pause" style="display:none" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><rect x="4" y="3" width="2.8" height="10" rx="0.5"/><rect x="9.2" y="3" width="2.8" height="10" rx="0.5"/></svg></button>
+      <div class="tl-btns" role="group" aria-label="シーケンスの操作">
+        <button class="icon-btn" id="seq-next-shot" aria-label="次のショット" title="次のショット"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><rect x="2.5" y="3.5" width="2" height="7" rx=".5"/><path d="M6 3v8l5-4Z"/></svg></button>
+        <button class="icon-btn" id="seq-last" aria-label="シーケンスの最後" title="シーケンスの最後"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><path d="M1.5 3v8L6 7Z"/><path d="M6 3v8l4.5-4Z"/><rect x="11" y="3" width="1.5" height="8"/></svg></button>
+      </div>
+      <input type="number" id="seq-frame" class="tl-num tl-frame" step="1" aria-label="シーケンスのフレーム" title="シーケンスのフレーム">
+      <span id="seq-shot" class="seq-shot-info"></span>
+      <label class="check seq-follow" title="オンのとき、ビューポートはシーケンスのフレームのショットのカメラとフレームで表示する"><input type="checkbox" id="seq-follow"> シーケンスで見る</label>
+    </div>
+  </section>
+
   <aside id="right" class="panel" aria-label="プロパティ">
     <button class="panel-strip" id="right-expand" title="右パネルを開く" aria-label="右パネルを開く" aria-controls="right" aria-expanded="false"><span class="strip-icon" aria-hidden="true">‹</span><span class="strip-label">選択・頂点・警告</span></button>
     <div class="panel-content">
-      <div class="panel-head"><span>プロパティ</span><button class="collapse-btn" id="right-collapse" title="右パネルを最小化" aria-label="右パネルを最小化" aria-controls="right" aria-expanded="true">›</button></div>
+      <div class="panel-head"><button class="collapse-btn" id="right-collapse" title="右パネルを最小化" aria-label="右パネルを最小化" aria-controls="right" aria-expanded="true">›</button><span>プロパティ</span></div>
       <details open id="sec-select">
         <summary>選択</summary>
         <div class="sec-body">

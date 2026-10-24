@@ -18,7 +18,7 @@ window.__tb = (() => {
   const $ = (id) => document.getElementById(id);
   const btn = (panel) => document.querySelector(`.menu-btn[aria-controls="${panel}"]`);
   const openState = () => ['menu-view', 'menu-maps', 'menu-weights'].map((p) => !$(p).hidden);
-  const set = (id, v) => { const el = $(id); el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); };
+  const set = (id, v) => { const el = $(id); el.querySelector('[data-value="' + v + '"]').click(); };   // メニューの選択肢を押す
   return { $, btn, openState, set };
 })(); 'ok'
 """

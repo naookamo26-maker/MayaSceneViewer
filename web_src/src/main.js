@@ -24,6 +24,7 @@ import { RigEvaluator, visibleFrom } from './rig.js';
 import { Timeline } from './timeline.js';
 import { CurveOverlay } from './curveOverlay.js';
 import { CameraIcons, cameraFrustum, cameraParams } from './cameraView.js';
+import { SequencerPanel, activeShot, shotTime } from './sequencer.js';
 
 const VERSION = '1.0.0';
 const D2R = Math.PI / 180;
@@ -40,6 +41,9 @@ const DEFAULTS = {
   tool: 'select', space: 'local', gizmoSize: 1,
   cameraIcons: true,             // シーンのカメラの形を描く
   cameraGate: true,              // カメラから見るとき、解像度ゲートの外側を暗くする
+  hud: true,                     // ヘッドアップディスプレイ（再生のフレームレート）
+  pickMode: 'object',            // クリックで選ぶもの: 'object'（オブジェクト）・'vertex'（頂点とそのウェイト）
+  pickAll: false,                // Maya で選択できないもの（テンプレート・リファレンス）もクリックで選ぶ
 };
 const TOOLS = ['select', 'translate', 'rotate', 'scale'];
 const num = (n) => n.toLocaleString('ja-JP');
@@ -74,8 +78,14 @@ class ViewerApp {
     this.cameras = [];              // シーンのカメラ（共通 JSON の cameras）
     this.viewCamera = -1;           // いま見ているカメラ（-1 は自由視点）
     this.cameraProps = new Map();   // カメラの番号 → アニメーション・リグで決まる属性の値（焦点距離など）
+    this.sequence = null;           // カメラシーケンサ（共通 JSON の sequencer）
+    this.seqFrame = 0;              // シーケンスのフレーム
+    this.seqFollow = false;         // ビューポートをシーケンス（ショットのカメラとフレーム）で表示するか
+    this.seqPlaying = false;
+    this.fpsMeter = null;           // 再生のフレームレートの計測（startFpsMeter）
     this.ui = new UI(this);
     this.timeline = new Timeline(this);
+    this.seqPanel = new SequencerPanel(this);
     this.ui.setHost(isQtHost() ? 'qt' : 'browser');
     this.ui.syncSettings(this.settings);     // ツールバーの表示を初期設定（DEFAULTS）に合わせる
     try {
@@ -267,6 +277,7 @@ class ViewerApp {
       else if (k === '6') { set('shading', 'smooth'); set('textures', true); }    //               6 = テクスチャあり
       else if (k === 'j') set('joints', !this.settings.joints);
       else if (k === 'b') this.togglePoseSource();
+      else if (k === 'f8') set('pickMode', this.settings.pickMode === 'vertex' ? 'object' : 'vertex');   // Maya と同じ: F8
       else if (k === 'c') {
         if (!this.cameras.length) this.ui.setMessage('このシーンにはカメラがありません');
         else this.setCamera(e.shiftKey ? -1 : this.nextCamera());
@@ -392,11 +403,22 @@ class ViewerApp {
       this.ui.showVertexInfo(null);
       this.ui.showPoseFor(-1);
       this.frameAll(true);
+      // 保存したときに Maya のビューで見ていたカメラから表示する（persp などの起動時のカメラなら自由視点）
+      const vc = data.viewCamera ?? -1;
+      if (vc >= 0 && vc < this.cameras.length) this.setCamera(vc, { quiet: true });
+      this.sequence = data.sequencer && (data.sequencer.shots || []).length ? data.sequencer : null;
+      this.seqFrame = this.sequence ? this.sequence.start : 0;
+      this.seqFollow = false;
+      this.seqPanel.build(this.sequence, this.cameras);
+      this.updateSequencePanel();
+      this.fpsMeter = null;
+      this.updateHud();
       this.maps.reset(data);
       this.requestMaps();
       mark('マテリアル');
       const renderStart = performance.now();
-      this.ui.setMessage(`読み込みました（${Math.round(performance.now() - t0)} ms）`);
+      this.ui.setMessage(`読み込みました（${Math.round(performance.now() - t0)} ms）`
+        + (this.viewCamera >= 0 ? `。Maya のビューと同じく、カメラ ${this.cameras[this.viewCamera].name} から表示しています（Shift+C で自由視点）` : ''), 6000);
       this.log('info', `scene loaded: ${built.meshes.length} meshes, ${built.jointIndices.length} joints`);
       // 読み込みの内訳（ビューア側）。最初の描画が終わったところまでを測る
       const tm = this.timing || {};
@@ -426,6 +448,10 @@ class ViewerApp {
   }
 
   clearScene() {
+    this.pauseSequence();
+    this.sequence = null;
+    this.seqFollow = false;
+    if (this.seqPanel) this.seqPanel.build(null, []);
     this.setCamera(-1, { quiet: true });
     this.cameraIcons.clear();
     this.cameras = [];
@@ -466,6 +492,7 @@ class ViewerApp {
     this.ui.showPoseFor(-1);
     this.ui.setLegend('off');
     this.ui.setCameras([]);
+    this.updateHud();
     this.updateToolbarHints();
     this.requestRender();
   }
@@ -515,6 +542,11 @@ class ViewerApp {
         break;
       case 'joints': this.overlay.setVisible(value); break;
       case 'cameraIcons': this.updateCameraIcons(); break;
+      case 'hud': this.updateHud(); break;
+      case 'pickMode':
+        if (value !== 'vertex' && this.picked) { this.picked = null; this.marker.visible = false; }
+        this.ui.showVertexInfo(this.vertexInfo(), value);
+        break;
       case 'cameraGate': this.updateGate(); break;
       case 'curves': this.curves.setVisible(value); break;
       case 'xray': this.overlay.setXray(value); break;
@@ -555,17 +587,25 @@ class ViewerApp {
 
   applyShading() {
     const st = this.settings;
+    // 選択したノードとその子孫のメッシュは、選択の色のワイヤーを重ねる（Maya の選択の表示）
+    const sel = new Set();
+    if (this.selected >= 0 && this.data) {
+      sel.add(this.selected);
+      this.data.nodes.forEach((n, i) => { if (sel.has(n.parent)) sel.add(i); });
+    }
+    const weightWire = st.weightMode !== 'off' && st.shading === 'none';
     for (const e of this.built.meshes) {
       const useSkin = st.skin && !!e.skinned;
       const shaded = e.visible && st.shading !== 'none';
-      const wire = e.visible && (st.wire || st.shading === 'none');
+      const highlight = e.visible && sel.has(e.transform) && !weightWire;
+      const wire = e.visible && (st.wire || st.shading === 'none' || highlight);
       e.staticMesh.visible = shaded && !useSkin;
       if (e.skinned) e.skinned.visible = shaded && useSkin;
       e.staticWire.visible = wire && !useSkin;
       if (e.skinnedWire) e.skinnedWire.visible = wire && useSkin;
       const wireOnly = st.shading === 'none';
-      e.wireMaterial.opacity = wireOnly ? 0.95 : 0.5;
-      e.wireMaterial.color.set(wireOnly ? 0xc8d2da : 0x1d2024);
+      e.wireMaterial.opacity = highlight ? 0.9 : wireOnly ? 0.95 : 0.5;
+      e.wireMaterial.color.set(highlight ? 0xf2a93b : wireOnly ? 0xc8d2da : 0x1d2024);
     }
   }
 
@@ -869,6 +909,9 @@ class ViewerApp {
     const switched = this.hasTimeline && !this.poseSourceChosen && this.settings.poseSource === 'bind' && hasBindPose(this.built);
     if (switched) this.setSetting('poseSource', 'file');
     this.applyFrame(clip.current);
+    if (this.seqFollow) this.applySequence();
+    this.fpsMeter = null;
+    this.updateHud();
     this.updateToolbarHints();
     const st = anim.stats || {};
     this.ui.setMessage(`アニメーションを読み込みました（カーブ ${num(st.curves ?? clip.curves.length)} 本・`
@@ -899,7 +942,7 @@ class ViewerApp {
   }
 
   /** タイムラインを出すか（キーのあるカーブか、frame・time を使う expression があるとき） */
-  get hasTimeline() { return !!(this.clip && (this.clip.timeCurves.length || (this.rig && this.rig.usesTime))); }
+  get hasTimeline() { return !!(this.clip && (this.clip.timeCurves.length || (this.rig && (this.rig.usesTime || this.rig.hasTrax)))); }
 
   /** フレーム f の姿勢にする（ポーズ確認の追加分はそのまま上に重ねる。リグはポーズ確認の結果も使って評価する） */
   applyFrame(f, light = this.playing) {
@@ -951,6 +994,8 @@ class ViewerApp {
 
   scrubTo(f) {
     if (!this.hasTimeline) return;
+    if (this.seqFollow) this.setSequenceFollow(false);   // シーンのタイムラインを操作した
+    this.pauseSequence();
     this.pause();
     this.ensureAnimatedPose();
     this.applyFrame(f);
@@ -990,16 +1035,19 @@ class ViewerApp {
   /** 再生（実時間。間に合わないときはフレームを飛ばす。範囲の最後まで行くと先頭に戻る） */
   play() {
     if (!this.hasTimeline || this.playing) return;
+    this.pauseSequence();
+    if (this.seqFollow) this.setSequenceFollow(false);
     this.ensureAnimatedPose();
     this.endPoseEdit();
     const from = this.frame >= this.clip.start && this.frame <= this.clip.end ? Math.round(this.frame) : this.clip.start;
     this.playing = true;
     this.timeline.setPlaying(true);
     const t0 = performance.now();
+    this.startFpsMeter(this.clip.fps);
     const tick = (now) => {
       if (!this.playing || !this.clip) return;
       const f = this.clip.wrap(from + Math.floor(((now - t0) / 1000) * this.clip.fps));
-      if (f !== this.frame) this.applyFrame(f);
+      if (f !== this.frame) { this.applyFrame(f); this.countShownFrame(now); }
       this.playHandle = requestAnimationFrame(tick);
     };
     this.playHandle = requestAnimationFrame(tick);
@@ -1009,6 +1057,7 @@ class ViewerApp {
     if (!this.playing) return;
     this.playing = false;
     cancelAnimationFrame(this.playHandle);
+    this.stopFpsMeter();
     this.timeline.setPlaying(false);
     // 再生中は省いていた、パネルの情報を更新する
     if (this.built) this.afterPoseChange();
@@ -1033,6 +1082,7 @@ class ViewerApp {
     this.overlay.setSelected(ni);
     this.curves.setSelected(ni);
     this.updateCameraIcons();
+    this.applyShading();
     this.ui.highlightNode(ni, this.data.nodes);
     this.ui.showNodeInfo(this.nodeInfo(ni));
     this.ui.showPoseFor(ni, this.pose.get(ni));
@@ -1070,6 +1120,7 @@ class ViewerApp {
     this.overlay.setSelected(-1);
     this.curves.setSelected(-1);
     this.updateCameraIcons();
+    this.applyShading();
     this.ui.highlightNode(-1, this.data.nodes);
     this.ui.showNodeInfo(null);
     this.ui.showVertexInfo(null);
@@ -1101,6 +1152,7 @@ class ViewerApp {
       hiddenByRig: !!(this.rigHidden && this.rigHidden.has(ni) && !this.rigShown.has(ni) && !this.hidden.has(ni)),
       hiddenByParent: !!(this.hiddenEff && this.hiddenEff[ni] && !(this.hidden && this.isNodeHidden(ni))),
       bindSource: n.bindSource || null,
+      unselectable: n.unselectable || null,
       usingBind: this.settings.poseSource === 'bind' && !!n.bindMatrix,
       drivenBy: n.drivenBy || null,
       animChannels: this.clip ? this.clip.channelsOf(ni) : [],
@@ -1117,13 +1169,17 @@ class ViewerApp {
     const ndc = new Vector2(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
     const cam = this.activeCamera();
     this.raycaster.setFromCamera(ndc, cam);
+    // Maya のビューポートで選べないもの（テンプレート・リファレンス）は、「選択の制限を無視」がオフなら選ばない
+    const force = !!this.settings.pickAll;
+    const nodes = this.data.nodes;
+    const okNode = (ni) => force || !nodes[ni].unselectable;
     if (this.settings.joints) {
       const ni = this.overlay.pick(this.raycaster);
-      if (ni >= 0) { this.select(ni, { notify: true }); return; }
+      if (ni >= 0 && okNode(ni)) { this.select(ni, { notify: true }); return; }
     }
     // カーブ: 画面上で約 5 ピクセル以内を通る線（メッシュより手前なら優先）
     const perPx = this.pixelSize(rect.height);
-    const curveHit = this.curves.pick(this.raycaster, perPx * 5);
+    const curveHit = this.curves.pick(this.raycaster, perPx * 5, (c) => force || !(c.unselectable || nodes[c.transform].unselectable));
     const useSkin = this.settings.skin;
     if (this.poseDirty) {
       for (const e of this.built.meshes) if (e.skinned) { e.skinned.boundingSphere = null; e.skinned.boundingBox = null; }
@@ -1131,7 +1187,7 @@ class ViewerApp {
     }
     const targets = [];
     for (const e of this.built.meshes) {
-      if (!e.visible) continue;
+      if (!e.visible || !(force || !e.data.unselectable)) continue;
       targets.push(useSkin && e.skinned ? e.skinned : e.staticMesh);
     }
     const hits = this.raycaster.intersectObjects(targets, false);
@@ -1142,6 +1198,13 @@ class ViewerApp {
     if (!hits.length) { this.clearSelection(); return; }
     const h = hits[0];
     const e = this.built.meshes[h.object.userData.meshIndex];
+    if (this.settings.pickMode !== 'vertex') {
+      // オブジェクトの選択: メッシュの transform を選ぶ
+      this.picked = null;
+      this.marker.visible = false;
+      this.select(e.transform, { notify: true });
+      return;
+    }
     // face の番号は表示用頂点（UV の継ぎ目で分割）なので、元の頂点番号に戻す
     let best = -1, bestD = Infinity;
     for (const rv of [h.face.a, h.face.b, h.face.c]) {
@@ -1378,6 +1441,141 @@ class ViewerApp {
     this.ui.setToolbarHints(hints);
   }
 
+  // ------------------------------------------------------------------ 再生のフレームレート（ヘッドアップディスプレイ）
+  /**
+   * 再生を始めたとき。再生は実時間で、描画が間に合わないとフレームを飛ばすので、
+   * 実際に表示できたフレーム数（直近 1 秒）を、シーンのフレームレート（目標）と並べて表示する
+   */
+  startFpsMeter(target) {
+    this.fpsMeter = { target, times: [], start: performance.now(), shown: 0, shownAt: 0, first: 0, last: 0 };
+    this.updateHud(true);
+  }
+
+  /** 再生で新しいフレームを表示したとき */
+  countShownFrame(now) {
+    const m = this.fpsMeter;
+    if (!m) return;
+    m.times.push(now);
+    if (!m.shown) m.first = now;
+    m.last = now;
+    m.shown++;
+    while (m.times.length && m.times[0] < now - 1000) m.times.shift();
+    if (now - m.shownAt > 250) { m.shownAt = now; this.updateHud(); }   // 表示の更新は 1 秒に 4 回まで
+  }
+
+  stopFpsMeter() {
+    const m = this.fpsMeter;
+    if (!m) return;
+    const sec = (m.last - m.first) / 1000;                    // 最初と最後に表示したフレームの間
+    // 直前の再生の平均（再生は時間からフレームを決めるので目標を超えない。超えるのは表示の間隔の量子化の誤差）
+    m.average = sec > 0.25 ? Math.min((m.shown - 1) / sec, m.target) : null;
+    m.stopped = true;
+    this.updateHud();
+  }
+
+  /** 直近 1 秒のフレームレート（フレームが 2 つ以上あるとき） */
+  currentFps() {
+    const t = this.fpsMeter ? this.fpsMeter.times : [];
+    if (t.length < 2) return null;
+    return Math.min(((t.length - 1) * 1000) / Math.max(t[t.length - 1] - t[0], 1), this.fpsMeter.target);
+  }
+
+  updateHud(starting = false) {
+    const m = this.fpsMeter;
+    const show = !!(this.settings.hud && this.built && (this.hasTimeline || this.sequence));
+    let text = '', cls = 'idle';
+    if (show) {
+      const target = (m && m.target) || (this.clip && this.clip.fps) || 24;
+      const f1 = (v) => v.toFixed(1);
+      if (m && !m.stopped) {
+        const fps = starting ? null : this.currentFps();
+        text = `再生 ${fps === null ? '--.-' : f1(fps)} / ${f1(target)} fps`;
+        // 立ち上がり（0.5 秒）を過ぎて、目標の 9 割に届かなければ処理落ち
+        cls = fps !== null && performance.now() - m.start > 500 && fps < target * 0.9 ? 'slow' : '';
+      } else {
+        text = m && m.average ? `直前の再生 ${f1(m.average)} / ${f1(target)} fps` : `${f1(target)} fps`;
+      }
+    }
+    this.ui.setHud(show ? text : null, cls);
+  }
+
+  // ------------------------------------------------------------------ カメラシーケンサ
+  /** シーケンスのフレームを f にする。follow: true ならビューポートもシーケンスで表示する */
+  setSequenceFrame(f, opts = {}) {
+    if (!this.sequence) return;
+    this.seqFrame = Math.min(Math.max(f, this.sequence.start), this.sequence.end);
+    if (opts.follow && !this.seqFollow) this.seqFollow = true;
+    if (this.seqFollow) this.applySequence();
+    this.updateSequencePanel();
+  }
+
+  setSequenceFollow(on) {
+    this.seqFollow = !!on && !!this.sequence;
+    if (this.seqFollow) this.applySequence();
+    else this.pauseSequence();
+    this.updateSequencePanel();
+  }
+
+  /** いまのシーケンスのフレームのショットの、カメラとシーンのフレームにする */
+  applySequence() {
+    const shot = activeShot(this.sequence && this.sequence.shots, this.seqFrame);
+    if (!shot) return;
+    if (shot.camera >= 0 && shot.camera !== this.viewCamera) this.setCamera(shot.camera, { quiet: true, fromSequence: true });
+    if (this.hasTimeline) {
+      if (this.playing) this.pause();
+      this.ensureAnimatedPose();
+      this.applyFrame(shotTime(shot, this.seqFrame), this.seqPlaying);
+    } else {
+      this.requestRender();
+    }
+  }
+
+  updateSequencePanel() {
+    if (!this.sequence) return;
+    this.seqPanel.update(this.seqFrame, activeShot(this.sequence.shots, this.seqFrame), this.cameras, this.seqFollow, this.seqPlaying);
+  }
+
+  /** 前・次のショットの先頭へ（ミュートしたショットは飛ばす） */
+  stepShot(d) {
+    if (!this.sequence) return;
+    const starts = [...new Set(this.sequence.shots.filter((s) => !s.mute).map((s) => s.sequenceStartFrame))].sort((a, b) => a - b);
+    const t = d > 0 ? starts.find((x) => x > this.seqFrame + 1e-6) : [...starts].reverse().find((x) => x < this.seqFrame - 1e-6);
+    if (t !== undefined) this.setSequenceFrame(t, { follow: true });
+  }
+
+  toggleSequencePlay() { if (this.seqPlaying) this.pauseSequence(); else this.playSequence(); }
+
+  /** シーケンスを実時間で再生する（最後まで行くと先頭に戻る） */
+  playSequence() {
+    if (!this.sequence || this.seqPlaying) return;
+    this.pause();
+    this.seqFollow = true;
+    this.seqPlaying = true;
+    const fps = (this.clip && this.clip.fps) || 24;
+    const { start, end } = this.sequence;
+    const from = this.seqFrame >= end ? start : Math.floor(this.seqFrame);
+    const t0 = performance.now();
+    this.startFpsMeter(fps);
+    const tick = (now) => {
+      if (!this.seqPlaying) return;
+      const span = end - start + 1;
+      const f = start + ((from - start + Math.floor(((now - t0) / 1000) * fps)) % span);
+      if (f !== this.seqFrame) { this.seqFrame = f; this.applySequence(); this.updateSequencePanel(); this.countShownFrame(now); }
+      this.seqHandle = requestAnimationFrame(tick);
+    };
+    this.updateSequencePanel();
+    this.seqHandle = requestAnimationFrame(tick);
+  }
+
+  pauseSequence() {
+    if (!this.seqPlaying) return;
+    this.seqPlaying = false;
+    cancelAnimationFrame(this.seqHandle);
+    this.stopFpsMeter();
+    if (this.built) this.afterPoseChange();
+    this.updateSequencePanel();
+  }
+
   // ------------------------------------------------------------------ シーンのカメラ
   /** 次のカメラ（C キー）。最後のカメラの次は自由視点 */
   nextCamera() {
@@ -1387,6 +1585,7 @@ class ViewerApp {
 
   /** シーンのカメラから見る（-1 で自由視点に戻す） */
   setCamera(ci, opts = {}) {
+    if (!opts.fromSequence && !opts.quiet && this.seqFollow) this.setSequenceFollow(false);   // 自分でカメラを選んだ
     if (!(ci >= 0 && ci < this.cameras.length)) ci = -1;
     if (ci === this.viewCamera) return;
     if (!this.renderer) { this.viewCamera = -1; return; }
@@ -1510,6 +1709,10 @@ class ViewerApp {
       curves: this.curves.items.filter(Boolean).length,
       cameras: this.cameras.map((c) => c.name),
       viewCamera: this.viewCamera >= 0 ? this.cameras[this.viewCamera].name : null,
+      fps: this.fpsMeter ? { current: this.currentFps(), average: this.fpsMeter.average ?? null, target: this.fpsMeter.target,
+        playing: !this.fpsMeter.stopped } : null,
+      sequence: this.sequence ? { frame: this.seqFrame, follow: this.seqFollow, playing: this.seqPlaying,
+        shot: (activeShot(this.sequence.shots, this.seqFrame) || {}).shotName || null, shots: this.sequence.shots.length } : null,
       hiddenMeshes: this.built.meshes.filter((e) => !e.visible).map((e) => e.name),
       selected: this.selected >= 0 ? this.data.nodes[this.selected].path : null,
       posedNodes: this.pose ? this.pose.size : 0,
