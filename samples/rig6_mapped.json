@@ -8,7 +8,8 @@
   "mayaVersion":"2024",
   "linearUnit":"cm",
   "angularUnit":"deg",
-  "upAxis":"y"
+  "upAxis":"y",
+  "references":[]
  },
  "nodes":[
   {
@@ -1752,7 +1753,10 @@
    },
    "segmentScaleCompensate":true,
    "drivenBy":[
-    "rx ← lay_jnt_rotate_layer1（animBlendNodeAdditiveRotation）"
+    "rx ← lay_jnt_rotate_layer1（animBlendNodeAdditiveRotation）",
+    "tz ← lay_jnt_translateZ_blend1（animBlendNodeAdditive）",
+    "ry ← lay_jnt_rotateY_blend1（animBlendNodeAdditiveFA）",
+    "sy ← lay_jnt_scaleY_blend1（animBlendNodeAdditiveScale）"
    ]
   },
   {
@@ -3687,6 +3691,14 @@
    "display":0
   }
  ],
+ "cameras":[],
+ "viewCamera":-1,
+ "sequencer":null,
+ "render":{
+  "width":640,
+  "height":480,
+  "deviceAspectRatio":1.3333333333333333
+ },
  "materials":[],
  "textures":[],
  "warnings":[
@@ -3699,6 +3711,7 @@
   "joints":31,
   "meshes":0,
   "curves":3,
+  "cameras":0,
   "vertices":0,
   "polygons":0,
   "skinnedMeshes":0,
@@ -3819,7 +3832,7 @@
     "post":0
    },
    {
-    "name":"arm2_ik_translateX",
+    "name":"lay_jnt_translateZ_base",
     "type":"TL",
     "offset":20,
     "count":2,
@@ -3829,7 +3842,7 @@
     "post":0
    },
    {
-    "name":"arm3_ik_translateX",
+    "name":"lay_jnt_translateZ_layer1",
     "type":"TL",
     "offset":22,
     "count":2,
@@ -3839,9 +3852,69 @@
     "post":0
    },
    {
+    "name":"lay_jnt_rotateY_base",
+    "type":"TA",
+    "offset":24,
+    "count":2,
+    "tangent":2,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
+    "name":"lay_jnt_rotateY_layer1",
+    "type":"TA",
+    "offset":26,
+    "count":2,
+    "tangent":2,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
+    "name":"lay_jnt_scaleY_base",
+    "type":"TU",
+    "offset":28,
+    "count":2,
+    "tangent":2,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
+    "name":"lay_jnt_scaleY_layer1",
+    "type":"TU",
+    "offset":30,
+    "count":2,
+    "tangent":2,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
+    "name":"arm2_ik_translateX",
+    "type":"TL",
+    "offset":32,
+    "count":2,
+    "tangent":2,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
+    "name":"arm3_ik_translateX",
+    "type":"TL",
+    "offset":34,
+    "count":2,
+    "tangent":2,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
     "name":"cx_ctrl_translateY",
     "type":"TL",
-    "offset":24,
+    "offset":36,
     "count":2,
     "tangent":2,
     "weighted":false,
@@ -3878,17 +3951,17 @@
    {
     "node":37,
     "attr":"tx",
-    "curve":10
+    "curve":16
    },
    {
     "node":42,
     "attr":"tx",
-    "curve":11
+    "curve":17
    },
    {
     "node":51,
     "attr":"ty",
-    "curve":12
+    "curve":18
    }
   ],
   "nodes":[
@@ -5557,7 +5630,10 @@
     "id":12,
     "name":"t2_wireBaseWire",
     "type":"transform",
-    "dag":11
+    "dag":11,
+    "attrs":{
+     "v":0.0
+    }
    },
    {
     "id":13,
@@ -6142,6 +6218,18 @@
      "rx":{
       "node":45,
       "attr":"ox"
+     },
+     "tz":{
+      "node":46,
+      "attr":"o"
+     },
+     "ry":{
+      "node":47,
+      "attr":"o"
+     },
+     "sy":{
+      "node":48,
+      "attr":"o"
      }
     }
    },
@@ -6174,30 +6262,84 @@
    },
    {
     "id":46,
+    "name":"lay_jnt_translateZ_blend1",
+    "type":"animBlendNodeAdditive",
+    "dag":-1,
+    "inputs":{
+     "ia":{
+      "curve":10
+     },
+     "ib":{
+      "curve":11
+     },
+     "wb":{
+      "node":44,
+      "attr":"fo"
+     }
+    }
+   },
+   {
+    "id":47,
+    "name":"lay_jnt_rotateY_blend1",
+    "type":"animBlendNodeAdditiveFA",
+    "dag":-1,
+    "inputs":{
+     "ia":{
+      "curve":12
+     },
+     "ib":{
+      "curve":13
+     },
+     "wb":{
+      "node":44,
+      "attr":"fo"
+     }
+    }
+   },
+   {
+    "id":48,
+    "name":"lay_jnt_scaleY_blend1",
+    "type":"animBlendNodeAdditiveScale",
+    "dag":-1,
+    "inputs":{
+     "ia":{
+      "curve":14
+     },
+     "ib":{
+      "curve":15
+     },
+     "wb":{
+      "node":44,
+      "attr":"fo"
+     }
+    }
+   },
+   {
+    "id":49,
     "name":"leg_hip",
     "type":"joint",
     "dag":26
    },
    {
-    "id":47,
+    "id":50,
     "name":"leg_knee",
     "type":"joint",
     "dag":27
    },
    {
-    "id":48,
+    "id":51,
     "name":"leg_ankle",
     "type":"joint",
     "dag":28
    },
    {
-    "id":49,
+    "id":52,
     "name":"foot_ctrl",
     "type":"transform",
     "dag":29
    },
    {
-    "id":50,
+    "id":53,
     "name":"leg_ik",
     "type":"ikHandle",
     "dag":30,
@@ -6210,15 +6352,15 @@
     },
     "inputs":{
      "pvx":{
-      "node":51,
+      "node":54,
       "attr":"ctx"
      },
      "pvy":{
-      "node":51,
+      "node":54,
       "attr":"cty"
      },
      "pvz":{
-      "node":51,
+      "node":54,
       "attr":"ctz"
      }
     },
@@ -6232,7 +6374,7 @@
     }
    },
    {
-    "id":51,
+    "id":54,
     "name":"leg_pvc",
     "type":"poleVectorConstraint",
     "dag":-1,
@@ -6242,35 +6384,35 @@
     },
     "inputs":{
      "cpim":{
-      "node":50,
+      "node":53,
       "attr":"pim"
      },
      "ps":{
-      "node":46,
+      "node":49,
       "attr":"pm"
      },
      "crp":{
-      "node":46,
+      "node":49,
       "attr":"t"
      },
      "tg[0].tt":{
-      "node":52,
+      "node":55,
       "attr":"t"
      },
      "tg[0].trp":{
-      "node":52,
+      "node":55,
       "attr":"rp"
      },
      "tg[0].trt":{
-      "node":52,
+      "node":55,
       "attr":"rpt"
      },
      "tg[0].tpm":{
-      "node":52,
+      "node":55,
       "attr":"pm"
      },
      "tg[0].tw":{
-      "node":51,
+      "node":54,
       "attr":"w0"
      }
     },
@@ -6279,30 +6421,30 @@
     "targets":[
      {
       "index":0,
-      "node":52
+      "node":55
      }
     ]
    },
    {
-    "id":52,
+    "id":55,
     "name":"knee_pv",
     "type":"transform",
     "dag":31
    },
    {
-    "id":53,
+    "id":56,
     "name":"poc_jnt",
     "type":"joint",
     "dag":32,
     "inputs":{
      "t":{
-      "node":54,
+      "node":57,
       "attr":"p"
      }
     }
    },
    {
-    "id":54,
+    "id":57,
     "name":"poc_half",
     "type":"pointOnCurveInfo",
     "dag":-1,
@@ -6318,19 +6460,19 @@
     }
    },
    {
-    "id":55,
+    "id":58,
     "name":"poc_jnt2",
     "type":"joint",
     "dag":33,
     "inputs":{
      "t":{
-      "node":56,
+      "node":59,
       "attr":"nt"
      }
     }
    },
    {
-    "id":56,
+    "id":59,
     "name":"poc_end",
     "type":"pointOnCurveInfo",
     "dag":-1,
@@ -6345,31 +6487,31 @@
     }
    },
    {
-    "id":57,
+    "id":60,
     "name":"arm2_a",
     "type":"joint",
     "dag":34
    },
    {
-    "id":58,
+    "id":61,
     "name":"arm2_b",
     "type":"joint",
     "dag":35
    },
    {
-    "id":59,
+    "id":62,
     "name":"arm2_c",
     "type":"joint",
     "dag":36
    },
    {
-    "id":60,
+    "id":63,
     "name":"arm2_ik",
     "type":"ikHandle",
     "dag":37,
     "inputs":{
      "tx":{
-      "curve":10
+      "curve":16
      }
     },
     "ik":{
@@ -6382,33 +6524,33 @@
     }
    },
    {
-    "id":61,
+    "id":64,
     "name":"arm3_root",
     "type":"transform",
     "dag":38
    },
    {
-    "id":62,
+    "id":65,
     "name":"arm3_a",
     "type":"joint",
     "dag":39,
     "inputs":{
      "tx":{
-      "node":63,
+      "node":66,
       "attr":"ctx"
      },
      "ty":{
-      "node":63,
+      "node":66,
       "attr":"cty"
      },
      "tz":{
-      "node":63,
+      "node":66,
       "attr":"ctz"
      }
     }
    },
    {
-    "id":63,
+    "id":66,
     "name":"arm3_pc",
     "type":"pointConstraint",
     "dag":-1,
@@ -6418,35 +6560,35 @@
     },
     "inputs":{
      "cpim":{
-      "node":62,
+      "node":65,
       "attr":"pim"
      },
      "crp":{
-      "node":62,
+      "node":65,
       "attr":"rp"
      },
      "crt":{
-      "node":62,
+      "node":65,
       "attr":"rpt"
      },
      "tg[0].tt":{
-      "node":61,
+      "node":64,
       "attr":"t"
      },
      "tg[0].trp":{
-      "node":61,
+      "node":64,
       "attr":"rp"
      },
      "tg[0].trt":{
-      "node":61,
+      "node":64,
       "attr":"rpt"
      },
      "tg[0].tpm":{
-      "node":61,
+      "node":64,
       "attr":"pm"
      },
      "tg[0].tw":{
-      "node":63,
+      "node":66,
       "attr":"w0"
      }
     },
@@ -6454,30 +6596,30 @@
     "targets":[
      {
       "index":0,
-      "node":61
+      "node":64
      }
     ]
    },
    {
-    "id":64,
+    "id":67,
     "name":"arm3_b",
     "type":"joint",
     "dag":40
    },
    {
-    "id":65,
+    "id":68,
     "name":"arm3_c",
     "type":"joint",
     "dag":41
    },
    {
-    "id":66,
+    "id":69,
     "name":"arm3_ik",
     "type":"ikHandle",
     "dag":42,
     "inputs":{
      "tx":{
-      "curve":11
+      "curve":17
      }
     },
     "ik":{
@@ -6490,7 +6632,7 @@
     }
    },
    {
-    "id":67,
+    "id":70,
     "name":"mm_custom",
     "type":"multMatrix",
     "dag":-1,
@@ -6505,49 +6647,49 @@
     }
    },
    {
-    "id":68,
+    "id":71,
     "name":"mm_dec2",
     "type":"decomposeMatrix",
     "dag":-1,
     "inputs":{
      "imat":{
-      "node":67,
+      "node":70,
       "attr":"o"
      }
     }
    },
    {
-    "id":69,
+    "id":72,
     "name":"mm_jnt2",
     "type":"joint",
     "dag":43,
     "inputs":{
      "t":{
-      "node":68,
+      "node":71,
       "attr":"ot"
      }
     }
    },
    {
-    "id":70,
+    "id":73,
     "name":"arm4_a",
     "type":"joint",
     "dag":5
    },
    {
-    "id":71,
+    "id":74,
     "name":"arm4_b",
     "type":"joint",
     "dag":6
    },
    {
-    "id":72,
+    "id":75,
     "name":"arm4_c",
     "type":"joint",
     "dag":7
    },
    {
-    "id":73,
+    "id":76,
     "name":"arm4_ik",
     "type":"ikHandle",
     "dag":44,
@@ -6561,31 +6703,31 @@
     }
    },
    {
-    "id":74,
+    "id":77,
     "name":"arm5_grp",
     "type":"transform",
     "dag":45
    },
    {
-    "id":75,
+    "id":78,
     "name":"arm5_a",
     "type":"joint",
     "dag":46
    },
    {
-    "id":76,
+    "id":79,
     "name":"arm5_b",
     "type":"joint",
     "dag":47
    },
    {
-    "id":77,
+    "id":80,
     "name":"arm5_c",
     "type":"joint",
     "dag":48
    },
    {
-    "id":78,
+    "id":81,
     "name":"arm5_ik",
     "type":"ikHandle",
     "dag":49,
@@ -6598,15 +6740,15 @@
     },
     "inputs":{
      "pvx":{
-      "node":79,
+      "node":82,
       "attr":"ctx"
      },
      "pvy":{
-      "node":79,
+      "node":82,
       "attr":"cty"
      },
      "pvz":{
-      "node":79,
+      "node":82,
       "attr":"ctz"
      }
     },
@@ -6620,7 +6762,7 @@
     }
    },
    {
-    "id":79,
+    "id":82,
     "name":"arm5_pvc",
     "type":"poleVectorConstraint",
     "dag":-1,
@@ -6630,31 +6772,31 @@
     },
     "inputs":{
      "cpim":{
-      "node":78,
+      "node":81,
       "attr":"pim"
      },
      "ps":{
-      "node":75,
+      "node":78,
       "attr":"pm"
      },
      "tg[0].tt":{
-      "node":80,
+      "node":83,
       "attr":"t"
      },
      "tg[0].trp":{
-      "node":80,
+      "node":83,
       "attr":"rp"
      },
      "tg[0].trt":{
-      "node":80,
+      "node":83,
       "attr":"rpt"
      },
      "tg[0].tpm":{
-      "node":80,
+      "node":83,
       "attr":"pm"
      },
      "tg[0].tw":{
-      "node":79,
+      "node":82,
       "attr":"w0"
      }
     },
@@ -6663,47 +6805,47 @@
     "targets":[
      {
       "index":0,
-      "node":80
+      "node":83
      }
     ]
    },
    {
-    "id":80,
+    "id":83,
     "name":"arm5_pv",
     "type":"transform",
     "dag":50
    },
    {
-    "id":81,
+    "id":84,
     "name":"cx_ctrl",
     "type":"myCtrlTransform",
     "dag":51,
     "inputs":{
      "ty":{
-      "curve":12
+      "curve":18
      }
     }
    },
    {
-    "id":82,
+    "id":85,
     "name":"cx_jnt",
     "type":"joint",
     "dag":52,
     "inputs":{
      "t":{
-      "node":83,
+      "node":86,
       "attr":"ot"
      }
     }
    },
    {
-    "id":83,
+    "id":86,
     "name":"cx_dec",
     "type":"decomposeMatrix",
     "dag":-1,
     "inputs":{
      "imat":{
-      "node":81,
+      "node":84,
       "attr":"wm"
      }
     }
@@ -6716,20 +6858,21 @@
    28,
    31
   ],
+  "props":[],
   "times":{
    "dtype":"float32",
-   "count":26,
-   "data":"AACAPwAAQEIAAIA/AABAQgAAgD8AAEBCAACAPwAAQEIAAIA/AABAQgAAgD8AAEBCAAAAAAAAIEEAAAAAAAA0QgAAgD8AAEBCAACAPwAAQEIAAIA/AABAQgAAgD8AAEBCAACAPwAAQEI="
+   "count":38,
+   "data":"AACAPwAAQEIAAIA/AABAQgAAgD8AAEBCAACAPwAAQEIAAIA/AABAQgAAgD8AAEBCAAAAAAAAIEEAAAAAAAA0QgAAgD8AAEBCAACAPwAAQEIAAIA/AABAQgAAgD8AAEBCAACAPwAAQEIAAIA/AABAQgAAgD8AAEBCAACAPwAAQEIAAIA/AABAQgAAgD8AAEBCAACAPwAAQEI="
   },
   "values":{
    "dtype":"float32",
-   "count":26,
-   "data":"AAAAAAAAQEAAAAAAAAAAQAAAAAAAACBBAAAAAAAAgEAAAAAAAAAgQQAAAAAAADRCAAAAAAAAtEIAAAAAAABAQAAAAAAAAPBBAAAAAAAAIEEAADhCAAAsQoSNNkKEjS5CAAAAAAAAAEA="
+   "count":38,
+   "data":"AAAAAAAAQEAAAAAAAAAAQAAAAAAAACBBAAAAAAAAgEAAAAAAAAAgQQAAAAAAADRCAAAAAAAAtEIAAAAAAABAQAAAAAAAAPBBAAAAAAAAIEEAACBBAABgQQAAAAAAAABAAAAAAAAAoEEAAAAAAAAgQQAAgD8AAABAAACAPwAAwD8AADhCAAAsQoSNNkKEjS5CAAAAAAAAAEA="
   },
   "tangentTypes":{
    "dtype":"uint8",
-   "count":52,
-   "data":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+   "count":76,
+   "data":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
   },
   "fixedTangents":{
    "dtype":"float32",
@@ -6742,12 +6885,12 @@
    "アニメーション: 表示していないノード（コントローラーなど）を動かすカーブ 1 本は読み込みません（表示するノードへの影響の有無は、リグの診断の「読み込まないカーブ」で確認できます）。"
   ],
   "stats":{
-   "curves":13,
-   "keys":26,
+   "curves":19,
+   "keys":38,
    "channels":8,
    "nodes":32,
-   "graphNodes":84,
-   "seconds":0.0021
+   "graphNodes":87,
+   "seconds":0.0045
   }
  }
 }

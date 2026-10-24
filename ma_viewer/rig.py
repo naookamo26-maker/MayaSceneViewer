@@ -14,7 +14,8 @@
     addDoubleLinear・multDoubleLinear・clamp・setRange・remapValue・distanceBetween・vectorProduct・blendTwoAttr・
     blendWeighted・choice・expression（式を解釈できるもの）
   * ドリブンキー: animCurveUA・UL・UU（ドライバーの値でキーを引く）
-  * アニメーションレイヤー: animBlendNodeAdditiveDL・DA・Rotation、animLayer（ウェイトとミュート）
+  * アニメーションレイヤー: animBlendNodeAdditive・DL・DA・F・FL・FA・I16・I32・Rotation・Scale、animBlendNodeBoolean・
+    Enum・Time、animLayer（ウェイトとミュート）
   * 行列ノード: multMatrix・decomposeMatrix・composeMatrix・inverseMatrix、DAG ノードの offsetParentMatrix
   * 四元数ノード: quatToEuler・eulerToQuat・quatProd・quatInvert・quatNormalize・quatSlerp
   * そのほか: curveInfo（カーブの長さ）、pointOnCurveInfo（カーブ上の点・接線・法線）、distanceDimShape（2 点の距離）、
@@ -42,6 +43,10 @@ UTILITY_TYPES = {"unitConversion", "pairBlend", "blendColors", "multiplyDivide",
                  "displayLayer", "expression", "addDoubleLinear", "multDoubleLinear", "clamp", "setRange", "remapValue",
                  "distanceBetween", "vectorProduct", "blendTwoAttr", "blendWeighted", "choice",
                  "animBlendNodeAdditiveDL", "animBlendNodeAdditiveDA", "animBlendNodeAdditiveRotation", "animLayer",
+                 # アニメーションレイヤー（属性の型ごとのノード）
+                 "animBlendNodeAdditive", "animBlendNodeAdditiveF", "animBlendNodeAdditiveFL", "animBlendNodeAdditiveFA",
+                 "animBlendNodeAdditiveI16", "animBlendNodeAdditiveI32", "animBlendNodeAdditiveScale",
+                 "animBlendNodeBoolean", "animBlendNodeEnum", "animBlendNodeTime",
                  "animCurveUA", "animCurveUL", "animCurveUU", "pointOnCurveInfo", "character",
                  "distanceDimShape"}                  # 距離の寸法（2 点の距離。伸びる IK などに使う）
 # 入力をたどらない（値を読むだけの）ノード

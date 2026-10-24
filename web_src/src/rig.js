@@ -60,6 +60,7 @@ const DEFAULTS = {
   animBlendNodeAdditiveDL: { ia: 0, ib: 0, wa: 1, wb: 1 },
   animBlendNodeAdditiveDA: { ia: 0, ib: 0, wa: 1, wb: 1 },
   animBlendNodeAdditiveRotation: { ia: [0, 0, 0], ib: [0, 0, 0], wa: 1, wb: 1 },
+  animBlendNodeAdditiveScale: { ia: 1, ib: 1, wa: 1, wb: 1, acm: 1 },     // acm 1: かけ算で重ねる（Maya の既定）
   animLayer: { w: 1, m: 0 },
   cluster: { en: 1 },
   pointOnCurveInfo: { pr: 0, top: 0 },
@@ -82,6 +83,9 @@ const OUTPUTS = {
   addDoubleLinear: /^o$/, multDoubleLinear: /^o$/, clamp: /^op[rgb]?$/, setRange: /^o[xyz]?$/, remapValue: /^(ov|outValue)$/,
   distanceBetween: /^d$/, vectorProduct: /^o[xyz]?$/, blendTwoAttr: /^o$/, blendWeighted: /^o$/, choice: /^o$/,
   animBlendNodeAdditiveDL: /^o$/, animBlendNodeAdditiveDA: /^o$/, animBlendNodeAdditiveRotation: /^o[xyz]?$/, animLayer: /^fo$/,
+  animBlendNodeAdditive: /^o$/, animBlendNodeAdditiveF: /^o$/, animBlendNodeAdditiveFL: /^o$/, animBlendNodeAdditiveFA: /^o$/,
+  animBlendNodeAdditiveI16: /^o$/, animBlendNodeAdditiveI32: /^o$/, animBlendNodeAdditiveScale: /^o$/,
+  animBlendNodeBoolean: /^o$/, animBlendNodeEnum: /^o$/, animBlendNodeTime: /^o$/,
   cluster: /^og(\[\d+\])?$/, pointOnCurveInfo: /^(p|n|t|nn|nt|cc)[xyz]?$|^cr$/,
   animCurveUA: /^(o|output)$/, animCurveUL: /^(o|output)$/, animCurveUU: /^(o|output)$/,
   character: /^(lv|av|uv|tv)\[\d+\]$/,
@@ -107,7 +111,7 @@ function isAngleAttr(type, attr) {
     case 'eulerToQuat': return /^irt[xyz]?$/.test(attr);
     case 'parentConstraint': return /^tg\[\d+\]\.tor[xyz]?$/.test(attr);
     case 'ikHandle': return attr === 'twi';
-    case 'animBlendNodeAdditiveDA': return /^i[ab]$/.test(attr);
+    case 'animBlendNodeAdditiveDA': case 'animBlendNodeAdditiveFA': return /^i[ab]$/.test(attr);
     case 'animBlendNodeAdditiveRotation': return /^i[ab][xyz]?$/.test(attr);
     default: return false;
   }
@@ -751,8 +755,24 @@ export class RigEvaluator {
         if (g.trax) Object.assign(o, evaluateTrax(g.trax, this.frame, this.clip.curves, (c, v) => (c.type === 'TA' ? v * D2R : v)));
         break;
       }
-      case 'animBlendNodeAdditiveDL': case 'animBlendNodeAdditiveDA':
+      // アニメーションレイヤー: 下のレイヤーまでの値（ia）にこのレイヤーの値（ib）をウェイトで重ねる
+      case 'animBlendNodeAdditiveDL': case 'animBlendNodeAdditiveDA': case 'animBlendNodeAdditive':
+      case 'animBlendNodeAdditiveF': case 'animBlendNodeAdditiveFL': case 'animBlendNodeAdditiveFA':
+      case 'animBlendNodeTime':
         o = { o: this.num(id, 'ia', 0) * this.num(id, 'wa', 1) + this.num(id, 'ib', 0) * this.num(id, 'wb', 1) };
+        break;
+      case 'animBlendNodeAdditiveI16': case 'animBlendNodeAdditiveI32':
+        o = { o: Math.round(this.num(id, 'ia', 0) * this.num(id, 'wa', 1) + this.num(id, 'ib', 0) * this.num(id, 'wb', 1)) };
+        break;
+      case 'animBlendNodeAdditiveScale': {
+        // かけ算で重ねる（acm 1）: ia · (1 + (ib − 1) · wb)。足し算（acm 0）: ia · wa + ib · wb
+        const ia = this.num(id, 'ia', 1), ib = this.num(id, 'ib', 1), wb = this.num(id, 'wb', 1);
+        o = { o: this.num(id, 'acm', 1) >= 0.5 ? ia * (1 + (ib - 1) * wb) : ia * this.num(id, 'wa', 1) + ib * wb };
+        break;
+      }
+      case 'animBlendNodeBoolean': case 'animBlendNodeEnum':
+        // 足し合わせられない型: ウェイトが半分以上ならこのレイヤーの値、それ以外は下のレイヤーまでの値
+        o = { o: this.num(id, 'wb', 1) >= 0.5 ? this.num(id, 'ib', 0) : this.num(id, 'ia', 0) };
         break;
       case 'animBlendNodeAdditiveRotation': {
         const a = this.vec(id, 'ia'), b = this.vec(id, 'ib'), wa = this.num(id, 'wa', 1), wb = this.num(id, 'wb', 1);

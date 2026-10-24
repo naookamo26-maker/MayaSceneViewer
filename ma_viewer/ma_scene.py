@@ -82,7 +82,9 @@ _SKIP_ATTR_TYPES = {
     # リグの計算ノード（値は 2 段階目に属性の範囲から読む）
     "quatToEuler", "eulerToQuat", "quatProd", "quatInvert", "quatNormalize", "quatSlerp", "curveInfo",
     "distanceBetween", "vectorProduct", "angleBetween", "pointOnCurveInfo", "motionPath", "animBlendNodeAdditiveDL", "animBlendNodeAdditiveDA",
-    "animBlendNodeAdditiveRotation", "animBlendNodeAdditiveScale", "animBlendNodeAdditive",
+    "animBlendNodeAdditiveRotation", "animBlendNodeAdditiveScale", "animBlendNodeAdditive", "animBlendNodeAdditiveF",
+    "animBlendNodeAdditiveFL", "animBlendNodeAdditiveFA", "animBlendNodeAdditiveI16", "animBlendNodeAdditiveI32",
+    "animBlendNodeBoolean", "animBlendNodeEnum", "animBlendNodeTime",
 }
 # シェイプのうち、メッシュ以外（子を持たず、属性も使わない）
 _SKIP_SHAPE_TYPES = SHAPE_TYPES - {"mesh"}

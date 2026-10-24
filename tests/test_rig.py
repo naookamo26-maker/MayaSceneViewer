@@ -454,7 +454,7 @@ class TestStage6(unittest.TestCase):
     def test_utilities_and_layers(self):
         for t in ("addDoubleLinear", "multDoubleLinear", "clamp", "setRange", "remapValue", "distanceBetween",
                   "vectorProduct", "blendTwoAttr", "blendWeighted", "choice", "animBlendNodeAdditiveRotation",
-                  "animLayer"):
+                  "animBlendNodeAdditive", "animBlendNodeAdditiveFA", "animBlendNodeAdditiveScale", "animLayer"):
             self.assertIn(t, {g["type"] for g in self.graph.values()}, t)
         self.assertEqual(self.graph["u_remap"]["attrs"]["vl[1]"], [0.5, 1.0, 1.0])
         self.assertNotIn("inputs", self.graph["layer1"])                     # animLayer の入力はたどらない

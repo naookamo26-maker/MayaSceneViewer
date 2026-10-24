@@ -76,8 +76,12 @@ test('標準の計算ノード', () => {
 
 test('アニメーションレイヤー: ベース + レイヤー × ウェイト', () => {
   for (const f of FRAMES) {
-    const r = at(f).chan(idx('lay_jnt')).r[0];
-    assert.ok(near(r, lin(f, 0, 30) + 0.5 * lin(f, 0, 10), 1e-6), `フレーム ${f}: rx ${r}`);
+    const ch = at(f).chan(idx('lay_jnt'));
+    assert.ok(near(ch.r[0], lin(f, 0, 30) + 0.5 * lin(f, 0, 10), 1e-6), `フレーム ${f}: rx ${ch.r[0]}`);
+    // 属性の型ごとのノード: animBlendNodeAdditive（tz）・FA（ry。角度）・Scale（sy。かけ算で重ねる）
+    assert.ok(near(ch.t[2], lin(f, 10, 14) + 0.5 * lin(f, 0, 2), 1e-6), `フレーム ${f}: tz ${ch.t[2]}`);
+    assert.ok(near(ch.r[1], lin(f, 0, 20) + 0.5 * lin(f, 0, 10), 1e-6), `フレーム ${f}: ry ${ch.r[1]}`);
+    assert.ok(near(ch.s[1], lin(f, 1, 2) * (1 + (lin(f, 1, 1.5) - 1) * 0.5), 1e-6), `フレーム ${f}: sy ${ch.s[1]}`);
   }
 });
 
