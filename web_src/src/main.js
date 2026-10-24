@@ -41,6 +41,7 @@ const DEFAULTS = {
   tool: 'select', space: 'local', gizmoSize: 1,
   cameraIcons: true,             // シーンのカメラの形を描く
   cameraGate: true,              // カメラから見るとき、解像度ゲートの外側を暗くする
+  hud: true,                     // ヘッドアップディスプレイ（再生のフレームレート）
 };
 const TOOLS = ['select', 'translate', 'rotate', 'scale'];
 const num = (n) => n.toLocaleString('ja-JP');
@@ -79,6 +80,7 @@ class ViewerApp {
     this.seqFrame = 0;              // シーケンスのフレーム
     this.seqFollow = false;         // ビューポートをシーケンス（ショットのカメラとフレーム）で表示するか
     this.seqPlaying = false;
+    this.fpsMeter = null;           // 再生のフレームレートの計測（startFpsMeter）
     this.ui = new UI(this);
     this.timeline = new Timeline(this);
     this.seqPanel = new SequencerPanel(this);
@@ -406,6 +408,8 @@ class ViewerApp {
       this.seqFollow = false;
       this.seqPanel.build(this.sequence, this.cameras);
       this.updateSequencePanel();
+      this.fpsMeter = null;
+      this.updateHud();
       this.maps.reset(data);
       this.requestMaps();
       mark('マテリアル');
@@ -485,6 +489,7 @@ class ViewerApp {
     this.ui.showPoseFor(-1);
     this.ui.setLegend('off');
     this.ui.setCameras([]);
+    this.updateHud();
     this.updateToolbarHints();
     this.requestRender();
   }
@@ -534,6 +539,7 @@ class ViewerApp {
         break;
       case 'joints': this.overlay.setVisible(value); break;
       case 'cameraIcons': this.updateCameraIcons(); break;
+      case 'hud': this.updateHud(); break;
       case 'cameraGate': this.updateGate(); break;
       case 'curves': this.curves.setVisible(value); break;
       case 'xray': this.overlay.setXray(value); break;
@@ -889,6 +895,8 @@ class ViewerApp {
     if (switched) this.setSetting('poseSource', 'file');
     this.applyFrame(clip.current);
     if (this.seqFollow) this.applySequence();
+    this.fpsMeter = null;
+    this.updateHud();
     this.updateToolbarHints();
     const st = anim.stats || {};
     this.ui.setMessage(`アニメーションを読み込みました（カーブ ${num(st.curves ?? clip.curves.length)} 本・`
@@ -1020,10 +1028,11 @@ class ViewerApp {
     this.playing = true;
     this.timeline.setPlaying(true);
     const t0 = performance.now();
+    this.startFpsMeter(this.clip.fps);
     const tick = (now) => {
       if (!this.playing || !this.clip) return;
       const f = this.clip.wrap(from + Math.floor(((now - t0) / 1000) * this.clip.fps));
-      if (f !== this.frame) this.applyFrame(f);
+      if (f !== this.frame) { this.applyFrame(f); this.countShownFrame(now); }
       this.playHandle = requestAnimationFrame(tick);
     };
     this.playHandle = requestAnimationFrame(tick);
@@ -1033,6 +1042,7 @@ class ViewerApp {
     if (!this.playing) return;
     this.playing = false;
     cancelAnimationFrame(this.playHandle);
+    this.stopFpsMeter();
     this.timeline.setPlaying(false);
     // 再生中は省いていた、パネルの情報を更新する
     if (this.built) this.afterPoseChange();
@@ -1402,6 +1412,64 @@ class ViewerApp {
     this.ui.setToolbarHints(hints);
   }
 
+  // ------------------------------------------------------------------ 再生のフレームレート（ヘッドアップディスプレイ）
+  /**
+   * 再生を始めたとき。再生は実時間で、描画が間に合わないとフレームを飛ばすので、
+   * 実際に表示できたフレーム数（直近 1 秒）を、シーンのフレームレート（目標）と並べて表示する
+   */
+  startFpsMeter(target) {
+    this.fpsMeter = { target, times: [], start: performance.now(), shown: 0, shownAt: 0, first: 0, last: 0 };
+    this.updateHud(true);
+  }
+
+  /** 再生で新しいフレームを表示したとき */
+  countShownFrame(now) {
+    const m = this.fpsMeter;
+    if (!m) return;
+    m.times.push(now);
+    if (!m.shown) m.first = now;
+    m.last = now;
+    m.shown++;
+    while (m.times.length && m.times[0] < now - 1000) m.times.shift();
+    if (now - m.shownAt > 250) { m.shownAt = now; this.updateHud(); }   // 表示の更新は 1 秒に 4 回まで
+  }
+
+  stopFpsMeter() {
+    const m = this.fpsMeter;
+    if (!m) return;
+    const sec = (m.last - m.first) / 1000;                    // 最初と最後に表示したフレームの間
+    // 直前の再生の平均（再生は時間からフレームを決めるので目標を超えない。超えるのは表示の間隔の量子化の誤差）
+    m.average = sec > 0.25 ? Math.min((m.shown - 1) / sec, m.target) : null;
+    m.stopped = true;
+    this.updateHud();
+  }
+
+  /** 直近 1 秒のフレームレート（フレームが 2 つ以上あるとき） */
+  currentFps() {
+    const t = this.fpsMeter ? this.fpsMeter.times : [];
+    if (t.length < 2) return null;
+    return Math.min(((t.length - 1) * 1000) / Math.max(t[t.length - 1] - t[0], 1), this.fpsMeter.target);
+  }
+
+  updateHud(starting = false) {
+    const m = this.fpsMeter;
+    const show = !!(this.settings.hud && this.built && (this.hasTimeline || this.sequence));
+    let text = '', cls = 'idle';
+    if (show) {
+      const target = (m && m.target) || (this.clip && this.clip.fps) || 24;
+      const f1 = (v) => v.toFixed(1);
+      if (m && !m.stopped) {
+        const fps = starting ? null : this.currentFps();
+        text = `再生 ${fps === null ? '--.-' : f1(fps)} / ${f1(target)} fps`;
+        // 立ち上がり（0.5 秒）を過ぎて、目標の 9 割に届かなければ処理落ち
+        cls = fps !== null && performance.now() - m.start > 500 && fps < target * 0.9 ? 'slow' : '';
+      } else {
+        text = m && m.average ? `停止中（直前の再生 平均 ${f1(m.average)} / ${f1(target)} fps）` : `停止中（${f1(target)} fps）`;
+      }
+    }
+    this.ui.setHud(show ? text : null, cls);
+  }
+
   // ------------------------------------------------------------------ カメラシーケンサ
   /** シーケンスのフレームを f にする。follow: true ならビューポートもシーケンスで表示する */
   setSequenceFrame(f, opts = {}) {
@@ -1458,11 +1526,12 @@ class ViewerApp {
     const { start, end } = this.sequence;
     const from = this.seqFrame >= end ? start : Math.floor(this.seqFrame);
     const t0 = performance.now();
+    this.startFpsMeter(fps);
     const tick = (now) => {
       if (!this.seqPlaying) return;
       const span = end - start + 1;
       const f = start + ((from - start + Math.floor(((now - t0) / 1000) * fps)) % span);
-      if (f !== this.seqFrame) { this.seqFrame = f; this.applySequence(); this.updateSequencePanel(); }
+      if (f !== this.seqFrame) { this.seqFrame = f; this.applySequence(); this.updateSequencePanel(); this.countShownFrame(now); }
       this.seqHandle = requestAnimationFrame(tick);
     };
     this.updateSequencePanel();
@@ -1473,6 +1542,7 @@ class ViewerApp {
     if (!this.seqPlaying) return;
     this.seqPlaying = false;
     cancelAnimationFrame(this.seqHandle);
+    this.stopFpsMeter();
     if (this.built) this.afterPoseChange();
     this.updateSequencePanel();
   }
@@ -1610,6 +1680,8 @@ class ViewerApp {
       curves: this.curves.items.filter(Boolean).length,
       cameras: this.cameras.map((c) => c.name),
       viewCamera: this.viewCamera >= 0 ? this.cameras[this.viewCamera].name : null,
+      fps: this.fpsMeter ? { current: this.currentFps(), average: this.fpsMeter.average ?? null, target: this.fpsMeter.target,
+        playing: !this.fpsMeter.stopped } : null,
       sequence: this.sequence ? { frame: this.seqFrame, follow: this.seqFollow, playing: this.seqPlaying,
         shot: (activeShot(this.sequence.shots, this.seqFrame) || {}).shotName || null, shots: this.sequence.shots.length } : null,
       hiddenMeshes: this.built.meshes.filter((e) => !e.visible).map((e) => e.name),

@@ -76,7 +76,7 @@ export class SequencerPanel {
   setCollapsed(on) {
     document.body.classList.toggle('sequencer-collapsed', on);
     $('seq-collapse').setAttribute('aria-expanded', String(!on));
-    $('seq-collapse').textContent = on ? '▴' : '▾';
+    $('seq-collapse').textContent = on ? '▾' : '▴';         // パネルはビューポートの上: 閉じると上に縮む
     $('seq-collapse').title = on ? 'カメラシーケンサを開く' : 'カメラシーケンサを最小化';
   }
 

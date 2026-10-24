@@ -50,6 +50,8 @@
           <div class="choices row" id="opt-axes" role="radiogroup" aria-label="ジョイントの軸" data-setting="axes"><button type="button" role="radio" aria-checked="false" data-value="none">表示しない</button><button type="button" role="radio" aria-checked="false" data-value="selected">選択中のみ</button><button type="button" role="radio" aria-checked="false" data-value="all">すべて</button></div>
           <div class="menu-row"><label for="opt-jsize">ジョイントの大きさ</label>
             <input type="range" id="opt-jsize" min="0.2" max="4" step="0.1" value="1"></div>
+          <div class="menu-sep"></div>
+          <label class="check"><input type="checkbox" id="opt-hud" checked> 再生のフレームレートを表示（ヘッドアップディスプレイ）</label>
         </div>
       </div>
       <div class="menu">
@@ -128,6 +130,7 @@
     <canvas id="canvas"></canvas>
     <div id="cam-gate" hidden><i class="g-top"></i><i class="g-bottom"></i><i class="g-left"></i><i class="g-right"></i><span class="g-frame"></span></div>
     <div id="vp-title"></div>
+    <div id="vp-hud" hidden role="status" aria-live="off" title="再生中に実際に表示できたフレーム数（1 秒あたり）と、シーンのフレームレート"></div>
     <div id="legend" hidden></div>
     <div id="vp-hint">左ドラッグ: 回転　中ドラッグ: 移動　右ドラッグ・ホイール: ズーム　クリック: 選択</div>
     <div id="timeline" role="group" aria-label="タイムライン" hidden>
@@ -166,10 +169,11 @@
     <div id="error" class="overlay-msg error" role="alert" hidden></div>
   </main>
 
-  <!-- カメラシーケンサ（シーンにショットがあるときだけ表示する、ビューポートの下のパネル） -->
+  <!-- カメラシーケンサ（シーンにショットがあるときだけ表示する、ビューポートの上のパネル。
+       下端のシーンのタイムラインと離して、再生ボタンを取り違えないようにする） -->
   <section id="sequencer" aria-label="カメラシーケンサ" hidden>
     <div class="seq-head">
-      <button class="collapse-btn" id="seq-collapse" aria-expanded="true" aria-controls="sequencer" title="カメラシーケンサを最小化">▾</button>
+      <button class="collapse-btn" id="seq-collapse" aria-expanded="true" aria-controls="sequencer" title="カメラシーケンサを最小化">▴</button>
       <span class="seq-title">カメラシーケンサ</span>
       <div class="tl-btns" role="group" aria-label="シーケンスの操作">
         <button class="icon-btn" id="seq-first" aria-label="シーケンスの先頭" title="シーケンスの先頭"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><rect x="1.5" y="3" width="1.5" height="8"/><path d="M8 3v8L3.5 7Z"/><path d="M12.5 3v8L8 7Z"/></svg></button>

@@ -33,11 +33,11 @@ code { font-family: Consolas, "SF Mono", monospace; font-size: 11px; color: var(
   --right-w: 300px;
   display: grid;
   grid-template-columns: var(--left-w) minmax(0, 1fr) var(--right-w);
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;   /* ツールバー・カメラシーケンサ・ビューポート・ステータス */
   height: 100vh;
 }
 #left, #right { grid-row: 2 / 4; }
-#viewport { grid-row: 2; grid-column: 2; }
+#viewport { grid-row: 3; grid-column: 2; }   /* カメラシーケンサ（行 2）の下。タイムラインのボタンと離す */
 #status { grid-row: 4; }
 
 /* ---- ツールバー ---------------------------------------------------- */
@@ -400,6 +400,17 @@ table.kv td.l { text-align: left; }
 #cam-gate i { position: absolute; background: rgba(10, 11, 13, 0.55); }
 #cam-gate .g-frame { position: absolute; box-shadow: 0 0 0 1px rgba(242, 169, 59, 0.75); }
 #cam-gate.no-mask i { display: none; }
+/* ヘッドアップディスプレイ: 再生のフレームレート（処理落ちすると色が変わる） */
+#vp-hud {
+  position: absolute; left: 10px; top: 28px;
+  padding: 1px 6px; border-radius: 3px;
+  background: rgba(20, 22, 25, 0.55); color: #cfe9d2;
+  font: 11px/1.6 Consolas, "SF Mono", monospace; font-variant-numeric: tabular-nums;
+  pointer-events: none; white-space: nowrap;
+}
+#vp-hud[hidden] { display: none; }
+#vp-hud.slow { color: #ffb4a8; background: rgba(90, 30, 25, 0.6); }
+#vp-hud.idle { color: rgba(255, 255, 255, 0.55); }
 #vp-hint {
   position: absolute; left: 10px; bottom: 8px;
   color: rgba(255, 255, 255, 0.55);
@@ -485,12 +496,12 @@ body.drag-over #viewport { box-shadow: inset 0 0 0 2px var(--joint); }
 /* 割合が分からないときは、帯を半分の長さで止めて表示する（アニメーションはしない） */
 .progress.indeterminate i { width: 40%; margin-left: 30%; opacity: 0.6; }
 
-/* ---- カメラシーケンサ（ビューポートの下） -------------------------------------- */
+/* ---- カメラシーケンサ（ビューポートの上。下端のタイムラインと離して、操作を取り違えないようにする） ---- */
 #sequencer {
-  grid-row: 3; grid-column: 2; min-width: 0;
+  grid-row: 2; grid-column: 2; min-width: 0;
   display: flex; flex-direction: column;
   height: 168px;
-  background: var(--panel); border-top: 1px solid var(--line);
+  background: var(--panel); border-bottom: 1px solid var(--line);
   font-variant-numeric: tabular-nums;
 }
 #sequencer[hidden] { display: none; }
@@ -503,8 +514,11 @@ body.sequencer-collapsed #sequencer .seq-body { display: none; }
 .seq-head .tl-btns .icon-btn { width: 26px; height: 24px; border-radius: 0; margin-left: -1px; background: var(--panel); }
 .seq-head .tl-btns .icon-btn:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
 .seq-head .tl-btns .icon-btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
-#seq-play { width: 36px; height: 26px; border-radius: 13px; background: #3b4651; border-color: #566572; color: #f2f6f9; }
+/* シーンのタイムラインの再生ボタン（青灰色）と見分けられるよう、シーケンスの再生ボタンは紫系にする */
+#seq-play { width: 36px; height: 26px; border-radius: 13px; background: #4a3f63; border-color: #6d5d92; color: #efe9ff; }
+#seq-play:hover { background: #57497a; }
 #seq-play[aria-pressed="true"] { background: #5a4a2c; border-color: #8a6d3b; color: var(--select); }
+.seq-title { color: #c3b6e6; font-weight: 600; }
 .seq-head .tl-num { flex: none; width: 66px; height: 24px; padding: 0 6px; border: 1px solid #6b5a3a; border-radius: var(--radius); background: var(--panel-2); color: var(--select); text-align: right; }
 .seq-shot-info { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
 .seq-follow { flex: none; }
@@ -551,11 +565,13 @@ body.sequencer-collapsed #sequencer .seq-body { display: none; }
   #vp-hint { display: none; }
 }
 @media (max-width: 720px) {
-  #app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 50vh auto auto auto auto; }
+  #app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 50vh auto auto auto; }
   #left, #right { max-height: 40vh; border: none; border-top: 1px solid var(--line); }
   body.left-collapsed #left .panel-strip, body.right-collapsed #right .panel-strip { flex-direction: row; height: 30px; padding: 0 10px; }
   .strip-label { writing-mode: horizontal-tb; }
-  #viewport { grid-row: 2; grid-column: 1; }
-  #left, #right, #sequencer, #status { grid-row: auto; grid-column: 1; }
+  #viewport { grid-row: 3; grid-column: 1; }
+  #sequencer { grid-row: 2; }
+  #left, #right, #status { grid-row: auto; grid-column: 1; }
+  #sequencer { grid-column: 1; }
   body { overflow: auto; }
 }

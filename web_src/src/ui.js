@@ -121,6 +121,7 @@ export class UI {
     });
     $('opt-bind').addEventListener('click', () => this.app.togglePoseSource());
     $('opt-camera-icons').addEventListener('change', (e) => s('cameraIcons', e.target.checked));
+    $('opt-hud').addEventListener('change', (e) => s('hud', e.target.checked));
     $('opt-camera-gate').addEventListener('change', (e) => s('cameraGate', e.target.checked));
     $('opt-normal-flip').addEventListener('change', (e) => s('normalFlipY', e.target.checked));
     document.querySelectorAll('#map-toggles [data-map]').forEach((el) => {
@@ -171,6 +172,7 @@ export class UI {
     $('opt-tex').setAttribute('aria-pressed', String(st.textures));
     $('opt-bind').setAttribute('aria-pressed', String(st.poseSource === 'bind'));
     $('opt-camera-icons').checked = st.cameraIcons !== false;
+    $('opt-hud').checked = st.hud !== false;
     $('opt-camera-gate').checked = st.cameraGate !== false;
     $('opt-normal-flip').checked = !!st.normalFlipY;
     $('map-toggles').disabled = st.mapView !== 'combined';
@@ -757,6 +759,14 @@ export class UI {
   }
 
   setTitle(text) { $('vp-title').textContent = text || ''; }
+  /** ヘッドアップディスプレイ（text が null なら隠す。cls: '' / 'slow'（処理落ち）/ 'idle'（停止中）） */
+  setHud(text, cls) {
+    const el = $('vp-hud');
+    el.hidden = text === null;
+    if (text === null) return;
+    el.textContent = text;
+    el.className = cls || '';
+  }
   setFile(text) { $('status-file').textContent = text; }
   setStats(text) { $('status-stats').textContent = text; }
   setMessage(text, ms = 4000) {

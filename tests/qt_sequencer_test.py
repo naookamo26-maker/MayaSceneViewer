@@ -23,7 +23,9 @@ STATE_JS = """JSON.stringify((() => {
   const lanes = document.getElementById('seq-lanes').getBoundingClientRect();
   const vp = document.getElementById('viewport').getBoundingClientRect();
   return { loaded: !!s.loaded, name: window.mayaViewer.debug.app.sceneName || '', animation: s.animation || null, seq: s.sequence, view: s.viewCamera,
-           panel: !el.hidden, lanes: [lanes.x, lanes.y, lanes.width, lanes.height], vpBottom: vp.bottom, seqTop: el.getBoundingClientRect().top,
+           panel: !el.hidden, lanes: [lanes.x, lanes.y, lanes.width, lanes.height], vpTop: vp.top, seqBottom: el.getBoundingClientRect().bottom,
+           hud: document.getElementById('vp-hud').hidden ? null : document.getElementById('vp-hud').textContent,
+           hudSlow: document.getElementById('vp-hud').classList.contains('slow'), fps: s.fps || null,
            shots: document.querySelectorAll('#seq-rows .seq-shot').length,
            current: (document.querySelector('#seq-rows .seq-shot.current b') || {}).textContent || null };
 })())"""
@@ -81,8 +83,9 @@ def main() -> int:
 
     def s_open(nxt):
         def got(s):
-            check(s["panel"] and s["shots"] == 6, "ショットがあると下部にカメラシーケンサを表示（ショット 6 個）")
-            check(abs(s["seqTop"] - s["vpBottom"]) < 2, "パネルはビューポートのすぐ下")
+            check(s["panel"] and s["shots"] == 6, "ショットがあるとカメラシーケンサを表示（ショット 6 個）")
+            check(abs(s["seqBottom"] - s["vpTop"]) < 2, "パネルはビューポートのすぐ上（下端のタイムラインと離す）")
+            check(bool(s["hud"]) and s["hud"].startswith("停止中"), "ヘッドアップディスプレイ（停止中）: %s" % s["hud"])
             check(s["seq"]["frame"] == 1 and not s["seq"]["follow"], "最初はシーケンスに従わない（Maya のビューのカメラのまま）")
             s_open.lanes = s["lanes"]
             nxt()
@@ -117,10 +120,13 @@ def main() -> int:
 
         def moved(s):
             check(s["seq"]["frame"] > 6, "再生中はシーケンスのフレームが進む: %s" % s["seq"]["frame"])
+            check(bool(s["hud"]) and s["hud"].startswith("再生 ") and s["hud"].endswith("/ 24.0 fps") and s["fps"]["current"],
+                  "再生中はヘッドアップディスプレイに実際のフレームレートと目標を表示: %s" % s["hud"])
             js("document.getElementById('seq-play').click(); 'ok'", lambda _: state(stopped))
 
         def stopped(s):
             check(not s["seq"]["playing"], "もう一度押すと停止")
+            check(bool(s["hud"]) and "直前の再生 平均" in s["hud"], "停止後は直前の再生の平均を表示: %s" % s["hud"])
             js("document.querySelector('#opt-camera [data-value=\"-1\"]').click(); 'ok'", lambda _: state(free))
 
         def free(s):
