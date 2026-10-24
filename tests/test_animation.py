@@ -218,7 +218,16 @@ class TestCameraAimAndDistance(unittest.TestCase):
 
     def test_no_warnings(self):
         self.assertFalse(any("lookAt" in w or "自作ノード" in w for w in self.scene["warnings"]), self.scene["warnings"])
-        self.assertEqual(self.anim["warnings"], [])
+        self.assertEqual(len(self.anim["warnings"]), 1, self.anim["warnings"])
+        self.assertIn("bad_roll_group の tws", self.anim["warnings"][0])     # 未対応のノードからの twist だけ
+        self.assertEqual(self.anim["tainted"], [])
+
+    def test_unsupported_twist_source_is_dropped(self):
+        # twist が未対応のノード（frameCache）から来ていても、lookAt は評価する（twist の接続だけ外す）
+        g = self.graph["bad_roll_group"]
+        self.assertNotIn("tws", g["inputs"])
+        cam = next(x for x in self.anim["graph"] if x["dag"] == self.names.index("bad_roll_cam"))
+        self.assertEqual(cam["inputs"]["rx"], {"node": g["id"], "attr": "crx"})
 
     def test_look_at_drives_camera_rotation(self):
         g = self.graph["cam_aim_group"]

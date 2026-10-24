@@ -12,6 +12,8 @@ samples/sample_arm.ma に、次のものを足したもの（再生範囲 1〜24
   * shape_roll_group（lookAt）: twist をカメラのシェイプの独自の属性（rollAngle、doubleAngle、20 度）からつないだカメラ
   * attr_roll_group（lookAt）: twist を別のノード（roll_ctrl）の独自の属性（roll、doubleAngle、20 度）からつないだカメラ
       （どちらも cam_aim_group と同じロールになる）
+  * bad_roll_group（lookAt）: twist を未対応のノード（frameCache）から unitConversion を通してつないだカメラ
+      （twist の接続だけを外してファイルの値（0）にし、エイムの向きは求める）
   * distanceDimension1（distanceDimShape）: locStart（原点）と locEnd（tx にキー 1: 3 → 24: 9）の距離 →
       multiplyDivide（÷ 6）→ box.sx
 """
@@ -84,7 +86,8 @@ def main():
     for args, kw in ((("cam_aim_group", "aim_cam", "aim_cam_aim", 20), {}), (("roll_group", "roll_cam", "roll_cam_aim", 0), {}),
                      (("shape_group", "shape_cam", "shape_cam_aim", 0), {"shape_target": True, "aim_pos": (0, -4, 0)}),
                      (("shape_roll_group", "shape_roll_cam", "shape_roll_cam_aim", 0), {"shape_roll": 20}),
-                     (("attr_roll_group", "attr_roll_cam", "attr_roll_cam_aim", 0), {})):
+                     (("attr_roll_group", "attr_roll_cam", "attr_roll_cam_aim", 0), {}),
+                     (("bad_roll_group", "bad_roll_cam", "bad_roll_cam_aim", 0), {})):
         a, c = camera_and_aim(*args, **kw)
         out += a
         conns += c
@@ -93,7 +96,12 @@ def main():
             '\tsetAttr -k on ".roll" 20;',
             'createNode locator -n "roll_ctrlShape" -p "roll_ctrl";',
             '\tsetAttr -k off ".v";']
-    conns.append('connectAttr "roll_ctrl.roll" "attr_roll_group.tws";')
+    out += ['createNode frameCache -n "roll_cache";',
+            'createNode unitConversion -n "roll_uc";',
+            '\tsetAttr ".cf" 0.017453292519943295;']
+    conns += ['connectAttr "roll_ctrl.roll" "attr_roll_group.tws";',
+              'connectAttr "roll_cache.v" "roll_uc.i";',
+              'connectAttr "roll_uc.o" "bad_roll_group.tws";']
     out += ['createNode transform -n "distanceDimension1";',
             'createNode distanceDimShape -n "distanceDimensionShape1" -p "distanceDimension1";',
             '\tsetAttr -k off ".v";',

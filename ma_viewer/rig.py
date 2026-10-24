@@ -113,6 +113,9 @@ class GraphInfo:
         self.edges: Dict[int, Dict[str, Tuple[MaNode, str]]] = {}   # id(使う側) → {属性: (元, 元の属性)}
         self.ik: List[dict] = []                       # {"handle", "solver", "chain": [joint...], "problem"}
         self.unsupported: Dict[str, List[Tuple[str, str, str]]] = {}   # 型 → [(ノード名, 使う側, 属性)]
+        self.unsupported_at: List[Tuple[MaNode, MaNode, str]] = []      # [(未対応のノード, 使う側, 属性)]
+        # 未対応のノードにつながるため、接続を外してファイルの値で再生する補助の入力: [(使う側, 属性, 未対応のノード)]
+        self.soft_dropped: List[Tuple[MaNode, str, MaNode]] = []
         self.graph_driven: Set[int] = set()            # チャンネルの接続元がすべて評価できるノード
         self.expressions: Dict[int, str] = {}          # 解釈できる expression の式
         self.expression_problems: Dict[str, str] = {}  # 解釈できない expression の名前 → 理由
@@ -204,6 +207,7 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
             text, problem = read_expression(ms, n)
             if problem:
                 info.unsupported.setdefault("expression", []).append((n.name, consumer.name, ckey))
+                info.unsupported_at.append((n, consumer, ckey))
                 info.expression_problems[n.name] = problem
                 return
             info.expressions[id(n)] = text
@@ -256,6 +260,7 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
                 add_edge(n, attr)
             return
         info.unsupported.setdefault(n.type, []).append((n.name, consumer.name, ckey))
+        info.unsupported_at.append((n, consumer, ckey))
 
     # 表示するノードのチャンネルの入力
     for n in ms.nodes:
@@ -327,7 +332,89 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
         srcs = [src for key, (src, _sa) in n.inputs.items() if _base(key) in _CHANNEL_KEYS]
         if srcs and all(_evaluable(s, info) for s in srcs):
             info.graph_driven.add(id(n))
+    _drop_soft_unsupported(info)
     return info
+
+
+# 未対応のノードにつながっていても、その接続だけを外して（ファイルの値にして）評価を続ける補助の入力。
+# lookAt の twist（ロール）などが未対応のノードから来ていても、エイムの向きは求められるようにする
+_SOFT_INPUTS = {t: re.compile(r"^(tws|twist|o[xyz]?|wu[xyz]?|u[xyz]?|a[xyz]?|w\d+|tg\[\d+\]\.tw)$") for t in CONSTRAINT_TYPES}
+_SOFT_INPUTS["ikHandle"] = re.compile(r"^(twi|twist|rol|roll)$")
+
+
+def _drop_soft_unsupported(info: GraphInfo):
+    """補助の入力（_SOFT_INPUTS）のうち、上流に未対応のノードがあるものの接続を外す。警告もそれに合わせる"""
+    if not info.unsupported_at:
+        return
+    bad_ids = {id(n) for n, _c, _k in info.unsupported_at}
+    memo: Dict[Tuple[int, str], Optional[MaNode]] = {}
+
+    def bad_up(src: MaNode, sattr: str, seen: Set[Tuple[int, str]]) -> Optional[MaNode]:
+        """src.sattr の上流にある未対応のノード（なければ None）"""
+        key = (id(src), sattr)
+        if key in memo:
+            return memo[key]
+        if id(src) in bad_ids:
+            return src
+        if key in seen:
+            return None
+        seen.add(key)
+        edges = info.edges.get(id(src), {})
+        if id(src) in info.dg and not _value_shape(src):
+            ups = list(edges.values())                   # 計算ノードは、すべての入力から出力が決まる
+        else:
+            ups = [edges[sattr]] if sattr in edges else []   # DAG ノード・シェイプの属性は、その属性の入力だけ
+        found = None
+        for s2, a2 in ups:
+            found = bad_up(s2, a2, seen)
+            if found is not None:
+                break
+        memo[key] = found
+        return found
+
+    for cid, edges in list(info.edges.items()):
+        consumer = info.dg.get(cid) or info.dag.get(cid)
+        if consumer is None or consumer.type not in _SOFT_INPUTS:
+            continue
+        for key, (src, sattr) in list(edges.items()):
+            bad = bad_up(src, sattr, set()) if _SOFT_INPUTS[consumer.type].match(key) else None
+            if bad is not None:
+                del edges[key]
+                info.soft_dropped.append((consumer, key, bad))
+    if not info.soft_dropped:
+        return
+
+    # 警告: 外した接続の先でしか使わない未対応のノードは「再生されません」から除く。
+    # 最後に値を使う側（DAG ノード・形の変形）の接続から、残った接続だけで上流へたどれるノードを集める
+    reached: Set[int] = set()
+    seen: Set[Tuple[int, str]] = set()
+
+    def mark(src: MaNode, sattr: str):
+        if (id(src), sattr) in seen:
+            return
+        seen.add((id(src), sattr))
+        reached.add(id(src))
+        edges = info.edges.get(id(src), {})
+        if id(src) in info.dg and not _value_shape(src):
+            ups = list(edges.values())
+        else:
+            ups = [edges[sattr]] if sattr in edges else []
+        for s2, a2 in ups:
+            mark(s2, a2)
+
+    for cid, edges in info.edges.items():
+        n = info.dg.get(cid)
+        if n is None or n.type in GEOMETRY_TYPES:
+            reached.add(cid)
+            for src, sattr in edges.values():
+                mark(src, sattr)
+    for _kind, n, _key, src, sattr in info.props:
+        reached.add(id(n))
+        mark(src, sattr)
+    info.unsupported_at = [(n, c, k) for n, c, k in info.unsupported_at if id(c) in reached]
+    info.unsupported = {}
+    for n, c, k in info.unsupported_at:
+        info.unsupported.setdefault(n.type, []).append((n.name, c.name, k))
 
 
 # ---------------------------------------------------------------------------
@@ -621,6 +708,9 @@ def graph_warnings(info: GraphInfo) -> List[str]:
             continue
         out.append("アニメーション: %s（%s など）は未対応のため、これにつながる %s の値は再生されません。"
                    % (t, items[0][0], "、".join(names[:4]) + (" ほか" if len(names) > 4 else "")))
+    for c, key, bad in info.soft_dropped:
+        out.append("アニメーション: %s の %s は、つながる %s（%s）が未対応のため、接続を使わずファイルの値で再生します"
+                   "（この値の動きは再現されません）。" % (c.name, key, bad.type, bad.name))
     for e in info.ik:
         if e["problem"]:
             out.append("アニメーション: IK ハンドル %s は再生されません（%s）。" % (e["handle"].name, e["problem"]))
