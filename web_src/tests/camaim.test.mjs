@@ -51,6 +51,9 @@ test('カメラとエイム: twist（ロール）で視線のまわりに回る'
   assert.ok(axis(a, 2).angleTo(axis(b, 2)) < 1e-6, '視線は同じ');
   const roll = axis(a, 1).angleTo(axis(b, 1)) / D2R;
   assert.ok(Math.abs(roll - 20) < 1e-4, `ロール ${roll} 度`);
+  // 回る向き: 正の twist は、視線（カメラ → エイム）のまわりに左ねじの向き（Maya と見比べて確かめた）
+  const dir = pos(rig.world(idx('aim_cam_aim'))).sub(pos(a)).normalize();
+  assert.ok(axis(b, 1).cross(axis(a, 1)).dot(dir) < 0, '正の twist で、視線のまわりに左ねじの向きに回る');
   // twist なしのカメラは、上（+Y）が world up（+Y）の側を向く（横に傾かない）
   assert.ok(Math.abs(axis(b, 0).y) < 1e-6, 'twist なしのカメラの横の軸は水平');
 });

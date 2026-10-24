@@ -1246,8 +1246,9 @@ export class RigEvaluator {
           q = new Quaternion().setFromRotationMatrix(frame(dir, upPerp).multiply(frame(a, uPerp).transpose()));
         }
         if (g.type === 'lookAt' && (wut === 0 || wut === 3)) {
-          const tw = this.num(id, this.attrName(g, ['tws', 'twist']), 0);          // ラジアン
-          if (Math.abs(tw) > 1e-12) q = new Quaternion().setFromAxisAngle(dir, tw).multiply(q);
+          // ラジアン。Maya の正の twist は、視線（カメラ → ターゲット）のまわりに左ねじの向き（Maya と見比べて確かめた）
+          const tw = this.num(id, this.attrName(g, ['tws', 'twist']), 0);
+          if (Math.abs(tw) > 1e-12) q = new Quaternion().setFromAxisAngle(dir, -tw).multiply(q);
         }
         return expand('cr', toRotate(q.multiply(radQuat(this.vec(id, 'o')))), XYZ);
       }
