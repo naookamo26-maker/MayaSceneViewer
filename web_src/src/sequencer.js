@@ -2,7 +2,8 @@
 //
 // ショットはシーンの startFrame〜endFrame を、シーケンスの sequenceStartFrame から scale 倍の長さで並べたもの
 // （前後の preHold・postHold のあいだは最初・最後のフレームで止まる）。シーケンスのフレーム f は [f, f + 1) を占める。
-// 同じフレームに複数のショットがあるときは、トラックの番号が大きい（パネルで上に表示する）ショットを使う。
+// 同じフレームに複数のショットがあるときは、トラックの番号が小さい（パネルで上に表示する）ショットを使う。
+// Maya と同じく、トラック 1 が一番上で、トラックを足すと 2、3… と下の段に増える。
 // ミュートしたショットは使わない。
 
 /** シーケンスのフレーム seq で使うショット（なければ null） */
@@ -10,7 +11,7 @@ export function activeShot(shots, seq) {
   let best = null;
   for (const s of shots || []) {
     if (s.mute || seq < s.sequenceStartFrame || seq >= s.sequenceEndFrame + 1) continue;
-    if (!best || s.track > best.track || (s.track === best.track && s.sequenceStartFrame > best.sequenceStartFrame)) best = s;
+    if (!best || s.track < best.track || (s.track === best.track && s.sequenceStartFrame > best.sequenceStartFrame)) best = s;
   }
   return best;
 }
@@ -88,7 +89,7 @@ export class SequencerPanel {
     const rows = $('seq-rows');
     rows.textContent = '';
     if (!this.seq) return;
-    const tracks = [...new Set(this.seq.shots.map((s) => s.track))].sort((a, b) => b - a);   // 番号の大きいトラックを上に
+    const tracks = [...new Set(this.seq.shots.map((s) => s.track))].sort((a, b) => a - b);   // トラック 1 を一番上に
     const camName = (ci) => (ci >= 0 && cameras[ci] ? cameras[ci].name : '（カメラなし）');
     for (const t of tracks) {
       const row = document.createElement('div');

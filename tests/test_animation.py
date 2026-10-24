@@ -219,7 +219,7 @@ class TestSequencer(unittest.TestCase):
         return self.scene["cameras"][s["camera"]]["name"]
 
     def test_shots(self):
-        self.assertEqual(sorted(self.shots), ["SH010", "SH015", "SH020", "SH030", "SH040", "SH099"])
+        self.assertEqual(sorted(self.shots), ["SH010", "SH015", "SH020", "SH030", "SH035", "SH040", "SH099"])
         s = self.shots["SH010"]
         self.assertEqual((s["name"], self.cam(s), s["startFrame"], s["endFrame"], s["sequenceStartFrame"], s["track"]),
                          ("shot1", "shot_cam", 1.0, 12.0, 1.0, 1))

@@ -507,7 +507,8 @@ body.drag-over #viewport { box-shadow: inset 0 0 0 2px var(--joint); }
 #sequencer[hidden] { display: none; }
 body.sequencer-collapsed #sequencer { height: auto; }
 body.sequencer-collapsed #sequencer .seq-body { display: none; }
-.seq-head { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px 0 0; border-bottom: 1px solid var(--line); flex: none; }
+/* 操作の行はパネルの下側（トラックの下）。ツールバーのボタンと離す */
+.seq-head { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px 0 0; border-top: 1px solid var(--line); flex: none; }
 .seq-head .collapse-btn { height: 100%; }
 .seq-title { color: var(--text-dim); white-space: nowrap; }
 .seq-head .tl-btns { display: inline-flex; flex: none; }
@@ -522,7 +523,7 @@ body.sequencer-collapsed #sequencer .seq-body { display: none; }
 .seq-head .tl-num { flex: none; width: 66px; height: 24px; padding: 0 6px; border: 1px solid #6b5a3a; border-radius: var(--radius); background: var(--panel-2); color: var(--select); text-align: right; }
 .seq-shot-info { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
 .seq-follow { flex: none; }
-.seq-body { position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-bottom: 6px; }
+.seq-body { position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-bottom: 6px; padding-top: 2px; }
 .seq-ruler-row, .seq-row { display: flex; align-items: stretch; }
 .seq-track-label { flex: none; width: 72px; padding: 0 8px; color: var(--text-dim); font-size: 11px; display: flex; align-items: center; }
 #seq-ruler { position: relative; flex: 1; height: 20px; margin-right: 10px; border-bottom: 1px solid var(--line); }

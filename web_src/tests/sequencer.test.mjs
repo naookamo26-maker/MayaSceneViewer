@@ -21,10 +21,10 @@ test('シーケンスのフレームごとのショット・カメラ・シー�
   assert.deepEqual(at(45), ['SH040', 'persp', 6]);        // 起動時のカメラ（persp）のショット
 });
 
-test('重なるショットはトラックの番号が大きい方、ミュートしたショットは使わない', () => {
-  assert.deepEqual(at(5), ['SH015', 'ortho_cam', 1]);
-  assert.deepEqual(at(8), ['SH015', 'ortho_cam', 4]);
-  assert.deepEqual(at(9), ['SH010', 'shot_cam', 9]);
+test('重なるショットはトラックの番号が小さい（上の段の）方、ミュートしたショットは使わない', () => {
+  assert.deepEqual(at(5), ['SH010', 'shot_cam', 5]);      // SH015（トラック 2）より SH010（トラック 1）
+  assert.deepEqual(at(8), ['SH010', 'shot_cam', 8]);
+  assert.deepEqual(at(38), ['SH035', 'ortho_cam', 2]);    // トラック 1 にショットがなければトラック 2
   assert.equal(at(16)[0], 'SH020');                       // SH099（ミュート）は無視
 });
 
@@ -36,6 +36,5 @@ test('scale と preHold: 長さが scale 倍になり、preHold の間は最初�
 });
 
 test('ショットのないフレーム', () => {
-  assert.equal(at(38), null);
   assert.equal(at(0), null);
 });

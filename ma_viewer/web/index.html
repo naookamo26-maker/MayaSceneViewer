@@ -169,9 +169,14 @@
     <div id="error" class="overlay-msg error" role="alert" hidden></div>
   </main>
 
-  <!-- カメラシーケンサ（シーンにショットがあるときだけ表示する、ビューポートの上のパネル。
-       下端のシーンのタイムラインと離して、再生ボタンを取り違えないようにする） -->
+  <!-- カメラシーケンサ（シーンにショットがあるときだけ表示する、ビューポートの上のパネル）。
+       再生ボタンなどの操作の行はパネルの下側に置き、ツールバーのボタンとも、下端のタイムラインとも離す -->
   <section id="sequencer" aria-label="カメラシーケンサ" hidden>
+    <div class="seq-body">
+      <div class="seq-ruler-row"><span class="seq-track-label"></span><div id="seq-ruler"></div></div>
+      <div id="seq-rows"></div>
+      <div id="seq-lanes" title="クリック・ドラッグ: シーケンスのフレームを移動"><div id="seq-playhead"></div></div>
+    </div>
     <div class="seq-head">
       <button class="collapse-btn" id="seq-collapse" aria-expanded="true" aria-controls="sequencer" title="カメラシーケンサを最小化">▴</button>
       <span class="seq-title">カメラシーケンサ</span>
@@ -187,11 +192,6 @@
       <input type="number" id="seq-frame" class="tl-num tl-frame" step="1" aria-label="シーケンスのフレーム" title="シーケンスのフレーム">
       <span id="seq-shot" class="seq-shot-info"></span>
       <label class="check seq-follow" title="オンのとき、ビューポートはシーケンスのフレームのショットのカメラとフレームで表示する"><input type="checkbox" id="seq-follow"> シーケンスで見る</label>
-    </div>
-    <div class="seq-body">
-      <div class="seq-ruler-row"><span class="seq-track-label"></span><div id="seq-ruler"></div></div>
-      <div id="seq-rows"></div>
-      <div id="seq-lanes" title="クリック・ドラッグ: シーケンスのフレームを移動"><div id="seq-playhead"></div></div>
     </div>
   </section>
 

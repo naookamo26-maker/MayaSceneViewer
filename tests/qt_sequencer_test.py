@@ -27,6 +27,8 @@ STATE_JS = """JSON.stringify((() => {
            hud: document.getElementById('vp-hud').hidden ? null : document.getElementById('vp-hud').textContent,
            hudSlow: document.getElementById('vp-hud').classList.contains('slow'), fps: s.fps || null,
            shots: document.querySelectorAll('#seq-rows .seq-shot').length,
+           rows: [...document.querySelectorAll('#seq-rows .seq-track-label')].map((e) => e.textContent),
+           headBelow: document.querySelector('.seq-head').getBoundingClientRect().top >= document.getElementById('seq-rows').getBoundingClientRect().bottom,
            current: (document.querySelector('#seq-rows .seq-shot.current b') || {}).textContent || null };
 })())"""
 
@@ -83,7 +85,9 @@ def main() -> int:
 
     def s_open(nxt):
         def got(s):
-            check(s["panel"] and s["shots"] == 6, "ショットがあるとカメラシーケンサを表示（ショット 6 個）")
+            check(s["panel"] and s["shots"] == 7, "ショットがあるとカメラシーケンサを表示（ショット 7 個）")
+            check(s["rows"] == ["トラック 1", "トラック 2"], "トラック 1 を一番上に、2 をその下に並べる: %s" % s["rows"])
+            check(s["headBelow"], "再生ボタンなどの操作の行は、トラックの下（パネルの下側）")
             check(abs(s["seqBottom"] - s["vpTop"]) < 2, "パネルはビューポートのすぐ上（下端のタイムラインと離す）")
             check(bool(s["hud"]) and s["hud"].startswith("停止中"), "ヘッドアップディスプレイ（停止中）: %s" % s["hud"])
             check(s["seq"]["frame"] == 1 and not s["seq"]["follow"], "最初はシーケンスに従わない（Maya のビューのカメラのまま）")
@@ -108,8 +112,8 @@ def main() -> int:
             QtCore.QTimer.singleShot(300, lambda: state(got2))
 
         def got2(s):
-            check(s["current"] == "SH015" and s["view"] == "ortho_cam" and s["animation"]["frame"] == 2,
-                  "重なるショットはトラック 2 を使う（SH015・ortho_cam・シーン 2）: %s" % s["current"])
+            check(s["current"] == "SH010" and s["view"] == "shot_cam" and s["animation"]["frame"] == 6,
+                  "重なるショットはトラック 1（上の段）を使う（SH010・shot_cam・シーン 6）: %s" % s["current"])
             nxt()
         QtCore.QTimer.singleShot(300, lambda: state(got))
 

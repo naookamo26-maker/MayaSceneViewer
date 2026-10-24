@@ -7034,6 +7034,20 @@
     "camera":0
    },
    {
+    "name":"shot7",
+    "startFrame":1.0,
+    "endFrame":3.0,
+    "sequenceStartFrame":37.0,
+    "scale":1.0,
+    "preHold":0.0,
+    "postHold":0.0,
+    "track":2,
+    "mute":false,
+    "sequenceEndFrame":39.0,
+    "shotName":"SH035",
+    "camera":1
+   },
+   {
     "name":"shot6",
     "startFrame":1.0,
     "endFrame":10.0,

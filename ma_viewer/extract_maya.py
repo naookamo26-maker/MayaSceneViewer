@@ -282,7 +282,7 @@ class _Extractor:
             out.append(e)
         if not out:
             return None
-        out.sort(key=lambda e: (e["sequenceStartFrame"], -e["track"]))
+        out.sort(key=lambda e: (e["sequenceStartFrame"], e["track"]))
         return {"shots": out, "start": min(e["sequenceStartFrame"] for e in out),
                 "end": max(e["sequenceEndFrame"] for e in out)}
 

@@ -129,7 +129,7 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 | `startFrame` / `endFrame` | シーンのフレーム範囲 |
 | `sequenceStartFrame` / `sequenceEndFrame` | シーケンス上の範囲。終わりは 開始 + preHold + (endFrame − startFrame) × scale + postHold |
 | `scale` / `preHold` / `postHold` | シーンの範囲に掛ける倍率と、前後に最初・最後のフレームを保つフレーム数 |
-| `track` / `mute` | トラックの番号（重なるときは大きい方を使う）とミュート |
+| `track` / `mute` | トラックの番号（1 が一番上の段。重なるときは番号の小さい方を使う）とミュート |
 
 ## render
 
