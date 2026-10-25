@@ -290,11 +290,13 @@ def collect_cameras(ms: MaScene) -> List[MaNode]:
     return out
 
 
-# カメラシーケンサのショット（shot）の属性: (読む名前の候補, 既定値)。フレームはシーンの時間の単位のまま
+# カメラシーケンサのショット（shot）の属性: (読む名前の候補, 既定値)。フレームはシーンの時間の単位のまま。
+# Maya は既定値と同じ値を .ma に書かないので、書かれていない属性は既定値（時間はどれも 0）とする
+# （0 フレームから始まるショットは .sf の行がない）
 _SHOT_ATTRS = {
-    "startFrame": (("sf", "startFrame"), None),
-    "endFrame": (("ef", "endFrame"), None),
-    "sequenceStartFrame": (("ssf", "sequenceStartFrame"), None),
+    "startFrame": (("sf", "startFrame"), 0.0),
+    "endFrame": (("ef", "endFrame"), 0.0),
+    "sequenceStartFrame": (("ssf", "sequenceStartFrame"), 0.0),
     "scale": (("s", "scale"), 1.0),
     "preHold": (("prh", "preHold"), 0.0),
     "postHold": (("psh", "postHold"), 0.0),
@@ -335,12 +337,10 @@ def sequencer_entry(ms: MaScene, shots: List[MaNode], camera_index: Dict[int, in
             v = next((a[k] for k in names if k in a), d)
             if isinstance(v, list):
                 v = v[0] if v else d
-            e[key] = float(v) if v is not None else None
-        if e["startFrame"] is None or e["endFrame"] is None:
-            ms.warn("%s: ショットのフレーム範囲がないため、カメラシーケンサに出しません。" % n.name)
-            continue
-        if e["sequenceStartFrame"] is None:
-            e["sequenceStartFrame"] = e["startFrame"]
+            e[key] = float(v)
+        if e["endFrame"] < e["startFrame"]:
+            ms.warn("%s: ショットの終了フレーム（%g）が開始フレーム（%g）より前です。"
+                    % (n.name, e["endFrame"], e["startFrame"]))
         scale = e["scale"] if abs(e["scale"]) > 1e-9 else 1.0
         e["sequenceEndFrame"] = (e["sequenceStartFrame"] + e["preHold"] + (e["endFrame"] - e["startFrame"]) * scale
                                  + e["postHold"])
