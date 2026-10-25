@@ -101,20 +101,25 @@ test('ドリブンキー: 独自の属性・unitConversion を経由した回転
   assert.ok(clip.keyTimes().every((t) => t >= 1 && t <= 48), `${clip.keyTimes()}`);
 });
 
-test('pointOnCurveInfo: 長さの割合の点・終点の接線の向き', () => {
+test('pointOnCurveInfo: turnOnPercentage の点（パラメータの範囲の割合）・終点の接線の向き', () => {
+  let differs = false;
   for (const f of FRAMES) {
     const rig = at(f);
     const wire = rig.plug(gid('t2_wireShape'), 'ws');
+    // Maya の turnOnPercentage はパラメータの範囲を 0〜1 にそろえる（長さの割合ではない）
+    const half = pointAt(wire, 0.5);
+    const p = new Vector3(...rig.chan(idx('poc_jnt')).t);
+    assert.ok(p.distanceTo(half) < 1e-6, `フレーム ${f}: パラメータの半分の点 ${p.toArray()} != ${half.toArray()}`);
     const { pts, len, total } = polyline(wire, 256);
     let k = 0;
     while (len[k + 1] < total / 2) k++;
-    const half = pts[k].clone().lerp(pts[k + 1], (total / 2 - len[k]) / (len[k + 1] - len[k]));
-    const p = new Vector3(...rig.chan(idx('poc_jnt')).t);
-    assert.ok(p.distanceTo(half) < 1e-2, `フレーム ${f}: 長さの半分の点 ${p.toArray()} != ${half.toArray()}`);
+    const byLength = pts[k].clone().lerp(pts[k + 1], (total / 2 - len[k]) / (len[k + 1] - len[k]));
+    if (p.distanceTo(byLength) > 1e-2) differs = true;
     const tan = new Vector3(...rig.chan(idx('poc_jnt2')).t);
     const end = pointAt(wire, 1).sub(pointAt(wire, 0.999)).normalize();
     assert.ok(near(tan.length(), 1, 1e-6) && tan.distanceTo(end) < 1e-3, `フレーム ${f}: 終点の接線 ${tan.toArray()}`);
   }
+  assert.ok(differs, '長さの半分の点とは違う（ワイヤーが曲がったフレーム）');
 });
 
 test('極ベクトルを書かない RP IK は、Maya の既定値 (0, 0, 1) の側に曲げる', () => {

@@ -1045,7 +1045,8 @@ export class RigEvaluator {
   }
 
   /**
-   * pointOnCurveInfo: カーブ（ic）のパラメータ pr の点・接線・法線。turnOnPercentage（top）なら pr は長さの割合（0〜1）。
+   * pointOnCurveInfo: カーブ（ic）のパラメータ pr の点・接線・法線。turnOnPercentage（top）なら pr はパラメータの範囲を
+   * 0〜1 にそろえた値（長さの割合ではない。カーブの伸び方によって点の間隔は変わる）。
    * 接線（t）はパラメータでの微分、法線（n）は 2 階微分の接線に垂直な成分（曲率の向き）。どちらも差分で求める
    */
   pointOnCurve(g) {
@@ -1054,15 +1055,8 @@ export class RigEvaluator {
     if (!c || !c.isCurve) return null;
     const [u0, u1] = domain(c);
     let u = this.num(id, 'pr', 0);
-    if (this.num(id, 'top', 0) >= 0.5) {
-      const poly = polyline(c, 64);
-      const s = Math.min(Math.max(u, 0), 1) * poly.total;
-      let k = 0;
-      while (k < poly.len.length - 2 && poly.len[k + 1] < s) k++;
-      const seg = poly.len[k + 1] - poly.len[k];
-      const frac = seg > EPS ? (s - poly.len[k]) / seg : 0;
-      u = u0 + (u1 - u0) * (k + frac) / (poly.pts.length - 1);
-    }
+    // turnOnPercentage: pr はパラメータの範囲を 0〜1 にそろえた値（Maya と同じ。長さの割合ではない）
+    if (this.num(id, 'top', 0) >= 0.5) u = u0 + (u1 - u0) * Math.min(Math.max(u, 0), 1);
     u = Math.min(Math.max(u, u0), u1);
     const h = (u1 - u0) * 1e-4;
     const at = (x) => pointAt(c, Math.min(Math.max(x, u0), u1));

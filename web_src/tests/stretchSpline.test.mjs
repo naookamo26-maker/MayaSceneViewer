@@ -8,7 +8,7 @@ import path from 'node:path';
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { AnimationClip } from '../src/animation.js';
 import { RigEvaluator } from '../src/rig.js';
-import { pointAt } from '../src/curve.js';
+import { domain, pointAt } from '../src/curve.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const data = JSON.parse(readFileSync(path.resolve(here, '../../samples/stretch_spline_sample.json'), 'utf8'));
@@ -22,15 +22,21 @@ function at(f) {
   return rig;
 }
 
-test('骨ごとの伸び: ジョイントはカーブの上のパラメータ 0・0.25・0.5・0.75・1 の点に乗る', () => {
+test('骨ごとの伸び: ジョイントはカーブの上の turnOnPercentage 0・0.25・0.5・0.75・1（パラメータ 0〜4）の点に乗る', () => {
   for (const f of [1, 24, 48]) {
     const rig = at(f);
     const crv = rig.plug(gid('sb_crvShape'), 'ws');
+    const [u0, u1] = domain(crv);
+    assert.deepEqual([u0, u1], [0, 4]);
+    const lens = [];
     for (let i = 0; i < 5; i++) {
       const p = new Vector3().setFromMatrixPosition(rig.world(idx(`sb_${i}`)));
-      const q = pointAt(crv, i / 4);
-      assert.ok(p.distanceTo(q) < 0.02, `フレーム ${f}: sb_${i} ${p.toArray()} ≠ ${q.toArray()}`);
+      const q = pointAt(crv, u0 + (u1 - u0) * i / 4);
+      assert.ok(p.distanceTo(q) < 1e-4, `フレーム ${f}: sb_${i} ${p.toArray()} ≠ ${q.toArray()}`);
+      if (i > 0) lens.push(p.distanceTo(new Vector3().setFromMatrixPosition(rig.world(idx(`sb_${i - 1}`)))));
     }
+    // カーブが曲がったフレームでは、骨ごとに長さが違う（長さの割合で並べると同じ長さになる）
+    if (f === 48) assert.ok(Math.max(...lens) - Math.min(...lens) > 0.5, `骨の長さ ${lens}`);
   }
 });
 

@@ -835,9 +835,9 @@
     0.0,
     0.0,
     0.0,
-    1.0,
-    1.0,
-    1.0,
+    4.0,
+    4.0,
+    4.0,
     4.0,
     0.0,
     0.0,
@@ -1411,9 +1411,9 @@
       0.0,
       0.0,
       0.0,
-      1.0,
-      1.0,
-      1.0,
+      4.0,
+      4.0,
+      4.0,
       4.0,
       0.0,
       0.0,
@@ -1529,6 +1529,7 @@
     "type":"pointOnCurveInfo",
     "dag":-1,
     "attrs":{
+     "top":1.0,
      "pr":0.0
     },
     "inputs":{
@@ -1544,6 +1545,7 @@
     "type":"pointOnCurveInfo",
     "dag":-1,
     "attrs":{
+     "top":1.0,
      "pr":0.25
     },
     "inputs":{
@@ -1559,6 +1561,7 @@
     "type":"pointOnCurveInfo",
     "dag":-1,
     "attrs":{
+     "top":1.0,
      "pr":0.5
     },
     "inputs":{
@@ -1574,6 +1577,7 @@
     "type":"pointOnCurveInfo",
     "dag":-1,
     "attrs":{
+     "top":1.0,
      "pr":0.75
     },
     "inputs":{
@@ -1589,6 +1593,7 @@
     "type":"pointOnCurveInfo",
     "dag":-1,
     "attrs":{
+     "top":1.0,
      "pr":1.0
     },
     "inputs":{
@@ -2082,7 +2087,7 @@
    "channels":2,
    "nodes":6,
    "graphNodes":43,
-   "seconds":0.0042
+   "seconds":0.0034
   }
  }
 }
