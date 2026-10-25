@@ -143,7 +143,11 @@ class CurveHistoryTest(unittest.TestCase):
                                          "baseShape": {"cvs": 4, "start": [0, 0, 0], "end": [0, 4, 0]}}]},
             {"name": "drv2", "type": "wire", "attr": "og[0]", "out": None, "envelope": 1.0,
              "wires": [{"index": 0, "wire": "a", "base": "b", "sameCount": False, "moved": None, "dropoff": 1.0,
-                        "dropoffInFile": True, "wireShape": None, "baseShape": None}]}]
+                        "dropoffInFile": True, "wireShape": None, "baseShape": None,
+                        "wireInfo": {"inGraph": True, "type": "nurbsCurve", "fileShape": False, "parsed": False,
+                                     "create": True},
+                        "baseInfo": {"inGraph": True, "type": "nurbsCurve", "fileShape": True, "parsed": False,
+                                     "create": False}}]}]
         text = "\n".join(_spline_detail(h, sp))
         self.assertIn("crvShape（nurbsCurve）.ws: (0.000, 0.000, 0.000) → (0.000, 4.000, 0.000)（CV 4 個）・ファイルの形 なし", text)
         self.assertIn("ワイヤー dw[0] drvShape: (0.000, 0.000, 0.000) → (0.000, 4.000, 0.000) ／ ベース bw[0] baseShape", text)
@@ -151,10 +155,24 @@ class CurveHistoryTest(unittest.TestCase):
         self.assertIn("★ ワイヤーがベースから動いていない", text)
         self.assertIn("★ ワイヤーとベースの CV の数が違う", text)
         self.assertIn("drv2（wire）.og[0]: 出力のカーブを求められない", text)
+        self.assertIn("★ ワイヤーのカーブの形を求められない理由: 形はファイルになく、作成の入力（create）を評価できない", text)
+        self.assertIn("★ ベースのカーブの形を求められない理由: ファイルの形（.cc）はあるが、ビューアが読めない", text)
         del sp["chain"]
         sp.update(fileToCurve=[0.5, 0.5, 0.5], rootOnCurve=False, curveLength=4.0)
         text = "\n".join(_spline_detail(h, sp))
         self.assertIn("カーブの形をなぞったまま、どれもカーブから 0.5000 離れています（rootOnCurve オフ", text)
+
+    def test_curve_tree_in_ik_section(self):
+        """リグの診断の IK ハンドル: スプライン IK のカーブの形の上流（wire のワイヤーとベース・変形・元のカーブ）"""
+        report = rig_report_file(os.path.join(ROOT, "samples", "rig6_sample.ma"))
+        self.assertIn("  カーブの形の上流（★ は形が分からない・評価できないもの）:", report)
+        self.assertIn("・ t2_curveShape（nurbsCurve）.ws: 形はファイルになく、入力（create）から作る", report)
+        self.assertIn("← ワイヤー dw[0]:", report)
+        self.assertIn("✓ t2_wireBaseWireShape（nurbsCurve）.ws: 形 あり（ファイル）", report)
+        # 計算できない形を作るノード
+        _scene, report = self.load_variant('connectAttr "spC_curveShape.ws" "spC_ik.ic";',
+                                           'connectAttr "rbDShape.ws" "spC_ik.ic";')
+        self.assertIn("★ rbD_rebuild（rebuildCurve）.oc: ビューアでは評価できない", report)
 
     def test_unsupported_circle_options(self):
         scene, report = self.load_variant('\tsetAttr ".r" 2;', '\tsetAttr ".r" 2;\n\tsetAttr ".sw" 180;')
