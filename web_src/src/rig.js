@@ -8,7 +8,7 @@
 //   * 循環（自分の結果を自分で使う）に当たったら、そこはファイルの値で打ち切る
 // 完全な再現は目指さず、Maya と同じ考え方の近似にする（docs/data_format.md「animation.graph」）。
 import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
-import { composeLocalMatrix, decomposeMaya, evaluateCurve } from './animation.js';
+import { composeLocalMatrix, composeMaya, decomposeMaya, evaluateCurve } from './animation.js';
 import { compileExpression } from './expression.js';
 import { evaluateTrax } from './trax.js';
 import { compileNodeDef, componentPlug } from './nodeDef.js';
@@ -149,8 +149,9 @@ function closestOnPolyline(pts, p) {
 const _e = new Euler();
 const _m = new Matrix4();
 
+/** 行列の回転（Maya と同じ分け方。せん断・鏡に映した行列も Maya と同じに扱う） */
 function rotationOf(m, target = new Quaternion()) {
-  m.decompose(_v, target, _s);
+  decomposeMaya(m, _v, target, _s);
   return target;
 }
 function positionOf(m, target = new Vector3()) { return target.setFromMatrixPosition(m); }
@@ -753,11 +754,11 @@ export class RigEvaluator {
         break;
       }
       case 'decomposeMatrix': {
-        const t = new Vector3(), q = new Quaternion(), s = new Vector3();
-        decomposeMaya(this.mat(id, 'imat'), t, q, s);     // 鏡に映した行列は Z のスケールを負にする（Maya と同じ）
+        // Maya と同じ分け方（せん断を分けてから回転にする。鏡に映した行列は Z のスケールを負にする）
+        const { t, q, s, sh } = decomposeMaya(this.mat(id, 'imat'));
         const e = new Euler().setFromQuaternion(q, THREE_ORDER[Math.round(this.num(id, 'ro', 0))] || 'ZYX');
         o = { ...expand('ot', t.toArray(), XYZ), ...expand('or', [e.x, e.y, e.z], XYZ), ...expand('os', s.toArray(), XYZ),
-          ...expand('osh', [0, 0, 0], XYZ), ...expand('oq', [q.x, q.y, q.z, q.w], ['x', 'y', 'z', 'w']) };
+          ...expand('osh', sh.toArray(), XYZ), ...expand('oq', [q.x, q.y, q.z, q.w], ['x', 'y', 'z', 'w']) };
         break;
       }
       case 'composeMatrix': {
@@ -769,7 +770,7 @@ export class RigEvaluator {
           const v = this.vec(id, 'iq', [0, 0, 0, 1]);
           q = new Quaternion(v[0], v[1], v[2], v[3] ?? 1).normalize();
         }
-        o = { omat: new Matrix4().compose(new Vector3(...t), q, new Vector3(...s)) };
+        o = { omat: composeMaya(t, q, s, this.vec(id, 'ish')) };   // せん断（inputShear）も入れる
         break;
       }
       case 'inverseMatrix': o = { omat: this.mat(id, 'imat').clone().invert() }; break;

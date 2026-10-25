@@ -63,3 +63,16 @@ test('鏡に映した行列の decomposeMatrix: 反転は Z のスケール（Ma
     }
   }
 });
+
+test('composeMatrix のせん断（inputShear）→ decomposeMatrix: 回転・スケール・せん断が元に戻る', () => {
+  const gid = (n) => data.animation.graph.find((g) => g.name === n).id;
+  for (const f of FRAMES) {
+    const { rig } = at(f);
+    const r = rig.chan(idx('jF')).r;
+    [20, -35, 60].forEach((v, k) => assert.ok(near(r[k], v, 1e-6), `フレーム ${f}: jF.r ${r}`));
+    const s = rig.plug(gid('dm_sh'), 'os'), sh = rig.plug(gid('dm_sh'), 'osh'), t = rig.plug(gid('dm_sh'), 'ot');
+    [0.5, 2, 1.5].forEach((v, k) => assert.ok(near(s[k], v), `os ${s}`));
+    [0.4, -0.3, 0.2].forEach((v, k) => assert.ok(near(sh[k], v), `osh ${sh}`));
+    [tx(f), 2, 3].forEach((v, k) => assert.ok(near(t[k], v), `ot ${t}`));
+  }
+});
