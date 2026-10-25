@@ -189,7 +189,8 @@ def _sparse_into(weights: Dict[int, Dict[int, float]], a: int, b: int, vals) -> 
 
 class MaNode:
     __slots__ = ("name", "type", "parent", "children", "path", "order", "is_dag",
-                 "xattrs", "mesh", "skin", "tweak", "inputs", "raw", "skip_attrs", "span", "attr_map", "ns", "espan")
+                 "xattrs", "mesh", "skin", "tweak", "inputs", "raw", "skip_attrs", "span", "attr_map", "ns", "espan",
+                 "node_def")
 
     def __init__(self, name: str, node_type: str, parent: Optional["MaNode"], order: int, ns: str = ""):
         self.name = name
@@ -210,6 +211,7 @@ class MaNode:
         self.attr_map: Optional[Dict[str, str]] = None  # 自作ノードの割り当て: 属性名の読み替え（custom_nodes）
         self.ns = ns                                    # リファレンスから読んだノードなら、その名前の前置き（"rig:"）
         self.espan: Optional[Tuple[int, int]] = None    # リファレンスの編集で変えた属性（setAttr を並べた範囲）
+        self.node_def = None                            # 自作ノードの定義（node_defs.NodeDef）で評価するとき
 
     @property
     def is_shape(self) -> bool:
@@ -279,6 +281,7 @@ class MaScene:
         self._ref_started = 0                        # 読み始めたリファレンスの数
         self._resolved: Dict[Tuple[str, str], Optional[str]] = {}   # (書かれたパス, 読み込む側) → 見つかったファイル
         self.plugins: List[str] = []                 # requires で読み込むプラグイン（maya 以外）
+        self.plugin_versions: Dict[str, str] = {}    # プラグイン → requires に書かれた版
         self.stats: Dict[str, int] = {}          # 文の種類ごとの数（読み込みの内訳に出す）
         # 「文の種類 ノードの種類」ごとの [秒, 文の数, 文字数]（どこに時間がかかっているかを調べる）
         self.cost: Dict[str, List[float]] = {}
@@ -392,6 +395,8 @@ class MaScene:
                     self.maya_version = vals[1]
             elif vals and vals[0] != "maya" and vals[0] not in self.plugins:
                 self.plugins.append(vals[0])
+                if len(vals) >= 2:
+                    self.plugin_versions[vals[0]] = vals[1]
         elif cmd == "fileInfo":
             vals = [t.value for t in R.tokenize(rest) if t.quoted]
             if len(vals) >= 2 and vals[0] == "upAxis" and not self.ref_depth:

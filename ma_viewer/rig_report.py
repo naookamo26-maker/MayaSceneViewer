@@ -42,7 +42,7 @@ class _Tracer:
             return "✓" if _evaluable(n, self.info) else "★"
         if n.type in CONSTRAINT_TYPES:
             return "✓" if _evaluable(n) else "★"
-        if n.type in SUPPORTED_DG or n.type in GEOMETRY_TYPES or _dag_like(n):
+        if n.type in SUPPORTED_DG or n.type in GEOMETRY_TYPES or _dag_like(n) or n.node_def is not None:
             return "✓"
         return "★"
 
@@ -50,6 +50,8 @@ class _Tracer:
         what = n.type
         if n.type in CURVE_TYPES:
             what = "アニメーションカーブ"
+        elif n.node_def is not None:
+            what = "%s・定義 %s で評価" % (n.type, n.node_def.source)
         elif n.type == "expression" and not _evaluable(n, self.info):
             what = "expression・解釈できない: %s" % self.info.expression_problems.get(n.name, "")
         elif self.status(n) == "★":
@@ -235,6 +237,18 @@ def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
                 out.append("    …ほか %d か所" % (len(items) - 8))
         for name, problem in sorted(info.expression_problems.items()):
             out.append("  expression %s: %s" % (name, problem))
+    defined = getattr(ms, "defined_nodes", {}) or {}
+    defs = getattr(ms, "node_defs", None)
+    if defined:
+        out.append("■ 定義で評価する自作ノード: %s" % "、".join(
+            "%s（%s。定義 %s）" % (t, "、".join(names[:5]), defs.nodes[t].source) for t, names in sorted(defined.items())))
+    if defs is not None:
+        bad = [(t, why) for t, why in sorted(defs.errors.items())
+               if t.endswith(".json") or any(n.type == t for n in ms.nodes)]
+        if bad:
+            out.append("■ 使えない自作ノードの定義（同梱の定義を直してください）")
+            for t, why in bad:
+                out.append("  %s: %s" % (t, why))
     mapped = getattr(ms, "mapped_nodes", {}) or {}
     if mapped:
         out.append("■ 設定ファイルで割り当てた自作ノード: %s" % "、".join(
@@ -460,11 +474,14 @@ def format_verification(result: Optional[dict]) -> str:
     return "\n".join(out)
 
 
-def rig_report_file(path: str) -> str:
+def rig_report_file(path: str, node_defs=None) -> str:
+    """node_defs: 自作ノードの定義（省略時は ma_viewer/node_defs に同梱したもの。テスト用）"""
     from .animation import build_animation
     from .extract_ma import scene_to_dict
     from .ma_scene import parse_ma_file
     ms = parse_ma_file(path)
+    if node_defs is not None:
+        ms.node_defs = node_defs
     scene = scene_to_dict(ms)
     anim = build_animation(ms, ms.out_index) if ms.text else None
     return rig_report(ms, scene, anim)

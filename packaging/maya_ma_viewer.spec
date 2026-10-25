@@ -5,17 +5,21 @@
 # ビューアの web 一式（index.html・style.css・viewer.bundle.js）は Python のコードではないため、
 # datas で明示的に同梱する。実行時は一時展開フォルダ（sys._MEIPASS）の ma_viewer/web に置かれ、
 # ma_viewer/resources.py がそこを見つける。
+# 自作ノードの定義（ma_viewer/node_defs/*.json）も必ず同梱する（ma_viewer/node_defs に置かれ、node_defs.py が読む）。
+import glob
 import os
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 WEB = os.path.join(ROOT, "ma_viewer", "web")
+NODE_DEFS = os.path.join(ROOT, "ma_viewer", "node_defs")
 
 a = Analysis(
     [os.path.join(ROOT, "run_viewer.py")],
     pathex=[ROOT],
     binaries=[],
     datas=[(os.path.join(WEB, f), os.path.join("ma_viewer", "web"))
-           for f in ("index.html", "style.css", "viewer.bundle.js")],
+           for f in ("index.html", "style.css", "viewer.bundle.js")]
+          + [(p, os.path.join("ma_viewer", "node_defs")) for p in sorted(glob.glob(os.path.join(NODE_DEFS, "*.json")))],
     hiddenimports=["PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebChannel"],
     hookspath=[],
     runtime_hooks=[],

@@ -239,7 +239,12 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 | `curve` | ドリブンキー（animCurveUA・UL・UU）のとき、animation.curves の番号。入力は `inputs` の `i` |
 | `trax` | キャラクターセット（character）の Trax のクリップ `{"clips": [...]}`。各クリップは `start`・`sourceStart`・`sourceEnd`・`scale`・`weight`・`preCycle`・`postCycle`・`hold`・`enable`・`track`・`absolute` と、`channels`（キャラクターの出力の属性 `lv[i]`・`av[i]`・`uv[i]`・`tv[i]` → animation.curves の番号）。キャラクターの出力は、カーブが直接つながる属性（`inputs`）はそのまま、ほかはそのフレームで有効なクリップの値。クリップのカーブは animation.curves で `"trax": true`（キーがクリップの中の時間なので、再生範囲・キーの印には使わない） |
 | `geom` | wire・cluster が変形するカーブの transform（`{"出力の番号 k": nodes の番号}`）。ワイヤー（`dw[i]`）・ベースワイヤー（`bw[i]`）はワールド空間なので、カーブをこの行列でワールドへ移して変形し、戻す。CV のウェイトは attrs の `wl[k].w[v]`（なければ 1）。cluster は attrs の `gm[k]` があればそちらを使う |
+| `def` | 自作ノードの定義で評価するとき、その型（`animation.nodeDefs` のキー）。属性の名前は定義の短い名前にそろえてある（`attrs`・`inputs`）。評価は `web_src/src/nodeDef.js`、定義の書き方は [node_definitions.md](node_definitions.md) |
 | `skin` | カーブを動かす skinCluster のウェイト `[[CV の番号, インフルエンスの論理番号, 値], …]`、`pm`（論理番号 → 16 要素）、`gm`。インフルエンスは `inputs` の `ma[i]` |
+
+### animation.nodeDefs
+
+graph で使っている自作ノードの定義（型 → `{"type", "attributes", "ir"}`）。`attributes` は定義の属性（`name`・`short`・`type`・`array`・`output`・`default`・`children`・ベクトルの成分の `components`）、`ir` は計算を Python の構文解析で検証して木の形にしたもの（`ma_viewer/node_defs.py` の Compiler の説明を参照）。ビューアが IR を関数に組み立てて評価する。
 
 ### animation.props
 

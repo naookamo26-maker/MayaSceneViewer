@@ -1021,7 +1021,8 @@ def promote_custom_transforms(ms: MaScene) -> Dict[str, List[str]]:
     out: Dict[str, List[str]] = {}
     for n in ms.nodes:
         t = n.type
-        if t in known or t.startswith("animCurve") or t.startswith("poly") or t.endswith("Constraint") or n.is_shape:
+        if (t in known or t.startswith("animCurve") or t.startswith("poly") or t.endswith("Constraint") or n.is_shape
+                or n.node_def is not None):
             continue
         if not (n.parent is not None or n.children or id(n) in evidence or any(k in n.xattrs for k in ("t", "r", "s"))):
             continue
@@ -1043,6 +1044,19 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         ms.warn("自作ノードの型 %s（%s%s）を、設定ファイルのとおり %s として扱います。"
                 % (t, "、".join(names[:5]), " ほか %d 個" % (len(names) - 5) if len(names) > 5 else "",
                    ms.node_map[t]["as"]), key="#自作ノードの割り当て " + t)
+    # 自作ノードの定義（ma_viewer/node_defs に同梱）: 属性と計算を書いた定義で評価する
+    from .node_defs import apply_definitions, load_definitions, plugin_version_warnings
+    if getattr(ms, "node_defs", None) is None:
+        ms.node_defs = load_definitions()
+    ms.defined_nodes = apply_definitions(ms, ms.node_defs)
+    if ms.defined_nodes:
+        ms.warn("自作ノードを、同梱の定義で評価します: %s。" % "、".join(
+            "%s（%d 個）" % (t, len(names)) for t, names in sorted(ms.defined_nodes.items())))
+    for w in plugin_version_warnings(ms, ms.defined_nodes, ms.node_defs):
+        ms.warn(w)
+    for t, why in sorted(ms.node_defs.errors.items()):
+        if t.endswith(".json") or any(n.type == t for n in ms.nodes):
+            ms.warn("自作ノードの定義 %s を使えません: %s" % (t, why), key="#自作ノードの定義の誤り " + t)
     # 自作のトランスフォームノード（プラグイン）は transform として扱う
     ms.custom_transforms = promote_custom_transforms(ms)
     for t, names in sorted(ms.custom_transforms.items()):
@@ -1612,11 +1626,13 @@ LAST_TIMING: Dict[str, float] = {}
 
 
 def load_ma(path: str, progress: ProgressFn = None, animation: bool = False, node_map: Optional[dict] = None,
-            references: bool = True) -> dict:
+            references: bool = True, node_defs=None) -> dict:
     """.ma ファイルを読み、共通 JSON（dict）を返す。animation=True ならアニメーションも読む（scene["animation"]）。
     node_map: 自作ノードの割り当て（custom_nodes。省略時は設定ファイルから読む）
-    references: リファレンス（file -r）を読み込むか"""
-    scene, load_animation = load_ma_staged(path, progress, node_map=node_map, references=references)
+    references: リファレンス（file -r）を読み込むか
+    node_defs: 自作ノードの定義（node_defs.Definitions。省略時は ma_viewer/node_defs に同梱したもの。テスト用）"""
+    scene, load_animation = load_ma_staged(path, progress, node_map=node_map, references=references,
+                                           node_defs=node_defs)
     if animation:
         anim = load_animation(progress)
         if anim is not None:
@@ -1645,7 +1661,8 @@ def _stage_progress(progress: ProgressFn, lo: float, hi: float) -> ProgressFn:
     return report
 
 
-def load_ma_staged(path: str, progress: ProgressFn = None, node_map: Optional[dict] = None, references: bool = True):
+def load_ma_staged(path: str, progress: ProgressFn = None, node_map: Optional[dict] = None, references: bool = True,
+                   node_defs=None):
     """.ma を 2 段階で読む。(共通 JSON, アニメーションを読む関数) を返す。
 
     1 段階目（この関数）はアニメーションカーブの中身を読まず、範囲だけを覚えておく。
@@ -1663,6 +1680,8 @@ def load_ma_staged(path: str, progress: ProgressFn = None, node_map: Optional[di
         ms = parse_ma_file(path, _stage_progress(progress, 0.0, PARSE_SHARE), load_references=references)
         if node_map is not None:
             ms.node_map = node_map
+        if node_defs is not None:
+            ms.node_defs = node_defs
         t1 = time.perf_counter()
         convert = _stage_progress(progress, PARSE_SHARE, 1.0)
         if convert:
