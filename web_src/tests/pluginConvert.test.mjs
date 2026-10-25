@@ -26,10 +26,10 @@ function at(f) {
 
 test('変換した型のノードはすべて定義で評価する', () => {
   const types = Object.keys(data.animation.nodeDefs).sort();
-  assert.deepEqual(types, ['aimMatrix2', 'angleScale', 'legacySum', 'stretchArray', 'targetAverage', 'vectorLength',
-    'weightedSumNode']);
+  assert.deepEqual(types, ['aimMatrix2', 'angleScale', 'legacySum', 'matrixOffset', 'stretchArray', 'targetAverage',
+    'vectorLength', 'weightedSumNode']);
   const rig = at(12);
-  for (const n of ['jA', 'jB', 'jC', 'jD', 'jE', 'jF', 'jG', 'jH']) rig.chan(idx(n));
+  for (const n of ['jA', 'jB', 'jC', 'jD', 'jE', 'jF', 'jG', 'jH', 'jI']) rig.chan(idx(n));
   assert.deepEqual([...rig.problems], []);
 });
 
@@ -84,5 +84,17 @@ test('API 1.0: legacySum（elementCount と next）・vectorLength（数の comp
     assert.ok(near(g[1], len), `フレーム ${f}: length ${g[1]}`);
     const h = rig.chan(idx('jH')).t;
     assert.ok(near(h[0], tx(f) / len) && near(h[1], 3 / len) && near(h[2], 4 / len), `フレーム ${f}: normal ${h}`);
+  }
+});
+
+test('API 1.0: matrixOffset（型つきの行列の属性・MFnMatrixData の読み書き）', () => {
+  const D2R = Math.PI / 180;
+  const rot = new Matrix4().makeRotationFromEuler(new Euler(30 * D2R, 45 * D2R, 60 * D2R, 'ZYX'));
+  for (const f of FRAMES) {
+    const c = at(f).chan(idx('jI'));
+    const t = [tx(f) + 1, 4, 6];
+    for (let k = 0; k < 3; k++) assert.ok(near(c.t[k], t[k]), `フレーム ${f}: t ${c.t}`);
+    const got = new Matrix4().makeRotationFromEuler(new Euler(...c.r.map((v) => v * D2R), 'ZYX'));
+    for (let k = 0; k < 16; k++) assert.ok(near(got.elements[k], rot.elements[k], 1e-6), `フレーム ${f}: r ${c.r}`);
   }
 });

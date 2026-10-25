@@ -88,12 +88,17 @@ class SamplePluginTest(unittest.TestCase):
         data, results, problems = convert_file(API1)
         self.assertEqual(problems, [])
         self.assertEqual(data["pluginVersion"], "0.9")
-        self.assertEqual({r.type for r in results if r.ok}, {"legacySum", "vectorLength"})
+        self.assertEqual({r.type for r in results if r.ok}, {"legacySum", "vectorLength", "matrixOffset"})
         vl = {a["name"]: a for a in data["nodes"]["vectorLength"]["attributes"]}
         # 子の属性から作った数の compound は、その子を成分とするベクトル
         self.assertEqual(vl["inVector"]["type"], "vector")
         self.assertEqual([c["short"] for c in vl["inVector"]["children"]], ["ivx", "ivy", "ivz"])
         self.assertTrue(vl["length"]["output"] and vl["normal"]["output"])
+        # 型つきの行列の属性（MFnTypedAttribute・MFnData.kMatrix）と、MFnMatrixData の読み書き
+        mo = data["nodes"]["matrixOffset"]
+        self.assertEqual({a["name"]: a["type"] for a in mo["attributes"]},
+                         {"inMatrix": "matrix", "offset": "vector", "outMatrix": "matrix"})
+        self.assertEqual(mo["compute"][-1], "outMatrix = outObject")
 
     def test_attributes(self):
         data, _results, _problems = convert_file(API2)
@@ -119,7 +124,7 @@ class SamplePluginTest(unittest.TestCase):
             self.assertEqual(json.load(f)["nodes"], nodes)
         defs = ND.load_definitions([SAMPLE_DEFS])
         self.assertEqual(defs.errors, {})
-        self.assertEqual(len(defs.nodes), 7)
+        self.assertEqual(len(defs.nodes), 8)
 
 
 class ComputeTest(unittest.TestCase):
@@ -139,7 +144,7 @@ class ComputeTest(unittest.TestCase):
         attrs = {a["name"]: a for a in spec["attributes"]}
         self.assertAlmostEqual(attrs["angle"]["default"], 28.64788976, places=6)   # ラジアン → 度
         self.assertNotIn("label", attrs)                                           # 文字列の属性は入れない
-        self.assertTrue(any("label" in n for n in r.notes), r.notes)
+        self.assertTrue(any("label" in n and "kString" in n for n in r.notes), r.notes)
 
     def test_local_names_do_not_hide_attributes(self):
         data, r = convert_compute('''

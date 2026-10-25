@@ -3,6 +3,8 @@
 
   * legacySum   : 配列の入力を MArrayDataHandle の elementCount と next でたどる合計（× gain）
   * vectorLength: double3 の入力（子の属性 inVectorX〜Z）の長さと、正規化したベクトル
+  * matrixOffset: 型つきの行列の属性（MFnTypedAttribute・MFnData.kMatrix）。MFnMatrixData で読み書きし、
+                  入力の行列の移動に offset を足す
 """
 import sys
 
@@ -13,6 +15,8 @@ kSumName = "legacySum"
 kSumId = OpenMaya.MTypeId(0x0012F010)
 kLengthName = "vectorLength"
 kLengthId = OpenMaya.MTypeId(0x0012F011)
+kOffsetName = "matrixOffset"
+kOffsetId = OpenMaya.MTypeId(0x0012F012)
 
 
 class LegacySum(OpenMayaMPx.MPxNode):
@@ -105,11 +109,52 @@ def lengthInitializer():
     VectorLength.attributeAffects(VectorLength.aInVector, VectorLength.aNormal)
 
 
+class MatrixOffset(OpenMayaMPx.MPxNode):
+    aInMatrix = OpenMaya.MObject()
+    aOffset = OpenMaya.MObject()
+    aOutMatrix = OpenMaya.MObject()
+
+    def __init__(self):
+        OpenMayaMPx.MPxNode.__init__(self)
+
+    def compute(self, plug, dataBlock):
+        if plug != MatrixOffset.aOutMatrix:
+            return OpenMaya.kUnknownParameter
+        inData = OpenMaya.MFnMatrixData(dataBlock.inputValue(MatrixOffset.aInMatrix).data())
+        xform = OpenMaya.MTransformationMatrix(inData.matrix())
+        offset = dataBlock.inputValue(MatrixOffset.aOffset).asVector()
+        xform.setTranslation(xform.getTranslation(OpenMaya.MSpace.kTransform) + offset, OpenMaya.MSpace.kTransform)
+        outData = OpenMaya.MFnMatrixData()
+        outObject = outData.create(xform.asMatrix())
+        dataBlock.outputValue(MatrixOffset.aOutMatrix).setMObject(outObject)
+        dataBlock.setClean(plug)
+
+
+def offsetCreator():
+    return OpenMayaMPx.asMPxPtr(MatrixOffset())
+
+
+def offsetInitializer():
+    tAttr = OpenMaya.MFnTypedAttribute()
+    nAttr = OpenMaya.MFnNumericAttribute()
+    MatrixOffset.aInMatrix = tAttr.create("inMatrix", "im", OpenMaya.MFnData.kMatrix)
+    MatrixOffset.aOffset = nAttr.createPoint("offset", "of")
+    MatrixOffset.aOutMatrix = tAttr.create("outMatrix", "om", OpenMaya.MFnData.kMatrix)
+    tAttr.setWritable(False)
+    tAttr.setStorable(False)
+    MatrixOffset.addAttribute(MatrixOffset.aInMatrix)
+    MatrixOffset.addAttribute(MatrixOffset.aOffset)
+    MatrixOffset.addAttribute(MatrixOffset.aOutMatrix)
+    MatrixOffset.attributeAffects(MatrixOffset.aInMatrix, MatrixOffset.aOutMatrix)
+    MatrixOffset.attributeAffects(MatrixOffset.aOffset, MatrixOffset.aOutMatrix)
+
+
 def initializePlugin(mobject):
     mplugin = OpenMayaMPx.MFnPlugin(mobject, "MayaSceneViewer", "0.9", "Any")
     try:
         mplugin.registerNode(kSumName, kSumId, sumCreator, sumInitializer)
         mplugin.registerNode(kLengthName, kLengthId, lengthCreator, lengthInitializer)
+        mplugin.registerNode(kOffsetName, kOffsetId, offsetCreator, offsetInitializer)
     except Exception:
         sys.stderr.write("Failed to register node\n")
         raise
@@ -119,3 +164,4 @@ def uninitializePlugin(mobject):
     mplugin = OpenMayaMPx.MFnPlugin(mobject)
     mplugin.deregisterNode(kSumId)
     mplugin.deregisterNode(kLengthId)
+    mplugin.deregisterNode(kOffsetId)

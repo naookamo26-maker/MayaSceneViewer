@@ -18,6 +18,8 @@
   * ls（legacySum、API 1.0）: values[0] ← ctrl.tx、values[1] = 2、gain = 0.5 → jG.tx = (tx + 2) · 0.5
   * vl（vectorLength、API 1.0）: inVector = (0, 3, 4)、成分 inVectorX（ivx）← ctrl.tx
       → length → jG.ty = √(tx² + 25)、normal → jH.t
+  * mo（matrixOffset、API 1.0・型つきの行列の属性）: inMatrix ← locD.wm（移動 (tx, 2, 3)・回転 (30, 45, 60) 度）、
+      offset = (1, 2, 3) → outMatrix → decomposeMatrix → jI.t = (tx + 1, 4, 6)・jI.r は locD と同じ回転
 """
 from __future__ import annotations
 
@@ -54,8 +56,11 @@ def main():
              'createNode transform -n "locB";', '\tsetAttr ".t" -type "double3" 4 0 0 ;',
              'createNode locator -n "locBShape" -p "locB";',
              'createNode transform -n "locC";', '\tsetAttr ".t" -type "double3" 0 5 10 ;',
-             'createNode locator -n "locCShape" -p "locC";']
-    for name in ("jA", "jB", "jC", "jD", "jE", "jF", "jG", "jH"):
+             'createNode locator -n "locCShape" -p "locC";',
+             'createNode transform -n "locD";', '\tsetAttr ".t" -type "double3" 0 2 3 ;',
+             '\tsetAttr ".r" -type "double3" 30 45 60 ;',
+             'createNode locator -n "locDShape" -p "locD";']
+    for name in ("jA", "jB", "jC", "jD", "jE", "jF", "jG", "jH", "jI"):
         lines += ['createNode joint -n "%s";' % name]
     lines += ['createNode weightedSumNode -n "ws";',
               '\tsetAttr ".in[2]" 3;', '\tsetAttr ".w[0]" 0.5;', '\tsetAttr ".w[2]" 2;',
@@ -66,6 +71,8 @@ def main():
               'createNode stretchArray -n "sa";', '\tsetAttr ".iv[1]" 5;', '\tsetAttr ".st" 3;',
               'createNode legacySum -n "ls";', '\tsetAttr ".vals[1]" 2;', '\tsetAttr ".gn" 0.5;',
               'createNode vectorLength -n "vl";', '\tsetAttr ".iv" -type "double3" 0 3 4 ;',
+              'createNode matrixOffset -n "mo";', '\tsetAttr ".of" -type "double3" 1 2 3 ;',
+              'createNode decomposeMatrix -n "dm2";',
               'createNode animCurveTL -n "ctrl_translateX";', '\tsetAttr ".tan" 2;',
               '\tsetAttr -s 2 ".ktv[0:1]"  1 0 24 10;',
               'createNode animCurveTA -n "ctrl_rotateZ";', '\tsetAttr ".tan" 2;',
@@ -97,6 +104,11 @@ def main():
               'connectAttr "ctrl.tx" "vl.ivx";',
               'connectAttr "vl.len" "jG.ty";',
               'connectAttr "vl.nrm" "jH.t";',
+              'connectAttr "ctrl.tx" "locD.tx";',
+              'connectAttr "locD.wm" "mo.im";',
+              'connectAttr "mo.om" "dm2.imat";',
+              'connectAttr "dm2.ot" "jI.t";',
+              'connectAttr "dm2.or" "jI.r";',
               '// End of plugin_convert_sample.ma']
     with open(OUT_MA, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")

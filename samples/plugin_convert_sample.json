@@ -268,6 +268,71 @@
    }
   },
   {
+   "name":"locD",
+   "path":"|locD",
+   "type":"transform",
+   "parent":-1,
+   "matrix":[
+    0.3535533906,
+    0.6123724357,
+    -0.7071067812,
+    0.0,
+    -0.5732233047,
+    0.7391989197,
+    0.3535533906,
+    0.0,
+    0.7391989197,
+    0.2803300859,
+    0.6123724357,
+    0.0,
+    0.0,
+    2.0,
+    3.0,
+    1.0
+   ],
+   "worldMatrix":[
+    0.3535533906,
+    0.6123724357,
+    -0.7071067812,
+    0.0,
+    -0.5732233047,
+    0.7391989197,
+    0.3535533906,
+    0.0,
+    0.7391989197,
+    0.2803300859,
+    0.6123724357,
+    0.0,
+    0.0,
+    2.0,
+    3.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     2.0,
+     3.0
+    ],
+    "r":[
+     30.0,
+     45.0,
+     60.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   },
+   "drivenBy":[
+    "tx ← ctrl（transform）"
+   ]
+  },
+  {
    "name":"jA",
    "path":"|jA",
    "type":"joint",
@@ -837,6 +902,78 @@
    "drivenBy":[
     "t ← vl（vectorLength）"
    ]
+  },
+  {
+   "name":"jI",
+   "path":"|jI",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "t ← dm2（decomposeMatrix）",
+    "r ← dm2（decomposeMatrix）"
+   ]
   }
  ],
  "meshes":[],
@@ -852,11 +989,11 @@
  "materials":[],
  "textures":[],
  "warnings":[
-  "自作ノードを、同梱の定義で評価します: aimMatrix2（1 個）、angleScale（1 個）、legacySum（1 個）、stretchArray（1 個）、targetAverage（1 個）、vectorLength（1 個）、weightedSumNode（1 個）。"
+  "自作ノードを、同梱の定義で評価します: aimMatrix2（1 個）、angleScale（1 個）、legacySum（1 個）、matrixOffset（1 個）、stretchArray（1 個）、targetAverage（1 個）、vectorLength（1 個）、weightedSumNode（1 個）。"
  ],
  "stats":{
-  "nodes":12,
-  "joints":8,
+  "nodes":14,
+  "joints":9,
   "meshes":0,
   "curves":0,
   "cameras":0,
@@ -867,7 +1004,7 @@
   "textures":0,
   "texturesMissing":0,
   "bindPoseNodes":0,
-  "drivenNodes":10
+  "drivenNodes":12
  },
  "animation":{
   "fps":24.0,
@@ -1015,17 +1152,17 @@
    },
    {
     "node":4,
-    "joint":true,
+    "joint":false,
     "ro":0,
     "t":[
      0.0,
-     0.0,
-     0.0
+     2.0,
+     3.0
     ],
     "r":[
-     0.0,
-     0.0,
-     0.0
+     30.0,
+     45.0,
+     60.0
     ],
     "s":[
      1.0,
@@ -1033,11 +1170,6 @@
      1.0
     ],
     "ra":[
-     0.0,
-     0.0,
-     0.0
-    ],
-    "jo":[
      0.0,
      0.0,
      0.0
@@ -1252,6 +1384,66 @@
      0.0,
      0.0
     ]
+   },
+   {
+    "node":12,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":13,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
    }
   ],
   "graph":[
@@ -1295,114 +1487,142 @@
    },
    {
     "id":4,
-    "name":"jA",
-    "type":"joint",
+    "name":"locD",
+    "type":"transform",
     "dag":4,
     "inputs":{
-     "ty":{
-      "node":12,
-      "attr":"o"
+     "tx":{
+      "node":0,
+      "attr":"tx"
      }
     }
    },
    {
     "id":5,
-    "name":"jB",
+    "name":"jA",
     "type":"joint",
     "dag":5,
     "inputs":{
-     "t":{
-      "node":13,
-      "attr":"ot"
+     "ty":{
+      "node":14,
+      "attr":"o"
      }
     }
    },
    {
     "id":6,
-    "name":"jC",
+    "name":"jB",
     "type":"joint",
     "dag":6,
     "inputs":{
-     "tx":{
-      "node":13,
-      "attr":"otX"
+     "t":{
+      "node":15,
+      "attr":"ot"
      }
     }
    },
    {
     "id":7,
-    "name":"jD",
+    "name":"jC",
     "type":"joint",
     "dag":7,
     "inputs":{
-     "rx":{
-      "node":14,
-      "attr":"out"
+     "tx":{
+      "node":15,
+      "attr":"otX"
      }
     }
    },
    {
     "id":8,
-    "name":"jE",
+    "name":"jD",
     "type":"joint",
     "dag":8,
     "inputs":{
-     "tx":{
-      "node":17,
-      "attr":"ov[0]"
-     },
-     "ty":{
-      "node":17,
-      "attr":"ov[1]"
+     "rx":{
+      "node":16,
+      "attr":"out"
      }
     }
    },
    {
     "id":9,
-    "name":"jF",
+    "name":"jE",
     "type":"joint",
     "dag":9,
     "inputs":{
-     "t":{
-      "node":16,
-      "attr":"ot"
+     "tx":{
+      "node":19,
+      "attr":"ov[0]"
      },
-     "r":{
-      "node":16,
-      "attr":"or"
+     "ty":{
+      "node":19,
+      "attr":"ov[1]"
      }
     }
    },
    {
     "id":10,
-    "name":"jG",
+    "name":"jF",
     "type":"joint",
     "dag":10,
     "inputs":{
-     "tx":{
+     "t":{
       "node":18,
-      "attr":"res"
+      "attr":"ot"
      },
-     "ty":{
-      "node":19,
-      "attr":"len"
+     "r":{
+      "node":18,
+      "attr":"or"
      }
     }
    },
    {
     "id":11,
-    "name":"jH",
+    "name":"jG",
     "type":"joint",
     "dag":11,
     "inputs":{
-     "t":{
-      "node":19,
-      "attr":"nrm"
+     "tx":{
+      "node":20,
+      "attr":"res"
+     },
+     "ty":{
+      "node":21,
+      "attr":"len"
      }
     }
    },
    {
     "id":12,
+    "name":"jH",
+    "type":"joint",
+    "dag":12,
+    "inputs":{
+     "t":{
+      "node":21,
+      "attr":"nrm"
+     }
+    }
+   },
+   {
+    "id":13,
+    "name":"jI",
+    "type":"joint",
+    "dag":13,
+    "inputs":{
+     "t":{
+      "node":23,
+      "attr":"ot"
+     },
+     "r":{
+      "node":23,
+      "attr":"or"
+     }
+    }
+   },
+   {
+    "id":14,
     "name":"ws",
     "type":"weightedSumNode",
     "dag":-1,
@@ -1420,7 +1640,7 @@
     }
    },
    {
-    "id":13,
+    "id":15,
     "name":"ta",
     "type":"targetAverage",
     "dag":-1,
@@ -1440,7 +1660,7 @@
     }
    },
    {
-    "id":14,
+    "id":16,
     "name":"an",
     "type":"angleScale",
     "dag":-1,
@@ -1456,7 +1676,7 @@
     }
    },
    {
-    "id":15,
+    "id":17,
     "name":"am",
     "type":"aimMatrix2",
     "dag":-1,
@@ -1473,19 +1693,19 @@
     }
    },
    {
-    "id":16,
+    "id":18,
     "name":"dm",
     "type":"decomposeMatrix",
     "dag":-1,
     "inputs":{
      "imat":{
-      "node":15,
+      "node":17,
       "attr":"om"
      }
     }
    },
    {
-    "id":17,
+    "id":19,
     "name":"sa",
     "type":"stretchArray",
     "dag":-1,
@@ -1502,7 +1722,7 @@
     }
    },
    {
-    "id":18,
+    "id":20,
     "name":"ls",
     "type":"legacySum",
     "dag":-1,
@@ -1519,7 +1739,7 @@
     }
    },
    {
-    "id":19,
+    "id":21,
     "name":"vl",
     "type":"vectorLength",
     "dag":-1,
@@ -1535,6 +1755,38 @@
      "ivx":{
       "node":0,
       "attr":"tx"
+     }
+    }
+   },
+   {
+    "id":22,
+    "name":"mo",
+    "type":"matrixOffset",
+    "dag":-1,
+    "def":"matrixOffset",
+    "attrs":{
+     "of":[
+      1.0,
+      2.0,
+      3.0
+     ]
+    },
+    "inputs":{
+     "im":{
+      "node":4,
+      "attr":"wm"
+     }
+    }
+   },
+   {
+    "id":23,
+    "name":"dm2",
+    "type":"decomposeMatrix",
+    "dag":-1,
+    "inputs":{
+     "imat":{
+      "node":22,
+      "attr":"om"
      }
     }
    }
@@ -2224,6 +2476,181 @@
         "l",
         "gain_"
        ]
+      ]
+     ]
+    ]
+   },
+   "matrixOffset":{
+    "type":"matrixOffset",
+    "attributes":[
+     {
+      "name":"inMatrix",
+      "short":"im",
+      "type":"matrix",
+      "default":[
+       1.0,
+       0,
+       0,
+       0,
+       0,
+       1.0,
+       0,
+       0,
+       0,
+       0,
+       1.0,
+       0,
+       0,
+       0,
+       0,
+       1.0
+      ]
+     },
+     {
+      "name":"offset",
+      "short":"of",
+      "type":"vector",
+      "default":[
+       0.0,
+       0.0,
+       0.0
+      ],
+      "components":[
+       "ofX",
+       "ofY",
+       "ofZ"
+      ]
+     },
+     {
+      "name":"outMatrix",
+      "short":"om",
+      "type":"matrix",
+      "output":true,
+      "default":[
+       1.0,
+       0,
+       0,
+       0,
+       0,
+       1.0,
+       0,
+       0,
+       0,
+       0,
+       1.0,
+       0,
+       0,
+       0,
+       0,
+       1.0
+      ]
+     }
+    ],
+    "ir":[
+     [
+      "set",
+      [
+       "l",
+       "offset_"
+      ],
+      [
+       "a",
+       [
+        [
+         "of",
+         null
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "outObject"
+      ],
+      [
+       "c",
+       "compose",
+       [
+        [
+         "b",
+         "+",
+         [
+          "c",
+          "translation",
+          [
+           [
+            "a",
+            [
+             [
+              "im",
+              null
+             ]
+            ]
+           ]
+          ]
+         ],
+         [
+          "l",
+          "offset_"
+         ]
+        ],
+        [
+         "c",
+         "rotation",
+         [
+          [
+           "a",
+           [
+            [
+             "im",
+             null
+            ]
+           ]
+          ],
+          [
+           "n",
+           0
+          ]
+         ]
+        ],
+        [
+         "c",
+         "scale",
+         [
+          [
+           "a",
+           [
+            [
+             "im",
+             null
+            ]
+           ]
+          ]
+         ]
+        ],
+        [
+         "n",
+         0
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "o",
+       [
+        [
+         "om",
+         null
+        ]
+       ]
+      ],
+      [
+       "l",
+       "outObject"
       ]
      ]
     ]
@@ -3030,9 +3457,9 @@
    "curves":2,
    "keys":4,
    "channels":2,
-   "nodes":10,
-   "graphNodes":20,
-   "seconds":0.0013
+   "nodes":12,
+   "graphNodes":24,
+   "seconds":0.0019
   }
  }
 }
