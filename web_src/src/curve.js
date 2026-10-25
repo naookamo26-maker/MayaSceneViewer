@@ -107,11 +107,24 @@ export function pointAtLength(poly, s, target = new Vector3()) {
  * 折れ線の segFrom 番目の線分以降で、点 from から距離 dist の最初の点（スプライン IK でジョイントを並べる）。
  * 見つからなければ null。戻り値 { point, seg }
  */
-export function pointAtDistance(poly, from, dist, segFrom = 0) {
+export function pointAtDistance(poly, from, dist, segFrom = 0, curve = null) {
   const { pts } = poly;
   for (let k = Math.max(0, segFrom); k < pts.length - 1; k++) {
     const a = pts[k], b = pts[k + 1];
     if (b.distanceTo(from) < dist) continue;
+    if (curve && a.distanceTo(from) <= dist) {
+      // カーブそのものの上で、|C(u) − from| = dist となるパラメータ u を、この折れ線の区間の中で二分法で求める
+      // （折れ線の弦はカーブの内側を通るので、折れ線の上の点は少しずれる）
+      const [u0, u1] = domain(curve);
+      const step = (u1 - u0) / (pts.length - 1);
+      let lo = u0 + step * k, hi = Math.min(u1, lo + step);
+      const p = new Vector3();
+      for (let it = 0; it < 40; it++) {
+        const mid = (lo + hi) / 2;
+        if (pointAt(curve, mid, p).distanceTo(from) < dist) lo = mid; else hi = mid;
+      }
+      return { point: pointAt(curve, (lo + hi) / 2), seg: k };
+    }
     // |a + t(b − a) − from| = dist を t ∈ [0, 1] で解く（a が円の内側、b が外側）
     const ab = new Vector3().subVectors(b, a);
     const af = new Vector3().subVectors(a, from);

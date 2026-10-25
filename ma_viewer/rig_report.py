@@ -581,6 +581,14 @@ def format_verification(result: Optional[dict]) -> str:
             # スプライン IK は、詳細の本数の制限とは別に、カーブとジョイントの関係をいつも出す
             out.append("    ［スプライン IK］ワールド空間")
             out.extend(_spline_detail(h, det["spline"]))
+            if det.get("fileLengths") is not None and det.get("evalLengths") is not None:
+                f1 = lambda xs: "、".join("%.2f" % x for x in xs)  # noqa: E731
+                out.append("      骨の長さ（ファイル）: %s" % f1(det["fileLengths"]))
+                out.append("      骨の長さ（計算）: %s" % f1(det["evalLengths"]))
+            if det.get("evalJoints"):
+                out.append("      ジョイントの位置（計算）: %s" % " ".join(
+                    "%s(%s)" % (name, ", ".join("%.1f" % x for x in p))
+                    for name, p in zip(h["chain"], det["evalJoints"])))
         if det and not h["ok"] and shown_detail[0] < 3:
             shown_detail[0] += 1
             fmt3 = lambda v: "(%s)" % ", ".join("%.4f" % x for x in v)  # noqa: E731

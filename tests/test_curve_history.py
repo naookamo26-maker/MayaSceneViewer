@@ -132,6 +132,17 @@ class CurveHistoryTest(unittest.TestCase):
         self.assertIn("こちらのカーブから最大 0.5000 離れています", text)
         self.assertIn("rootOnCurve なのに、Maya の開始ジョイントがこちらのカーブの始点から 0.5000 離れています", text)
         self.assertIn("カーブがチェーンより短い", text)
+        # 再現チェックの文章: スプライン IK は、骨の長さとジョイントの位置（計算）をいつも出す
+        from ma_viewer.rig_report import format_verification
+        text = format_verification({"frame": 1, "handles": [
+            {"handle": "tail_ik", "solver": "ikSplineSolver", "ok": False, "chain": ["a", "b", "c"],
+             "detail": {"spline": sp, "fileJoints": [[0, 0, 0], [0, 1, 0], [0, 3, 0]],
+                        "evalJoints": [[0, 0, 0], [0, 2, 0], [0, 4, 0]], "handle": [0, 4, 0],
+                        "fileLengths": [1.0, 2.0], "evalLengths": [2.0, 2.0]},
+             "joints": [{"name": "a", "angle": 0, "roll": 0, "bend": 0, "position": 0, "ok": True}]}]})
+        self.assertIn("      骨の長さ（ファイル）: 1.00、2.00", text)
+        self.assertIn("      骨の長さ（計算）: 2.00、2.00", text)
+        self.assertIn("      ジョイントの位置（計算）: a(0.0, 0.0, 0.0) b(0.0, 2.0, 0.0) c(0.0, 4.0, 0.0)", text)
         self.assertIn("形を求められません", "\n".join(_spline_detail(h, {"missing": True})))
         sp["chain"] = [
             {"name": "crvShape", "type": "nurbsCurve", "attr": "ws", "out": {"cvs": 4, "start": [0, 0, 0], "end": [0, 4, 0]},
