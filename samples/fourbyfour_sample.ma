@@ -1,0 +1,37 @@
+//Maya ASCII 2024 scene
+//Name: fourbyfour_sample.ma
+requires maya "2024";
+currentUnit -l centimeter -a degree -t film;
+createNode transform -n "ctrl";
+createNode joint -n "jA";
+createNode joint -n "jB";
+	setAttr ".t" -type "double3" 1 0 0 ;
+createNode joint -n "jC";
+	setAttr ".t" -type "double3" 0 3 0 ;
+createNode fourByFourMatrix -n "fbf";
+	setAttr ".i00" 0.8660254037844387;
+	setAttr ".i01" 0.49999999999999994;
+	setAttr ".i10" -0.49999999999999994;
+	setAttr ".i11" 0.8660254037844387;
+	setAttr ".i32" 5;
+createNode fourByFourMatrix -n "fbf_id";
+createNode decomposeMatrix -n "dm";
+createNode animCurveTL -n "ctrl_translateX";
+	setAttr ".tan" 2;
+	setAttr -s 2 ".ktv[0:1]"  1 0 24 10;
+createNode animCurveTL -n "ctrl_translateY";
+	setAttr ".tan" 2;
+	setAttr -s 2 ".ktv[0:1]"  1 0 24 4;
+createNode script -n "sceneConfigurationScriptNode";
+	setAttr ".b" -type "string" "playbackOptions -min 1 -max 24 -ast 1 -aet 24 ";
+	setAttr ".st" 6;
+connectAttr "ctrl_translateX.o" "ctrl.tx";
+connectAttr "ctrl_translateY.o" "ctrl.ty";
+connectAttr "ctrl.tx" "fbf.i30";
+connectAttr "ctrl.ty" "fbf.in31";
+connectAttr "fbf.output" "dm.imat";
+connectAttr "dm.ot" "jA.t";
+connectAttr "dm.or" "jA.r";
+connectAttr "fbf.o" "jB.opm";
+connectAttr "fbf_id.o" "jC.opm";
+// End of fourbyfour_sample.ma

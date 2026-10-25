@@ -86,7 +86,7 @@ _SKIP_ATTR_TYPES = {
     # 一般的なユーティリティ・管理用のノード
     "unitConversion", "multiplyDivide", "plusMinusAverage", "condition", "reverse", "clamp", "setRange",
     "blendColors", "blendTwoAttr", "blendWeighted", "pairBlend", "multDoubleLinear", "addDoubleLinear",
-    "decomposeMatrix", "composeMatrix", "multMatrix", "inverseMatrix", "pickMatrix", "blendMatrix",
+    "decomposeMatrix", "composeMatrix", "multMatrix", "inverseMatrix", "pickMatrix", "blendMatrix", "fourByFourMatrix",
     "choice", "remapValue", "network", "expression", "script", "objectSet", "renderLayer",
     "displayLayerManager", "renderLayerManager", "nodeGraphEditorInfo", "hyperGraphInfo", "hyperView",
     "hyperLayout", "polyBlindData", "blindDataTemplate", "reference", "blendShape", "cluster", "ffd",

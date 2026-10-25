@@ -16,7 +16,7 @@
   * ドリブンキー: animCurveUA・UL・UU（ドライバーの値でキーを引く）
   * アニメーションレイヤー: animBlendNodeAdditive・DL・DA・F・FL・FA・I16・I32・Rotation・Scale、animBlendNodeBoolean・
     Enum・Time、animLayer（ウェイトとミュート）
-  * 行列ノード: multMatrix・decomposeMatrix・composeMatrix・inverseMatrix、DAG ノードの offsetParentMatrix
+  * 行列ノード: multMatrix・decomposeMatrix・composeMatrix・inverseMatrix・fourByFourMatrix、DAG ノードの offsetParentMatrix
   * 四元数ノード: quatToEuler・eulerToQuat・quatProd・quatInvert・quatNormalize・quatSlerp
   * そのほか: curveInfo（カーブの長さ）、pointOnCurveInfo（カーブ上の点・接線・法線）、distanceDimShape（2 点の距離）、
     displayLayer（値を読むだけ）
@@ -38,7 +38,7 @@ CURVE_TYPES = {"animCurveTL", "animCurveTA", "animCurveTU"}
 CONSTRAINT_TYPES = {"pointConstraint", "orientConstraint", "parentConstraint", "scaleConstraint", "poleVectorConstraint",
                     "aimConstraint", "lookAt"}
 UTILITY_TYPES = {"unitConversion", "pairBlend", "blendColors", "multiplyDivide", "plusMinusAverage", "reverse",
-                 "condition", "multMatrix", "decomposeMatrix", "composeMatrix", "inverseMatrix",
+                 "condition", "multMatrix", "decomposeMatrix", "composeMatrix", "inverseMatrix", "fourByFourMatrix",
                  "quatToEuler", "eulerToQuat", "quatProd", "quatInvert", "quatNormalize", "quatSlerp", "curveInfo",
                  "displayLayer", "expression", "addDoubleLinear", "multDoubleLinear", "clamp", "setRange", "remapValue",
                  "distanceBetween", "vectorProduct", "blendTwoAttr", "blendWeighted", "choice",
