@@ -1,0 +1,155 @@
+{
+  "format": "maya-scene-viewer-node-definitions",
+  "version": 1,
+  "plugin": "nodeDefSamplePlugin",
+  "pluginVersion": "1.0",
+  "nodes": {
+    "weightedSum": {
+      "description": "入力の重み付きの和",
+      "attributes": [
+        {
+          "name": "input",
+          "short": "in",
+          "type": "double",
+          "array": true
+        },
+        {
+          "name": "weight",
+          "short": "w",
+          "type": "double",
+          "array": true,
+          "default": 1
+        },
+        {
+          "name": "output",
+          "short": "o",
+          "type": "double",
+          "output": true
+        }
+      ],
+      "compute": [
+        "total = 0",
+        "for i in indices(input):",
+        "    total += input[i] * weight[i]",
+        "output = total"
+      ]
+    },
+    "matrixBlend": {
+      "description": "ターゲットの位置の重み付きの平均",
+      "attributes": [
+        {
+          "name": "target",
+          "short": "tg",
+          "type": "compound",
+          "array": true,
+          "children": [
+            {
+              "name": "targetMatrix",
+              "short": "tm",
+              "type": "matrix"
+            },
+            {
+              "name": "targetWeight",
+              "short": "tw",
+              "type": "double",
+              "default": 1
+            }
+          ]
+        },
+        {
+          "name": "outTranslate",
+          "short": "ot",
+          "type": "vector",
+          "output": true
+        }
+      ],
+      "compute": [
+        "p = [0, 0, 0]",
+        "wsum = 0",
+        "for i in indices(target):",
+        "    w = target[i].targetWeight",
+        "    p = p + xform_point([0, 0, 0], target[i].targetMatrix) * w",
+        "    wsum += w",
+        "outTranslate = p / wsum if wsum > 0 else p"
+      ]
+    },
+    "angleDouble": {
+      "attributes": [
+        {
+          "name": "inAngle",
+          "short": "ia",
+          "type": "angle"
+        },
+        {
+          "name": "offset",
+          "short": "of",
+          "type": "angle"
+        },
+        {
+          "name": "outAngle",
+          "short": "oa",
+          "type": "angle",
+          "output": true
+        }
+      ],
+      "compute": "outAngle = inAngle * 2 + offset"
+    },
+    "waveNode": {
+      "attributes": [
+        {
+          "name": "inTime",
+          "short": "it",
+          "type": "time"
+        },
+        {
+          "name": "amplitude",
+          "short": "amp",
+          "type": "double",
+          "default": 2
+        },
+        {
+          "name": "output",
+          "short": "o",
+          "type": "double",
+          "output": true
+        }
+      ],
+      "compute": "output = sin(inTime * 0.1) * amplitude"
+    },
+    "divider": {
+      "attributes": [
+        {
+          "name": "input",
+          "short": "in",
+          "type": "double"
+        },
+        {
+          "name": "output",
+          "short": "o",
+          "type": "double",
+          "output": true
+        }
+      ],
+      "compute": "output = 1 / input"
+    },
+    "brokenNode": {
+      "attributes": [
+        {
+          "name": "input",
+          "short": "in",
+          "type": "double"
+        },
+        {
+          "name": "output",
+          "short": "o",
+          "type": "double",
+          "output": true
+        }
+      ],
+      "compute": [
+        "x = input *",
+        "output = x"
+      ]
+    }
+  }
+}

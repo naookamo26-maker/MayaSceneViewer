@@ -11,6 +11,7 @@ import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { composeLocalMatrix, evaluateCurve } from './animation.js';
 import { compileExpression } from './expression.js';
 import { evaluateTrax } from './trax.js';
+import { compileNodeDef, componentPlug } from './nodeDef.js';
 import { arcLength, domain, parseNurbsCurve, pointAt, pointAtDistance, pointAtLength, polyline, withCvs } from './curve.js';
 
 const D2R = Math.PI / 180;
@@ -259,6 +260,11 @@ export class RigEvaluator {
     this.usesTime = this.graph.some((g) => g.type === 'expression' && /\b(frame|time)\b/.test(g.expr || ''));
     this.hasTrax = this.graph.some((g) => g.trax);          // キャラクターセットの Trax のクリップ（時間で変わる）
     this.props = clip.raw.props || [];       // 表示・カメラの属性の接続（evaluateProps）
+    // 自作ノードの定義（animation.nodeDefs）: 型 → 評価できる形。定義が壊れていれば、そのノードは評価しない
+    this.defs = new Map();
+    for (const [t, d] of Object.entries(clip.raw.nodeDefs || {})) {
+      try { this.defs.set(t, compileNodeDef(d)); } catch (e) { this.defs.set(t, null); }
+    }
     this.problems = new Set();               // 評価中に見つかった問題（循環など）
     this.ikVariant = null;                   // 再現チェックで試す IK の解き方の候補（ふだんは null）
     this.aimMode = null;                     // aim と up が平行な aimConstraint の解き方（再現チェックで試す。null = parent）
@@ -516,6 +522,7 @@ export class RigEvaluator {
 
   plugUncached(id, attr) {
     const g = this.byId.get(id);
+    if (g.def) return this.defPlug(g, attr);
     const inputs = g.inputs || {};
     if (inputs[attr]) return this.source(inputs[attr]);
     // 成分（ox）: 3 つ組（o）が接続されている
@@ -600,6 +607,99 @@ export class RigEvaluator {
     return def.slice();
   }
 
+  // ------------------------------------------------------------------ 自作ノードの定義（nodeDef.js）
+  /** 定義で評価するノードの属性の値（出力は計算結果、入力は接続 → ファイルの値 → 既定値） */
+  defPlug(g, attr) {
+    const d = this.defs.get(g.def);
+    if (!d) return undefined;
+    if (d.isOutput(attr)) {
+      const outs = this.outputs(g.id);
+      return outs ? outs[attr] : undefined;
+    }
+    return this.defRead(g, attr, d.infoOf(attr));
+  }
+
+  defOutputs(g) {
+    const d = this.defs.get(g.def);
+    if (!d) {
+      this.problems.add(`${g.name}: 自作ノードの定義 ${g.def} を読めません`);
+      return null;
+    }
+    const io = {
+      frame: this.frame,
+      fps: this.clip.fps || 24,
+      read: (plug, info) => this.defRead(g, plug, info),
+      indices: (prefix) => this.defIndices(g, prefix),
+      connected: (plug) => {
+        const keys = Object.keys(g.inputs || {});
+        return keys.some((k) => k === plug || k.startsWith(`${plug}.`) || k.startsWith(`${plug}[`));
+      },
+    };
+    try {
+      return d.run(io);
+    } catch (e) {
+      this.problems.add(`${g.name}（${g.def}）: ${e.message}`);
+      return null;
+    }
+  }
+
+  /** 定義のノードの入力の値。角度はラジアン、時間は接続がなければいまのフレーム */
+  defRead(g, plug, info) {
+    const inputs = g.inputs || {}, attrs = g.attrs || {};
+    if (!info) return inputs[plug] ? this.source(inputs[plug]) : attrs[plug];
+    if (info.component !== undefined) {            // ベクトルの成分（inx）を直接読む
+      if (inputs[plug]) {
+        const v = this.source(inputs[plug]);
+        return typeof v === 'number' ? v : (Array.isArray(v) ? v[0] : 0);
+      }
+      const k = info.angle ? D2R : 1;
+      if (typeof attrs[plug] === 'number') return attrs[plug] * k;
+      const d = info.of.default || [];
+      return (d[info.component] ?? 0) * k;
+    }
+    const k = info.angle ? D2R : 1;
+    if (info.type === 'matrix') {
+      const v = inputs[plug] ? this.source(inputs[plug]) : attrs[plug];
+      if (v && v.isMatrix4) return v;
+      return new Matrix4().fromArray(Array.isArray(v) && v.length === 16 ? v : info.default);
+    }
+    if (info.size) {
+      // ベクトル: 全体の接続 → 成分ごとの接続・値 → 全体の値 → 既定値
+      if (inputs[plug]) {
+        const v = this.source(inputs[plug]);
+        if (Array.isArray(v)) return v.slice(0, info.size);
+      }
+      const whole = Array.isArray(attrs[plug]) ? attrs[plug] : null;
+      return (info.components || []).map((c, i) => {
+        const cp = componentPlug(plug, c);
+        if (inputs[cp]) {
+          const v = this.source(inputs[cp]);
+          return typeof v === 'number' ? v : (Array.isArray(v) ? v[0] : 0);
+        }
+        if (typeof attrs[cp] === 'number') return attrs[cp] * k;
+        if (whole && typeof whole[i] === 'number') return whole[i] * k;
+        return (info.default ? info.default[i] : 0) * k;
+      });
+    }
+    // 数
+    if (inputs[plug]) {
+      const v = this.source(inputs[plug]);
+      if (typeof v === 'number') return v;
+      if (Array.isArray(v) && typeof v[0] === 'number') return v[0];
+      return 0;
+    }
+    if (info.type === 'time') return this.frame;   // 時間（time1 への接続は .ma の読み込みで消えるため、いまのフレーム）
+    if (typeof attrs[plug] === 'number') return attrs[plug] * k;
+    if (Array.isArray(attrs[plug]) && typeof attrs[plug][0] === 'number') return attrs[plug][0] * k;
+    return (typeof info.default === 'number' ? info.default : 0) * k;
+  }
+
+  /** 配列の属性（prefix[n]）の、存在する要素の番号（接続とファイルの値から。小さい順） */
+  defIndices(g, prefix) {
+    const esc = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return this.indices(g, new RegExp(`^${esc}\\[(\\d+)\\]`));
+  }
+
   // ------------------------------------------------------------------ 計算ノード
   outputs(id) {
     if (this.cache.out.has(id)) return this.cache.out.get(id);
@@ -610,6 +710,7 @@ export class RigEvaluator {
 
   outputsUncached(id) {
     const g = this.byId.get(id);
+    if (g.def) return this.defOutputs(g);
     let o = null;
     switch (g.type) {
       case 'unitConversion': o = { o: this.num(id, 'i') * this.num(id, 'cf', 1) }; break;

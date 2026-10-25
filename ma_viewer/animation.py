@@ -411,6 +411,8 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         "channels": channels_out,
         "nodes": rest_nodes,
         "graph": graph_nodes,
+        # 自作ノードの定義（node_defs）: 型 → 属性と計算（IR）。graph のノードの "def" から引く
+        "nodeDefs": {t: nd.to_json() for t, nd in sorted(_used_defs(ms, graph_nodes).items())},
         "fallback": fallback,
         "tainted": tainted,
         "props": props_out,
@@ -423,6 +425,13 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
                   "nodes": len(animated), "graphNodes": len(graph_nodes),
                   "seconds": round(time.perf_counter() - t0, 4)},
     }
+
+
+def _used_defs(ms: MaScene, graph_nodes: List[dict]) -> dict:
+    """graph で使っている自作ノードの定義（型 → NodeDef）"""
+    used = {g["def"] for g in graph_nodes if g.get("def")}
+    defs = getattr(ms, "node_defs", None)
+    return {t: defs.nodes[t] for t in used if defs is not None and t in defs.nodes}
 
 
 def build_props(ms: MaScene, info, out_index: Dict[int, int], curve_index: Dict[int, int]) -> List[dict]:

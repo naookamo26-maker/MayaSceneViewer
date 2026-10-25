@@ -7,6 +7,9 @@
   python -m ma_viewer info scene.ma      内容の概要と警告を表示
   python -m ma_viewer rig scene.ma       リグの診断（評価できないノードと、IK の極ベクトルなどの上流）
   python -m ma_viewer excerpt scene.ma [ノード名...]   指定したノード（省略時は lookAt）の部分だけを抜き出す
+  python -m ma_viewer node-defs          同梱した自作ノードの定義の一覧と誤り
+  python -m ma_viewer convert-plugin plugin.py -o ma_viewer/node_defs/plugin.json
+                                         Python のノードプラグインを自作ノードの定義に変換（配布者が一度だけ使う）
 """
 from __future__ import annotations
 
@@ -129,6 +132,45 @@ def cmd_excerpt(args) -> int:
     return 0
 
 
+def cmd_node_defs(args) -> int:
+    """同梱した自作ノードの定義（ma_viewer/node_defs）の一覧と誤り。誤りがあれば終了コード 1"""
+    from .node_defs import DEF_DIR, load_definitions
+    defs = load_definitions(args.files or None)
+    print("自作ノードの定義: %s" % (", ".join(args.files) if args.files else DEF_DIR))
+    for t, nd in sorted(defs.nodes.items()):
+        ins = [a.name for a in nd.attrs if not a.output]
+        outs = [a.name for a in nd.attrs if a.output]
+        print("  ✓ %s（%s%s）入力 %s → 出力 %s" % (t, nd.source, "・%s %s" % (nd.plugin, nd.plugin_version or "")
+                                              if nd.plugin else "", "・".join(ins) or "なし", "・".join(outs)))
+    for t, why in sorted(defs.errors.items()):
+        print("  ★ %s: %s" % (t, why))
+    if not defs.nodes and not defs.errors:
+        print("  （なし）")
+    return 1 if defs.errors else 0
+
+
+def cmd_convert_plugin(args) -> int:
+    """Python のノードプラグイン → 自作ノードの定義。変換できないノードがあれば終了コード 1"""
+    from .plugin_convert import convert_file, report_text
+    data, results, problems = convert_file(args.input, args.plugin, args.version)
+    print(report_text(args.input, data, results, problems))
+    if args.show or not args.output:
+        for t, spec in data.get("nodes", {}).items():
+            print("\n--- %s の計算" % t)
+            print("\n".join("    " + line for line in spec["compute"]))
+    if args.output:
+        if data.get("nodes"):
+            with open(args.output, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+            print("書き出し: %s（%d 個のノード）" % (args.output, len(data["nodes"])))
+        else:
+            print("変換できたノードがないので、書き出していません")
+    else:
+        print("\n（-o 定義ファイル.json で書き出します。同梱するなら ma_viewer/node_defs/ に置いてください）")
+    return 1 if problems or any(not r.ok for r in results) else 0
+
+
 def cmd_view(args) -> int:
     from .app import main as app_main
     return app_main([args.input] if args.input else [])
@@ -152,6 +194,14 @@ def main(argv=None) -> int:
     px.add_argument("input")
     px.add_argument("nodes", nargs="*", help="ノードの名前（省略時は lookAt をすべて）")
     px.add_argument("-o", "--output", help="テキストファイルに書き出す")
+    pn = sub.add_parser("node-defs", help="同梱した自作ノードの定義（ma_viewer/node_defs）の一覧と誤りを表示")
+    pn.add_argument("files", nargs="*", help="定義ファイル（省略時は同梱のフォルダ）")
+    pc = sub.add_parser("convert-plugin", help="Python のノードプラグイン（.py）を自作ノードの定義（.json）に変換")
+    pc.add_argument("input", help="プラグインのファイル（.py）")
+    pc.add_argument("-o", "--output", help="定義ファイル（.json）に書き出す（省略時は結果の表示だけ）")
+    pc.add_argument("--plugin", help="プラグインの名前（省略時はファイル名。.ma の requires の名前に合わせる）")
+    pc.add_argument("--version", help="プラグインの版（省略時は MFnPlugin の 3 番目の引数）")
+    pc.add_argument("--show", action="store_true", help="書き出すときも変換した計算を表示する")
     pv = sub.add_parser("view", help="ビューアを起動")
     pv.add_argument("input", nargs="?")
     args = p.parse_args(argv)
@@ -163,6 +213,10 @@ def main(argv=None) -> int:
         return cmd_rig(args)
     if args.cmd == "excerpt":
         return cmd_excerpt(args)
+    if args.cmd == "node-defs":
+        return cmd_node_defs(args)
+    if args.cmd == "convert-plugin":
+        return cmd_convert_plugin(args)
     if args.cmd == "view":
         return cmd_view(args)
     from .app import main as app_main

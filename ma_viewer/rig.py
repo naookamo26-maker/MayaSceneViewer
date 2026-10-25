@@ -89,18 +89,21 @@ def _base(attr: str) -> str:
 
 
 def _dag_like(n: MaNode) -> bool:
-    return n.is_dag and not n.is_shape and n.type not in SUPPORTED_DG
+    return n.is_dag and not n.is_shape and n.type not in SUPPORTED_DG and n.node_def is None
 
 
 def _value_shape(n: MaNode) -> bool:
     """値を読むだけのシェイプ（カメラのシェイプの独自の属性など。形は評価しない）"""
-    return n.is_shape and n.type not in GEOMETRY_TYPES and n.type not in SUPPORTED_DG and n.type != "mesh"
+    return (n.is_shape and n.type not in GEOMETRY_TYPES and n.type not in SUPPORTED_DG and n.type != "mesh"
+            and n.node_def is None)
 
 
 def _evaluable(n: MaNode, info: Optional["GraphInfo"] = None) -> bool:
     """接続元として評価できるか（コンストレイントはターゲットがあるときだけ。expression は式を解釈できるときだけ）"""
     if n.type == "expression":
         return info is not None and id(n) in info.expressions
+    if n.node_def is not None:
+        return True                                   # 自作ノードの定義（node_defs）で評価する
     if n.type in CURVE_TYPES or n.type in UTILITY_TYPES or _dag_like(n) or _value_shape(n):
         return True                                   # DAG ノードからの直接の接続（ctrl.t → joint.t など）も評価できる
     if n.type in CONSTRAINT_TYPES:
@@ -216,7 +219,7 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
                 info.expression_problems[n.name] = problem
                 return
             info.expressions[id(n)] = text
-        if n.type in SUPPORTED_DG:
+        if n.type in SUPPORTED_DG or n.node_def is not None:
             if id(n) not in info.dg:
                 info.dg[id(n)] = n
                 if n.type == "character":
@@ -521,6 +524,8 @@ def parse_attrs(text: str, node: MaNode, skip=(), angle_k: Optional[float] = Non
     if node.attr_map:                                    # 自作ノードの割り当て: 属性名を標準ノードの名前に読み替える
         from .custom_nodes import rename_attr
         out = {rename_attr(k, node.attr_map): v for k, v in out.items()}
+    if node.node_def is not None:                        # 自作ノードの定義: 属性名を定義の短い名前にそろえる
+        out = {node.node_def.normalize_plug(k): v for k, v in out.items()}
     return out
 
 
@@ -541,6 +546,8 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
     for n in order:
         is_dag = id(n) not in info.dg
         entry = {"id": gid[id(n)], "name": n.name, "type": n.type, "dag": out_index[id(n)] if is_dag else -1}
+        if n.node_def is not None:
+            entry["def"] = n.node_def.type                # 自作ノードの定義で評価する（animation.nodeDefs）
         ang_k = 1.0 if ms.angular_unit in ("rad", "radian") else 3.141592653589793 / 180.0
         attrs = parse_attrs(ms.text, n, _STANDARD_ATTRS if is_dag else (), angle_k=ang_k)
         if is_dag:
@@ -651,7 +658,7 @@ def analyze_fallback(info: GraphInfo, kept: List[MaNode], bind_ids: Set[int], ou
     def bad_source(src: MaNode, sattr: str) -> bool:
         if src.type in CURVE_TYPES:
             return False
-        if src.type in SUPPORTED_DG or src.type in GEOMETRY_TYPES:
+        if src.type in SUPPORTED_DG or src.type in GEOMETRY_TYPES or src.node_def is not None:
             if src.type in CONSTRAINT_TYPES and not _evaluable(src):
                 return True
             if src.type == "expression" and id(src) not in info.expressions:
