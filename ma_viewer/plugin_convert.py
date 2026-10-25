@@ -627,6 +627,31 @@ class Translator:
             for c in a.children:
                 taken.update((c.long, c.short))
         self.taken = taken | _RESERVED
+        self.outputs = set(scanner.outputs())
+        self.written: List[AttrInfo] = []                # 値を書き込んだ出力（上の階層の属性）
+        self.out_vars: Dict[str, str] = {}               # 書き込んだ出力 → その値を入れた変数（あとで読むため）
+        self.read_outputs = self.outputs_read_in(fn)
+
+    def outputs_read_in(self, fn) -> set:
+        """compute の中で inputValue で読んでいる出力の属性（attributeAffects で次の出力につながる途中の属性）"""
+        out = set()
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call) and _tail(node.func) in ("inputValue", "inputArrayValue") and node.args:
+                a = self.sc.attrs.get(_tail(node.args[0]) or "")
+                if a is not None and a in self.outputs:
+                    out.add(a)
+        return out
+
+    def emit_output(self, target: str, top: "AttrInfo", code: str):
+        """出力への書き込み。あとで読む出力は、値を変数にも入れる"""
+        if top not in self.written:
+            self.written.append(top)
+        if top in self.read_outputs:
+            var = self.out_vars.get(target) or self.fresh("out")
+            self.out_vars[target] = var
+            self.emit("%s = %s" % (var, code))
+            code = var
+        self.emit("%s = %s" % (target, code))
 
     # ---- 出力
     def emit(self, line: str):
@@ -692,6 +717,11 @@ class Translator:
                     return                               # 以降の文は実行されない
                 self.problem(s, "ループの中の return は変換できません（break を使ってください）")
                 return
+            if isinstance(s, ast.If) and self.plug_test(s.test) is not None:
+                # if plug == outA: … elif plug == outB: … → すべての出力を計算するので、どの分かれ道も順に変換する
+                self.block(s.body, tail=True)
+                self.block(s.orelse, tail=True)
+                continue
             if tail and isinstance(s, ast.If) and (self.ends_with_return(s.body) or self.ends_with_return(s.orelse)):
                 # if 条件: … return → 条件が成り立たなければ、残りの文を実行する（if … else に書き換える）
                 rest = list(stmts[k + 1:])
@@ -789,7 +819,7 @@ class Translator:
         if isinstance(target, ast.Name):
             # 値を読める入力の handle・MTransformationMatrix・MFnMatrixData は、代入した時点の値を変数に書き出す
             # （同じ名前の使い回し・if の分かれ道ごとの代入・if の中での変更でも、Maya と同じ順に値が決まるように）
-            if v.kind == "hdl" and self.readable_handle(v):
+            if v.kind == "hdl" and self.readable_handle(v) and v.extra["path"][0][0] not in self.outputs:
                 name = self.local(target.id)
                 self.emit("%s = %s" % (name, self.path_text(v.extra["path"])))
                 self.env[target.id] = Value("hdl", **dict(v.extra, var=name))
@@ -872,9 +902,9 @@ class Translator:
         self.if_branches(s, s.body, s.orelse, tail=False)
 
     def if_branches(self, s: ast.If, body, orelse, tail: bool):
-        static = self.plug_test(s.test)
-        if static is not None:
-            self.block(body if static else orelse, tail=tail)
+        if self.plug_test(s.test) is not None:
+            self.block(body, tail=True)
+            self.block(orelse, tail=True)
             return
         cond = self.cond(s.test)
         head = len(self.lines)
@@ -1101,23 +1131,24 @@ class Translator:
             _fail("入力の handle に書き込んでいます（%s）" % name, c)
         target = self.path_text(h.extra["path"])
         info = h.extra["path"][-1][0]
+        top = h.extra["path"][0][0]
         if name in _SETTERS_NUM or name in _SETTERS_UNIT:
             v = self.expr(c.args[0])
             if v.kind == "unit":
                 v = Value("num", v.code)
             if v.kind != "num":
                 _fail("%s に数以外を渡しています" % name, c)
-            self.emit("%s = %s" % (target, v.code))
+            self.emit_output(target, top, v.code)
             return
         if name in _SETTERS_SPLIT:
             parts = [self.num(a).code for a in c.args]
-            self.emit("%s = [%s]" % (target, ", ".join(parts)))
+            self.emit_output(target, top, "[%s]" % ", ".join(parts))
             return
         if name in _SETTERS_VEC:
             v = self.expr(c.args[0])
             if v.kind not in ("vec", "pt"):
                 _fail("%s にベクトル以外を渡しています" % name, c)
-            self.emit("%s = %s" % (target, self.vec3(v)))
+            self.emit_output(target, top, self.vec3(v))
             return
         if name in _SETTERS_MAT:
             v = self.expr(c.args[0])
@@ -1125,14 +1156,14 @@ class Translator:
                 v = self.tm_matrix(v)
             if v.kind != "mat":
                 _fail("%s に行列以外を渡しています" % name, c)
-            self.emit("%s = %s" % (target, v.code))
+            self.emit_output(target, top, v.code)
             return
         if name in _SETTERS_OBJ and c.args:
             # 型つきの行列の属性: handle.setMObject(MFnMatrixData().create(m))
             v = self.expr(c.args[0])
             if v.kind != "mobj" or info.type != "matrix":
                 _fail("%s は、行列の属性に MFnMatrixData().create(行列) を渡すときだけ変換できます" % name, c)
-            self.emit("%s = %s" % (target, v.code))
+            self.emit_output(target, top, v.code)
             return
         _fail("出力の %s（%s）は変換できません" % (name, info.long), c)
 
@@ -1626,6 +1657,13 @@ class Translator:
         if h.extra.get("output") and m not in _GETTERS_NUM | _GETTERS_VEC | _GETTERS_MAT | _GETTERS_UNIT:
             _fail("出力の handle の %s は変換できません" % m, e)
         code = h.extra.get("var") or self.path_text(path)
+        if not h.extra.get("output") and path[0][0] in self.outputs and not h.extra.get("var"):
+            # 出力の属性を読む（attributeAffects で次の出力につながる途中の属性）→ 書き込んだ値の変数
+            text = self.path_text(path)
+            if text not in self.out_vars:
+                _fail("出力 %s を、値を書き込む前に読んでいます（定義では出力を読めないので、書き込んだ値を使います。"
+                      "書き込む処理を、読む処理より前に書いてください）" % text, e)
+            code = self.out_vars[text]
         if info.array and path[-1][1] is None:
             _fail("配列の属性 %s を、要素を選ばずに読んでいます" % info.long, e)
         if m == "data":
@@ -2058,6 +2096,32 @@ class NodeResult:
         return self.spec is not None and not self.problems
 
 
+def _names_of(a: AttrInfo) -> set:
+    names = {a.long, a.short}
+    for c in a.children:
+        names |= _names_of(c)
+    return names
+
+
+def dedupe_attributes(scanner: "AttrScanner", r: "NodeResult") -> List[AttrInfo]:
+    """定義に入れる属性。addAttribute していない属性と名前が重なるもの（if の両側で作るなど）は、先のものだけ使う"""
+    out: List[AttrInfo] = []
+    seen: Dict[str, AttrInfo] = {}
+    for a in scanner.top_level():
+        clash = [n for n in sorted(_names_of(a)) if n in seen and seen[n] is not a]
+        if clash and a not in scanner.added:
+            r.notes.append("%d 行目: 属性 %s は、%d 行目の属性と名前（%s）が重なるので使いません"
+                           % (a.line, a.long, seen[clash[0]].line, "・".join(clash)))
+            continue
+        if clash:
+            r.problems.append((a.line, "属性 %s の名前（%s）が、%d 行目で作った属性と重なっています"
+                               % (a.long, "・".join(clash), seen[clash[0]].line)))
+        for n in _names_of(a):
+            seen.setdefault(n, a)
+        out.append(a)
+    return out
+
+
 def convert_source(source: str, filename: str = "plugin.py", plugin: Optional[str] = None,
                    plugin_version: Optional[str] = None) -> Tuple[dict, List[NodeResult], List[str]]:
     """プラグインのソース → (定義のファイルの内容, ノードごとの結果, 全体の問題)"""
@@ -2097,7 +2161,7 @@ def convert_source(source: str, filename: str = "plugin.py", plugin: Optional[st
             continue
         r.unknown = unknown_calls(compute, module)
         outputs = scanner.outputs()
-        tops = scanner.top_level()
+        tops = dedupe_attributes(scanner, r)
         unsupported = [a for a in tops if not a.supported]
         for a in unsupported:
             r.notes.append("%d 行目: 属性 %s は扱えないので定義に入れません（%s）"
@@ -2112,6 +2176,11 @@ def convert_source(source: str, filename: str = "plugin.py", plugin: Optional[st
         r.notes.extend(scanner.notes + tr.notes)
         if r.problems:
             continue
+        for a in tr.written:
+            if a not in outputs:
+                # attributeAffects に出てこないが、compute で値を書き込んでいる → 出力
+                outputs.append(a)
+                r.notes.append("属性 %s は attributeAffects にありませんが、compute で値を書き込んでいるので出力にします" % a.long)
         written = {line.split("=")[0].strip().split("[")[0].split(".")[0] for line in lines if "=" in line}
         spec = {"description": "%s の %s から変換（convert-plugin %s）" % (os.path.basename(filename), cls.name, VERSION),
                 "attributes": [a.spec(outputs) for a in tops if a.supported],
@@ -2125,7 +2194,11 @@ def convert_source(source: str, filename: str = "plugin.py", plugin: Optional[st
         try:
             ND.NodeDef(r.type, spec, filename, plugin, plugin_version)
         except ND.DefError as exc:
-            r.problems.append((0, "変換した計算の検証で誤り（変換ツールの不具合の可能性があります）: %s" % exc.text()))
+            where = ""
+            if exc.line and 0 < exc.line <= len(spec["compute"]):
+                where = "\n        変換した計算の %d 行目: %s" % (exc.line, spec["compute"][exc.line - 1].strip())
+            r.problems.append((0, "変換した計算の検証で誤り（変換ツールの不具合の可能性があります）: %s%s"
+                               % (exc.text(), where)))
             continue
         r.spec = spec
         nodes[r.type] = spec
@@ -2145,7 +2218,8 @@ def convert_file(path: str, plugin: Optional[str] = None, plugin_version: Option
 
 
 def report_text(path: str, data: dict, results: List[NodeResult], problems: List[str]) -> str:
-    out = ["プラグインの変換: %s（プラグイン %s %s）" % (path, data.get("plugin", "?"), data.get("pluginVersion", ""))]
+    version = data.get("pluginVersion")
+    out = ["プラグインの変換: %s（プラグイン %s%s）" % (path, data.get("plugin", "?"), " " + version if version else "")]
     for p in problems:
         out.append("  ★ %s" % p)
     for r in results:
