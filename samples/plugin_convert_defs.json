@@ -330,6 +330,11 @@
           ]
         },
         {
+          "name": "mode",
+          "short": "md",
+          "type": "enum"
+        },
+        {
           "name": "outMatrix",
           "short": "om",
           "type": "matrix",
@@ -337,9 +342,14 @@
         }
       ],
       "compute": [
-        "offset_ = offset",
-        "outObject = compose((translation(inMatrix) + offset_), rotation(inMatrix, 0), scale(inMatrix), 0)",
-        "outMatrix = outObject"
+        "inObject = inMatrix",
+        "if connected(inMatrix):",
+        "    offset_ = offset",
+        "    mode_ = mode",
+        "    if (mode_ == 1):",
+        "        offset_ = (-offset_)",
+        "    outObject = compose((translation(inObject) + offset_), rotation(inObject, 0), scale(inObject), 0)",
+        "    outMatrix = outObject"
       ]
     }
   }

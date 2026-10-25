@@ -46,6 +46,7 @@ createNode vectorLength -n "vl";
 	setAttr ".iv" -type "double3" 0 3 4 ;
 createNode matrixOffset -n "mo";
 	setAttr ".of" -type "double3" 1 2 3 ;
+	setAttr ".md" 1;
 createNode decomposeMatrix -n "dm2";
 createNode animCurveTL -n "ctrl_translateX";
 	setAttr ".tan" 2;

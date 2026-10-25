@@ -467,7 +467,7 @@ class Translator:
         return n
 
     def translate(self) -> List[str]:
-        self.block(self.fn.body, top=True)
+        self.block(self.fn.body, tail=True)
         return self.lines
 
     # ---- 属性の参照
@@ -494,14 +494,25 @@ class Translator:
         return ".".join(out)
 
     # ---- 文
-    def block(self, stmts, top: bool = False):
+    def block(self, stmts, tail: bool = False):
+        """tail: この文の並びのあとに、compute の文が続かない（ここでの return は compute の終わり）"""
         for k, s in enumerate(stmts):
             if isinstance(s, ast.Return):
-                if top and k == len(stmts) - 1:
-                    return
-                if top and self.is_trivial_tail(stmts[k + 1:]):
-                    return
-                self.problem(s, "途中の return は変換できません（計算の最後か、plug による出し分けだけにしてください）")
+                if tail:
+                    return                               # 以降の文は実行されない
+                self.problem(s, "ループの中の return は変換できません（break を使ってください）")
+                return
+            if tail and isinstance(s, ast.If) and (self.ends_with_return(s.body) or self.ends_with_return(s.orelse)):
+                # if 条件: … return → 条件が成り立たなければ、残りの文を実行する（if … else に書き換える）
+                rest = list(stmts[k + 1:])
+                body = s.body if self.ends_with_return(s.body) else s.body + rest
+                orelse = s.orelse if self.ends_with_return(s.orelse) else s.orelse + rest
+                try:
+                    self.if_branches(s, body, orelse, tail=True)
+                except _Cascade:
+                    pass
+                except ConvertError as exc:
+                    self.problems.append((exc.line or s.lineno, str(exc)))
                 return
             try:
                 self.stmt(s)
@@ -526,6 +537,18 @@ class Translator:
     @staticmethod
     def is_trivial_tail(stmts) -> bool:
         return all(isinstance(s, (ast.Pass, ast.Return)) for s in stmts)
+
+    @classmethod
+    def ends_with_return(cls, stmts) -> bool:
+        """文の並びのどの道も return で終わる"""
+        if not stmts:
+            return False
+        last = stmts[-1]
+        if isinstance(last, (ast.Return, ast.Raise)):
+            return True
+        if isinstance(last, ast.If):
+            return cls.ends_with_return(last.body) and cls.ends_with_return(last.orelse)
+        return False
 
     def problem(self, node, msg):
         self.problems.append((getattr(node, "lineno", 0), msg))
@@ -574,7 +597,7 @@ class Translator:
                   % target.attr, s)
         v = self.expr(value_node)
         if isinstance(target, ast.Name):
-            if v.kind in ("hdl", "ahdl", "bld", "tm", "mfn"):
+            if v.kind in ("hdl", "ahdl", "bld", "tm", "mfn", "this", "depfn"):
                 self.env[target.id] = v                  # handle・MTransformationMatrix は変数に入れず、そのまま追う
                 return
             name = self.local(target.id)
@@ -639,30 +662,52 @@ class Translator:
         return None
 
     def if_stmt(self, s: ast.If):
+        self.if_branches(s, s.body, s.orelse, tail=False)
+
+    def if_branches(self, s: ast.If, body, orelse, tail: bool):
         static = self.plug_test(s.test)
         if static is not None:
-            chosen = s.body if static else s.orelse
-            if any(isinstance(x, ast.Return) for x in chosen) and not self.is_trivial_tail(chosen):
-                self.block([x for x in chosen if not isinstance(x, ast.Return)])
-            elif not self.is_trivial_tail(chosen) or not chosen:
-                self.block(chosen)
+            self.block(body if static else orelse, tail=tail)
             return
         cond = self.cond(s.test)
+        head = len(self.lines)
         self.emit("if %s:" % cond)
         self.indent += 1
         n = len(self.lines)
-        self.block(s.body)
-        if len(self.lines) == n:
+        self.block(body, tail=tail)
+        empty_body = len(self.lines) == n
+        if empty_body:
             self.emit("pass")
         self.indent -= 1
-        if s.orelse:
+        if orelse:
+            mark = len(self.lines)
             self.emit("else:")
             self.indent += 1
             n = len(self.lines)
-            self.block(s.orelse)
+            self.block(orelse, tail=tail)
             if len(self.lines) == n:
-                self.emit("pass")
+                del self.lines[mark:]                    # 中身のない else は書かない
+            elif empty_body:
+                # if 条件: pass / else: … → if not 条件: …
+                self.lines[head] = self.lines[head].replace("if %s:" % cond, "if %s:" % self.negate(cond), 1)
+                del self.lines[mark]
+                del self.lines[head + 1]
             self.indent -= 1
+
+    @staticmethod
+    def negate(cond: str) -> str:
+        if cond.startswith("(not ") and cond.endswith(")") and Translator.balanced(cond[5:-1]):
+            return cond[5:-1]
+        return "not %s" % cond
+
+    @staticmethod
+    def balanced(text: str) -> bool:
+        depth = 0
+        for ch in text:
+            depth += {"(": 1, "[": 1, ")": -1, "]": -1}.get(ch, 0)
+            if depth < 0:
+                return False
+        return depth == 0
 
     def cond(self, t) -> str:
         v = self.expr(t)
@@ -1024,6 +1069,8 @@ class Translator:
             _fail("data.%s は変換できません" % f.attr, e)
         name = _tail(f)
         if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == self.self_name:
+            if f.attr == "thisMObject":
+                return Value("this")
             _fail("self.%s()（ノードのメソッドの呼び出し）は変換できません。計算を compute の中に書いてください" % f.attr, e)
         if isinstance(f, ast.Name) and f.id in self.module.functions:
             _fail("関数 %s()（プラグインの中の関数）は変換できません。計算を compute の中に書いてください" % f.id, e)
@@ -1047,6 +1094,15 @@ class Translator:
             return self.make_vector(name, e)
         if name in _MAT_CLASSES:
             return self.make_matrix(e)
+        if name == "MPlug" and len(e.args) >= 2:
+            # MPlug(self.thisMObject(), 属性) の値を読む（compute の中では入力の値と同じ）
+            if self.expr(e.args[0]).kind != "this":
+                _fail("MPlug は、このノード（self.thisMObject()）の属性だけ変換できます", e)
+            return self.plug_value(self.need_attr(e.args[1]))
+        if name == "MFnDependencyNode" and e.args:
+            if self.expr(e.args[0]).kind != "this":
+                _fail("MFnDependencyNode は、このノード（self.thisMObject()）だけ変換できます", e)
+            return Value("depfn")
         if name == "MFnMatrixData":
             # 型つきの行列の属性のデータ。MFnMatrixData(handle.data()).matrix()・MFnMatrixData().create(m)
             if not e.args:
@@ -1186,6 +1242,28 @@ class Translator:
             _fail("行列の %s は変換できません" % m, e)
         if k == "tm":
             return self.tm_method(base, m, e, kw)
+        if k == "depfn":
+            if m == "findPlug" and args:
+                a = args[0]
+                c = _const(a)
+                if isinstance(c, str):
+                    attr = next((x for x in self.sc.order if c in (x.long, x.short)), None)
+                    if attr is None:
+                        _fail("findPlug の属性 %r が、初期化の関数で作った属性にありません" % c, e)
+                    if not attr.supported:
+                        _fail("属性 %s は扱えません（%s）" % (attr.long, attr.type.split(":", 1)[-1]), e)
+                else:
+                    attr = self.need_attr(a)
+                return self.plug_value(attr)
+            _fail("MFnDependencyNode の %s は変換できません（findPlug だけ）" % m, e)
+        if k == "mobj":
+            if m == "isNull":
+                path = base.extra.get("path")
+                if path:
+                    self.notes.append("%d 行目: isNull は「%s に接続がない」として扱います（.ma に値だけが書かれていると、"
+                                      "Maya と違う結果になることがあります）" % (e.lineno, path))
+                return Value("num", "(not connected(%s))" % path if path else "0")
+            _fail("MObject の %s は変換できません" % m, e)
         if k == "mfn":
             if m in ("matrix", "transformation"):
                 if base.extra.get("mat") is None:
@@ -1220,9 +1298,30 @@ class Translator:
             _fail("MQuaternion の %s は変換できません" % m, e)
         _fail("%s の %s は変換できません" % (k, m), e)
 
+    def plug_value(self, attr: "AttrInfo") -> Value:
+        return Value("hdl", path=[(attr, None)], output=False, plug=True)
+
     def handle_method(self, h: Value, m: str, e) -> Value:
         path = h.extra["path"]
         info = path[-1][0]
+        if h.extra.get("plug"):
+            # MPlug だけのメソッド
+            if m == "isConnected":
+                return Value("num", "connected(%s)" % self.path_text(path))
+            if m in ("elementByLogicalIndex",) and e.args:
+                if not info.array or path[-1][1] is not None:
+                    _fail("配列でない属性の %s を呼んでいます" % m, e)
+                path = list(path)
+                path[-1] = (info, self.num(e.args[0]).code)
+                return Value("hdl", path=path, output=False, plug=True)
+            if m in ("numElements", "evaluateNumElements"):
+                if not info.array:
+                    _fail("配列でない属性の %s を呼んでいます" % m, e)
+                return Value("num", "count(%s)" % self.path_text(path))
+            if m == "asMObject":
+                m = "data"
+            if m in ("asMAngle", "asMDistance", "asMTime"):
+                m = "as" + m[3:]
         if m == "child" and e.args:
             child = self.need_attr(e.args[0])
             if child not in info.children:
@@ -1236,7 +1335,7 @@ class Translator:
         if m == "data":
             if info.type != "matrix" or h.extra.get("output"):
                 _fail("handle.data() は、入力の行列の属性（MFnMatrixData で読む）だけ変換できます", e)
-            return Value("mobj", code)
+            return Value("mobj", code, path=code)
         if m in _GETTERS_NUM:
             if info.type in ND.VECTOR_TYPES or info.type in ("matrix", "compound"):
                 _fail("%s（%s）を %s で読んでいます" % (info.long, info.type, m), e)
@@ -1313,6 +1412,59 @@ class Translator:
             _fail("MTransformationMatrix の %s は変換できません" % m, c)
         x.clear()
         x.update(parts)
+
+
+# compute の中で解釈できる関数・メソッドの名前（解釈できないものの一覧を作るため。クラスは問わず名前で見る）
+_KNOWN_METHODS = (_GETTERS_NUM | _GETTERS_VEC | _GETTERS_MAT | _GETTERS_UNIT | _SETTERS_NUM | _SETTERS_VEC
+                  | _SETTERS_SPLIT | _SETTERS_MAT | _SETTERS_UNIT | _SETTERS_OBJ | _IGNORED_CALLS | _LOGICAL_JUMP
+                  | _PHYSICAL_JUMP | _LOGICAL_INDEX | {
+                      "inputValue", "outputValue", "child", "elementCount", "__len__", "builder", "addElement",
+                      "next", "isDone", "asRadians", "asCentimeters", "asDegrees", "asUnits", "length", "normal",
+                      "angle", "distanceTo", "rotateBy", "inverse", "transpose", "homogenize", "asQuaternion",
+                      "asMatrix", "asEulerRotation", "conjugate", "normalize", "normalizeIt", "invertIt",
+                      "conjugateIt", "translation", "getTranslation", "rotation", "eulerRotation",
+                      "rotationComponents", "scale", "getScale", "asMatrixInverse", "rotationOrder", "setTranslation",
+                      "setRotation", "rotateTo", "setScale", "setRotationOrder", "matrix", "transformation", "create",
+                      "data", "isNull", "parent", "array", "attribute", "slerp", "thisMObject", "findPlug",
+                      "isConnected", "elementByLogicalIndex", "numElements", "evaluateNumElements", "asMObject",
+                      "asMAngle", "asMDistance", "asMTime"})
+_KNOWN_CLASSES = _VEC_CLASSES | _PT_CLASSES | _MAT_CLASSES | {
+    "MTransformationMatrix", "MEulerRotation", "MQuaternion", "MAngle", "MDistance", "MTime", "MFnMatrixData",
+    "MPlug", "MFnDependencyNode"}
+_KNOWN_FUNCTIONS = {"abs", "min", "max", "pow", "round", "float", "int", "bool", "len", "range", "print"}
+
+
+def unknown_calls(fn: ast.FunctionDef, module: "ModuleInfo") -> Dict[str, List[int]]:
+    """compute の中の、解釈できない関数・メソッドの呼び出し → 行番号（実行の流れに関係なく、すべて）"""
+    self_name = fn.args.args[0].arg if fn.args.args else "self"
+    found: Dict[str, List[int]] = {}
+
+    def add(name, node):
+        found.setdefault(name, [])
+        if node.lineno not in found[name]:
+            found[name].append(node.lineno)
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        if isinstance(f, ast.Name):
+            if f.id in module.functions:
+                add("%s()（プラグインの関数）" % f.id, node)
+            elif f.id not in _KNOWN_FUNCTIONS and f.id not in _KNOWN_CLASSES:
+                add("%s()" % f.id, node)
+        elif isinstance(f, ast.Attribute):
+            owner = f.value.id if isinstance(f.value, ast.Name) else None
+            if owner == "math":
+                if f.attr not in _MATH and f.attr not in _MATH_RENAME:
+                    add("math.%s()" % f.attr, node)
+            elif owner == self_name and f.attr != "thisMObject":
+                add("self.%s()" % f.attr, node)
+            elif f.attr[:1] == "M" and f.attr[1:2].isupper():
+                if f.attr not in _KNOWN_CLASSES:
+                    add("%s()" % f.attr, node)
+            elif f.attr not in _KNOWN_METHODS:
+                add(".%s()" % f.attr, node)
+    return found
 
 
 # ---------------------------------------------------------------------------
@@ -1449,6 +1601,7 @@ class NodeResult:
         self.spec: Optional[dict] = None
         self.problems: List[Tuple[int, str]] = []
         self.notes: List[str] = []
+        self.unknown: Dict[str, List[int]] = {}         # 解釈できない関数・メソッド → 行番号
 
     @property
     def ok(self) -> bool:
@@ -1489,6 +1642,7 @@ def convert_source(source: str, filename: str = "plugin.py", plugin: Optional[st
         if compute is None:
             r.problems.append((cls.lineno, "compute がありません（%s）" % cls.name))
             continue
+        r.unknown = unknown_calls(compute, module)
         outputs = scanner.outputs()
         tops = scanner.top_level()
         unsupported = [a for a in tops if not a.supported]
@@ -1552,6 +1706,26 @@ def report_text(path: str, data: dict, results: List[NodeResult], problems: List
                 out.append("      %s%s" % ("%d 行目: " % line if line else "", msg))
         for n in r.notes:
             out.append("      ※ %s" % n)
+        if r.unknown and not r.ok:
+            out.append("      解釈できない関数・メソッド: %s" % "、".join(
+                "%s（%s 行目）" % (name, "・".join(str(x) for x in lines)) for name, lines in r.unknown.items()))
     ok = sum(1 for r in results if r.ok)
     out.append("変換できたノード: %d / %d" % (ok, len(results)))
+    summary = unknown_summary(results)
+    if summary:
+        out.append("")
+        out.append("■ 解釈できない関数・メソッドの一覧（変換できなかったノードの compute。対応を相談するときに使ってください）")
+        for name, where in summary:
+            out.append("  %s: %s" % (name, "、".join(where)))
     return "\n".join(out)
+
+
+def unknown_summary(results: List[NodeResult]) -> List[Tuple[str, List[str]]]:
+    """変換できなかったノードの、解釈できない関数・メソッド → [ノードの型（行番号）]（名前の順）"""
+    table: Dict[str, List[str]] = {}
+    for r in results:
+        if r.ok:
+            continue
+        for name, lines in r.unknown.items():
+            table.setdefault(name, []).append("%s（%s 行目）" % (r.type, "・".join(str(x) for x in lines)))
+    return sorted(table.items(), key=lambda kv: kv[0].lstrip(".").lower())
