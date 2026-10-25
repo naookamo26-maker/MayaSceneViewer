@@ -271,6 +271,23 @@ def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
         for e in info.ik:
             out.extend(_ik_section(ms, e))
     out.append("")
+    out.append("■ ヒストリのあるカーブ（形を作るノードから形を求めるもの）")
+    baked = getattr(ms, "curve_history_baked", 0)
+    problems = getattr(ms, "curve_history_problems", {}) or {}
+    if not baked and not problems:
+        out.append("  なし")
+    if baked:
+        out.append("  ✓ 形を計算したカーブ: %d 本（circle・transformGeometry など）" % baked)
+    for t, items in sorted(problems.items(), key=lambda kv: -len(kv[1])):
+        out.append("  ★ %s で形を作るカーブ: %d 本（ビューアでは形を計算できないので、表示もスプライン IK もできません）"
+                   % (t, len(items)))
+        for name, why in items[:20]:
+            out.append("      %s（%s）" % (name, why))
+        if len(items) > 20:
+            out.append("      ほか %d 本" % (len(items) - 20))
+    if problems:
+        out.append("  Maya でカーブのヒストリを削除（Edit > Delete by Type > History）して保存すると、形が保存されます。")
+    out.append("")
     out.append("■ 読み込まないカーブ（表示していないノードを動かすもの）")
     hidden = hidden_curve_targets(ms)
     if not hidden:
