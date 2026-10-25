@@ -6,12 +6,13 @@
 内容（作業単位 cm・度・film、再生範囲 1〜48）:
   * 背骨 sb_0〜sb_4（+X 方向、骨の長さ 2、z = -8）のスプライン IK sb_ik（rootOnCurve）。カーブ sb_crvShape は
     cluster sb_cl（コンポーネントタグで CV 3 だけ）で変形する。ハンドル sb_clHandle にキー: tx 0 → 3・ty 0 → 4
-  * カーブの上のパラメータ 0・0.25・0.5・0.75・1 の点（pointOnCurveInfo sb_poc0〜4。turnOnPercentage なし）
+  * カーブ（ノット 0 0 0 4 4 4。パラメータの範囲 0〜4）の上の、turnOnPercentage で 0・0.25・0.5・0.75・1 の点
+    （pointOnCurveInfo sb_poc0〜4。パラメータの範囲を 0〜1 にそろえた値なので、パラメータ 0・1・2・3・4 の点。長さの割合ではない）
   * 骨 i の伸び: sb_i.sx = blendColors(sb_bc{i}: color1R = 点 i と点 i+1 の距離（distanceBetween sb_db{i}）、
     color2R = 2（addDoubleLinear sb_rest{i} の出力）、blender = スイッチ) ÷ 2（multiplyDivide sb_md{i}、割り算）
   * スイッチ: sb_switchCtrl.tx（10）× 0.1 を expression で sb_root.stretch_switch へ、それを別の expression で各 blendColors の
     blender へ（.O[0] = .I[0]）
-  ジョイントは、カーブの上の点 sb_poc0〜4 に乗る（骨の長さ = 点どうしの距離）
+  ジョイントは、カーブの上の点 sb_poc0〜4 に乗る（骨の長さ = 点どうしの距離。カーブが曲がると骨ごとに長さが違う）
   * 伸び縮みするジョイント sb_1 の子に、型を知らないノード sb_comp（型 myCompXform。回転 (0, 30, 0)）。
     ジョイント sb_follow は sb_comp への pointConstraint・orientConstraint（オフセットなし）で動く。
     sb_1 のスケールは X だけが 1 以外になるので、親のスケールを受け継ぐ transform として扱うと sb_comp の行列がゆがむ。
@@ -88,7 +89,7 @@ def main():
     node("nurbsCurve", "sb_crvShapeOrig", "sb_crv", io="yes")
     A('\tsetAttr ".gtag[0].gtagnm" -type "string" "sb_cl";')
     A('\tsetAttr ".gtag[0].gtagcmp" -type "componentList" 1 "cv[3]";')
-    A('\tsetAttr ".cc" -type "nurbsCurve" 3 1 0 no 3 6 0 0 0 1 1 1 4 %s "gtag" 1 "sb_cl" 1 "cv[3]";'
+    A('\tsetAttr ".cc" -type "nurbsCurve" 3 1 0 no 3 6 0 0 0 4 4 4 4 %s "gtag" 1 "sb_cl" 1 "cv[3]";'
       % " ".join(" ".join(fmt(x) for x in c) for c in straight))
     node("transform", "sb_clHandle", rp=straight[3], sp=straight[3])
     node("clusterHandle", "sb_clHandleShape", "sb_clHandle")
@@ -106,7 +107,7 @@ def main():
     A('\tsetAttr -k on ".stretch_switch" 1;')
     expression("sb_switchExpr", ".O[0] = .I[0] * 0.1;")
     for i in range(5):
-        node("pointOnCurveInfo", "sb_poc%d" % i)
+        node("pointOnCurveInfo", "sb_poc%d" % i, top="yes")
         A('\tsetAttr ".pr" %s;' % fmt(i / 4.0))
     for i in range(4):
         node("distanceBetween", "sb_db%d" % i)

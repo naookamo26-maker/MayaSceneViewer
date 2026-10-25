@@ -28,7 +28,7 @@
     自作ノードの入力 pv_src.tx にはキーがある（表示しないノードのカーブ。診断で、表示するノードへ届く経路を出す）。
     脚の IK まわり（ハンドル・poleVectorConstraint・knee_pv）はディスプレイレイヤー rig_layer に入っている
     （layerManager（displayLayerManager）→ rig_layer.id、rig_layer.di → 各ノードの .do。値の計算には関係しない）
-  * pointOnCurveInfo: poc_jnt.t = ワイヤー t2_wireShape の長さの半分の点（turnOnPercentage）、
+  * pointOnCurveInfo: poc_jnt.t = ワイヤー t2_wireShape のパラメータの範囲の半分の点（turnOnPercentage。長さの半分ではない）、
     poc_jnt2.t = パラメータ 1（終点）の接線の向き（normalizedTangent）
   * 腕 arm2_a → arm2_b → arm2_c（+X 方向、肘は +Z 側に曲がる）の ikRPsolver。極ベクトルは書かない
     （Maya の既定値 (0, 0, 1) のまま）。ハンドル arm2_ik.tx にキー 46 → 43
