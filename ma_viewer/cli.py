@@ -140,7 +140,7 @@ def cmd_node_defs(args) -> int:
     for t, nd in sorted(defs.nodes.items()):
         ins = [a.name for a in nd.attrs if not a.output]
         outs = [a.name for a in nd.attrs if a.output]
-        print("  ✓ %s（%s%s）入力 %s → 出力 %s" % (t, nd.source, "・%s %s" % (nd.plugin, nd.plugin_version or "")
+        print("  ○ %s（%s%s）入力 %s → 出力 %s" % (t, nd.source, "・%s %s" % (nd.plugin, nd.plugin_version or "")
                                               if nd.plugin else "", "・".join(ins) or "なし", "・".join(outs)))
     for t, why in sorted(defs.errors.items()):
         print("  ★ %s: %s" % (t, why))
@@ -176,7 +176,17 @@ def cmd_view(args) -> int:
     return app_main([args.input] if args.input else [])
 
 
+def _safe_console():
+    """出力の文字コード（Windows の cp932 など）で表せない文字は ? にする（止まらないように）"""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def main(argv=None) -> int:
+    _safe_console()
     p = argparse.ArgumentParser(prog="ma_viewer", description="Maya ASCII 簡易ビューア")
     sub = p.add_subparsers(dest="cmd")
     pe = sub.add_parser("export", help=".ma を共通 JSON に変換")

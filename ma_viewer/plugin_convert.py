@@ -1504,7 +1504,7 @@ def report_text(path: str, data: dict, results: List[NodeResult], problems: List
         if r.ok:
             outs = [a["name"] for a in r.spec["attributes"] if a.get("output")]
             ins = [a["name"] for a in r.spec["attributes"] if not a.get("output")]
-            out.append("  ✓ %s（%s）入力 %s → 出力 %s" % (r.type, r.cls, "・".join(ins) or "なし", "・".join(outs)))
+            out.append("  ○ %s（%s）入力 %s → 出力 %s" % (r.type, r.cls, "・".join(ins) or "なし", "・".join(outs)))
         else:
             out.append("  ★ %s（%s）: 変換できません" % (r.type, r.cls))
             for line, msg in r.problems:
