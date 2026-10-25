@@ -667,6 +667,110 @@ class ComputeTest(unittest.TestCase):
                     "first = weightA", "second = weightB", "third = weightC",
                     "total = ((first + (second * 2.0)) + third)"])
 
+    CHAIN_PLUGIN = textwrap.dedent('''\
+        import maya.api.OpenMaya as om
+
+        def maya_useNewAPI():
+            pass
+
+        class Chain(om.MPxNode):
+            @staticmethod
+            def creator():
+                return Chain()
+
+            @staticmethod
+            def initialize():
+                n = om.MFnNumericAttribute()
+                Chain.aSrc = n.create("source", "src", om.MFnNumericData.kDouble, 1.0)
+                Chain.aMid = n.create("middle", "mid", om.MFnNumericData.kDouble, 0.0)
+                n.writable = False
+                Chain.aEnd = n.create("final", "fin", om.MFnNumericData.kDouble, 0.0)
+                n.writable = False
+                Chain.aHalf = n.create("half", "hf", om.MFnNumericData.kDouble, 0.0)
+                n.writable = False
+                Chain.aExtra = n.create("extra", "ex", om.MFnNumericData.kDouble, 0.0)
+                for a in (Chain.aSrc, Chain.aMid, Chain.aEnd, Chain.aHalf, Chain.aExtra):
+                    Chain.addAttribute(a)
+                Chain.attributeAffects(Chain.aSrc, Chain.aMid)
+                Chain.attributeAffects(Chain.aMid, Chain.aEnd)
+                Chain.attributeAffects(Chain.aSrc, Chain.aHalf)
+
+            def compute(self, plug, data):
+                if plug == Chain.aMid:
+                    v = data.inputValue(Chain.aSrc).asDouble()
+                    data.outputValue(Chain.aMid).setDouble(v + 1.0)
+                elif plug == Chain.aEnd:
+                    m = data.inputValue(Chain.aMid).asDouble()
+                    data.outputValue(Chain.aEnd).setDouble(m * 3.0)
+                elif plug == Chain.aHalf:
+                    data.outputValue(Chain.aHalf).setDouble(data.inputValue(Chain.aSrc).asDouble() / 2.0)
+                    data.outputValue(Chain.aExtra).setDouble(7.0)
+                else:
+                    return om.kUnknownParameter
+                data.setClean(plug)
+
+
+        class Twice(om.MPxNode):
+            @staticmethod
+            def creator():
+                return Twice()
+
+            @staticmethod
+            def initialize():
+                n = om.MFnNumericAttribute()
+                if om.MGlobal.apiVersion() > 20200000:
+                    Twice.aIn = n.create("input", "in", om.MFnNumericData.kDouble, 1.0)
+                else:
+                    Twice.aIn = n.create("input", "in", om.MFnNumericData.kDouble, 2.0)
+                Twice.aOut = n.create("output", "out", om.MFnNumericData.kDouble, 0.0)
+                Twice.addAttribute(Twice.aIn)
+                Twice.addAttribute(Twice.aOut)
+                Twice.attributeAffects(Twice.aIn, Twice.aOut)
+
+            def compute(self, plug, data):
+                data.outputValue(Twice.aOut).setDouble(data.inputValue(Twice.aIn).asDouble())
+
+
+        def initializePlugin(obj):
+            p = om.MFnPlugin(obj)
+            p.registerNode("chainNode", om.MTypeId(1), Chain.creator, Chain.initialize)
+            p.registerNode("twiceNode", om.MTypeId(2), Twice.creator, Twice.initialize)
+    ''')
+
+    def test_outputs_by_plug_and_chained(self):
+        """plug で出し分けるすべての出力・途中の属性（出力を次の出力の計算で読む）・attributeAffects にない出力"""
+        data, results, problems = convert_source(self.CHAIN_PLUGIN, "chain.py")
+        self.assertEqual(problems, [])
+        chain = next(r for r in results if r.type == "chainNode")
+        self.assertTrue(chain.ok, chain.problems)
+        spec = data["nodes"]["chainNode"]
+        self.assertEqual(spec["compute"], ["v = source", "_out1 = (v + 1.0)", "middle = _out1", "m = _out1",
+                                           "final = (m * 3.0)", "half = (source / 2.0)", "extra = 7.0"])
+        self.assertEqual([(a["name"], a.get("output", False)) for a in spec["attributes"]],
+                         [("source", False), ("middle", True), ("final", True), ("half", True), ("extra", True)])
+        self.assertTrue(any("extra" in n and "attributeAffects" in n for n in chain.notes), chain.notes)
+        # 出力を、書き込む前に読む → 分かりやすい誤り
+        swapped = self.CHAIN_PLUGIN.replace("if plug == Chain.aMid:", "if plug == Chain.aNone:").replace(
+            "elif plug == Chain.aEnd:", "elif plug == Chain.aMid:")
+        swapped = swapped.replace('''            v = data.inputValue(Chain.aSrc).asDouble()
+            data.outputValue(Chain.aMid).setDouble(v + 1.0)
+        elif plug == Chain.aMid:''', '''            m = data.inputValue(Chain.aMid).asDouble()
+            data.outputValue(Chain.aEnd).setDouble(m * 3.0)
+        elif plug == Chain.aMid:''')
+        _data, results, _p = convert_source(swapped, "chain.py")
+        chain = next(r for r in results if r.type == "chainNode")
+        self.assertFalse(chain.ok)
+        self.assertTrue(any("書き込む前に読んでいます" in m for _l, m in chain.problems), chain.problems)
+
+    def test_same_attribute_made_twice(self):
+        """if の両側で同じ名前の属性を作る → addAttribute したほうを使い、重なりの誤りにしない"""
+        data, results, _p = convert_source(self.CHAIN_PLUGIN, "chain.py")
+        twice = next(r for r in results if r.type == "twiceNode")
+        self.assertTrue(twice.ok, twice.problems)
+        self.assertEqual([(a["name"], a.get("default")) for a in data["nodes"]["twiceNode"]["attributes"]],
+                         [("input", 2.0), ("output", None)])
+        self.assertTrue(any("重なる" in n for n in twice.notes), twice.notes)
+
     def test_unknown_attribute_message(self):
         """分からない属性は、書いたとおりの式と、作った属性の一覧つきで報告する"""
         _data, r = convert_compute("x = data.inputValue(self.aMissing).asDouble()")
