@@ -392,7 +392,7 @@ python tests/qt_rig_test.py                             # リグ（IK・コン�
 ```
 
 自作ノードの定義のテストは `tests/test_node_defs.py`（読み込み・検証・シーンへの適用）と `web_src/tests/nodeDef.test.mjs`（評価）です。サンプルとテスト用の定義は `python tools/make_nodedef_sample.py` で作ります（`samples/nodedef_sample_defs.json`。ビューアには同梱しません）。
-ヒストリのあるカーブのテストは `tests/test_curve_history.py`（形の計算・警告・リグの診断）と `web_src/tests/curveHistory.test.mjs`（表示とスプライン IK）です（サンプルは `python tools/make_curve_history_sample.py`）。コンポーネントタグのテストは `tests/test_component_tags.py`（タグと式の読み取り・リグの診断）と `web_src/tests/componentTags.test.mjs`（cluster → wire → スプライン IK）です（サンプルは `python tools/make_component_tag_sample.py`）。
+ヒストリのあるカーブのテストは `tests/test_curve_history.py`（形の計算・警告・リグの診断）と `web_src/tests/curveHistory.test.mjs`（表示とスプライン IK）です（サンプルは `python tools/make_curve_history_sample.py`）。骨ごとに伸び縮みするスプライン IK（カーブ上の点どうしの距離 → blendColors → multiplyDivide → ジョイントのスケール）のテストは `web_src/tests/stretchSpline.test.mjs` です（サンプルは `python tools/make_stretch_spline_sample.py`）。コンポーネントタグのテストは `tests/test_component_tags.py`（タグと式の読み取り・リグの診断）と `web_src/tests/componentTags.test.mjs`（cluster → wire → スプライン IK）です（サンプルは `python tools/make_component_tag_sample.py`）。
 fourByFourMatrix のテストは `web_src/tests/fourByFour.test.mjs` です（サンプルは `python tools/make_fourbyfour_sample.py`）。
 プラグインからの変換のテストは `tests/test_plugin_convert.py`（変換の結果・変換できない書き方・CLI）と `web_src/tests/pluginConvert.test.mjs`（変換した定義の評価をプラグインの式と比べる）です。サンプルのプラグインは `samples/plugins/`、変換した定義とシーンは `python tools/make_plugin_convert_sample.py` で作ります（`samples/plugin_convert_defs.json`・`samples/plugin_convert_sample.ma`）。
 

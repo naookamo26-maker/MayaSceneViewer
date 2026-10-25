@@ -1752,7 +1752,7 @@ export class RigEvaluator {
     const q = [start];
     const endDir = new Vector3().subVectors(poly.pts[poly.pts.length - 1], poly.pts[poly.pts.length - 2]).normalize();
     for (let i = 0; i < n - 1; i++) {
-      const r = pointAtDistance(poly, q[i], lens[i], seg);
+      const r = pointAtDistance(poly, q[i], lens[i], seg, curve);
       if (r) { q.push(r.point); seg = r.seg; } else q.push(q[i].clone().addScaledVector(endDir, lens[i]));
     }
     if (shift) for (const p of q) p.add(shift);
