@@ -492,6 +492,8 @@ def parse_attrs(text: str, node: MaNode, skip=(), angle_k: Optional[float] = Non
     out: Dict[str, object] = {}
     # ノードのブロックと、リファレンスの編集で変えた属性（あとから当てるので後ろ）
     spans = [s for s in (node.span, node.espan) if s is not None]
+    named = set(node.xspans or [])                       # ノード名つきの setAttr（ブロックの外）
+    spans += sorted(named)
     if not spans or not text:
         return dict(node.baked) if node.baked else out
     angles = set()
@@ -510,6 +512,8 @@ def parse_attrs(text: str, node: MaNode, skip=(), angle_k: Optional[float] = Non
                         out[name] = dv
     for m in (m for a, b in spans for m in _SETATTR_RE.finditer(text, a, b)):
         sa = R.parse_setattr(m.group(1))
+        if sa is not None and not sa.plug.startswith(".") and named and any(a <= m.start() < b for a, b in named):
+            sa.plug = "." + R.split_node_attr(sa.plug)[1]    # "curveShapeOrig.cc" → ".cc"
         if sa is None or not sa.plug.startswith(".") or sa.type == "string":
             continue
         key = R.normalize_attr(sa.plug[1:])
@@ -586,6 +590,10 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
             entry["inputs"] = inputs
             if is_dag and any(_base(k) in _CHANNEL_KEYS for k in inputs):
                 moving.add(out_index[id(n)])
+        if n.type == "nurbsCurve" and "cr" in n.inputs and "cr" not in inputs:
+            # 評価できないノードで形を作るカーブ（リグの診断で、何で止まっているかを出すため）
+            src = n.inputs["cr"][0]
+            entry["createFrom"] = {"name": src.name, "type": src.type}
         if n.type in CONSTRAINT_TYPES:
             # 動かされるノード: Maya はどのコンストレイントでも「動かされるノード.pim → .cpim」とつなぐので、それを使う。
             # なければ親（ふつうのコンストレイントは動かされるノードの子。lookAt は逆にカメラの親なので親は使えない）

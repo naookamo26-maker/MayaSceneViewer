@@ -52,6 +52,7 @@ ATTR_ALIASES = {
     "inheritsTransform": "it", "worldMatrix": "wm",
     # 注意: "matrix" は transform では m、skinCluster では ma なので別名変換しない
     "vrts": "vt", "edge": "ed", "face": "fc", "pnts": "pt",
+    "cached": "cc",                    # nurbsCurve の形（長い名前）
     "inMesh": "i", "outMesh": "o", "worldMesh": "w",
     "weightList": "wl", "weights": "w", "bindPreMatrix": "pm", "geomMatrix": "gm",
     "skinningMethod": "skm", "maxInfluences": "mi", "normalizeWeights": "nw",

@@ -468,8 +468,11 @@ def _spline_detail(h: dict, sp: dict) -> List[str]:
                         why = "nurbsCurve ではない（%s）" % inf.get("type")
                     elif inf.get("fileShape") and not inf.get("parsed"):
                         why = "ファイルの形（.cc）はあるが、ビューアが読めない"
+                    elif inf.get("createFrom"):
+                        cf = inf["createFrom"]
+                        why = "形はファイルになく、作成の入力（create）の %s（%s）をビューアで評価できない" % (cf["name"], cf["type"])
                     elif inf.get("create"):
-                        why = "形はファイルになく、作成の入力（create）を評価できない"
+                        why = "形はファイルになく、作成の入力（create）を評価できない（上流をカーブの形の上流の木で確認）"
                     else:
                         why = "形がファイルにも入力にもない"
                     out.append("          ★ %sのカーブの形を求められない理由: %s" % (label, why))

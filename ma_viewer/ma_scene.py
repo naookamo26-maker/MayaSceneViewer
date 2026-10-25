@@ -190,7 +190,7 @@ def _sparse_into(weights: Dict[int, Dict[int, float]], a: int, b: int, vals) -> 
 class MaNode:
     __slots__ = ("name", "type", "parent", "children", "path", "order", "is_dag",
                  "xattrs", "mesh", "skin", "tweak", "inputs", "raw", "skip_attrs", "span", "attr_map", "ns", "espan",
-                 "node_def", "baked")
+                 "node_def", "baked", "xspans")
 
     def __init__(self, name: str, node_type: str, parent: Optional["MaNode"], order: int, ns: str = ""):
         self.name = name
@@ -213,6 +213,8 @@ class MaNode:
         self.espan: Optional[Tuple[int, int]] = None    # リファレンスの編集で変えた属性（setAttr を並べた範囲）
         self.node_def = None                            # 自作ノードの定義（node_defs.NodeDef）で評価するとき
         self.baked: Optional[Dict[str, object]] = None  # 読み込みで求めた属性（ヒストリから求めたカーブの形 cc など）
+        # ノードのブロックの外で、ノード名つきで値を入れた setAttr の範囲（属性を後から読むノード。カーブの形など）
+        self.xspans: Optional[List[Tuple[int, int]]] = None
 
     @property
     def is_shape(self) -> bool:
@@ -1342,12 +1344,15 @@ def _parse_segment(scene: MaScene, text: str, base: int, name: str) -> None:
     while pos < n:
         end = statement_end(text, pos, find(";", pos))    # 文字列の中の ; は飛ばす
         stmt = text[pos:end]
+        start = pos
         pos = end + 1
         cmd, rest = split_command(stmt)
         if cmd is None:
             continue
         counts[cmd] = counts.get(cmd, 0) + 1
         t_stmt = clock()
+        if cmd == "setAttr":
+            _remember_named_setattr(scene, rest, base + start, base + end + 1)
         scene.handle(cmd, rest)
         cur = scene.current
         key = cmd if cmd != "setAttr" else "setAttr " + (cur.type if cur is not None else "?")
@@ -1375,6 +1380,21 @@ def _parse_segment(scene: MaScene, text: str, base: int, name: str) -> None:
             scene._report_parse(at / total, name)
             next_report += 0.02
     scene._bytes_done += n - counted
+
+
+def _remember_named_setattr(scene: "MaScene", rest: str, a: int, b: int):
+    """ノードのブロックの外の、ノード名つきの setAttr（setAttr "curveShapeOrig.cc" …）。属性を後から読むノード
+    （カーブの形など、読み込みでは値を読み飛ばすノード）なら、その範囲を覚えておく"""
+    m = _PLUG_RE.search(rest)
+    if m is None or m.group(1).startswith("."):
+        return
+    nname, _attr = R.split_node_attr(m.group(1))
+    node = scene.resolve(scene.qualify(nname))
+    if node is None or node.span is None or not node.skip_attrs:
+        return
+    if node.xspans is None:
+        node.xspans = []
+    node.xspans.append((a, b))
 
 
 def parse_ma_file(path: str, progress: ProgressFn = None, load_references: bool = True) -> MaScene:
