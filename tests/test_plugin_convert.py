@@ -393,22 +393,21 @@ class ComputeTest(unittest.TestCase):
         src = TEMPLATE.replace('TestNode.aIn = nAttr.create("input", "in", om.MFnNumericData.kDouble, 0.0)',
                                'TestNode.aIn = tAttr.create("input", "in", om.MFnData.kMatrix)')
         body = '''
-            dataHandle = data.inputValue(self.aIn).data()
-            if dataHandle.isNull():
-                inMat = om.MMatrix.identity
-            else:
-                inMat = om.MFnMatrixData(dataHandle).matrix()
-            q = om.MQuaternion.kIdentity
-            m = inMat * om.MMatrix.kIdentity
-            data.outputValue(TestNode.aOut).setDouble(m.getElement(3, 0) + q.w)
+            parent = om.MMatrix.identity
+            raw = data.inputValue(TestNode.aIn).data()
+            if not raw.isNull():
+                parent = om.MFnMatrixData(raw).matrix()
+            spin = om.MQuaternion.kIdentity
+            world = om.MMatrix.kIdentity * parent
+            data.outputValue(TestNode.aOut).setDouble(world.getElement(3, 1) - spin.w)
         '''
         data, results, _p = convert_source(src % textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8), "t.py")
         r = results[0]
         self.assertTrue(r.ok, r.problems)
         self.assertEqual(r.unknown, {})
         self.assertEqual(data["nodes"]["testNode"]["compute"], [
-            "dataHandle = input", "if (not connected(input)):", "    inMat = identity()", "else:", "    inMat = dataHandle",
-            "q = [0.0, 0.0, 0.0, 1.0]", "m = (inMat * identity())", "output = (element(m, 3, 0) + q.w)"])
+            "parent = identity()", "raw = input", "if connected(input):", "    parent = raw",
+            "spin = [0.0, 0.0, 0.0, 1.0]", "world = (identity() * parent)", "output = (element(world, 3, 1) - spin.w)"])
         body = body.replace("om.MQuaternion.kIdentity", "om.MQuaternion.kSomething")
         data, results, _p = convert_source(src % textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8), "t.py")
         r = results[0]
@@ -576,6 +575,97 @@ class ComputeTest(unittest.TestCase):
                 self.assertEqual(spec["compute"], ["outA = (inA * 2.0)"])
                 self.assertEqual([(a["name"], a.get("default"), a.get("output", False)) for a in spec["attributes"]],
                                  [("inA", 1.0, False), ("outA", None, True)])
+
+    def test_attributes_made_by_helpers_and_loops(self):
+        """補助の関数・ループと setattr / getattr・その場の関数セット・組み立てた名前で作った属性"""
+        head = textwrap.dedent('''
+            import maya.api.OpenMaya as om
+            def maya_useNewAPI():
+                pass
+            def makeWeight(longName, shortName, value):
+                fn = om.MFnNumericAttribute()
+                obj = fn.create(longName, shortName, om.MFnNumericData.kFloat, value)
+                fn.keyable = True
+                return obj
+            class WeightTotal(om.MPxNode):
+                aTotal = None
+                @staticmethod
+                def creator():
+                    return WeightTotal()
+                @staticmethod
+                def _weight(longName, shortName, value=1.0):
+                    fn = om.MFnNumericAttribute()
+                    obj = fn.create(longName, shortName, om.MFnNumericData.kFloat, value)
+                    fn.storable = True
+                    return obj
+                @classmethod
+                def initialize(cls):
+                    num = om.MFnNumericAttribute()
+        ''')
+        tail = textwrap.dedent('''
+                    cls.aTotal = num.create("total", "tot", om.MFnNumericData.kFloat, 0.0)
+                    num.writable = False
+                    cls.addAttribute(cls.aTotal)
+                    for src in (cls.aWeightA, cls.aWeightB, cls.aWeightC):
+                        cls.attributeAffects(src, cls.aTotal)
+                def compute(self, plug, data):
+                    first = data.inputValue(self.aWeightA).asFloat()
+                    second = data.inputValue(type(self).aWeightB)
+                    third = data.inputValue(self.__class__.aWeightC).asFloat()
+                    data.outputValue(self.aTotal).setFloat(first + second.asFloat() * 2.0 + third)
+            def initializePlugin(obj):
+                om.MFnPlugin(obj, "t", "1.0").registerNode("weightTotal", om.MTypeId(1), WeightTotal.creator,
+                                                          WeightTotal.initialize)
+        ''')
+        variants = {
+            "そのまま": '''
+                cls.aWeightA = num.create("weightA", "wa", om.MFnNumericData.kFloat, 0.5)
+                cls.aWeightB = num.create("weightB", "wb", om.MFnNumericData.kFloat, 1.0)
+                cls.aWeightC = num.create("weightC", "wc", om.MFnNumericData.kFloat, 1.5)
+                for w in (cls.aWeightA, cls.aWeightB, cls.aWeightC):
+                    cls.addAttribute(w)
+            ''',
+            "補助の関数（staticmethod・名前つきの引数）": '''
+                cls.aWeightA = cls._weight("weightA", "wa", 0.5)
+                cls.aWeightB = cls._weight("weightB", "wb")
+                cls.aWeightC = WeightTotal._weight("weightC", shortName="wc", value=1.5)
+                for w in (cls.aWeightA, cls.aWeightB, cls.aWeightC):
+                    cls.addAttribute(w)
+            ''',
+            "補助の関数（モジュール）": '''
+                cls.aWeightA = makeWeight("weightA", "wa", 0.5)
+                cls.aWeightB = makeWeight("weightB", "wb", 1.0)
+                cls.aWeightC = makeWeight("weightC", "wc", 1.5)
+                for w in (cls.aWeightA, cls.aWeightB, cls.aWeightC):
+                    cls.addAttribute(w)
+            ''',
+            "ループと setattr・%・upper": '''
+                for key, value in (("a", 0.5), ("b", 1.0), ("c", 1.5)):
+                    obj = num.create("weight%s" % key.upper(), "w" + key, om.MFnNumericData.kFloat, value)
+                    setattr(cls, "aWeight" + key.upper(), obj)
+                    cls.addAttribute(obj)
+            ''',
+            "ループと f 文字列・getattr・その場の関数セット": '''
+                for key, value in (("A", 0.5), ("B", 1.0), ("C", 1.5)):
+                    setattr(cls, f"aWeight{key}",
+                            om.MFnNumericAttribute().create(f"weight{key}", f"w{key.lower()}", om.MFnNumericData.kFloat,
+                                                            value))
+                    cls.addAttribute(getattr(cls, f"aWeight{key}"))
+            ''',
+        }
+        for name, body in variants.items():
+            with self.subTest(name=name):
+                src = head + textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8) + "\n" + tail
+                data, results, problems = convert_source(src, "x.py")
+                self.assertEqual(problems, [])
+                self.assertTrue(results[0].ok, results[0].problems)
+                spec = data["nodes"]["weightTotal"]
+                self.assertEqual([(a["name"], a["short"], a["type"], a.get("default")) for a in spec["attributes"]],
+                                 [("weightA", "wa", "float", 0.5), ("weightB", "wb", "float", 1.0),
+                                  ("weightC", "wc", "float", 1.5), ("total", "tot", "float", None)])
+                self.assertEqual(spec["compute"], [
+                    "first = weightA", "second = weightB", "third = weightC",
+                    "total = ((first + (second * 2.0)) + third)"])
 
     def test_unknown_attribute_message(self):
         """分からない属性は、書いたとおりの式と、作った属性の一覧つきで報告する"""

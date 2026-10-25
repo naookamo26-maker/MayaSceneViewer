@@ -163,13 +163,18 @@ class AttrScanner:
         self.local: Dict[str, AttrInfo] = {}
         self.notes: List[str] = []
         self.in_class = False                    # クラスの直下の文を読んでいる
+        self.returns: Optional[List[AttrInfo]] = None   # 補助の関数を読んでいるとき、return した属性
+        self.depth = 0
 
     def fn_of(self, node) -> Optional[FnState]:
-        """nAttr・cls.nAttr・self.nAttr・Cls.nAttr → 関数セット（クラスの直下に書いたものは @名前）"""
+        """nAttr・cls.nAttr・self.nAttr・Cls.nAttr・om.MFnEnumAttribute() → 関数セット（クラスの直下のものは @名前）"""
         if isinstance(node, ast.Name):
             return self.fns.get(node.id)
         if isinstance(node, ast.Attribute):
             return self.fns.get("@" + node.attr)
+        kind = self.fn_kind(node)
+        if kind:
+            return FnState(kind)                         # その場で作った関数セット
         return None
 
     def scan_class(self, cls: ast.ClassDef):
@@ -180,11 +185,48 @@ class AttrScanner:
         finally:
             self.in_class = False
 
-    def name_value(self, node):
-        """属性の名前など: 定数・モジュールの定数・クラスの定数（Cls.kName・cls.kName・self.kName）"""
+    def name_value(self, node, env=None):
+        """属性の名前など: 定数・モジュールの定数・クラスの定数（Cls.kName・cls.kName・self.kName）・
+        補助の関数の引数・ループの変数、文字列の + と f 文字列"""
         v = _const(node)
         if v is not None:
             return v
+        if isinstance(node, ast.Name) and env and node.id in env and not isinstance(env[node.id], AttrInfo):
+            return env[node.id]
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            a, b = self.name_value(node.left, env), self.name_value(node.right, env)
+            if isinstance(a, str) and isinstance(b, str):
+                return a + b
+            if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+                return a + b
+            return None
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and not node.args \
+                and node.func.attr in ("lower", "upper", "capitalize", "title"):
+            base = self.name_value(node.func.value, env)    # "X".lower() など
+            return getattr(base, node.func.attr)() if isinstance(base, str) else None
+        if isinstance(node, ast.IfExp):
+            test = self.name_value(node.test, env)
+            if test is None:
+                return None
+            return self.name_value(node.body if test else node.orelse, env)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+            fmt = self.name_value(node.left, env)
+            items = node.right.elts if isinstance(node.right, ast.Tuple) else [node.right]
+            vals = [self.name_value(x, env) for x in items]
+            if isinstance(fmt, str) and all(v is not None for v in vals):
+                try:
+                    return fmt % tuple(vals)
+                except (TypeError, ValueError):
+                    return None
+            return None
+        if isinstance(node, ast.JoinedStr):
+            out = []
+            for part in node.values:
+                v = self.name_value(part.value if isinstance(part, ast.FormattedValue) else part, env)
+                if v is None:
+                    return None
+                out.append(str(v))
+            return "".join(out)
         if isinstance(node, ast.Name):
             if node.id in self.module.consts:
                 return self.module.consts[node.id]
@@ -203,8 +245,13 @@ class AttrScanner:
         """Cls.aX・self.aX・aX → 属性"""
         if isinstance(node, ast.Name):
             if node.id in env:
-                return env[node.id]
+                v = env[node.id]
+                return v if isinstance(v, AttrInfo) else None
             return self.local.get(node.id) or self.attrs.get(node.id)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr" \
+                and len(node.args) >= 2:
+            name = self.name_value(node.args[1], env)    # getattr(cls, "aWeight" + key)
+            return self.attrs.get(name) if isinstance(name, str) else None
         if isinstance(node, ast.Attribute):
             return self.attrs.get(node.attr)
         return None
@@ -217,6 +264,11 @@ class AttrScanner:
             self.stmt(s, env)
 
     def stmt(self, s, env):
+        if isinstance(s, ast.Return) and self.returns is not None and s.value is not None:
+            a = self.ref(s.value, env) or self.create(s.value, env) or self.helper_call(s.value, env)
+            if a is not None:
+                self.returns.append(a)
+            return
         if isinstance(s, (ast.Assign, ast.AnnAssign)):
             targets = s.targets if isinstance(s, ast.Assign) else [s.target]
             value = s.value
@@ -233,7 +285,7 @@ class AttrScanner:
                     elif isinstance(t, ast.Attribute):
                         self.fns["@" + t.attr] = fn
                 return
-            attr = self.create(value)
+            attr = self.create(value, env) or self.helper_call(value, env)
             if attr is not None:
                 for t in targets:
                     self.bind(t, attr)
@@ -253,18 +305,87 @@ class AttrScanner:
             self.call(s.value, env)
             return
         if isinstance(s, ast.For):
-            items = s.iter.elts if isinstance(s.iter, (ast.Tuple, ast.List)) else None
-            if items is not None and isinstance(s.target, ast.Name):
-                for it in items:
-                    a = self.ref(it, env)
-                    if a is not None:
-                        self.block(s.body, dict(env, **{s.target.id: a}))
+            # for a in (Cls.aX, …)・for name, short in (("weightA", "wa"), …): のループを、要素ごとに読む
+            items = s.iter.elts if isinstance(s.iter, (ast.Tuple, ast.List)) else (
+                self.module.tuples.get(s.iter.id) if isinstance(s.iter, ast.Name) else None)
+            for it in items or []:
+                bound = self.loop_bind(s.target, it, env)
+                if bound is not None:
+                    self.block(s.body, dict(env, **bound))
             return
         if isinstance(s, (ast.If, ast.Try, ast.With)):
             for part in ("body", "orelse", "finalbody"):
                 self.block(getattr(s, part, []) or [], env)
             for h in getattr(s, "handlers", []) or []:
                 self.block(h.body, env)
+
+    def loop_bind(self, target, item, env) -> Optional[dict]:
+        """ループの変数 → 属性か定数（分からなければ None）"""
+        if isinstance(target, ast.Name):
+            v = self.ref(item, env)
+            if v is None:
+                v = self.name_value(item, env)
+            return None if v is None else {target.id: v}
+        if isinstance(target, (ast.Tuple, ast.List)) and isinstance(item, (ast.Tuple, ast.List)) \
+                and len(target.elts) == len(item.elts):
+            out = {}
+            for t, it in zip(target.elts, item.elts):
+                b = self.loop_bind(t, it, env)
+                if b is None:
+                    return None
+                out.update(b)
+            return out
+        return None
+
+    def resolve_function(self, func) -> Optional[Tuple[ast.FunctionDef, bool]]:
+        """補助の関数（cls.helper・Cls.helper・self.helper・helper）→ (関数, 最初の引数 cls / self を除くか)"""
+        fn = None
+        if isinstance(func, ast.Name):
+            fn = self.module.functions.get(func.id)
+            return (fn, False) if fn is not None else None
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+            owner = self.module.classes.get(func.value.id) or self.cls
+            if owner is not None:
+                fn = self.module.method(owner, func.attr)
+        if fn is None:
+            return None
+        decorators = {_tail(d) for d in fn.decorator_list}
+        return fn, "staticmethod" not in decorators
+
+    def helper_call(self, value, env) -> Optional[AttrInfo]:
+        """属性を作って返す補助の関数（cls._weight("weightA", "wa", 0.5) など）を、引数を当てはめて読む"""
+        if not isinstance(value, ast.Call) or self.depth >= 8:
+            return None
+        found = self.resolve_function(value.func)
+        if found is None:
+            return None
+        fn, drop_first = found
+        params = [a.arg for a in fn.args.args]
+        if drop_first and params:
+            params = params[1:]                          # cls・self
+        sub = {}
+        defaults = fn.args.defaults
+        for name, d in zip(params[len(params) - len(defaults):], defaults):
+            v = self.name_value(d, env)
+            if v is not None:
+                sub[name] = v
+        args = list(zip(params, value.args)) + [(k.arg, k.value) for k in value.keywords if k.arg in params]
+        for name, arg in args:
+            v = self.ref(arg, env)
+            if v is None:
+                v = self.name_value(arg, env)
+            if v is not None:
+                sub[name] = v
+        saved = (self.fns, self.local, self.returns)
+        self.fns, self.local, self.returns = dict(self.fns), {}, []
+        self.depth += 1
+        try:
+            self.block(fn.body, sub)
+            result = self.returns[-1] if self.returns else None
+        finally:
+            self.depth -= 1
+            self.fns, self.local, self.returns = saved
+        return result
 
     def bind(self, target, attr: AttrInfo):
         if isinstance(target, ast.Name) and self.in_class:
@@ -281,7 +402,7 @@ class AttrScanner:
             return _FN_KINDS.get(_tail(value.func) or "")
         return None
 
-    def create(self, value) -> Optional[AttrInfo]:
+    def create(self, value, env=None) -> Optional[AttrInfo]:
         """fn.create(…) / createPoint / createColor → 属性"""
         if not (isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
                 and self.fn_of(value.func.value) is not None):
@@ -291,12 +412,16 @@ class AttrScanner:
         if method not in ("create", "createPoint", "createColor", "createAddr"):
             return None
         args = value.args
-        long_name = self.name_value(args[0]) if args else None
-        short_name = self.name_value(args[1]) if len(args) > 1 else None
+        long_name = self.name_value(args[0], env) if args else None
+        short_name = self.name_value(args[1], env) if len(args) > 1 else None
         if not isinstance(long_name, str):
             _fail("属性の名前（%s）が分かりません。文字列か、モジュール・クラスの定数にしてください"
                   % (ast.unparse(args[0]) if args else "なし"), value)
-        short_name = short_name if isinstance(short_name, str) else long_name
+        if not isinstance(short_name, str):
+            if len(args) > 1:
+                self.notes.append("%d 行目: 属性 %s の短い名前（%s）が分からないので、長い名前を使います（.ma で短い名前の接続が"
+                                  "読めません）" % (value.lineno, long_name, ast.unparse(args[1])))
+            short_name = long_name
         line = value.lineno
         kind = fn.kind
         if method in ("createPoint", "createColor"):
@@ -321,13 +446,13 @@ class AttrScanner:
                     n = ND.VECTOR_TYPES[typ]
                     a.children = [AttrInfo(long_name + s, short_name + s, "double", line) for s in "0123"[:n]]
                 if len(args) >= 4:
-                    a.default = self.default_of(args[3:])
+                    a.default = self.default_of(args[3:], env)
         elif kind == "unit":
             t = _tail(args[2]) if len(args) >= 3 else None
             typ = _UNIT_TYPES.get(t or "")
             a = AttrInfo(long_name, short_name, typ or "unsupported:単位の型 %s" % t, line)
             if len(args) >= 4:
-                a.default = _const(args[3])
+                a.default = self.name_value(args[3], env)
         elif kind == "matrix":
             a = AttrInfo(long_name, short_name, "matrix", line)
         elif kind == "compound":
@@ -335,7 +460,7 @@ class AttrScanner:
         elif kind == "enum":
             a = AttrInfo(long_name, short_name, "enum", line)
             if len(args) >= 3:
-                a.default = _const(args[2])
+                a.default = self.name_value(args[2], env)
         elif kind == "typed":
             # MFnTypedAttribute: 行列（MFnData.kMatrix）だけ扱える
             t = _tail(args[2]) if len(args) >= 3 else None
@@ -351,9 +476,8 @@ class AttrScanner:
         self.order.append(a)
         return a
 
-    @staticmethod
-    def default_of(args):
-        vals = [_const(x) for x in args]
+    def default_of(self, args, env=None):
+        vals = [self.name_value(x, env) for x in args]
         if len(vals) == 1:
             return vals[0]
         return vals if all(isinstance(v, (int, float)) for v in vals) else None
@@ -400,6 +524,16 @@ class AttrScanner:
             src, dst = self.ref(c.args[0], env), self.ref(c.args[1], env)
             if src is not None and dst is not None:
                 self.affects.append((src, dst))
+            return
+        if isinstance(f, ast.Name) and f.id == "setattr" and len(c.args) == 3:
+            # setattr(cls, "aWeight" + key, nAttr.create(…))
+            attr_name = self.name_value(c.args[1], env)
+            value = c.args[2]
+            a = self.ref(value, env) or self.create(value, env) or self.helper_call(value, env)
+            if isinstance(attr_name, str) and a is not None:
+                self.attrs[attr_name] = a
+            return
+        self.helper_call(c, env)                         # 属性を作って cls に入れる補助の関数
 
     def outputs(self) -> List[AttrInfo]:
         """出力の属性（attributeAffects で影響を受けるもの。なければ書き込めないもの）"""
@@ -415,7 +549,8 @@ class AttrScanner:
         return out
 
     def top_level(self) -> List[AttrInfo]:
-        attrs = self.added or [a for a in self.order if a.parent is None]
+        """定義に入れる属性: addAttribute したもの（の順）と、作ったが addAttribute が見つからないもの"""
+        attrs = list(self.added) + [a for a in self.order if a not in self.added]
         return [a for a in attrs if a.parent is None]
 
 
@@ -1036,6 +1171,8 @@ class Translator:
         if isinstance(e, ast.UnaryOp):
             v = self.expr(e.operand)
             if isinstance(e.op, ast.Not):
+                if v.code.startswith("(not ") and v.code.endswith(")") and self.balanced(v.code[5:-1]):
+                    return Value("num", v.code[5:-1])        # not (not x) → x
                 return Value("num", "(not %s)" % v.code)
             if isinstance(e.op, ast.USub):
                 if v.kind in ("num", "vec", "pt"):
@@ -1972,7 +2109,7 @@ def convert_source(source: str, filename: str = "plugin.py", plugin: Optional[st
             r.problems.append((exc.line, str(exc)))
             continue
         r.problems.extend(tr.problems)
-        r.notes.extend(tr.notes)
+        r.notes.extend(scanner.notes + tr.notes)
         if r.problems:
             continue
         written = {line.split("=")[0].strip().split("[")[0].split(".")[0] for line in lines if "=" in line}
