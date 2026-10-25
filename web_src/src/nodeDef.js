@@ -30,6 +30,11 @@ function kindOf(v) {
   if (isNum(v)) return '数';
   return v === undefined ? '値なし' : typeof v;
 }
+const cell = (r, c, what) => {
+  const i = Math.trunc(num(r, `${what} の行`)), j = Math.trunc(num(c, `${what} の列`));
+  if (i < 0 || i > 3 || j < 0 || j > 3) fail(`${what} の行・列は 0〜3 です（${i}, ${j}）`);
+  return i * 4 + j;
+};
 const truthy = (v) => (isVec(v) ? v.length > 0 : !!v);
 const order = (o) => THREE_ORDER[Math.round(o || 0)] || 'ZYX';
 const v3 = (v) => new Vector3(v[0] || 0, v[1] || 0, v[2] || 0);
@@ -112,6 +117,20 @@ const FUNCS = {
   matrix: (a) => mat(a, 'matrix').clone(),
   inverse: (m) => mat(m, 'inverse').clone().invert(),
   transpose: (m) => mat(m, 'transpose').clone().transpose(),
+  // 要素（行・列は Maya の 0〜3。行ベクトルの規約なので、移動は 3 行目）。three.js の elements は Maya の行の順に並ぶ
+  element: (m, r, c) => mat(m, 'element').elements[cell(r, c, 'element')],
+  set_element: (m, r, c, v) => {
+    const out = mat(m, 'set_element').clone();
+    out.elements[cell(r, c, 'set_element')] = num(v, 'set_element の値');
+    return out;
+  },
+  matrix_values: (m) => Array.from(mat(m, 'matrix_values').elements),
+  determinant: (m) => mat(m, 'determinant').determinant(),
+  determinant3: (m) => new Matrix3().setFromMatrix4(mat(m, 'determinant3')).determinant(),
+  equivalent: (a, b, tol) => {
+    const x = mat(a, 'equivalent').elements, y = mat(b, 'equivalent').elements, t = tol === undefined ? 1e-10 : num(tol, 'equivalent の許容差');
+    return x.every((v, i) => Math.abs(v - y[i]) <= t) ? 1 : 0;
+  },
   // 移動・回転（ラジアン、回転順 Maya の 0〜5）・スケールから行列（Maya の S · R · T）
   compose: (t, r, s, o) => new Matrix4().compose(v3(vec(t, 'compose の移動')),
     new Quaternion().setFromEuler(new Euler(...vec(r, 'compose の回転').slice(0, 3), order(o))), v3(vec(s, 'compose のスケール'))),

@@ -100,6 +100,25 @@ test('行列の積は Maya と同じ順（m1 * m2 は m1 を先に掛ける）',
   assert.ok(near(dir[0], 0) && near(dir[1], 1), dir.join());
 });
 
+test('行列の要素（Maya の行・列。移動は 3 行目）・行列式・比較', () => {
+  const m = c('compose', v(5, 6, 7), v(0, 0, Math.PI / 2), v(2, 2, 2));
+  assert.equal(run(set(c('element', m, n(3), n(0)))).o, 5);                 // 移動 x
+  assert.equal(run(set(c('element', m, n(3), n(2)))).o, 7);
+  assert.ok(near(run(set(c('element', m, n(0), n(1)))).o, 2));           // X 軸 → (0, 2, 0)（Z 90 度・スケール 2）
+  const seq = c('matrix', v(...Array.from({ length: 16 }, (_, i) => i + 1)));
+  assert.equal(run(set(c('element', seq, n(1), n(2)))).o, 7);               // 行の順: 1 行目 2 列目 = 7 番目
+  assert.equal(run(set(['i', c('matrix_values', seq), n(12)])).o, 13);
+  const changed = c('set_element', seq, n(3), n(0), n(-1));
+  assert.equal(run(set(c('element', changed, n(3), n(0)))).o, -1);
+  assert.equal(run(set(c('element', seq, n(3), n(0)))).o, 13);              // 元の行列は変わらない
+  assert.ok(near(run(set(c('determinant', m))).o, 8));                    // スケール 2 の 3 乗
+  assert.ok(near(run(set(c('determinant3', m))).o, 8));
+  assert.equal(run(set(c('equivalent', m, m))).o, 1);
+  assert.equal(run(set(c('equivalent', m, c('identity')))).o, 0);
+  assert.equal(run(set(c('equivalent', c('identity'), c('set_element', c('identity'), n(0), n(0), n(1.01)), n(0.1)))).o, 1);
+  assert.throws(() => run(set(c('element', m, n(4), n(0)))), /0〜3/);
+});
+
 test('四元数の積は Maya と同じ順（a * b は a を先に回す）', () => {
   // X 90 度 → Y 90 度。three.js では qy · qx
   const qx = new Quaternion().setFromEuler(new Euler(Math.PI / 2, 0, 0));
