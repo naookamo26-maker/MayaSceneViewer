@@ -43,3 +43,25 @@ test('スプライン IK は、transformGeometry から求めた形のカーブ�
     assert.deepEqual([...rig.problems], []);
   }
 });
+
+test('再現チェックのスプライン IK の詳細: Maya の答え（ファイルのジョイント）がこちらのカーブの上にあるか', () => {
+  const rig = new RigEvaluator(new AnimationClip(data.animation), data.nodes, (ni) => new Matrix4().fromArray(data.nodes[ni].matrix));
+  rig.evaluate(1);
+  const res = rig.verifySaved((n) => rig.fileRestLocal(n));
+  const h = res.find((x) => x.handle === 'spC_ik');
+  assert.ok(h, res.map((x) => x.handle).join());
+  const sp = h.detail.spline;
+  assert.ok(sp && !sp.missing, JSON.stringify(sp));
+  assert.ok(near(sp.curveLength, 8, 1e-3) && near(sp.chainLength, 8, 1e-3), JSON.stringify(sp));
+  assert.ok(sp.fileToCurve.every((d) => d < 1e-3) && sp.evalToCurve.every((d) => d < 1e-3), JSON.stringify(sp));
+  assert.equal(sp.rootOnCurve, true);
+  assert.equal(sp.curveFrom.name, 'spC_curveShape');
+  assert.equal(sp.curveFrom.hasFileShape, true, 'ヒストリから求めた形');
+  // Maya の答えがカーブから離れている場合（開始ジョイントの位置を 1 ずらす）
+  const root = idx('spC_0');
+  const off = rig.verifySaved((n) => {
+    const m = rig.fileRestLocal(n);
+    return n === root && m ? new Matrix4().makeTranslation(0, 0, 1).multiply(m) : m;
+  }).find((x) => x.handle === 'spC_ik');
+  assert.ok(near(off.detail.spline.fileToCurve[0], 1, 1e-3), JSON.stringify(off.detail.spline.fileToCurve));
+});
