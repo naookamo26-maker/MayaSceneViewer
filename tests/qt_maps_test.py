@@ -150,7 +150,7 @@ def main() -> int:
         js("""(()=>{ __tx.set('opt-lighting', 'standard'); __tx.set('opt-map-view', 'combined');
               for (const k of ['roughness','metalness','emissive']) { const t = document.querySelector('#map-toggles [data-map=' + k + ']');
                 t.checked = true; t.dispatchEvent(new Event('change')); }
-              const a = __tx.app; a.frameAll(true); document.getElementById('tab-meshes').click(); a.render(); return 1; })()""",
+              const a = __tx.app; a.frameAll(true); a.selectMesh(a.built.meshes.findIndex((e) => (e.data.material ?? -1) >= 0 || e.data.faceMaterials)); a.render(); return 1; })()""",
            lambda _: wait_loaded(lambda st: QtCore.QTimer.singleShot(400, lambda: (
                os.makedirs(args.shot, exist_ok=True), win.grab().save(os.path.join(args.shot, "maps_overview.png")),
                js("(()=>{ __tx.set('opt-map-view', 'roughness'); __tx.app.render(); return 1; })()",

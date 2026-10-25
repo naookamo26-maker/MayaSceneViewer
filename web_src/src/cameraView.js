@@ -33,10 +33,15 @@ export function cameraParams(cam, over = null) {
 
 /**
  * カメラから見るときの投影。解像度ゲートがビューポートに収まるように（周りに margin 倍の余白）広げる。
+ * inset: ビューポートの上下の、ほかの表示に重なる高さ（ピクセル。下端のタイムラインなど）。
+ *   ゲートはその内側の中央に収め、投影は重なる部分まで上下に広げる（画面全体に描く）
  * @returns {{ ortho, left, right, top, bottom, near, far, gate: {x, y, w, h} }}
  *   透視投影の left〜bottom は近クリップ面での範囲、平行投影はワールドの長さ。gate はビューポート上のピクセル
  */
-export function cameraFrustum(p, viewW, viewH, renderAspect, margin = 1.06) {
+export function cameraFrustum(p, viewW, viewH, renderAspect, margin = 1.06, inset = null) {
+  const insetTop = Math.max(0, (inset && inset.top) || 0), insetBottom = Math.max(0, (inset && inset.bottom) || 0);
+  const fullH = viewH;
+  viewH = Math.max(viewH - insetTop - insetBottom, 1);   // ゲートを収める範囲の高さ
   const filmW = p.hfa * p.lsr, filmH = p.vfa;
   const filmAspect = filmW / filmH;
   const ra = renderAspect > 0 ? renderAspect : filmAspect;
@@ -51,10 +56,12 @@ export function cameraFrustum(p, viewW, viewH, renderAspect, margin = 1.06) {
   const k = p.ortho ? (p.ow / filmW) * p.cs : (p.near * MM_PER_INCH * p.cs) / p.fl;
   const gate = { w: (gateW / w) * viewW, h: (gateH / h) * viewH };
   gate.x = (viewW - gate.w) / 2;
-  gate.y = (viewH - gate.h) / 2;
+  gate.y = insetTop + (viewH - gate.h) / 2;
+  const perPx = h / viewH;                          // フィルム上の長さ（インチ）/ ピクセル
+  const top = cy + h / 2 + insetTop * perPx, bottom = cy - h / 2 - (fullH - viewH - insetTop) * perPx;
   return {
     ortho: p.ortho,
-    left: (cx - w / 2) * k, right: (cx + w / 2) * k, top: (cy + h / 2) * k, bottom: (cy - h / 2) * k,
+    left: (cx - w / 2) * k, right: (cx + w / 2) * k, top: top * k, bottom: bottom * k,
     near: p.near, far: Math.max(p.far, p.near * 2), gate,
   };
 }

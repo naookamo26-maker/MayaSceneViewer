@@ -178,7 +178,7 @@ def main() -> int:
             return nxt()
         js("(()=>{const a=window.mayaViewer.debug.app; a.forceBridgeTextures=false; a.frameAll(true);"
            "a.controls.object.position.sub(a.controls.target).multiplyScalar(0.75).add(a.controls.target); a.controls.update();"
-           "document.getElementById('tab-meshes').click(); a.render(); return 1;})()",
+           "a.selectMesh(a.built.meshes.findIndex((e) => (e.data.material ?? -1) >= 0 || e.data.faceMaterials)); a.render(); return 1;})()",
            lambda _: shot("texture_overview.png", nxt), 500)
 
     win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(200, lambda: run(

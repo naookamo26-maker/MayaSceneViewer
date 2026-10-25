@@ -29,7 +29,6 @@ window.__vis = (() => {
       { eye: r.querySelector('.eye').getAttribute('aria-pressed') === 'true', dim: r.classList.contains('dim') }])),
     meshes: Object.fromEntries(app.built.meshes.map((m) => [m.name, { visible: m.visible, self: m.selfVisible,
       drawn: (m.skinned || m.staticMesh).visible || m.staticMesh.visible }])),
-    checkbox: Object.fromEntries(app.built.meshes.map((m, i) => [m.name, document.getElementById('mesh-vis-' + i).checked])),
     joints: { shoulder: jointSize('shoulder'), elbow: jointSize('elbow'), wrist_end: jointSize('wrist_end') },
   });
   const key = (k, mods) => window.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...mods }));
@@ -85,8 +84,9 @@ def main() -> int:
             a, b = r["a"], r["b"]
             check(a["meshes"]["hidden_geoShape"]["visible"] and not a["rows"]["hidden_geoShape"]["dim"],
                   "非表示だったグループを表示すると、その下のメッシュも表示")
-            check(not b["meshes"]["arm_geoShape"]["visible"] and b["checkbox"]["arm_geoShape"],
-                  "グループを隠すと下のメッシュも隠れる（メッシュ自身のチェックはそのまま）")
+            check(not b["meshes"]["arm_geoShape"]["visible"] and b["meshes"]["arm_geoShape"]["self"]
+                  and b["rows"]["arm_geoShape"]["eye"],
+                  "グループを隠すと下のメッシュも隠れる（メッシュ自身の表示の設定と行の目はそのまま）")
             check(b["joints"]["shoulder"] > 0, "別の枝のジョイントは表示されたまま")
             nxt()
         js("JSON.stringify({ a: __vis.eye('hidden_geo'), b: __vis.eye('arm_geo') })", got)
@@ -99,20 +99,20 @@ def main() -> int:
             nxt()
         js("JSON.stringify({ hid: __vis.eye('shoulder'), shown: __vis.eye('shoulder') })", got)
 
-    def s_mesh_row_and_tab(nxt):
+    def s_mesh_row(nxt):
         code = """JSON.stringify((() => {
           __vis.eye('arm_geo');                                 // グループを表示に戻す
           const a = __vis.eye('arm_geoShape');                   // メッシュの行の目
-          const cb = document.getElementById('mesh-vis-0'); cb.click();   // メッシュタブのチェック
-          const b = __vis.state();
+          const b = __vis.eye('arm_geoShape');
           return { a, b };
         })())"""
 
         def got(r):
-            check(not r["a"]["meshes"]["arm_geoShape"]["visible"] and not r["a"]["checkbox"]["arm_geoShape"],
-                  "メッシュの行の目で隠すと、メッシュタブのチェックも外れる")
+            check(not r["a"]["meshes"]["arm_geoShape"]["visible"] and not r["a"]["rows"]["arm_geoShape"]["eye"],
+                  "メッシュの行の目で、メッシュだけを隠せる")
+            check(r["a"]["rows"]["arm_geo"]["eye"], "メッシュを隠しても、親の transform の目はそのまま")
             check(r["b"]["meshes"]["arm_geoShape"]["visible"] and r["b"]["rows"]["arm_geoShape"]["eye"],
-                  "メッシュタブのチェックで表示すると、行の目も戻る")
+                  "もう一度押すと表示に戻る")
             nxt()
         js(code, got)
 
@@ -150,7 +150,7 @@ def main() -> int:
            lambda _: (os.makedirs(args.shot, exist_ok=True), win.grab().save(os.path.join(args.shot, "visibility.png")), nxt()), 400)
 
     win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(200, lambda: run(
-        [s_load, s_initial, s_toggle_group, s_joints, s_mesh_row_and_tab, s_keys, s_shot, lambda _: app.quit()])))
+        [s_load, s_initial, s_toggle_group, s_joints, s_mesh_row, s_keys, s_shot, lambda _: app.quit()])))
     QtCore.QTimer.singleShot(60000, lambda: (print("NG タイムアウト"), ok.update(v=False), app.quit()))
     app.exec()
     print("結果:", "OK" if ok["v"] else "NG")

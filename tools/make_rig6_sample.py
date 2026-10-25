@@ -19,7 +19,10 @@
   * ドリブンキー: roll_jnt.rz = animCurveUA(roll_ctrl.roll。キー (0, 0)・(10, 90))。roll_ctrl.roll にキー 0 → 10
     roll_jnt.ty = animCurveUL(drv2.rx を unitConversion で度にした値。キー (0, 0)・(45, 3))。drv2.rx にキー 0 → 45
   * アニメーションレイヤー: lay_jnt.rx = animBlendNodeAdditiveRotation(ベースのキー 0 → 30、レイヤーのキー 0 → 10、
-    レイヤー layer1 のウェイト 0.5)
+    レイヤー layer1 のウェイト 0.5)。同じレイヤーで、属性の型ごとのノードも:
+      lay_jnt.tz = animBlendNodeAdditive（ベース 10 → 14、レイヤー 0 → 2）、
+      lay_jnt.ry = animBlendNodeAdditiveFA（ベース 0 → 20 度、レイヤー 0 → 10 度）、
+      lay_jnt.sy = animBlendNodeAdditiveScale（ベース 1 → 2、レイヤー 1 → 1.5。かけ算で重ねる）
   * 脚 leg_hip → leg_knee → leg_ankle の ikRPsolver。極ベクトルは knee_pv への poleVectorConstraint で、
     knee_pv.tx は自作ノード（未知の型 myRigNode）の出力 → 再生できない（リグの診断で見つける）。
     自作ノードの入力 pv_src.tx にはキーがある（表示しないノードのカーブ。診断で、表示するノードへ届く経路を出す）。
@@ -193,6 +196,18 @@ def main():
     uid("lay_jnt_rotate_layer1")
     anim("TA", "lay_jnt_rotateX_base", [(1, 0), (48, 30)])
     anim("TA", "lay_jnt_rotateX_layer1", [(1, 0), (48, 10)])
+    A('createNode animBlendNodeAdditive -n "lay_jnt_translateZ_blend1";')
+    uid("lay_jnt_translateZ_blend1")
+    A('createNode animBlendNodeAdditiveFA -n "lay_jnt_rotateY_blend1";')
+    uid("lay_jnt_rotateY_blend1")
+    A('createNode animBlendNodeAdditiveScale -n "lay_jnt_scaleY_blend1";')
+    uid("lay_jnt_scaleY_blend1")
+    anim("TL", "lay_jnt_translateZ_base", [(1, 10), (48, 14)])
+    anim("TL", "lay_jnt_translateZ_layer1", [(1, 0), (48, 2)])
+    anim("TA", "lay_jnt_rotateY_base", [(1, 0), (48, 20)])
+    anim("TA", "lay_jnt_rotateY_layer1", [(1, 0), (48, 10)])
+    anim("TU", "lay_jnt_scaleY_base", [(1, 1), (48, 2)])
+    anim("TU", "lay_jnt_scaleY_layer1", [(1, 1), (48, 1.5)])
 
     # --- 自作ノードで動く極ベクトル ---------------------------------------------------------
     node("joint", "leg_hip", t=(20, 10, 0))
@@ -354,6 +369,11 @@ def main():
     C("lay_jnt_rotateX_layer1.o", "lay_jnt_rotate_layer1.ibx")
     C("layer1.fo", "lay_jnt_rotate_layer1.wb")
     C("lay_jnt_rotate_layer1.ox", "lay_jnt.rx")
+    for attr, short in (("translateZ", "tz"), ("rotateY", "ry"), ("scaleY", "sy")):
+        C("lay_jnt_%s_base.o" % attr, "lay_jnt_%s_blend1.ia" % attr)
+        C("lay_jnt_%s_layer1.o" % attr, "lay_jnt_%s_blend1.ib" % attr)
+        C("layer1.fo", "lay_jnt_%s_blend1.wb" % attr)
+        C("lay_jnt_%s_blend1.o" % attr, "lay_jnt.%s" % short)
 
     C("leg_hip.msg", "leg_ik.hsj")
     C("leg_eff.hp", "leg_ik.hee")

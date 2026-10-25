@@ -93,3 +93,22 @@ test('ビューポートが横長なら、ゲートを高さに合わせて左�
   assert.ok(near(fr.gate.w, 500 * 16 / 9, 1e-6));
   assert.ok(near(fr.gate.x, (2000 - 500 * 16 / 9) / 2, 1e-6));
 });
+
+test('上下に重なる表示（タイムラインなど）があれば、ゲートはその内側に収め、投影は画面全体に広げる', () => {
+  const cam = data.cameras.find((c) => c.name === 'shot_cam');
+  const p = cameraParams(cam);
+  const W = 2000, H = 600, inset = { top: 30, bottom: 40 };
+  const fr = cameraFrustum(p, W, H, 16 / 9, 1.06, inset);
+  // ゲートは上端 30px・下端 40px を避けた範囲（高さ 530px）の中央
+  assert.ok(near(fr.gate.h, 530 / 1.06, 1e-6));
+  assert.ok(near(fr.gate.y - 30, 600 - 40 - (fr.gate.y + fr.gate.h), 1e-6));
+  assert.ok(fr.gate.y >= 30 && fr.gate.y + fr.gate.h <= H - 40);
+  assert.ok(near(fr.gate.w / fr.gate.h, 16 / 9, 1e-9));
+  // 投影の上下の範囲を画面のピクセルに割り振ると、ゲートの上端・下端がフィルム上のゲートの上下の端（縦の中心から ±半分）に一致する
+  const at = (y) => fr.top - (y / H) * (fr.top - fr.bottom);
+  const center = (at(fr.gate.y) + at(fr.gate.y + fr.gate.h)) / 2;
+  assert.ok(near(center, 0, 1e-9));                                      // フィルムオフセットなし: ゲートの中心が視線
+  const plain = cameraFrustum(p, W, 530, 16 / 9, 1.06);                  // 重なりのない 530px のビューポートと同じ写り方
+  assert.ok(near(at(fr.gate.y), plain.top - (plain.gate.y / 530) * (plain.top - plain.bottom), 1e-9));
+  assert.ok(near(fr.right - fr.left, plain.right - plain.left, 1e-9));
+});

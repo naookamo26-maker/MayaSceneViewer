@@ -10,6 +10,28 @@ const ICON = {
 };
 
 const EYE = '<svg class="on" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 7s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4Z" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="7" cy="7" r="1.8" fill="currentColor"/></svg><svg class="off" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 7s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4Z" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".5"/><path d="M2 12 12 2" stroke="currentColor" stroke-width="1.4"/></svg>';
+/** ノード名の名前空間から、そのノードを読み込んだリファレンス（.ma のみ。入れ子なら内側のもの）。なければ null */
+export function referenceOf(data, name) {
+  let best = null;
+  for (const r of (data.source && data.source.references) || []) {
+    if (r.loaded && r.namespace && name.startsWith(r.namespace + ':')
+        && (!best || r.namespace.length > best.namespace.length)) best = r;
+  }
+  return best;
+}
+/** パスのファイル名 */
+const fileName = (p) => String(p || '').split(/[\\/]/).pop();
+/** 階層の名前: 名前空間（armA:）は薄く表示する */
+function nameHtml(label) {
+  const k = label.lastIndexOf(':');
+  return k > 0 ? `<span class="ns">${esc(label.slice(0, k + 1))}</span>${esc(label.slice(k + 1))}` : esc(label);
+}
+/** 進捗のバー（i 要素）に割合を反映する。割合が分からなければ止まった帯で表示する */
+function setBar(bar, frac) {
+  const known = typeof frac === 'number' && frac >= 0;
+  bar.parentElement.classList.toggle('indeterminate', !known);
+  bar.style.width = known ? `${Math.round(Math.min(1, frac) * 100)}%` : '';
+}
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const fmt = (v, d = 3) => {
   if (!Number.isFinite(v)) return String(v);
@@ -28,8 +50,8 @@ export class UI {
     this.selectedRow = null;
     this.filter = '';
     this.msgTimer = 0;
+    this.textureState = null;       // テクスチャの読み込み状況（選択情報のメッシュの欄に出す）
     this.bindToolbar();
-    this.bindTabs();
     this.bindTree();
     this.bindPose();
     this.bindPanels();
@@ -221,7 +243,7 @@ export class UI {
     group.textContent = '';
     const add = (value, text, sub) => {
       const b = document.createElement('button');
-      Object.assign(b, { type: 'button', textContent: text });
+      Object.assign(b, { type: 'button', textContent: text, title: text });
       b.setAttribute('role', 'radio');
       b.dataset.value = String(value);
       if (sub) { const s2 = document.createElement('span'); s2.className = 'c-sub'; s2.textContent = sub; b.appendChild(s2); }
@@ -280,7 +302,14 @@ export class UI {
         const open = b.getAttribute('aria-expanded') !== 'true';
         close(b);
         b.setAttribute('aria-expanded', String(open));
-        $(b.getAttribute('aria-controls')).hidden = !open;
+        const panel = $(b.getAttribute('aria-controls'));
+        panel.hidden = !open;
+        if (open) {
+          // 画面の下端までに収める（はみ出す分はメニューの中でスクロール）。選んでいる項目が見えるところまで送る
+          panel.style.maxHeight = `${Math.max(160, window.innerHeight - panel.getBoundingClientRect().top - 12)}px`;
+          const checked = panel.querySelector('.choices.list.scroll [aria-checked="true"]');
+          if (checked) checked.scrollIntoView({ block: 'nearest' });
+        }
       });
     }
     // メニューの外をクリックしたら閉じる（メニューの中の操作では閉じない）
@@ -296,18 +325,6 @@ export class UI {
       e.preventDefault();
     });
     this.closeMenus = () => close(null);
-  }
-
-  bindTabs() {
-    const tabs = [['tab-tree', 'pane-tree'], ['tab-meshes', 'pane-meshes']];
-    for (const [tid, pid] of tabs) {
-      $(tid).addEventListener('click', () => {
-        for (const [t2, p2] of tabs) {
-          $(t2).setAttribute('aria-selected', String(t2 === tid));
-          $(p2).hidden = t2 !== tid;
-        }
-      });
-    }
   }
 
   // ---------------------------------------------------------------- 階層
@@ -330,7 +347,7 @@ export class UI {
         this.applyTreeVisibility();
         return;
       }
-      if (row.mesh >= 0) this.app.selectMesh(row.mesh);
+      if (row.mesh >= 0) this.app.selectMesh(row.mesh);      // メッシュの行はその行を選択状態にする
       else this.app.select(row.node, { notify: true });
     });
     $('tree-expand-all').addEventListener('click', () => this.setAllOpen(true));
@@ -346,8 +363,10 @@ export class UI {
     tree.textContent = '';
     this.rows = [];
     this.rowOfNode = new Map();
+    this.rowOfMesh = new Map();
     this.collapsed = new Set();
     this.selectedRow = null;
+    this.textureState = null;
     const meshesOf = new Map();
     data.meshes.forEach((m, mi) => {
       if (!meshesOf.has(m.transform)) meshesOf.set(m.transform, []);
@@ -357,12 +376,16 @@ export class UI {
     const collapseDeep = data.nodes.length > 400;
     const addRow = (row) => {
       const el = document.createElement('div');
-      el.className = 'row' + (row.dim ? ' dim' : '');
+      // リファレンスから読み込んだノード（名前空間から判定）は、アイコンに印を付けて名前の色を変える
+      const ref = referenceOf(data, row.label);
+      el.className = 'row' + (row.dim ? ' dim' : '') + (ref ? ' referenced' : '');
       el.setAttribute('role', 'treeitem');
       el.dataset.row = String(this.rows.length);
       el.style.setProperty('--depth', row.depth);
+      const title = row.title + (ref ? `\nリファレンス: ${ref.namespace}（${fileName(ref.resolved || ref.path)}）` : '');
       el.innerHTML = `<button class="twisty${row.hasChildren ? '' : ' leaf'}" tabindex="-1" aria-label="開閉" title="クリック: 開閉　Shift+クリック: 下の階層もまとめて開閉">▾</button>`
-        + `<span class="icon">${row.icon}</span><span class="name" title="${esc(row.title)}">${esc(row.label)}</span>`
+        + `<span class="icon">${row.icon}${ref ? '<i class="ref-badge" aria-label="リファレンス"></i>' : ''}</span>`
+        + `<span class="name" title="${esc(title)}">${nameHtml(row.label)}</span>`
         + `<button class="eye" tabindex="-1" aria-pressed="true" aria-label="表示" title="表示・非表示（H: 切り替え / Ctrl+H: 隠す / Shift+H: 表示）">${EYE}</button>`;
       row.eye = el.lastChild;
       row.el = el;
@@ -384,17 +407,16 @@ export class UI {
       if (collapseDeep && depth >= 2 && row.hasChildren) this.collapsed.add(row.key);
       for (const mi of meshKids) {
         const m = data.meshes[mi];
-        addRow({
+        this.rowOfMesh.set(mi, addRow({
           key: 'm' + mi, node: ni, mesh: mi, depth: depth + 1, label: m.name, title: m.path,
           icon: m.skin ? ICON.skin : ICON.mesh, hasChildren: false, dim: m.visible === false,
-        });
+        }));
       }
       for (const k of kids) visit(k, depth + 1);
     };
     data.nodes.forEach((n, i) => { if (n.parent < 0) visit(i, 0); });
     tree.appendChild(frag);
     this.applyTreeVisibility();
-    this.populateMeshes(data, built);
   }
 
   /** rowIndex の行と、その下の階層をすべて開く（open=false なら閉じる） */
@@ -406,7 +428,6 @@ export class UI {
       if (row.mesh >= 0) {
         on = app.isMeshShown(row.mesh);
         dim = !meshes[row.mesh].visible;
-        this.setMeshChecked(row.mesh, on);
       } else {
         on = !app.isNodeHidden(row.node);
         dim = !!app.hiddenEff[row.node];
@@ -453,10 +474,14 @@ export class UI {
     }
   }
 
-  highlightNode(ni, nodes) {
-    if (this.selectedRow) this.selectedRow.el.classList.remove('selected');
+  /** 選択中のノードの行を強調する。mesh（メッシュの番号）を渡すと、そのメッシュの行を強調する */
+  highlightNode(ni, nodes, mesh = -1) {
+    if (this.selectedRow) {
+      this.selectedRow.el.classList.remove('selected');
+      this.selectedRow.el.removeAttribute('aria-selected');
+    }
     this.selectedRow = null;
-    const row = this.rowOfNode.get(ni);
+    const row = (mesh >= 0 && this.rowOfMesh.get(mesh)) || this.rowOfNode.get(ni);
     if (!row) return;
     // 祖先を開く
     let p = nodes[ni].parent;
@@ -472,15 +497,21 @@ export class UI {
     if (!row.el.hidden) row.el.scrollIntoView({ block: 'nearest' });
   }
 
-  populateMeshes(data, built, textureState) {
-    const list = $('mesh-list');
-    list.textContent = '';
+  /** テクスチャの読み込み状況（選択情報のメッシュの欄に出す）を受け取る */
+  setTextureState(state) { this.textureState = state; }
+
+  /** 選択情報のメッシュの欄: 三角形・UV・マテリアルとテクスチャの読み込み状況 */
+  meshDetailHtml(mi) {
+    const data = this.app.data;
+    const e = this.app.built.meshes[mi];
+    const m = data.meshes[mi];
+    const textureState = this.textureState;
     const mats = data.materials || [];
     const texLabel = (ti) => {
       if (ti < 0) return '<span class="tex">テクスチャなし</span>';
       const info = (data.textures || [])[ti] || {};
       const st = (textureState && textureState[ti]) || { status: info.resolved && info.format ? 'loading' : 'missing' };
-      const name = esc(String(info.path || '').split(/[\\/]/).pop() || info.node || '?');
+      const name = esc(fileName(info.path) || info.node || '?');
       const where = esc(info.resolved || info.path || '');
       if (st.status === 'ok') {
         const size = (st.tiles > 1 ? `UDIM ${st.tiles} タイル・` : '')
@@ -492,61 +523,44 @@ export class UI {
       const why = st.status === 'error' ? '読み込めません' : (info.resolved ? '形式に未対応' : '見つかりません');
       return `<span class="tex-bad" aria-label="${why}">✕</span><span class="tex" title="${where}">${name}（${why}）</span>`;
     };
-    built.meshes.forEach((e, mi) => {
-      const m = data.meshes[mi];
-      const item = document.createElement('div');
-      item.className = 'mesh-item';
-      const id = 'mesh-vis-' + mi;
-      let meta = `頂点 ${num(e.vertexCount)} ・ 面 ${num(m.counts.length)} ・ 三角形 ${num(e.triCount)}`;
-      if (e.skin) {
-        meta += `<br>スキン ${esc(m.skin.cluster)}（インフルエンス ${e.skin.stats.influenceCount}・最大 ${e.skin.stats.maxCount}/頂点）`;
+    let h = '<table class="kv">';
+    h += `<tr><th>三角形</th><td>${num(e.triCount)}</td></tr>`;
+    if (m.visible === false) h += '<tr><th>Maya での表示</th><td>非表示</td></tr>';
+    // UV の状態（テクスチャが貼られない原因を調べるため）
+    if (m.uv) {
+      let noUv = 0, off = 0;
+      for (const c of m.counts) { for (let k = 0; k < c; k++) if (m.uv.indices[off + k] < 0) { noUv++; break; } off += c; }
+      h += `<tr><th>UV</th><td>${esc(m.uv.set)}${noUv ? `（<span class="tex-bad">UV のない面 ${num(noUv)}</span>）` : ''}</td></tr>`;
+    } else {
+      h += '<tr><th>UV</th><td>なし</td></tr>';
+    }
+    h += '</table>';
+    const perFace = m.faceMaterials || m.counts.map(() => m.material ?? -1);
+    const faceCount = new Map();
+    for (const x of perFace) faceCount.set(x, (faceCount.get(x) || 0) + 1);
+    const multi = faceCount.size > 1;
+    h += '<ul class="mats">';
+    for (const [mi2, cnt] of faceCount) {
+      const md = mats[mi2];
+      const faces = multi ? `<span class="faces">${num(cnt)} 面</span>` : '';
+      h += md
+        ? `<li><span title="${esc(md.type)}">${esc(md.name)}</span>${faces}${texLabel(md.texture)}</li>`
+        : `<li><span>既定のマテリアル</span>${faces}</li>`;
+      // ベースカラー以外のマップ（法線・ラフネスなど）の状態
+      const other = md && md.maps ? Object.entries(md.maps).filter(([k]) => k !== 'baseColor') : [];
+      if (other.length) {
+        const LABEL = { normal: '法線', roughness: 'ラフネス', metalness: 'メタリック', ao: 'AO', emissive: 'エミッシブ', opacity: '不透明度' };
+        const MARK = { ok: '<span class="tex-ok">✓</span>', loading: '<span class="tex-wait">…</span>',
+          pending: '<span class="tex-wait">–</span>', missing: '<span class="tex-bad">✕</span>', error: '<span class="tex-bad">✕</span>' };
+        const items = other.map(([k, mp]) => {
+          const st2 = (textureState && textureState[mp.texture]) || { status: 'pending' };
+          const ch = mp.channel && mp.channel !== 'rgb' ? `（${mp.channel.toUpperCase()}）` : '';
+          return `${LABEL[k] || k}${ch} ${MARK[st2.status] || ''}`;
+        });
+        h += `<li class="sub-maps">${items.join('　')}</li>`;
       }
-      if (m.visible === false) meta += '<br>Maya では非表示';
-      // UV の状態（テクスチャが貼られない原因を調べるため）
-      if (m.uv) {
-        let noUv = 0, off = 0;
-        for (const c of m.counts) { for (let k = 0; k < c; k++) if (m.uv.indices[off + k] < 0) { noUv++; break; } off += c; }
-        meta += `<br>UV ${esc(m.uv.set)}` + (noUv ? `（<span class="tex-bad">UV のない面 ${num(noUv)}</span>）` : '');
-      } else {
-        meta += '<br>UV なし';
-      }
-      const perFace = m.faceMaterials || m.counts.map(() => m.material ?? -1);
-      const faceCount = new Map();
-      for (const x of perFace) faceCount.set(x, (faceCount.get(x) || 0) + 1);
-      const multi = faceCount.size > 1;
-      let matHtml = '<ul class="mats">';
-      for (const [mi2, cnt] of faceCount) {
-        const md = mats[mi2];
-        const faces = multi ? `<span class="faces">${num(cnt)} 面</span>` : '';
-        matHtml += md
-          ? `<li><span title="${esc(md.type)}">${esc(md.name)}</span>${faces}${texLabel(md.texture)}</li>`
-          : `<li><span>既定のマテリアル</span>${faces}</li>`;
-        // ベースカラー以外のマップ（法線・ラフネスなど）の状態
-        const other = md && md.maps ? Object.entries(md.maps).filter(([k]) => k !== 'baseColor') : [];
-        if (other.length) {
-          const LABEL = { normal: '法線', roughness: 'ラフネス', metalness: 'メタリック', ao: 'AO', emissive: 'エミッシブ', opacity: '不透明度' };
-          const MARK = { ok: '<span class="tex-ok">✓</span>', loading: '<span class="tex-wait">…</span>',
-            pending: '<span class="tex-wait">–</span>', missing: '<span class="tex-bad">✕</span>', error: '<span class="tex-bad">✕</span>' };
-          const items = other.map(([k, mp]) => {
-            const st2 = (textureState && textureState[mp.texture]) || { status: 'pending' };
-            const ch = mp.channel && mp.channel !== 'rgb' ? `（${mp.channel.toUpperCase()}）` : '';
-            return `${LABEL[k] || k}${ch} ${MARK[st2.status] || ''}`;
-          });
-          matHtml += `<li class="sub-maps">${items.join('　')}</li>`;
-        }
-      }
-      matHtml += '</ul>';
-      item.innerHTML = `<input type="checkbox" id="${id}" ${e.visible ? 'checked' : ''} aria-label="${esc(m.name)} を表示">`
-        + `<label class="name" for="${id}">${esc(m.name)}</label><div class="meta">${meta}</div>${matHtml}`;
-      item.querySelector('input').addEventListener('change', (ev) => this.app.setMeshVisible(mi, ev.target.checked));
-      item.querySelector('.name').addEventListener('click', (ev) => { ev.preventDefault(); this.app.selectMesh(mi); });
-      list.appendChild(item);
-    });
-  }
-
-  setMeshChecked(mi, v) {
-    const el = $('mesh-vis-' + mi);
-    if (el) el.checked = v;
+    }
+    return h + '</ul>';
   }
 
   // ---------------------------------------------------------------- 選択情報
@@ -554,13 +568,14 @@ export class UI {
     const head = $('select-head');
     const body = $('select-info');
     if (!info) {
-      head.innerHTML = '<p class="muted">ジョイントやメッシュをクリックすると、ここに情報を表示します。</p>';
+      head.innerHTML = '<p class="muted">ジョイント・メッシュ・カメラをクリックすると、ここに情報を表示します。</p>';
       body.innerHTML = '';
       return;
     }
     const n = info.node;
     const a = n.attrs || {};
-    const typeLabel = { joint: 'ジョイント', transform: 'トランスフォーム' }[n.type] || n.type;
+    const typeLabel = info.cameras && info.cameras.length ? 'カメラ'
+      : ({ joint: 'ジョイント', transform: 'トランスフォーム' }[n.type] || n.type);
     head.innerHTML = `<p class="info-title">${esc(n.name)}<span class="info-type">${esc(typeLabel)}</span>`
       + `${info.posed ? '<span class="posed-badge">ポーズ変更中</span>' : ''}</p>`
       + `<p class="info-path">${esc(n.path)}</p>`;
@@ -570,12 +585,14 @@ export class UI {
     h += `<tr><th>表示</th><td>${info.hiddenByRig ? '非表示（リグ・アニメーションで決まる値）' : info.hiddenSelf ? '非表示'
       : info.hiddenByParent ? '親が非表示のため隠れています' : '表示中'}</td></tr>`;
     if (info.reference) {
-      const file = String(info.reference.resolved || info.reference.path).split(/[\\/]/).pop();
-      h += `<tr><th>リファレンス</th><td>${esc(info.reference.namespace)}（${esc(file)}）</td></tr>`;
+      h += `<tr><th>リファレンス</th><td>${esc(info.reference.namespace)}（${esc(fileName(info.reference.resolved || info.reference.path))}）</td></tr>`;
     }
     if (info.unselectable) h += `<tr><th>Maya での選択</th><td>ビューポートでは選択できない（${esc(info.unselectable)}）</td></tr>`;
-    h += `<tr><th>姿勢の基準</th><td>${info.usingBind ? 'バインドポーズ' : 'ファイルの値'}</td></tr>`;
-    h += `<tr><th>バインドポーズの情報</th><td>${info.bindSource ? esc(SRC[info.bindSource] || info.bindSource) : 'なし'}</td></tr>`;
+    // 姿勢の基準は、バインドポーズの情報があるノードとジョイントだけ（ほかは常にファイルの値）
+    if (info.bindSource || n.type === 'joint') {
+      h += `<tr><th>姿勢の基準</th><td>${info.usingBind ? 'バインドポーズ' : 'ファイルの値'}</td></tr>`;
+      h += `<tr><th>バインドポーズの情報</th><td>${info.bindSource ? esc(SRC[info.bindSource] || info.bindSource) : 'なし'}</td></tr>`;
+    }
     h += '</table>';
     const anim = info.animChannels || [];
     const rig = info.rigDrivers || [];
@@ -585,6 +602,8 @@ export class UI {
       if (rig.length) h += `<tr><th>リグ</th><td>${rig.slice(0, 6).map(esc).join('<br>')}${rig.length > 6 ? '<br>ほか' : ''}</td></tr>`;
       h += '</table>';
     }
+    // カメラはレンズの情報を先に出す（カメラを選んだときに知りたいもの）
+    for (const c of info.cameras || []) h += this.cameraHtml(c);
     // アニメーションを読み込んだあとは、カーブ・リグで評価する値は注記から外す
     // （リグで求められたノード（推定・不明でない）は、接続で決まる値もすべて評価している）
     const evaluated = /（animCurveT[LAU]）$/;
@@ -620,7 +639,7 @@ export class UI {
     }
     if (info.meshes && info.meshes.length) {
       for (const m of info.meshes) {
-        h += `<p class="sub">メッシュ ${esc(m.name)}</p><table class="kv">`;
+        h += `<p class="sub${m.selected ? ' selected-mesh' : ''}">メッシュ ${esc(m.name)}</p><table class="kv">`;
         h += `<tr><th>頂点 / 面</th><td>${num(m.vertices)} / ${num(m.faces)}</td></tr>`;
         if (m.skin) {
           const sk = m.skin;
@@ -635,19 +654,57 @@ export class UI {
         }
         h += '</table>';
         if (m.skin && m.skin.overMax) h += '<p class="note small">9 つ以上のインフルエンスを持つ頂点は、上位 8 つで変形表示しています（ヒートマップと数値は全インフルエンス）。</p>';
+        h += this.meshDetailHtml(m.index);
       }
     }
     body.innerHTML = h;
+    body.querySelectorAll('[data-view-camera]').forEach((el) => {
+      el.addEventListener('click', () => this.app.setCamera(+el.dataset.viewCamera));
+    });
+  }
+
+  /**
+   * 選択情報のカメラの欄（レンズ・フィルムバック・投影・クリップ面・レンダーの解像度）。
+   * c: { index, cam（共通 JSON の cameras の 1 件）, p（いまのフレームの値。cameraParams）, animated（キー・リグで決まる属性）, viewing }
+   */
+  cameraHtml(c) {
+    const { cam, p } = c;
+    const MM = 25.4;
+    const anim = (k) => (c.animated.includes(k) ? '<span class="sub-note">キー・リグ</span>' : '');
+    const FIT = ['フィル', '水平', '垂直', 'オーバースキャン'];
+    // 画角: フィルムの幅（インチ）と焦点距離（mm）から。カメラスケールの分だけ広がる
+    const fov = (film) => 2 * Math.atan((film * MM * p.cs) / (2 * p.fl)) * 180 / Math.PI;
+    let h = `<p class="sub">カメラ ${esc(cam.shape || cam.name)}</p>`;
+    h += c.viewing ? '<p class="muted small">このカメラから見ています（Shift+C で自由視点）</p>'
+      : `<div class="pose-btns"><button class="btn" data-view-camera="${c.index}">このカメラから見る</button></div>`;
+    h += '<table class="kv">';
+    if (p.ortho) {
+      h += `<tr><th>投影</th><td>平行投影</td></tr><tr><th>幅</th><td>${fmt(p.ow, 3)}${anim('ow')}</td></tr>`;
+    } else {
+      h += `<tr><th>焦点距離</th><td>${fmt(p.fl, 2)} mm${anim('fl')}</td></tr>`;
+      h += `<tr><th>画角（水平 / 垂直）</th><td>${fmt(fov(p.hfa * p.lsr), 2)}° / ${fmt(fov(p.vfa), 2)}°</td></tr>`;
+    }
+    h += `<tr><th>フィルムバック</th><td title="${fmt(p.hfa, 4)} × ${fmt(p.vfa, 4)} インチ">`
+      + `${fmt(p.hfa * MM, 2)} × ${fmt(p.vfa * MM, 2)} mm${anim('hfa') || anim('vfa')}</td></tr>`;
+    h += `<tr><th>フィルムフィット</th><td>${FIT[p.fit] || p.fit}</td></tr>`;
+    if (Math.abs(p.lsr - 1) > 1e-6) h += `<tr><th>レンズスクイーズ</th><td>${fmt(p.lsr, 3)}</td></tr>`;
+    if (p.hfo || p.vfo) h += `<tr><th>フィルムオフセット</th><td>${fmt(p.hfo, 3)}, ${fmt(p.vfo, 3)} in${anim('hfo') || anim('vfo')}</td></tr>`;
+    if (Math.abs(p.cs - 1) > 1e-6) h += `<tr><th>カメラスケール</th><td>${fmt(p.cs, 3)}</td></tr>`;
+    h += `<tr><th>クリップ面</th><td>${fmt(p.near, 3)} 〜 ${fmt(p.far, 1)}${anim('ncp') || anim('fcp')}</td></tr>`;
+    const r = c.render || {};
+    if (r.width && r.height) h += `<tr><th>レンダーの解像度</th><td>${num(r.width)} × ${num(r.height)}</td></tr>`;
+    if (cam.renderable === false) h += '<tr><th>レンダー</th><td>対象外（renderable がオフ）</td></tr>';
+    return h + '</table>';
   }
 
   // ---------------------------------------------------------------- 頂点
   /** @param mode 選択の対象（'object' のときは、頂点の選び方を案内する） */
   showVertexInfo(info, mode = this.app.settings.pickMode) {
     const body = $('vertex-body');
+    // 頂点の欄は、頂点を選んでいるときと、頂点の選択に切り替えたとき（案内）だけ出す
+    $('sec-vertex').hidden = !info && mode !== 'vertex';
     if (!info) {
-      body.innerHTML = mode === 'vertex'
-        ? '<p class="muted">メッシュをクリックすると、いちばん近い頂点のウェイトを表示します。</p>'
-        : '<p class="muted">頂点のウェイトを見るには、ツールバーで「頂点を選択」に切り替えて（F8）、メッシュをクリックします。</p>';
+      body.innerHTML = '<p class="muted">メッシュをクリックすると、いちばん近い頂点のウェイトを表示します。</p>';
       return;
     }
     let h = `<p class="info-title">${esc(info.meshName)}.vtx[${info.vertex}]</p>`;
@@ -793,13 +850,19 @@ export class UI {
     if (text && ms) this.msgTimer = setTimeout(() => { $('status-msg').textContent = ''; }, ms);
   }
   setEmpty(on) { $('empty').hidden = !on; }
-  /** 読み込み中の表示。frac（0〜1）があれば進捗のバーに反映する（再描画は呼ばれたときだけ） */
-  showLoading(text, frac) {
+  /**
+   * 読み込み中の表示。frac（0〜1）があれば全体の進捗のバーに反映する（再描画は呼ばれたときだけ）。
+   * subText・subFrac は、いま読んでいるファイルの進み具合（リファレンスがあるときの 2 段目。なければ隠す）
+   */
+  showLoading(text, frac, subText, subFrac) {
     $('loading').hidden = false;
     $('loading-text').textContent = text || '読み込み中';
-    const known = typeof frac === 'number' && frac >= 0;
-    $('loading-bar').parentElement.classList.toggle('indeterminate', !known);
-    $('loading-bar').style.width = known ? `${Math.round(Math.min(1, frac) * 100)}%` : '';
+    setBar($('loading-bar'), frac);
+    $('loading-sub').hidden = !subText;
+    if (subText) {
+      $('loading-sub-text').textContent = subText;
+      setBar($('loading-sub-bar'), subFrac);
+    }
   }
   hideLoading() { $('loading').hidden = true; }
   showError(text) { const e = $('error'); e.hidden = false; e.textContent = text; }

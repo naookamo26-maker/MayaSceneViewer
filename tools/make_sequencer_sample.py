@@ -12,6 +12,7 @@
   * SH099（shot5）: ミュート（トラック 2、シーケンスの 15〜17。無視する）
   * SH040（shot6）: 起動時のカメラ persp、シーンの 1〜10 → シーケンスの 40〜49
   * SH035（shot7）: ortho_cam、シーンの 1〜3 → シーケンスの 37〜39。トラック 2（トラック 1 のすき間なので使う）
+Maya と同じく、既定値と同じ属性（フレーム 0・トラック 1）は書かない（開始 0 のショットは tests/test_animation.py で確認）。
 重なるショットは、トラックの番号が小さい（上の段の）方を使う（トラック 1 が一番上）。
 Maya の書き出し形式を推定して作ったもの（実際の Maya のファイルとは細部が違うことがある）。
 """
@@ -36,6 +37,8 @@ SHOTS = [
     ("shot6", "SH040", "perspShape", 1, 10, 40, 1, {}),
     ("shot7", "SH035", "ortho_camShape", 1, 3, 37, 2, {}),
 ]
+# Maya の既定値（.ma には書かれない）
+DEFAULTS = {"sf": 0, "ef": 0, "ssf": 0, "trk": 1}
 
 
 def main():
@@ -47,13 +50,10 @@ def main():
     out = ['createNode sequencer -n "sequencer1";', '\tsetAttr -s %d ".shts";' % len(SHOTS)]
     conns = []
     for name, shot_name, cam, sf, ef, ssf, trk, extra in SHOTS:
-        out += ['createNode shot -n "%s";' % name,
-                '\tsetAttr ".ihi" 0;',
-                '\tsetAttr ".sf" %g;' % sf,
-                '\tsetAttr ".ef" %g;' % ef,
-                '\tsetAttr ".ssf" %g;' % ssf,
-                '\tsetAttr ".trk" %d;' % trk,
-                '\tsetAttr ".sn" -type "string" "%s";' % shot_name]
+        out += ['createNode shot -n "%s";' % name, '\tsetAttr ".ihi" 0;']
+        out += ['\tsetAttr ".%s" %g;' % (k, v) for k, v in (("sf", sf), ("ef", ef), ("ssf", ssf), ("trk", trk))
+                if v != DEFAULTS[k]]
+        out += ['\tsetAttr ".sn" -type "string" "%s";' % shot_name]
         out += ['\tsetAttr ".%s" %s;' % (k, v) for k, v in extra.items()]
         conns += ['connectAttr "%s.msg" "%s.ccm";' % (cam, name),
                   'connectAttr "%s.msg" "sequencer1.shts" -na;' % name]

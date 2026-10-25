@@ -82,11 +82,11 @@
       <div class="menu">
         <button class="menu-btn" aria-haspopup="true" aria-expanded="false" aria-controls="menu-camera">カメラ <span class="state" id="menu-camera-state"></span><svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M1 2.5 4 5.5 7 2.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></button>
         <div class="menu-panel" id="menu-camera" hidden data-close-on-pick>
-          <div class="choices list" id="opt-camera" role="radiogroup" aria-label="視点" data-setting="camera" title="C: 次のカメラ / Shift+C: 自由視点に戻す"><button type="button" role="radio" aria-checked="true" data-value="-1">自由視点（パース）</button></div>
+          <div class="choices list scroll" id="opt-camera" role="radiogroup" aria-label="視点" data-setting="camera" title="C: 次のカメラ / Shift+C: 自由視点に戻す"><button type="button" role="radio" aria-checked="true" data-value="-1">自由視点（パース）</button></div>
           <div class="menu-sep"></div>
           <label class="check"><input type="checkbox" id="opt-camera-icons" checked> シーンのカメラを表示（形と視野）</label>
           <label class="check"><input type="checkbox" id="opt-camera-gate" checked> 解像度ゲートの外側を暗くする</label>
-          <p class="muted small" id="camera-note">カメラから見ている間は、ドラッグでの視点操作はできません（自由視点に戻すと操作できます）。焦点距離・フィルムバック・フィルムフィット・クリップ面・平行投影を再現します。</p>
+          <p class="muted small" id="camera-note">焦点距離・フィルムバック・フィルムフィット・クリップ面・平行投影を再現します。</p>
         </div>
       </div>
       <div class="menu">
@@ -104,24 +104,21 @@
     </div>
   </header>
 
-  <aside id="left" class="panel" aria-label="階層とメッシュ">
-    <button class="panel-strip" id="left-expand" title="左パネルを開く" aria-label="左パネルを開く" aria-controls="left" aria-expanded="false"><span class="strip-icon" aria-hidden="true">›</span><span class="strip-label">階層・メッシュ</span></button>
+  <aside id="left" class="panel" aria-label="階層">
+    <button class="panel-strip" id="left-expand" title="左パネルを開く" aria-label="左パネルを開く" aria-controls="left" aria-expanded="false"><span class="strip-icon" aria-hidden="true">›</span><span class="strip-label">階層</span></button>
     <div class="panel-content">
-      <div class="tabs" role="tablist">
-        <button role="tab" id="tab-tree" aria-selected="true" aria-controls="pane-tree">階層</button>
-        <button role="tab" id="tab-meshes" aria-selected="false" aria-controls="pane-meshes">メッシュ</button>
+      <!-- メッシュの情報（UV・マテリアル・テクスチャ）は、選んだときに右の［選択］に出す -->
+      <div class="panel-head">
+        <span id="tree-title">階層</span>
         <button class="collapse-btn" id="left-collapse" title="左パネルを最小化" aria-label="左パネルを最小化" aria-controls="left" aria-expanded="true">‹</button>
       </div>
-      <div id="pane-tree" role="tabpanel" aria-labelledby="tab-tree" class="pane">
+      <div id="pane-tree" class="pane" aria-labelledby="tree-title">
         <div class="tree-tools">
           <input type="search" id="tree-filter" placeholder="名前で絞り込み" aria-label="名前で絞り込み">
           <button class="icon-btn" id="tree-expand-all" title="すべて開く" aria-label="すべて開く"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1.5" y="1.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor"/><path d="M4 7h6M7 4v6" stroke="currentColor" stroke-width="1.4"/></svg></button>
           <button class="icon-btn" id="tree-collapse-all" title="すべて閉じる" aria-label="すべて閉じる"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1.5" y="1.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor"/><path d="M4 7h6" stroke="currentColor" stroke-width="1.4"/></svg></button>
         </div>
         <div id="tree" class="tree" role="tree" aria-label="ノード階層"></div>
-      </div>
-      <div id="pane-meshes" role="tabpanel" aria-labelledby="tab-meshes" class="pane" hidden>
-        <div id="mesh-list"></div>
       </div>
       <div class="resizer" id="left-resizer" role="separator" aria-orientation="vertical" aria-controls="left"
            aria-label="左パネルの幅" tabindex="0" title="ドラッグで幅を変更（ダブルクリックで元の幅に戻す）"></div>
@@ -167,6 +164,11 @@
     <div id="loading" class="overlay-msg" hidden>
       <div class="progress" aria-hidden="true"><i id="loading-bar"></i></div>
       <p id="loading-text" role="status">読み込み中</p>
+      <!-- いま読んでいるファイル（リファレンスがあるときだけ。上は全体の進捗） -->
+      <div id="loading-sub" hidden>
+        <div class="progress sub" aria-hidden="true"><i id="loading-sub-bar"></i></div>
+        <p id="loading-sub-text" class="muted"></p>
+      </div>
     </div>
     <div id="error" class="overlay-msg error" role="alert" hidden></div>
   </main>
@@ -198,13 +200,13 @@
   </section>
 
   <aside id="right" class="panel" aria-label="プロパティ">
-    <button class="panel-strip" id="right-expand" title="右パネルを開く" aria-label="右パネルを開く" aria-controls="right" aria-expanded="false"><span class="strip-icon" aria-hidden="true">‹</span><span class="strip-label">選択・頂点・警告</span></button>
+    <button class="panel-strip" id="right-expand" title="右パネルを開く" aria-label="右パネルを開く" aria-controls="right" aria-expanded="false"><span class="strip-icon" aria-hidden="true">‹</span><span class="strip-label">プロパティ</span></button>
     <div class="panel-content">
       <div class="panel-head"><button class="collapse-btn" id="right-collapse" title="右パネルを最小化" aria-label="右パネルを最小化" aria-controls="right" aria-expanded="true">›</button><span>プロパティ</span></div>
       <details open id="sec-select">
         <summary>選択</summary>
         <div class="sec-body">
-          <div id="select-head"><p class="muted">ジョイントやメッシュをクリックすると、ここに情報を表示します。</p></div>
+          <div id="select-head"><p class="muted">ジョイント・メッシュ・カメラをクリックすると、ここに情報を表示します。</p></div>
           <div id="pose-ctrls" hidden>
             <p class="sub">ポーズ確認<span class="sub-note">ファイル上の姿勢への追加分・保存されません</span></p>
             <div class="pose-vec pv-head"><span></span><span>X</span><span>Y</span><span>Z</span></div>
@@ -232,7 +234,8 @@
           <div id="select-info"></div>
         </div>
       </details>
-      <details open id="sec-vertex">
+      <!-- 頂点を選んでいるとき・頂点の選択に切り替えたときだけ出す（ui.showVertexInfo） -->
+      <details open id="sec-vertex" hidden>
         <summary>頂点のウェイト</summary>
         <div id="vertex-body" class="sec-body"><p class="muted">メッシュをクリックすると、いちばん近い頂点のウェイトを表示します。</p></div>
       </details>

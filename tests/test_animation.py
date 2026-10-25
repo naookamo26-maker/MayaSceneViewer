@@ -309,6 +309,33 @@ class TestSequencer(unittest.TestCase):
         self.assertTrue(self.shots["SH099"]["mute"])
         self.assertEqual((self.scene["sequencer"]["start"], self.scene["sequencer"]["end"]), (1.0, 49.0))
 
+    def test_default_values_not_written(self):
+        """Maya は既定値と同じ属性を書かない: 開始フレーム 0（.sf なし）・シーケンスの開始 0（.ssf なし）のショットも出す"""
+        body = ('createNode transform -n "cam";\ncreateNode camera -n "camShape" -p "cam";\n'
+                'createNode shot -n "shotA";\n\tsetAttr ".ef" 5;\n\tsetAttr ".ssf" 50;\n'
+                '\tsetAttr ".sn" -type "string" "SH050";\n'
+                'createNode shot -n "shotB";\n\tsetAttr ".sf" 10;\n\tsetAttr ".ef" 12;\n\tsetAttr ".trk" 3;\n'
+                'connectAttr "camShape.msg" "shotA.ccm";\nconnectAttr "camShape.msg" "shotB.ccm";\n')
+        ms = parse_ma_text('requires maya "2024";\ncurrentUnit -l centimeter -a degree -t film;\n' + body, "test.ma")
+        sc = scene_to_dict(ms)
+        shots = {s["name"]: s for s in sc["sequencer"]["shots"]}
+        s = shots["shotA"]
+        self.assertEqual((s["startFrame"], s["endFrame"], s["sequenceStartFrame"], s["sequenceEndFrame"], s["track"]),
+                         (0.0, 5.0, 50.0, 55.0, 1))
+        s = shots["shotB"]
+        self.assertEqual((s["shotName"], s["startFrame"], s["sequenceStartFrame"], s["sequenceEndFrame"], s["track"]),
+                         ("shotB", 10.0, 0.0, 2.0, 3))
+        self.assertFalse(any("フレーム" in w for w in sc["warnings"]))
+
+    def test_render_aspect(self):
+        """解像度ゲートの縦横比: .dar があればそれ、なければ 幅 / 高さ × ピクセルの縦横比（.pa）"""
+        from ma_viewer.extract_ma import render_settings
+        head = 'requires maya "2024";\ncurrentUnit -l centimeter -a degree -t film;\nselect -ne :defaultResolution;\n'
+        r = render_settings(parse_ma_text(head + '\tsetAttr ".w" 1440;\n\tsetAttr ".h" 1080;\n\tsetAttr ".pa" 1.3333333;\n', "t.ma"))
+        self.assertAlmostEqual(r["deviceAspectRatio"], 16 / 9, places=5)
+        r = render_settings(parse_ma_text(head + '\tsetAttr ".w" 1920;\n\tsetAttr ".h" 1080;\n\tsetAttr ".dar" 1.777;\n', "t.ma"))
+        self.assertAlmostEqual(r["deviceAspectRatio"], 1.777)
+
     def test_sequence_end_frame(self):
         """sequenceEndFrame = 開始 + preHold + (endFrame − startFrame) × scale + postHold"""
         s = self.shots["SH030"]

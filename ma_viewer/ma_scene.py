@@ -16,7 +16,23 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from . import ma_reader as R
 
-ProgressFn = Optional[Callable[[float, str], None]]
+# 進捗の通知: progress(全体の割合 0〜1, 文言)。3 つめの引数を受け取る関数には、リファレンスを読んでいる間、
+# いま読んでいるファイルの (文言, 割合) も渡す（progress_accepts_detail）
+ProgressFn = Optional[Callable[..., None]]
+
+
+def progress_accepts_detail(fn) -> bool:
+    """進捗の関数が 3 つめの引数（いま読んでいるファイルの進み具合）を受け取るか"""
+    if fn is None:
+        return False
+    import inspect
+    try:
+        params = list(inspect.signature(fn).parameters.values())
+    except (TypeError, ValueError):
+        return False
+    if any(p.kind == p.VAR_POSITIONAL for p in params):
+        return True
+    return len([p for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]) >= 3
 
 # numpy があれば、大量の数値（面の定義・ウェイト）をまとめて処理する（なければ従来の処理）
 try:
@@ -82,7 +98,9 @@ _SKIP_ATTR_TYPES = {
     # リグの計算ノード（値は 2 段階目に属性の範囲から読む）
     "quatToEuler", "eulerToQuat", "quatProd", "quatInvert", "quatNormalize", "quatSlerp", "curveInfo",
     "distanceBetween", "vectorProduct", "angleBetween", "pointOnCurveInfo", "motionPath", "animBlendNodeAdditiveDL", "animBlendNodeAdditiveDA",
-    "animBlendNodeAdditiveRotation", "animBlendNodeAdditiveScale", "animBlendNodeAdditive",
+    "animBlendNodeAdditiveRotation", "animBlendNodeAdditiveScale", "animBlendNodeAdditive", "animBlendNodeAdditiveF",
+    "animBlendNodeAdditiveFL", "animBlendNodeAdditiveFA", "animBlendNodeAdditiveI16", "animBlendNodeAdditiveI32",
+    "animBlendNodeBoolean", "animBlendNodeEnum", "animBlendNodeTime",
 }
 # シェイプのうち、メッシュ以外（子を持たず、属性も使わない）
 _SKIP_SHAPE_TYPES = SHAPE_TYPES - {"mesh"}
@@ -253,7 +271,13 @@ class MaScene:
         self._placeholders: Dict[Tuple[int, str], str] = {}  # (reference ノード, "phl[n]") → 本当のプラグ
         self._seg_refnodes: List[List["MaNode"]] = [[]]  # 解析中のファイルごとの reference ノード
         self._progress: ProgressFn = None
-        self._progress_frac = 0.0
+        self._progress_detail = False                # _progress が 3 つめの引数を受け取るか
+        # 全体の進捗: 開いたファイルとリファレンスの本文の文字数の合計（見積もり）と、読み終えた文字数
+        self._bytes_total = 0
+        self._bytes_done = 0
+        self._ref_expected: Dict[str, int] = {}      # reference ノード名 → 見積もった文字数（file -rdi の行から）
+        self._ref_started = 0                        # 読み始めたリファレンスの数
+        self._resolved: Dict[Tuple[str, str], Optional[str]] = {}   # (書かれたパス, 読み込む側) → 見つかったファイル
         self.plugins: List[str] = []                 # requires で読み込むプラグイン（maya 以外）
         self.stats: Dict[str, int] = {}          # 文の種類ごとの数（読み込みの内訳に出す）
         # 「文の種類 ノードの種類」ごとの [秒, 文の数, 文字数]（どこに時間がかかっているかを調べる）
@@ -522,11 +546,34 @@ class MaScene:
             # 読み込みの状態。外側のファイル（先に読む）に書かれたものを優先する
             if rfn and rfn not in self._ref_deferred:
                 self._ref_deferred[rfn] = info["deferred"]
+            # 全体の進捗の見積もり: 開いたファイルの file -rdi の行には、入れ子を含むすべてのリファレンスが並ぶ
+            if (rfn and rfn not in self._ref_expected and self.load_references and not self._ref_deferred.get(rfn)
+                    and info["type"] != "mayaBinary" and not path.lower().endswith(".mb")):
+                resolved = self._resolve_ref(path)
+                if resolved is not None:
+                    try:
+                        size = os.path.getsize(resolved)
+                    except OSError:
+                        size = 0
+                    self._ref_expected[rfn] = size
+                    self._bytes_total += size
             return
         self._load_reference(info, rfn)
 
+    def _resolve_ref(self, path: str) -> Optional[str]:
+        from .references import resolve_reference_path
+        referencing = self._ref_files[-1] if self._ref_files else self.source_path
+        key = (path, referencing)
+        if key not in self._resolved:
+            self._resolved[key] = resolve_reference_path(path, referencing, self.source_path)[0]
+        return self._resolved[key]
+
+    def _drop_estimate(self, rfn: str):
+        """読み込まなかったリファレンスを、全体の進捗の見積もりから外す"""
+        self._bytes_total -= self._ref_expected.pop(rfn, 0)
+
     def _load_reference(self, info: dict, rfn: str):
-        from .references import RefInfo, default_namespace, resolve_reference_path
+        from .references import RefInfo, default_namespace
         path = info["path"]
         if info["ns"] is None and info["rpr"]:
             local = info["rpr"] + "_"              # 古い形式（名前の前置き）
@@ -545,19 +592,22 @@ class MaScene:
             return
         if info["type"] == "mayaBinary" or path.lower().endswith(".mb"):
             ri.reason = "Maya バイナリ（.mb）は読み込めません"
+            self._drop_estimate(rfn)
             return
-        referencing = self._ref_files[-1] if self._ref_files else self.source_path
-        resolved, _tried = resolve_reference_path(path, referencing, self.source_path)
+        resolved = self._resolve_ref(path)
         if resolved is None:
             ri.reason = "ファイルが見つかりません"
+            self._drop_estimate(rfn)
             return
         ri.resolved = resolved
         key = os.path.normcase(os.path.abspath(resolved))
         if any(os.path.normcase(os.path.abspath(f)) == key for f in self._ref_files):
             ri.reason = "自分自身を読み込むリファレンス（循環）です"
+            self._drop_estimate(rfn)
             return
         if self.ref_depth >= 32:
             ri.reason = "入れ子が深すぎます"
+            self._drop_estimate(rfn)
             return
         import time
         t0 = time.perf_counter()
@@ -565,8 +615,13 @@ class MaScene:
             text = R.strip_line_comments(read_ma_text(resolved))
         except (OSError, ValueError) as exc:
             ri.reason = "読み込めません（%s）" % exc
+            self._drop_estimate(rfn)
             return
         self.read_seconds += time.perf_counter() - t0
+        # 見積もり（ファイルの大きさ）を本文の文字数に置き換える。file -rdi の行になかったものは、ここで足す
+        self._bytes_total += len(text) - self._ref_expected.get(rfn, 0)
+        self._ref_expected[rfn or ("#%d" % len(self.ref_infos))] = len(text)
+        self._ref_started += 1
         base = self._text_len + 1                  # 本文の後ろにつなげる（ノードの範囲 span はつなげた本文の位置）
         self._pieces.append("\n" + text)
         self._text_len += 1 + len(text)
@@ -574,17 +629,28 @@ class MaScene:
         self.prefix, self.ref_depth, self._ref_current, self.current = prefix, self.ref_depth + 1, ri, None
         self._ref_files.append(resolved)
         self._seg_refnodes.append([])
-        outer = self._progress
-        label = "リファレンス %s" % os.path.basename(resolved)
-        frac = self._progress_frac
-        report = None if outer is None else (lambda f, _m: outer(frac, "%s: 解析中 %d%%" % (label, int(f * 100))))
         try:
-            _parse_segment(self, text, base, report)
+            # 同じファイルを何度も読むことがあるので、名前空間も出す（arm_rig.ma（arm3））
+            label = os.path.basename(resolved) + ("（%s）" % ri.namespace if ri.namespace else "")
+            _parse_segment(self, text, base, label)
         finally:
             self._ref_segments.append((prefix, self._seg_refnodes.pop()))
             self._ref_files.pop()
             self.prefix, self.ref_depth, self._ref_current, self.current = saved
         ri.loaded = True
+
+    def _report_parse(self, seg_frac: float, name: str):
+        """解析の進捗を通知する。割合は、開いたファイルとリファレンスを合わせた全体のもの"""
+        frac = min(self._bytes_done / max(self._bytes_total, 1), 1.0)
+        count = len(self._ref_expected)
+        if not count:
+            self._progress(frac, "解析中 %d%%" % int(frac * 100))
+            return
+        msg = "解析中 %d%%（リファレンス %d / %d）" % (int(frac * 100), min(self._ref_started, count), count)
+        if self._progress_detail:
+            self._progress(frac, msg, ("%s を解析中 %d%%" % (name, int(seg_frac * 100)), seg_frac))
+        else:
+            self._progress(frac, "%s・%s" % (msg, name))
 
     def _finish_references(self):
         """リファレンスの編集（reference ノードの .ed）を、内側のファイルのものから順に当てる。
@@ -1237,7 +1303,9 @@ def parse_ma_text(text: str, source_path: str = "", progress: ProgressFn = None,
     scene._text_len = len(text)
     scene._ref_files = [source_path] if source_path else []
     scene._progress = progress
-    _parse_segment(scene, text, 0, progress)
+    scene._progress_detail = progress_accepts_detail(progress)
+    scene._bytes_total = len(text)
+    _parse_segment(scene, text, 0, os.path.basename(source_path) if source_path else "シーン")
     scene._finish_references()
     scene.text = text if len(scene._pieces) == 1 else "".join(scene._pieces)
     scene._pieces = []
@@ -1246,9 +1314,12 @@ def parse_ma_text(text: str, source_path: str = "", progress: ProgressFn = None,
     return scene
 
 
-def _parse_segment(scene: MaScene, text: str, base: int, progress: ProgressFn) -> None:
-    """1 つのファイルの本文の文を順に処理する。base: つなげた本文（scene.text）での、この本文の開始位置"""
+def _parse_segment(scene: MaScene, text: str, base: int, name: str) -> None:
+    """1 つのファイルの本文の文を順に処理する。base: つなげた本文（scene.text）での、この本文の開始位置。
+    name: 進捗に出すファイル名"""
     n = len(text)
+    progress = scene._progress
+    counted = 0                                       # 全体の進捗に足した文字数
     total = max(n, 1)
     next_report = 0.0
     find = text.find
@@ -1289,10 +1360,12 @@ def _parse_segment(scene: MaScene, text: str, base: int, progress: ProgressFn) -
                 counts["読み飛ばし"] = counts.get("読み飛ばし", 0) + text.count(";", pos, skip_to)
                 pos = skip_to
         if progress is not None and pos / total >= next_report:
-            if not scene.ref_depth:
-                scene._progress_frac = min(pos / total, 1.0)
-            progress(min(pos / total, 1.0), "解析中 %d%%" % int(min(pos, n) * 100 / total))
+            at = min(pos, n)
+            scene._bytes_done += at - counted
+            counted = at
+            scene._report_parse(at / total, name)
             next_report += 0.02
+    scene._bytes_done += n - counted
 
 
 def parse_ma_file(path: str, progress: ProgressFn = None, load_references: bool = True) -> MaScene:
