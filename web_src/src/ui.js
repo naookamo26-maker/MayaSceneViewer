@@ -627,7 +627,9 @@ export class UI {
         + `<tr><th>移動</th><td>${fmt3(v.t)}</td></tr><tr><th>回転</th><td>${fmt3(v.r, 2)}</td></tr>`
         + `<tr><th>スケール</th><td>${fmt3(v.s)}</td></tr></table>`;
     }
-    h += `<table class="kv" style="margin-top:6px"><tr><th>ワールド位置</th><td>${fmt3(info.worldPos)}</td></tr></table>`;
+    h += `<table class="kv" style="margin-top:6px"><tr><th>ワールド位置</th><td>${fmt3(info.worldPos)}</td></tr>`
+      + (info.worldRot ? `<tr><th title="Maya の xform -q -ws -ro と同じ値（回転順はノードの回転順）">ワールド回転</th><td>${fmt3(info.worldRot, 3)}</td></tr>` : '')
+      + '</table>';
     if (info.usage && info.usage.length) {
       h += '<p class="sub">インフルエンスとして</p><table class="kv">';
       for (const u of info.usage) {

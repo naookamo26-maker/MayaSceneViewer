@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { applyPoseSource, buildScene } from '../src/sceneBuilder.js';
 import {
-  AnimationClip, INFINITY, TANGENT, composeLocalMatrix, decodeArray, evaluateCurve, prepareCurve,
+  AnimationClip, INFINITY, TANGENT, composeLocalMatrix, decodeArray, evaluateCurve, prepareCurve, worldRotationDegrees,
 } from '../src/animation.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -143,4 +143,16 @@ test('バインドポーズの表示はフレームによらない（バイン�
   applyPoseSource(built, 'file');
   assert.ok(rig.baseMatrix.equals(rig.fileMatrix), 'ファイルの値ではフレーム 12 の値');
   assert.ok(shoulder.baseMatrix.equals(shoulder.fileMatrix));
+});
+
+test('ワールド回転（xform -q -ws -ro と同じ）: 回転順ごとに、回転の値に戻る。ジョイントの向き・スケールも含めて', () => {
+  const orders = ['xyz', 'yzx', 'zxy', 'xzy', 'yxz', 'zyx'];
+  orders.forEach((name, ro) => {
+    const m = composeLocalMatrix({ t: [1, 2, 3], r: [10, 20, 30], s: [0.5, 2, 1], ro, joint: false }, null);
+    worldRotationDegrees(m, name).forEach((v, k) => assert.ok(Math.abs(v - [10, 20, 30][k]) < 1e-9, `${name}: ${v}`));
+    worldRotationDegrees(m, ro).forEach((v, k) => assert.ok(Math.abs(v - [10, 20, 30][k]) < 1e-9, `${ro}: ${v}`));
+  });
+  // ジョイント: 回転 0・ジョイントの向き (0, 0, 45) なら、ワールド回転は (0, 0, 45)
+  const j = composeLocalMatrix({ t: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1], jo: [0, 0, 45], ro: 0, joint: true }, null);
+  worldRotationDegrees(j, 0).forEach((v, k) => assert.ok(Math.abs(v - [0, 0, 45][k]) < 1e-9, `ジョイント: ${v}`));
 });

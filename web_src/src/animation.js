@@ -7,7 +7,7 @@
 //   * 重み付きのカーブ: 接線の長さを制御点にした 3 次ベジエ
 //   * スプライン・クランプ・オート・プラトーの傾きは近似（オートとプラトーは山・谷で平らにし、行き過ぎを抑える）
 // ローカル行列は Maya の式（docs/data_format.md「行列の規約」）で組み立てる。
-import { Euler, Matrix4 } from 'three';
+import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 
 // 接線の種類（.ma の kit / kot / .tan の値）
 export const TANGENT = {
@@ -186,6 +186,18 @@ const ROTATE_ORDERS = ['xyz', 'yzx', 'zxy', 'xzy', 'yxz', 'zyx'];
 const THREE_ORDER = ROTATE_ORDERS.map((o) => o.split('').reverse().join('').toUpperCase());  // Maya の xyz → three の 'ZYX'
 const _e = new Euler();
 const _f = new Matrix4();
+
+/**
+ * ワールド行列の回転を、回転順 ro（'xyz' などの文字列か 0〜5）の角度（度）にする。
+ * Maya の xform -q -ws -ro と同じ値（ジョイントの向き・rotateAxis・親の回転を含む。スケールは除く）
+ */
+export function worldRotationDegrees(m, ro = 0) {
+  const i = typeof ro === 'string' ? ROTATE_ORDERS.indexOf(ro) : Math.round(ro);
+  const q = new Quaternion();
+  m.decompose(new Vector3(), q, new Vector3());
+  const e = new Euler().setFromQuaternion(q, THREE_ORDER[i] || 'ZYX');
+  return [e.x / D2R, e.y / D2R, e.z / D2R];
+}
 
 /**
  * Maya の式でローカル行列を作る（docs/data_format.md「行列の規約」）。

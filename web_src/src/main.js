@@ -19,7 +19,7 @@ import { UI, referenceOf } from './ui.js';
 import { connectBridge, isQtHost } from './bridge.js';
 import { History, sameChanges } from './history.js';
 import { compareGpuCpuSkinning } from './skinCheck.js';
-import { AnimationClip } from './animation.js';
+import { AnimationClip, worldRotationDegrees } from './animation.js';
 import { RigEvaluator, visibleFrom } from './rig.js';
 import { Timeline } from './timeline.js';
 import { CurveOverlay } from './curveOverlay.js';
@@ -1175,6 +1175,7 @@ class ViewerApp {
     return {
       node: n,
       worldPos: _v.setFromMatrixPosition(obj.matrixWorld).toArray(),
+      worldRot: worldRotationDegrees(obj.matrixWorld, (n.attrs && n.attrs.ro) || 0),
       usage, meshes, cameras, posed: this.pose.has(ni),
       hiddenSelf: !!(this.hidden && this.isNodeHidden(ni)),
       hiddenByRig: !!(this.rigHidden && this.rigHidden.has(ni) && !this.rigShown.has(ni) && !this.hidden.has(ni)),
