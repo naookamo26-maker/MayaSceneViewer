@@ -141,6 +141,12 @@ class CurveHistoryTest(unittest.TestCase):
              "wires": [{"index": 0, "wire": "drvShape", "base": "baseShape", "sameCount": True,
                                          "moved": 0.0, "dropoff": 1.0, "dropoffInFile": False,
                                          "reach": {"cvs": 4, "inside": 1, "nearest": 0.5, "farthest": 3.0},
+                                         "driver": [
+                                             {"name": "drvShape", "type": "nurbsCurve", "attr": "ws", "out": None,
+                                              "fileShape": False, "cp": 0},
+                                             {"name": "cl1", "type": "cluster", "attr": "og[0]", "out": None,
+                                              "handle": "cl1Handle.wm", "handlePos": [1, 2, 3], "pm": "なし（単位行列）",
+                                              "tagged": [2], "movedCvs": [[2, 1.5]]}],
                                          "wireShape": {"cvs": 4, "start": [0, 0, 0], "end": [0, 4, 0]},
                                          "baseShape": {"cvs": 4, "start": [0, 0, 0], "end": [0, 4, 0]}}]},
             {"name": "drv2", "type": "wire", "attr": "og[0]", "out": None, "envelope": 1.0,
@@ -159,6 +165,9 @@ class CurveHistoryTest(unittest.TestCase):
         self.assertIn("コンポーネントタグで動かす CV 3 個・変形するカーブの CV の最大の移動 0.000", text)
         self.assertIn("一番近い 0.500・一番遠い 3.000（影響範囲の中の CV 1 / 4 個）", text)
         self.assertIn("★ 影響範囲 dropoff（1.000）より遠い CV は", text)
+        self.assertIn("ワイヤー dw[0] の上流:", text)
+        self.assertIn("            cl1（cluster）.og[0]: 出力のカーブを求められない・ハンドル cl1Handle.wm の位置 (1.000, 2.000, 3.000)"
+                      "・bindPreMatrix: なし（単位行列）・タグで動かす CV: 2・動いた CV: 2（1.500）", text)
         self.assertIn("★ ワイヤーとベースの CV の数が違う", text)
         self.assertIn("drv2（wire）.og[0]: 出力のカーブを求められない", text)
         self.assertIn("★ ワイヤーのカーブの形を求められない理由: 形はファイルになく、作成の入力（create）を評価できない", text)
