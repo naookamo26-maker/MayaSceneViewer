@@ -385,6 +385,34 @@ class ComputeTest(unittest.TestCase):
         self.assertTrue(results[0].ok, results[0].problems)
         self.assertEqual(data["nodes"]["testNode"]["compute"], ["mt = input", "output = (mt * 2.0)"])
 
+    def test_class_constants(self):
+        """om.MMatrix.identity・kIdentity などのクラスの定数（分からない定数は、名前ではなく定数として報告する）"""
+        src = TEMPLATE.replace('TestNode.aIn = nAttr.create("input", "in", om.MFnNumericData.kDouble, 0.0)',
+                               'TestNode.aIn = tAttr.create("input", "in", om.MFnData.kMatrix)')
+        body = '''
+            dataHandle = data.inputValue(self.aIn).data()
+            if dataHandle.isNull():
+                inMat = om.MMatrix.identity
+            else:
+                inMat = om.MFnMatrixData(dataHandle).matrix()
+            q = om.MQuaternion.kIdentity
+            m = inMat * om.MMatrix.kIdentity
+            data.outputValue(TestNode.aOut).setDouble(m.getElement(3, 0) + q.w)
+        '''
+        data, results, _p = convert_source(src % textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8), "t.py")
+        r = results[0]
+        self.assertTrue(r.ok, r.problems)
+        self.assertEqual(r.unknown, {})
+        self.assertEqual(data["nodes"]["testNode"]["compute"], [
+            "dataHandle = input", "if (not connected(input)):", "    inMat = identity()", "else:", "    inMat = dataHandle",
+            "q = [0.0, 0.0, 0.0, 1.0]", "m = (inMat * identity())", "output = (element(m, 3, 0) + q.w)"])
+        body = body.replace("om.MQuaternion.kIdentity", "om.MQuaternion.kSomething")
+        data, results, _p = convert_source(src % textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8), "t.py")
+        r = results[0]
+        self.assertFalse(r.ok)
+        self.assertTrue(any("om.MQuaternion.kSomething（MQuaternion の定数）" in m for _l, m in r.problems), r.problems)
+        self.assertEqual(list(r.unknown), ["MQuaternion.kSomething"])
+
     def test_missing_output_write_is_noted(self):
         data, r = convert_compute("x = data.inputValue(TestNode.aIn).asDouble()")
         self.assertTrue(r.ok, r.problems)

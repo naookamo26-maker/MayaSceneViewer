@@ -1036,8 +1036,17 @@ class Translator:
                 return Value("num", "e")
         if a in _AXES:
             return Value("vec", _AXES[a])
-        if a == "kIdentity":
-            return Value("mat", "identity()")
+        owner = _tail(e.value)
+        if a in ("kIdentity", "identity"):
+            # 単位行列など（om.MMatrix.kIdentity）。クラスが分からなければ行列とみなす
+            if owner == "MQuaternion":
+                return Value("quat", "[0.0, 0.0, 0.0, 1.0]")
+            if owner == "MEulerRotation":
+                return Value("eul", "[0.0, 0.0, 0.0]", order="0")
+            if owner == "MTransformationMatrix":
+                return Value("tm", t="[0.0, 0.0, 0.0]", r="[0.0, 0.0, 0.0]", s="[1.0, 1.0, 1.0]", order="0")
+            if owner in _MAT_CLASSES or a == "kIdentity":
+                return Value("mat", "identity()")
         if a in _ROT_ORDERS:
             return Value("num", str(_ROT_ORDERS[a]))
         if isinstance(e.value, ast.Name) and e.value.id == self.self_name:
@@ -1049,6 +1058,11 @@ class Translator:
             v = self.module.class_constant(e.value.id, a)
             if isinstance(v, (int, float)) and not isinstance(v, bool):
                 return Value("num", _num_text(v))
+        parts = _dotted(e)
+        if parts and parts[0] not in self.env and parts[0] not in (self.data_name, self.plug_name) \
+                and len(parts) >= 3 and _is_class_name(parts[-2]):
+            # om.MMatrix.xxx などのクラスの定数（名前 om が分かりません、とは言わない）
+            _fail("%s（%s の定数）は変換できません" % (".".join(parts), parts[-2]), e)
         base = self.expr(e.value)
         if a in ("x", "y", "z", "w") and base.kind in ("vec", "pt", "quat", "eul"):
             return Value("num", "%s.%s" % (base.code, a))
@@ -1501,6 +1515,16 @@ _KNOWN_CLASSES = _VEC_CLASSES | _PT_CLASSES | _MAT_CLASSES | {
 _KNOWN_FUNCTIONS = {"abs", "min", "max", "pow", "round", "float", "int", "bool", "len", "range", "print"}
 
 
+_KNOWN_CONSTANTS = ({"kIdentity", "identity", "kWorld", "kTransform", "kObject", "kPreTransform", "kPostTransform",
+                     "kInvalid", "kRadians", "kDegrees", "kCentimeters", "uiUnit", "kTolerance"}
+                    | set(_AXES) | set(_ROT_ORDERS))
+
+
+def _is_class_name(name: str) -> bool:
+    """MMatrix・MSpace などの Maya のクラスの名前らしい"""
+    return len(name) > 1 and name[0] == "M" and name[1].isupper()
+
+
 def unknown_calls(fn: ast.FunctionDef, module: "ModuleInfo") -> Dict[str, List[int]]:
     """compute の中の、解釈できない関数・メソッドの呼び出し → 行番号（実行の流れに関係なく、すべて）"""
     self_name = fn.args.args[0].arg if fn.args.args else "self"
@@ -1511,7 +1535,14 @@ def unknown_calls(fn: ast.FunctionDef, module: "ModuleInfo") -> Dict[str, List[i
         found.setdefault(name, [])
         if node.lineno not in found[name]:
             found[name].append(node.lineno)
+    funcs = {id(n.func) for n in ast.walk(fn) if isinstance(n, ast.Call)}
     for node in ast.walk(fn):
+        if isinstance(node, ast.Attribute) and id(node) not in funcs:
+            # クラスの定数（om.MMatrix.kIdentity など）
+            owner = _tail(node.value)
+            if owner and _is_class_name(owner) and node.attr not in _KNOWN_CONSTANTS:
+                add("%s.%s" % (owner, node.attr), node)
+            continue
         if not isinstance(node, ast.Call):
             continue
         f = node.func
