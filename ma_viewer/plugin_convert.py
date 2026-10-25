@@ -412,6 +412,7 @@ _SETTERS_SPLIT = {"set3Double", "set3Float", "set3Int", "set3Short", "set3Long",
                   "set2Int", "set2Short", "set2Long", "set4Double"}
 _SETTERS_MAT = {"setMMatrix", "setMFloatMatrix"}
 _SETTERS_OBJ = {"setMObject", "setData"}
+_MATRIX_FROM_LIST = {"createMatrixFromList", "createFloatMatrixFromList"}
 _SETTERS_UNIT = {"setMAngle", "setMDistance", "setMTime"}
 _IGNORED_CALLS = {"setClean", "setAllClean", "set", "print", "displayInfo", "displayWarning", "displayError",
                   "inputArrayValue", "outputArrayValue"}
@@ -824,6 +825,9 @@ class Translator:
             if name in ("setClean",):
                 return
             _fail("data.%s は変換できません" % name, c)
+        if name in _MATRIX_FROM_LIST:
+            self.matrix_from_list(c)
+            return
         base = self.expr_obj(f.value)
         if base is None:
             _fail("この呼び出しは変換できません", c)
@@ -852,6 +856,21 @@ class Translator:
             self.tm_setter(base, name, c)
             return
         _fail("%s の %s は変換できません" % (base.kind, name), c)
+
+    def matrix_from_list(self, c: ast.Call):
+        """MScriptUtil.createMatrixFromList(16 個の数のリスト, 行列) → 行列 = matrix(リスト)"""
+        if len(c.args) < 2 or not isinstance(c.args[1], ast.Name):
+            _fail("%s の 2 番目の引数は、行列の変数にしてください" % c.func.attr, c)
+        items = c.args[0]
+        if isinstance(items, (ast.List, ast.Tuple)) and len(items.elts) != 16:
+            _fail("%s のリストの要素が 16 個ではありません（%d 個）" % (c.func.attr, len(items.elts)), c)
+        v = self.expr(items)
+        if v.kind != "vec":
+            _fail("%s には数のリストを渡してください" % c.func.attr, c)
+        target = c.args[1].id
+        name = self.local(target)
+        self.emit("%s = matrix(%s)" % (name, v.code))
+        self.env[target] = Value("mat", name)
 
     def write_output(self, h: Value, name: str, c):
         if name in ("setClean",):
@@ -1417,7 +1436,7 @@ class Translator:
 # compute の中で解釈できる関数・メソッドの名前（解釈できないものの一覧を作るため。クラスは問わず名前で見る）
 _KNOWN_METHODS = (_GETTERS_NUM | _GETTERS_VEC | _GETTERS_MAT | _GETTERS_UNIT | _SETTERS_NUM | _SETTERS_VEC
                   | _SETTERS_SPLIT | _SETTERS_MAT | _SETTERS_UNIT | _SETTERS_OBJ | _IGNORED_CALLS | _LOGICAL_JUMP
-                  | _PHYSICAL_JUMP | _LOGICAL_INDEX | {
+                  | _PHYSICAL_JUMP | _LOGICAL_INDEX | _MATRIX_FROM_LIST | {
                       "inputValue", "outputValue", "child", "elementCount", "__len__", "builder", "addElement",
                       "next", "isDone", "asRadians", "asCentimeters", "asDegrees", "asUnits", "length", "normal",
                       "angle", "distanceTo", "rotateBy", "inverse", "transpose", "homogenize", "asQuaternion",

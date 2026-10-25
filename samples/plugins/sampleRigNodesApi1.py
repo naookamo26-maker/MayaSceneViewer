@@ -4,7 +4,8 @@
   * legacySum   : 配列の入力を MArrayDataHandle の elementCount と next でたどる合計（× gain）
   * vectorLength: double3 の入力（子の属性 inVectorX〜Z）の長さと、正規化したベクトル
   * matrixOffset: 型つきの行列の属性（MFnTypedAttribute・MFnData.kMatrix）。MFnMatrixData で読み書きし、
-                  入力の行列の移動に offset を足す（mode = 1 なら引く。mode は MPlug の asShort で読む）。
+                  入力の行列に、offset の移動の行列（MScriptUtil.createMatrixFromList で作る）を掛ける
+                  （mode = 1 なら引く。mode は MPlug の asShort で読む）。
                   入力のデータがなければ（isNull）何もしない
 """
 import sys
@@ -126,14 +127,16 @@ class MatrixOffset(OpenMayaMPx.MPxNode):
         if inObject.isNull():
             return
         inData = OpenMaya.MFnMatrixData(inObject)
-        xform = OpenMaya.MTransformationMatrix(inData.matrix())
+        inMatrix = inData.matrix()
         offset = dataBlock.inputValue(MatrixOffset.aOffset).asVector()
         mode = OpenMaya.MPlug(self.thisMObject(), MatrixOffset.aMode).asShort()
         if mode == 1:
             offset = -offset
-        xform.setTranslation(xform.getTranslation(OpenMaya.MSpace.kTransform) + offset, OpenMaya.MSpace.kTransform)
+        offsetMatrix = OpenMaya.MMatrix()
+        OpenMaya.MScriptUtil.createMatrixFromList([1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+                                                   offset.x, offset.y, offset.z, 1.0], offsetMatrix)
         outData = OpenMaya.MFnMatrixData()
-        outObject = outData.create(xform.asMatrix())
+        outObject = outData.create(inMatrix * offsetMatrix)
         dataBlock.outputValue(MatrixOffset.aOutMatrix).setMObject(outObject)
         dataBlock.setClean(plug)
 

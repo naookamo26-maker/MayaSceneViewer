@@ -286,6 +286,26 @@ class ComputeTest(unittest.TestCase):
         self.assertIn("■ 解釈できない関数・メソッドの一覧", text)
         self.assertIn("  .getValueAtPosition(): testNode（", text)
 
+    def test_matrix_from_list(self):
+        """MScriptUtil.createMatrixFromList(リスト, 行列) → 行列 = matrix(リスト)"""
+        data, r = convert_compute('''
+            x = data.inputValue(TestNode.aIn).asDouble()
+            values = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, x, 0.0, 0.0, 1.0]
+            m = om.MMatrix()
+            om.MScriptUtil.createMatrixFromList(values, m)
+            p = om.MPoint() * m
+            data.outputValue(TestNode.aOut).setDouble(p.x)
+        ''')
+        self.assertTrue(r.ok, r.problems)
+        self.assertEqual(r.unknown, {})
+        self.assertIn("m = matrix(values_)", data["nodes"]["testNode"]["compute"])
+        _data, r = convert_compute('''
+            m = om.MMatrix()
+            om.MScriptUtil.createMatrixFromList([1.0, 0.0], m)
+        ''')
+        self.assertFalse(r.ok)
+        self.assertTrue(any("16 個" in msg for _l, msg in r.problems), r.problems)
+
     def test_missing_output_write_is_noted(self):
         data, r = convert_compute("x = data.inputValue(TestNode.aIn).asDouble()")
         self.assertTrue(r.ok, r.problems)
