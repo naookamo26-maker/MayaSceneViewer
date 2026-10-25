@@ -113,12 +113,15 @@ Python で書いたノードプラグイン（API 2.0・1.0）は、`python -m m
 ```json
 {
   "myMatrixBlend": {"as": "multMatrix", "attrs": {"inMatrix": "i[0]", "outMatrix": "o"}},
-  "myCtrlTransform": {"as": "transform"}
+  "myCtrlTransform": {"as": "transform"},
+  "myCompXform": {"as": "transform", "segmentScaleCompensate": true},
+  "myBone": {"as": "joint"}
 }
 ```
 
 - 置き場所（後のものが優先）: `~/.ma_viewer/nodes.json`、環境変数 `MA_VIEWER_NODES` のパス、.ma と同じフォルダの `ma_viewer_nodes.json`。
-- 「as」: ビューアが評価できる型（multMatrix・inverseMatrix・decomposeMatrix・composeMatrix・multiplyDivide・plusMinusAverage・transform など）。
+- 「as」: ビューアが評価できる型（multMatrix・inverseMatrix・decomposeMatrix・composeMatrix・multiplyDivide・plusMinusAverage・transform・joint など）。型を知らない DAG ノードは、指定がなければ transform として扱います（親のスケールを受け継ぎます）。
+- 「segmentScaleCompensate」: transform・joint として扱うノードで、親のスケールを打ち消すか（ジョイントの segmentScaleCompensate と同じ計算。親のスケールの逆数を、ローカル行列の移動の直前に掛けます。inverseScale の接続がなくても親のスケールを使います）。joint の既定は true、transform の既定は false。親のスケールを受け継がない自作の transform（伸び縮みするジョイントの下に置いても、向きがゆがまないもの）に使います。打ち消さずに扱うと、親のスケールが軸ごとに違うときに行列がゆがみ、そのノードを使うコンストレイントの向きがずれます。
 - 「attrs」: 自作ノードの属性名 → 標準ノードの短い属性名。`"i"` のように添字なしで書くと元の添字を引き継ぎ（inMatrix[2] → i[2]）、`"i[0]"` のように添字つきで書くとその属性になります。行列を扱う主な型の属性: multMatrix は入力 `i[k]`・出力 `o`、inverseMatrix は `imat` → `omat`、decomposeMatrix は `imat` → `ot`・`or`・`os`・`oq`、composeMatrix は `it`・`ir`・`is` → `omat`。
 
 出力はテキストなので、そのまま貼り付けて相談できます（ファイル本体を渡さなくても、原因の見当がつきます）。
@@ -392,7 +395,7 @@ python tests/qt_rig_test.py                             # リグ（IK・コン�
 ```
 
 自作ノードの定義のテストは `tests/test_node_defs.py`（読み込み・検証・シーンへの適用）と `web_src/tests/nodeDef.test.mjs`（評価）です。サンプルとテスト用の定義は `python tools/make_nodedef_sample.py` で作ります（`samples/nodedef_sample_defs.json`。ビューアには同梱しません）。
-ヒストリのあるカーブのテストは `tests/test_curve_history.py`（形の計算・警告・リグの診断）と `web_src/tests/curveHistory.test.mjs`（表示とスプライン IK）です（サンプルは `python tools/make_curve_history_sample.py`）。骨ごとに伸び縮みするスプライン IK（カーブ上の点どうしの距離 → blendColors → multiplyDivide → ジョイントのスケール）のテストは `web_src/tests/stretchSpline.test.mjs` です（サンプルは `python tools/make_stretch_spline_sample.py`）。コンポーネントタグのテストは `tests/test_component_tags.py`（タグと式の読み取り・リグの診断）と `web_src/tests/componentTags.test.mjs`（cluster → wire → スプライン IK）です（サンプルは `python tools/make_component_tag_sample.py`）。
+ヒストリのあるカーブのテストは `tests/test_curve_history.py`（形の計算・警告・リグの診断）と `web_src/tests/curveHistory.test.mjs`（表示とスプライン IK）です（サンプルは `python tools/make_curve_history_sample.py`）。骨ごとに伸び縮みするスプライン IK（カーブ上の点どうしの距離 → blendColors → multiplyDivide → ジョイントのスケール）と、その下の親のスケールを打ち消す自作ノード（割り当ての segmentScaleCompensate）のテストは `web_src/tests/stretchSpline.test.mjs` と `tests/test_scale_compensation.py` です（サンプルは `python tools/make_stretch_spline_sample.py`）。コンポーネントタグのテストは `tests/test_component_tags.py`（タグと式の読み取り・リグの診断）と `web_src/tests/componentTags.test.mjs`（cluster → wire → スプライン IK）です（サンプルは `python tools/make_component_tag_sample.py`）。
 fourByFourMatrix のテストは `web_src/tests/fourByFour.test.mjs` です（サンプルは `python tools/make_fourbyfour_sample.py`）。
 プラグインからの変換のテストは `tests/test_plugin_convert.py`（変換の結果・変換できない書き方・CLI）と `web_src/tests/pluginConvert.test.mjs`（変換した定義の評価をプラグインの式と比べる）です。サンプルのプラグインは `samples/plugins/`、変換した定義とシーンは `python tools/make_plugin_convert_sample.py` で作ります（`samples/plugin_convert_defs.json`・`samples/plugin_convert_sample.ma`）。
 

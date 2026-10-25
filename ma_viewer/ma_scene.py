@@ -190,7 +190,7 @@ def _sparse_into(weights: Dict[int, Dict[int, float]], a: int, b: int, vals) -> 
 class MaNode:
     __slots__ = ("name", "type", "parent", "children", "path", "order", "is_dag",
                  "xattrs", "mesh", "skin", "tweak", "inputs", "raw", "skip_attrs", "span", "attr_map", "ns", "espan",
-                 "node_def", "baked", "xspans")
+                 "node_def", "baked", "xspans", "ssc_parent")
 
     def __init__(self, name: str, node_type: str, parent: Optional["MaNode"], order: int, ns: str = ""):
         self.name = name
@@ -215,6 +215,9 @@ class MaNode:
         self.baked: Optional[Dict[str, object]] = None  # 読み込みで求めた属性（ヒストリから求めたカーブの形 cc など）
         # ノードのブロックの外で、ノード名つきで値を入れた setAttr の範囲（属性を後から読むノード。カーブの形など）
         self.xspans: Optional[List[Tuple[int, int]]] = None
+        # 親のスケールを打ち消す（自作ノードの割り当てで指定。ジョイントの segmentScaleCompensate と同じ計算を、
+        # inverseScale の接続がなくても親のスケールで行う）
+        self.ssc_parent = False
 
     @property
     def is_shape(self) -> bool:
@@ -233,6 +236,18 @@ class MaNode:
     def flag(self, name: str, default: bool) -> bool:
         v = self.xattrs.get(name)
         return default if v is None else bool(v)
+
+    def inverse_scale_source(self) -> Optional["MaNode"]:
+        """親のスケールの打ち消し（ローカル行列の移動の直前に掛けるスケールの逆数）に使うスケールを持つノード。
+
+        ジョイント: segmentScaleCompensate が有効で、inverseScale（.is）に接続があれば、その接続元（ふつうは親）。
+        自作ノードの割り当てで打ち消しを指定したノード: 親。どちらでもなければ None
+        """
+        if self.type == "joint" and self.flag("ssc", True) and "is" in self.inputs:
+            return self.inputs["is"][0]
+        if self.ssc_parent and self.parent is not None:
+            return self.parent
+        return None
 
     def __repr__(self):
         return "<MaNode %s %s>" % (self.type, self.path)

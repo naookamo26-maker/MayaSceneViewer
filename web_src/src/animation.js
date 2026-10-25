@@ -191,7 +191,7 @@ const _f = new Matrix4();
  * Maya の式でローカル行列を作る（docs/data_format.md「行列の規約」）。
  * Maya の行ベクトル規約の積 A·B は、three.js（列ベクトル）では B·A なので、Maya の並び順に premultiply する。
  * @param x {t, r（度）, s, ro, ra（度）, jo（度）, rp, sp, rpt, spt, sh, joint}
- * @param isScale segmentScaleCompensate の親のスケール（なければ null）
+ * @param isScale 打ち消す親のスケール（ジョイントの segmentScaleCompensate・自作ノードの割り当てで指定したノード。なければ null）
  */
 export function composeLocalMatrix(x, isScale, target = new Matrix4()) {
   target.identity();
@@ -218,6 +218,7 @@ export function composeLocalMatrix(x, isScale, target = new Matrix4()) {
   mul(rot(x.r, x.ro || 0));
   if (x.rp) mul(tr(x.rp));
   if (x.rpt) mul(tr(x.rpt));
+  if (isScale) mul(_f.makeScale(isScale[0] ? 1 / isScale[0] : 1, isScale[1] ? 1 / isScale[1] : 1, isScale[2] ? 1 / isScale[2] : 1));
   mul(tr(x.t));
   return withOffsetParent(x, target);
 }
@@ -294,7 +295,7 @@ export class AnimationClip {
     }
     for (const e of this.entries) {
       let isScale = null;
-      if (e.cur.joint && (e.isScale || e.isNode >= 0)) {
+      if (e.isScale || e.isNode >= 0) {
         const p = e.isNode >= 0 ? this.byNode.get(e.isNode) : null;
         isScale = p ? p.cur.s : e.isScale;
       }

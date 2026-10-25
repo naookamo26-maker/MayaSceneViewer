@@ -403,7 +403,7 @@ export class RigEvaluator {
     if (!rest || !this.moving.has(ni)) return this.staticLocal(ni);
     const c = this.chan(ni, 'full');
     let isScale = null;
-    if (rest.joint && (rest.isScale || (rest.isNode ?? -1) >= 0)) {
+    if (rest.isScale || (rest.isNode ?? -1) >= 0) {
       isScale = rest.isNode >= 0 && this.rest(rest.isNode) ? this.chan(rest.isNode, 'full').s : rest.isScale;
     }
     const m = composeLocalMatrix(c, isScale, new Matrix4());
@@ -2435,7 +2435,7 @@ export class RigEvaluator {
 
   isScaleOf(ni) {
     const rest = this.rest(ni);
-    if (!rest || !rest.joint) return null;
+    if (!rest) return null;
     if ((rest.isNode ?? -1) >= 0 && this.rest(rest.isNode)) return this.chan(rest.isNode, 'fk').s;
     return rest.isScale || null;
   }

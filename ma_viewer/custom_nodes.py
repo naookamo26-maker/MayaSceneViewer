@@ -11,10 +11,15 @@
 書き方:
   {
     "myMatrixBlend": {"as": "multMatrix", "attrs": {"inMatrix": "i[0]", "outMatrix": "o"}},
-    "myCtrlTransform": {"as": "transform"}
+    "myCtrlTransform": {"as": "transform"},
+    "myCompXform": {"as": "transform", "segmentScaleCompensate": true},
+    "myBone": {"as": "joint"}
   }
-  * "as": 扱う標準ノードの型（multMatrix・inverseMatrix・decomposeMatrix・composeMatrix・transform など、ビューアが
-    評価できる型）
+  * "as": 扱う標準ノードの型（multMatrix・inverseMatrix・decomposeMatrix・composeMatrix・transform・joint など、
+    ビューアが評価できる型）。型を知らない DAG ノードは、指定がなければ transform として扱う
+  * "segmentScaleCompensate": transform・joint として扱うノードで、親のスケールを打ち消すか（ジョイントの
+    segmentScaleCompensate と同じ計算。親のスケールの逆数を、ローカル行列の移動の直前に掛ける）。
+    inverseScale の接続がなくても、親のスケールを使う。"joint" の既定は true、"transform" の既定は false
   * "attrs": 自作ノードの属性名 → 標準ノードの属性名（短い名前）。"i" のように添字なしで書くと元の添字を引き継ぎ
     （inMatrix[2] → i[2]）、"i[0]" のように添字つきで書くとその属性にする
 """
@@ -60,8 +65,17 @@ def load_node_map(ma_path: Optional[str], warn=None) -> Dict[str, dict]:
             if isinstance(spec, str):
                 spec = {"as": spec}
             if isinstance(spec, dict) and isinstance(spec.get("as"), str) and not t.startswith("_"):
-                out[t] = {"as": spec["as"], "attrs": dict(spec.get("attrs") or {}), "from": p}
+                out[t] = dict(normalize_spec(spec), **{"from": p})
     return out
+
+
+def normalize_spec(spec) -> dict:
+    """割り当て 1 つを {"as", "attrs", "ssc"} にそろえる（"segmentScaleCompensate" の既定は joint だけ true）"""
+    if isinstance(spec, str):
+        spec = {"as": spec}
+    ssc = spec.get("ssc", spec.get("segmentScaleCompensate", spec["as"] == "joint"))
+    return {"as": spec["as"], "attrs": dict(spec.get("attrs") or {}), "ssc": bool(ssc),
+            **({"from": spec["from"]} if "from" in spec else {})}
 
 
 def rename_attr(attr: str, amap: Dict[str, str]) -> str:
@@ -81,6 +95,7 @@ def apply_node_map(ms, mapping: Dict[str, dict]) -> Dict[str, List[str]]:
         return {}
     applied: Dict[str, List[str]] = {}
     mapped = {}
+    mapping = {t: normalize_spec(v) for t, v in mapping.items()}
     for n in ms.nodes:
         spec = mapping.get(n.type)
         if spec is None:
@@ -94,6 +109,7 @@ def apply_node_map(ms, mapping: Dict[str, dict]) -> Dict[str, List[str]]:
         n.type = spec["as"]
         if spec["as"] in TRANSFORM_TYPES:
             n.is_dag = True
+            n.ssc_parent = bool(spec.get("ssc"))         # 親のスケールを打ち消す（segmentScaleCompensate）
     if not mapped:
         return applied
     conns = []

@@ -151,18 +151,27 @@ def is_close(a: Sequence[float], b: Sequence[float], tol: float = 1e-6) -> bool:
 # Maya のノード行列
 # ---------------------------------------------------------------------------
 
+def _inverse_scale(ps) -> Mat:
+    if ps is None:
+        return identity()
+    return scale((1.0 / ps[0] if ps[0] else 1.0,
+                  1.0 / ps[1] if ps[1] else 1.0,
+                  1.0 / ps[2] if ps[2] else 1.0))
+
+
 def transform_matrix(t=(0, 0, 0), r=(0, 0, 0), s=(1, 1, 1), ro="xyz",
                      ra=(0, 0, 0), rp=(0, 0, 0), sp=(0, 0, 0),
-                     rpt=(0, 0, 0), spt=(0, 0, 0), sh=(0, 0, 0)) -> Mat:
+                     rpt=(0, 0, 0), spt=(0, 0, 0), sh=(0, 0, 0), inverse_parent_scale=None) -> Mat:
     """transform ノードのローカル行列（角度はラジアン）。
 
-    M = [-SP] [S] [SH] [SP] [SPT] [-RP] [RA] [R] [RP] [RPT] [T]
+    M = [-SP] [S] [SH] [SP] [SPT] [-RP] [RA] [R] [RP] [RPT] [IS] [T]
+    IS は親のスケールを打ち消すとき（自作ノードの割り当てで指定）の「親のスケールの逆数」。ふつうは単位行列。
     """
     neg_sp = translate((-sp[0], -sp[1], -sp[2]))
     neg_rp = translate((-rp[0], -rp[1], -rp[2]))
     return mul_chain(neg_sp, scale(s), shear(sh), translate(sp), translate(spt),
                      neg_rp, euler(ra, "xyz"), euler(r, ro), translate(rp),
-                     translate(rpt), translate(t))
+                     translate(rpt), _inverse_scale(inverse_parent_scale), translate(t))
 
 
 def joint_matrix(t=(0, 0, 0), r=(0, 0, 0), s=(1, 1, 1), ro="xyz",
@@ -172,14 +181,8 @@ def joint_matrix(t=(0, 0, 0), r=(0, 0, 0), s=(1, 1, 1), ro="xyz",
     M = [S] [RA] [R] [JO] [IS] [T]
     IS は segmentScaleCompensate 有効時の「親ジョイントのスケールの逆数」。
     """
-    is_m = identity()
-    if inverse_parent_scale is not None:
-        ps = inverse_parent_scale
-        is_m = scale((1.0 / ps[0] if ps[0] else 1.0,
-                      1.0 / ps[1] if ps[1] else 1.0,
-                      1.0 / ps[2] if ps[2] else 1.0))
     return mul_chain(scale(s), euler(ra, "xyz"), euler(r, ro), euler(jo, "xyz"),
-                     is_m, translate(t))
+                     _inverse_scale(inverse_parent_scale), translate(t))
 
 
 def xform_data_to_matrix(values: Sequence[float]) -> Mat:
