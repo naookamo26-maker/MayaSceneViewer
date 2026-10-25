@@ -158,7 +158,7 @@ def _curve_without_shape(ms: MaScene, curve: MaNode):
     from .curve_history import shape_blocker
     if curve_shape_source(ms, curve, parse_attrs(ms.text, curve))[0] is not None:
         return None
-    return shape_blocker(ms, curve)
+    return shape_blocker(ms, curve) or curve
 
 
 def wire_shapes(ms: MaScene, wire: MaNode) -> Dict[int, MaNode]:
@@ -333,9 +333,9 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
             elif entry["solver"] == "ikSplineSolver" and (curve is None or curve[0].type != "nurbsCurve"):
                 entry["problem"] = "スプライン IK のカーブ（nurbsCurve）が見つかりません"
             elif entry["solver"] == "ikSplineSolver" and _curve_without_shape(ms, curve[0]):
-                blocker = _curve_without_shape(ms, curve[0])
-                entry["problem"] = ("スプライン IK のカーブ %s の形が分かりません（形を作るノード %s（%s）を計算できません。"
-                                    "ヒストリを削除して保存してください）" % (curve[0].name, blocker.name, blocker.type))
+                from .curve_history import shape_problem
+                entry["problem"] = ("スプライン IK のカーブ %s の形が分かりません（%s。ヒストリを削除して保存してください）"
+                                    % (curve[0].name, shape_problem(ms, curve[0])))
             elif entry["solver"] == "ikSplineSolver":
                 entry["curve"] = curve[0]
         info.ik.append(entry)

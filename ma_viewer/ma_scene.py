@@ -290,6 +290,7 @@ class MaScene:
         self.connections: List[Tuple[MaNode, str, MaNode, str]] = []   # (元, 元の属性, 先, 先の属性)
         self.warnings: List[str] = []
         self._warn_keys: Dict[str, int] = {}
+        self._warn_limits: Dict[str, int] = {}
 
     # ------------------------------------------------------------------
     def warn(self, msg: str, key: Optional[str] = None, limit: int = 1):
@@ -297,13 +298,15 @@ class MaScene:
         k = key or msg
         n = self._warn_keys.get(k, 0)
         self._warn_keys[k] = n + 1
+        self._warn_limits[k] = limit
         if n < limit:
             self.warnings.append(msg)
 
     def finalize_warnings(self):
         for k, n in self._warn_keys.items():
-            if n > 1 and k.startswith("#"):
-                self.warnings.append("（同様の警告が他に %d 件: %s）" % (n - 1, k[1:]))
+            extra = n - self._warn_limits.get(k, 1)          # 書かずに数えただけの件数
+            if extra > 0 and k.startswith("#"):
+                self.warnings.append("（同様の警告が他に %d 件: %s）" % (extra, k[1:]))
 
     # ------------------------------------------------------------------
     def qualify(self, ref: str) -> str:

@@ -19,7 +19,7 @@ const tx = (f) => 5 * (f - 1) / 23;
 
 test('形を作るノード（circle・transformGeometry）から求めた形のカーブを表示する', () => {
   const byName = Object.fromEntries(data.curves.map((c) => [c.name, c]));
-  assert.deepEqual(Object.keys(byName).sort(), ['hexBShape', 'ringAShape', 'spC_curveShape']);
+  assert.deepEqual(Object.keys(byName).sort(), ['hexBShape', 'ringAShape', 'spC_curveShape', 'wsEShape']);
   const ring = parseNurbsCurve(byName.ringAShape.cc);
   assert.ok(ring, 'ringAShape');
   // 半径 2 の円: カーブ上の点は、中心から距離 2（法線 +Y なので y = 0）

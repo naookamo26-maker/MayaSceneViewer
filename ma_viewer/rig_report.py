@@ -278,7 +278,7 @@ def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
         out.append("  なし")
     if baked:
         out.append("  ✓ 形を計算したカーブ: %d 本（circle・transformGeometry など）" % baked)
-    for t, items in sorted(problems.items(), key=lambda kv: -len(kv[1])):
+    for t, items in sorted(problems.items(), key=lambda kv: (-len(kv[1]), kv[0])):
         out.append("  ★ %s で形を作るカーブ: %d 本（ビューアでは形を計算できないので、表示もスプライン IK もできません）"
                    % (t, len(items)))
         for name, why in items[:20]:
