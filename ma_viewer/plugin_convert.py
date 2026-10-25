@@ -631,6 +631,7 @@ class Translator:
         self.written: List[AttrInfo] = []                # 値を書き込んだ出力（上の階層の属性）
         self.out_vars: Dict[str, str] = {}               # 書き込んだ出力 → その値を入れた変数（あとで読むため）
         self.read_outputs = self.outputs_read_in(fn)
+        self.kept: Optional[List[AttrInfo]] = None        # 定義に入れる上の階層の属性（変換の前に決める）
 
     def outputs_read_in(self, fn) -> set:
         """compute の中で inputValue で読んでいる出力の属性（attributeAffects で次の出力につながる途中の属性）"""
@@ -699,7 +700,49 @@ class Translator:
                   % (ast.unparse(node), "・".join(known) or "なし"), node)
         if not a.supported:
             _fail("属性 %s は扱えません（%s）" % (a.long, a.type.split(":", 1)[-1]), node)
+        if self.kept is not None and self.top_of(a) not in self.kept:
+            # 定義に入れなかった属性（同じ名前の属性が 2 つあって外したもの）→ 名前が同じ、定義に入れた属性
+            alt = self.find_kept(a)
+            if alt is None:
+                _fail("属性 %s（%s。%d 行目で作った属性）は定義に入っていません（同じ名前の別の属性を使ったか、"
+                      "addAttribute していません）" % (ast.unparse(node), a.long, a.line), node)
+            self.notes.append("%d 行目: %s は、%d 行目で作った属性 %s として読みます（同じ名前の属性が 2 つあるため）"
+                              % (getattr(node, "lineno", 0), ast.unparse(node), alt.line, alt.long))
+            a = alt
         return a
+
+    @staticmethod
+    def top_of(a: "AttrInfo") -> "AttrInfo":
+        while a.parent is not None:
+            a = a.parent
+        return a
+
+    def find_kept(self, a: "AttrInfo") -> Optional["AttrInfo"]:
+        names = {a.long, a.short}
+        todo = list(self.kept or [])
+        best = None
+        while todo:
+            k = todo.pop(0)
+            if k.long == a.long and k.type == a.type:
+                return k
+            if best is None and names & {k.long, k.short}:
+                best = k
+            todo.extend(k.children)
+        return best
+
+    def attr_path(self, a: "AttrInfo", node) -> list:
+        """属性 → 定義の計算での道筋（配列でない compound の子は 親.子）"""
+        chain = []
+        x = a
+        while x is not None:
+            chain.append(x)
+            x = x.parent if x.parent is not None and x.parent.type == "compound" else None
+        chain.reverse()
+        for p in chain[:-1]:
+            if p.array:
+                _fail("配列の compound %s の子 %s を、要素を選ばずに読んでいます（%s.inputValue のあと child で読んでください）"
+                      % (p.long, a.long, p.long), node)
+        return [(x, None) for x in chain]
 
     @staticmethod
     def path_text(path) -> str:
@@ -1360,7 +1403,7 @@ class Translator:
         if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == self.data_name:
             if f.attr in ("inputValue", "outputValue"):
                 a = self.need_attr(e.args[0])
-                return Value("hdl", path=[(a, None)], output=f.attr == "outputValue")
+                return Value("hdl", path=self.attr_path(a, e), output=f.attr == "outputValue")
             if f.attr in ("inputArrayValue", "outputArrayValue"):
                 a = self.need_attr(e.args[0])
                 if not a.array:
@@ -1565,7 +1608,8 @@ class Translator:
                 a = args[0]
                 c = _const(a)
                 if isinstance(c, str):
-                    attr = next((x for x in self.sc.order if c in (x.long, x.short)), None)
+                    attr = next((x for x in (self.kept or []) if c in (x.long, x.short)), None) or \
+                        next((x for x in self.sc.order if c in (x.long, x.short)), None)
                     if attr is None:
                         _fail("findPlug の属性 %r が、初期化の関数で作った属性にありません" % c, e)
                     if not attr.supported:
@@ -1626,7 +1670,7 @@ class Translator:
         return info.supported and info.type != "compound" and not (info.array and idx is None)
 
     def plug_value(self, attr: "AttrInfo") -> Value:
-        return Value("hdl", path=[(attr, None)], output=False, plug=True)
+        return Value("hdl", path=self.attr_path(attr, None), output=False, plug=True)
 
     def handle_method(self, h: Value, m: str, e) -> Value:
         path = h.extra["path"]
@@ -2179,6 +2223,7 @@ def convert_source(source: str, filename: str = "plugin.py", plugin: Optional[st
                            % (a.line, a.long, a.type.split(":", 1)[-1]))
         try:
             tr = Translator(scanner, module, cls, compute)
+            tr.kept = [a for a in tops if a.supported]
             lines = tr.translate()
         except ConvertError as exc:
             r.problems.append((exc.line, str(exc)))
