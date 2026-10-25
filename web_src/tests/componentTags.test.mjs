@@ -63,6 +63,7 @@ test('再現チェックのスプライン IK の詳細: ワイヤーの上流�
   assert.deepEqual(k4.tagged, [3]);
   assert.deepEqual(k4.movedCvs, [[3, 3]]);
   assert.deepEqual(w.driver[4].movedCvs, []);           // fin_k1 のハンドルは動かない
+  assert.deepEqual(w.driver[0].points, [[0, 0, 5], [2.7, 0, 5], [5.3, 1.5, 5], [8, 3, 5]]);   // ワイヤーの CV（ワールド）
 });
 
 test('parentConstraint はターゲットの回転ピボットに、動かされるノードの回転ピボットを合わせる', () => {

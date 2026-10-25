@@ -135,7 +135,7 @@ class CurveHistoryTest(unittest.TestCase):
         self.assertIn("形を求められません", "\n".join(_spline_detail(h, {"missing": True})))
         sp["chain"] = [
             {"name": "crvShape", "type": "nurbsCurve", "attr": "ws", "out": {"cvs": 4, "start": [0, 0, 0], "end": [0, 4, 0]},
-             "fileShape": False, "cp": 0, "shown": False},
+             "fileShape": False, "cp": 0, "shown": False, "points": [[0, 0, 0], [0, 1.5, 0]]},
             {"name": "wire1", "type": "wire", "attr": "og[0]", "out": {"cvs": 4, "start": [0, 0, 0], "end": [0, 4, 0]},
              "envelope": 1.0, "tagged": 3, "deformed": 0.0,
              "wires": [{"index": 0, "wire": "drvShape", "base": "baseShape", "sameCount": True,
@@ -162,6 +162,7 @@ class CurveHistoryTest(unittest.TestCase):
         self.assertIn("影響範囲 dropoff 1.000（ファイルに値がないので既定値）", text)
         self.assertIn("★ ワイヤーがベースから動いていない", text)
         self.assertIn("画面のカーブ: 描かない", text)
+        self.assertIn("          CV: 0(0.0, 0.0, 0.0) 1(0.0, 1.5, 0.0)", text)
         self.assertIn("コンポーネントタグで動かす CV 3 個・変形するカーブの CV の最大の移動 0.000", text)
         self.assertIn("一番近い 0.500・一番遠い 3.000（影響範囲の中の CV 1 / 4 個）", text)
         self.assertIn("★ 影響範囲 dropoff（1.000）より遠い CV は", text)
