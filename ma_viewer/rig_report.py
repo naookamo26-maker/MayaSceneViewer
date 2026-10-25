@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import List, Optional, Set
 
 from .custom_nodes import FILE_NAME, template_for
@@ -123,6 +124,7 @@ def _ik_section(ms: MaScene, entry: dict) -> List[str]:
     out = ["- %s（%s）: %s" % (h.name, entry["solver"], chain)]
     if entry["problem"]:
         out.append("    ★ 再生しない: %s" % entry["problem"])
+        out.extend(_spline_curve_tree(ms, entry))
         return out
     parts = [("ハンドルの位置", lambda t: t.dag(h, "wm", 0))]
     if entry["solver"] == "ikRPsolver":
@@ -145,6 +147,76 @@ def _ik_section(ms: MaScene, entry: dict) -> List[str]:
         verdict = "★ 評価できないノードがある: %s" % "、".join(dict.fromkeys(t.bad)) if t.bad else "✓ すべて評価できる"
         out.append("  %s: %s" % (title, verdict))
         out.extend(t.lines)
+    out.extend(_spline_curve_tree(ms, entry))
+    return out
+
+
+def _spline_curve_tree(ms: MaScene, entry: dict) -> List[str]:
+    h: MaNode = entry["handle"]
+    if entry["solver"] != "ikSplineSolver" or "ic" not in h.inputs:
+        return []
+    src, sattr = h.inputs["ic"]
+    return ["  カーブの形の上流（★ は形が分からない・評価できないもの）:"] + _curve_tree(ms, src, sattr)
+
+
+# カーブの形の上流をたどる入力（ノードの型 → 入力の属性の正規表現）
+_CURVE_TREE_INPUTS = {
+    "nurbsCurve": re.compile(r"^cr$"),
+    "groupParts": re.compile(r"^ig$"),
+    "transformGeometry": re.compile(r"^(ig|txf)$"),
+    "tweak": re.compile(r"^ip\[\d+\]\.ig$"),
+    "skinCluster": re.compile(r"^ip\[\d+\]\.ig$"),
+    "cluster": re.compile(r"^ip\[\d+\]\.ig$"),
+    "wire": re.compile(r"^(ip\[\d+\]\.ig|dw\[\d+\]|bw\[\d+\])$"),
+}
+
+
+def _curve_tree(ms: MaScene, node: MaNode, attr: str, indent: str = "    ", seen=None, budget=None) -> List[str]:
+    """カーブの形が決まるまでの上流（変形・ヒストリ・wire のワイヤーとベース）を木の形で並べる"""
+    from .curve_history import PRODUCERS
+    from .rig import GEOMETRY_TYPES, parse_attrs
+    seen = set() if seen is None else seen
+    budget = [60] if budget is None else budget
+    if budget[0] <= 0:
+        return [indent + "…（多いので省略）"]
+    budget[0] -= 1
+    if id(node) in seen:
+        return [indent + "%s（%s）.%s: （上に同じ）" % (node.name, node.type, attr)]
+    seen.add(id(node))
+    if node.type == "nurbsCurve":
+        a = parse_attrs(ms.text, node)
+        cps = sum(1 for k in node.inputs if k.startswith("cp["))
+        if isinstance(a.get("cc"), list) and len(a.get("cc")) > 6:
+            how = "形 あり（ヒストリから計算）" if node.baked and "cc" in node.baked else "形 あり（ファイル）"
+            mark = "✓"
+        elif "cr" in node.inputs:
+            how, mark = "形はファイルになく、入力（create）から作る", "・"
+        else:
+            how, mark = "形がない（ファイルにも入力にもない）", "★"
+        extra = "・制御点の接続 %d 個" % cps if cps else ""
+        line = "%s %s（nurbsCurve）.%s: %s%s" % (mark, node.name, attr, how, extra)
+    elif node.type in GEOMETRY_TYPES:
+        line = "✓ %s（%s）.%s: 評価できる" % (node.name, node.type, attr)
+    elif node.type in PRODUCERS:
+        line = "✓ %s（%s）.%s: 形を作るノード（計算できる）" % (node.name, node.type, attr)
+    elif node.type in ("multMatrix", "decomposeMatrix", "composeMatrix", "inverseMatrix") or node.is_dag:
+        line = "✓ %s（%s）.%s: 行列" % (node.name, node.type, attr)
+    else:
+        line = "★ %s（%s）.%s: ビューアでは評価できない（形を作るノード・未対応のノード）" % (node.name, node.type, attr)
+    out = [indent + line]
+    pat = _CURVE_TREE_INPUTS.get(node.type)
+    if pat is not None:
+        for key in sorted(node.inputs, key=lambda k: (not k.startswith("ip["), k)):
+            if not pat.match(key):
+                continue
+            label = {"cr": "create", "ig": "入力", "txf": "行列"}.get(key, key)
+            if key.startswith("dw["):
+                label = "ワイヤー " + key
+            elif key.startswith("bw["):
+                label = "ベース " + key
+            src, sattr = node.inputs[key]
+            out.append(indent + "  ← %s:" % label)
+            out.extend(_curve_tree(ms, src, sattr, indent + "    ", seen, budget))
     return out
 
 
@@ -385,6 +457,22 @@ def _spline_detail(h: dict, sp: dict) -> List[str]:
                 out.append("          ワイヤー dw[%d] %s: %s ／ ベース bw[%d] %s: %s" % (
                     w["index"], w.get("wire") or "?", "%s → %s" % (f3(ws["start"]), f3(ws["end"])) if ws else "求められない",
                     w["index"], w.get("base") or "?", "%s → %s" % (f3(bs["start"]), f3(bs["end"])) if bs else "求められない"))
+                for label, key in (("ワイヤー", "wireInfo"), ("ベース", "baseInfo")):
+                    inf = w.get(key)
+                    shape = w.get("wireShape" if key == "wireInfo" else "baseShape")
+                    if inf is None or shape:
+                        continue
+                    if not inf.get("inGraph"):
+                        why = "リグに入っていない（たどれていない）"
+                    elif inf.get("type") != "nurbsCurve":
+                        why = "nurbsCurve ではない（%s）" % inf.get("type")
+                    elif inf.get("fileShape") and not inf.get("parsed"):
+                        why = "ファイルの形（.cc）はあるが、ビューアが読めない"
+                    elif inf.get("create"):
+                        why = "形はファイルになく、作成の入力（create）を評価できない"
+                    else:
+                        why = "形がファイルにも入力にもない"
+                    out.append("          ★ %sのカーブの形を求められない理由: %s" % (label, why))
                 if not w.get("sameCount"):
                     out.append("          ★ ワイヤーとベースの CV の数が違う（または求められない）ため、ビューアはこのワイヤーで変形しません")
                 elif w.get("moved") is not None:

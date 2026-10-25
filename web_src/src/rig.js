@@ -2110,7 +2110,16 @@ export class RigEvaluator {
           if (W && W.isCurve && B && B.isCurve && W.cvs.length === B.cvs.length) {
             moved = Math.round(Math.max(...W.cvs.map((p, k) => p.distanceTo(B.cvs[k]))) * 1e3) / 1e3;
           }
+          // カーブの形の手がかり（ファイルの形があるか・読めるか・作成の入力があるか）
+          const shapeOf = (x) => {
+            const c = x ? this.byId.get(x.node) : null;
+            if (!c) return x ? { inGraph: false } : null;
+            const cc = (c.attrs || {}).cc;
+            return { inGraph: true, type: c.type, fileShape: !!cc, parsed: !!(cc && parseNurbsCurve(cc)),
+              create: !!(c.inputs || {}).cr };
+          };
           return { index: i, wire: name(dw), base: name(bw), wireShape: ends(W), baseShape: ends(B), moved,
+            wireInfo: shapeOf(dw), baseInfo: shapeOf(bw),
             sameCount: !!(W && B && W.isCurve && B.isCurve && W.cvs.length === B.cvs.length),
             dropoff: this.num(n.id, `dds[${i}]`, 1), dropoffInFile: (n.attrs || {})[`dds[${i}]`] !== undefined };
         });
