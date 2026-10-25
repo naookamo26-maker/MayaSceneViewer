@@ -1036,8 +1036,17 @@ class Translator:
                 return Value("num", "e")
         if a in _AXES:
             return Value("vec", _AXES[a])
-        if a == "kIdentity":
-            return Value("mat", "identity()")
+        owner = _tail(e.value)
+        if a in ("kIdentity", "identity"):
+            # 単位行列など（om.MMatrix.kIdentity）。クラスが分からなければ行列とみなす
+            if owner == "MQuaternion":
+                return Value("quat", "[0.0, 0.0, 0.0, 1.0]")
+            if owner == "MEulerRotation":
+                return Value("eul", "[0.0, 0.0, 0.0]", order="0")
+            if owner == "MTransformationMatrix":
+                return Value("tm", t="[0.0, 0.0, 0.0]", r="[0.0, 0.0, 0.0]", s="[1.0, 1.0, 1.0]", order="0")
+            if owner in _MAT_CLASSES or a == "kIdentity":
+                return Value("mat", "identity()")
         if a in _ROT_ORDERS:
             return Value("num", str(_ROT_ORDERS[a]))
         if isinstance(e.value, ast.Name) and e.value.id == self.self_name:
@@ -1049,6 +1058,11 @@ class Translator:
             v = self.module.class_constant(e.value.id, a)
             if isinstance(v, (int, float)) and not isinstance(v, bool):
                 return Value("num", _num_text(v))
+        parts = _dotted(e)
+        if parts and parts[0] not in self.env and parts[0] not in (self.data_name, self.plug_name) \
+                and len(parts) >= 3 and _is_class_name(parts[-2]):
+            # om.MMatrix.xxx などのクラスの定数（名前 om が分かりません、とは言わない）
+            _fail("%s（%s の定数）は変換できません" % (".".join(parts), parts[-2]), e)
         base = self.expr(e.value)
         if a in ("x", "y", "z", "w") and base.kind in ("vec", "pt", "quat", "eul"):
             return Value("num", "%s.%s" % (base.code, a))
@@ -1501,6 +1515,16 @@ _KNOWN_CLASSES = _VEC_CLASSES | _PT_CLASSES | _MAT_CLASSES | {
 _KNOWN_FUNCTIONS = {"abs", "min", "max", "pow", "round", "float", "int", "bool", "len", "range", "print"}
 
 
+_KNOWN_CONSTANTS = ({"kIdentity", "identity", "kWorld", "kTransform", "kObject", "kPreTransform", "kPostTransform",
+                     "kInvalid", "kRadians", "kDegrees", "kCentimeters", "uiUnit", "kTolerance"}
+                    | set(_AXES) | set(_ROT_ORDERS))
+
+
+def _is_class_name(name: str) -> bool:
+    """MMatrix・MSpace などの Maya のクラスの名前らしい"""
+    return len(name) > 1 and name[0] == "M" and name[1].isupper()
+
+
 def unknown_calls(fn: ast.FunctionDef, module: "ModuleInfo") -> Dict[str, List[int]]:
     """compute の中の、解釈できない関数・メソッドの呼び出し → 行番号（実行の流れに関係なく、すべて）"""
     self_name = fn.args.args[0].arg if fn.args.args else "self"
@@ -1511,7 +1535,14 @@ def unknown_calls(fn: ast.FunctionDef, module: "ModuleInfo") -> Dict[str, List[i
         found.setdefault(name, [])
         if node.lineno not in found[name]:
             found[name].append(node.lineno)
+    funcs = {id(n.func) for n in ast.walk(fn) if isinstance(n, ast.Call)}
     for node in ast.walk(fn):
+        if isinstance(node, ast.Attribute) and id(node) not in funcs:
+            # クラスの定数（om.MMatrix.kIdentity など）
+            owner = _tail(node.value)
+            if owner and _is_class_name(owner) and node.attr not in _KNOWN_CONSTANTS:
+                add("%s.%s" % (owner, node.attr), node)
+            continue
         if not isinstance(node, ast.Call):
             continue
         f = node.func
@@ -1535,6 +1566,90 @@ def unknown_calls(fn: ast.FunctionDef, module: "ModuleInfo") -> Dict[str, List[i
             elif f.attr not in _KNOWN_METHODS:
                 add(".%s()" % f.attr, node)
     return found
+
+
+# ---------------------------------------------------------------------------
+# 別名（import … as・from … import・モジュールの先頭の 別名 = om.MVector など）
+
+def _dotted(node) -> Optional[List[str]]:
+    """om.MFnNumericData.kDouble → ["om", "MFnNumericData", "kDouble"]（名前と . だけの式でなければ None）"""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    return [node.id] + parts[::-1]
+
+
+def _dotted_expr(parts: List[str]) -> ast.expr:
+    node: ast.expr = ast.Name(id=parts[0], ctx=ast.Load())
+    for p in parts[1:]:
+        node = ast.Attribute(value=node, attr=p, ctx=ast.Load())
+    return node
+
+
+class AliasResolver(ast.NodeTransformer):
+    """別名を元の名前に戻す（変換はクラス・メソッドの名前の最後の部分と、math の名前で見るため）。
+    関数の中で同じ名前に値を入れていれば、その関数の中では置き換えない"""
+
+    def __init__(self, tree: ast.Module):
+        self.aliases: Dict[str, List[str]] = {}
+        self.stack: List[set] = []
+        modules: Dict[str, str] = {}
+        star_math = False
+        stmts = []
+        for st in tree.body:                             # try: import … except: … の中も見る
+            stmts.append(st)
+            if isinstance(st, (ast.Try, ast.If)):
+                stmts += list(st.body) + [x for h in getattr(st, "handlers", []) for x in h.body] + list(st.orelse)
+        for st in stmts:
+            if isinstance(st, ast.Import):
+                for a in st.names:
+                    if a.asname:
+                        modules[a.asname] = a.name
+                        if a.name == "math" and a.asname != "math":
+                            self.aliases[a.asname] = ["math"]
+                    else:
+                        modules[a.name.split(".")[0]] = a.name.split(".")[0]
+            elif isinstance(st, ast.ImportFrom):
+                for a in st.names:
+                    if a.name == "*":
+                        star_math = star_math or st.module == "math"
+                        continue
+                    local = a.asname or a.name
+                    if st.module == "math":
+                        self.aliases[local] = ["math", a.name]
+                    else:
+                        modules[local] = "%s.%s" % (st.module, a.name)
+                        if local != a.name:
+                            self.aliases[local] = [a.name]
+            elif isinstance(st, ast.Assign) and len(st.targets) == 1 and isinstance(st.targets[0], ast.Name):
+                parts = _dotted(st.value)
+                if parts and len(parts) >= 2 and (parts[0] in modules or parts[0] in self.aliases):
+                    root = self.aliases.get(parts[0], [parts[0]])
+                    self.aliases[st.targets[0].id] = root + parts[1:]
+        if star_math:
+            for name in _MATH | set(_MATH_RENAME) | {"pi", "e"}:
+                self.aliases.setdefault(name, ["math", name])
+
+    def resolve(self, tree: ast.Module) -> ast.Module:
+        if not self.aliases:
+            return tree
+        return ast.fix_missing_locations(self.visit(tree))
+
+    def visit_FunctionDef(self, node):
+        stored = {a.arg for a in node.args.args + node.args.kwonlyargs}
+        stored |= {n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del))}
+        self.stack.append(stored)
+        self.generic_visit(node)
+        self.stack.pop()
+        return node
+
+    def visit_Name(self, node):
+        if isinstance(node.ctx, ast.Load) and node.id in self.aliases and not any(node.id in s for s in self.stack):
+            return ast.copy_location(_dotted_expr(self.aliases[node.id]), node)
+        return node
 
 
 # ---------------------------------------------------------------------------
@@ -1705,6 +1820,7 @@ def convert_source(source: str, filename: str = "plugin.py", plugin: Optional[st
         tree = ast.parse(source, filename=filename)
     except SyntaxError as exc:
         return {}, [], ["%d 行目: プラグインの書き方の誤り（%s）" % (exc.lineno or 0, exc.msg)]
+    tree = AliasResolver(tree).resolve(tree)
     module = ModuleInfo(tree)
     regs, version, problems = module.registrations()
     if not regs and not problems:

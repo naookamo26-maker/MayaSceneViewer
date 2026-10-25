@@ -347,6 +347,72 @@ class ComputeTest(unittest.TestCase):
         data, results, _p = convert_source(api1, "t.py")
         self.assertIn("q = quat_from_euler(rotation(m, 0), 0)", data["nodes"]["testNode"]["compute"])
 
+    def test_import_aliases(self):
+        """import … as・from … import・モジュールの先頭の別名でも、別名なしと同じに変換する"""
+        with open(API2, encoding="utf-8") as f:
+            src0 = f.read()
+        base = convert_source(src0, "x.py")[0]["nodes"]
+        variants = {
+            "import math as mt": src0.replace("import math\n", "import math as mt\n").replace("math.radians", "mt.radians"),
+            "from math import radians": src0.replace("import math\n", "from math import radians\n")
+                                            .replace("math.radians", "radians"),
+            "from math import *": src0.replace("import math\n", "from math import *\n").replace("math.radians", "radians"),
+            "OpenMaya as OM2": src0.replace("import maya.api.OpenMaya as om", "import maya.api.OpenMaya as OM2")
+                                   .replace("om.", "OM2."),
+            "別名 = om.MFn…": src0.replace("EPSILON = 1e-6", "EPSILON = 1e-6\nNumAttr = om.MFnNumericAttribute\nVec = om.MVector")
+                                  .replace("nAttr = om.MFnNumericAttribute()", "nAttr = NumAttr()").replace("om.MVector(", "Vec("),
+            "from … import … as": src0.replace("import maya.api.OpenMaya as om", "import maya.api.OpenMaya as om\n"
+                                               "from maya.api.OpenMaya import MVector as Vec, MFnNumericAttribute as NumAttr")
+                                      .replace("nAttr = om.MFnNumericAttribute()", "nAttr = NumAttr()")
+                                      .replace("om.MVector(", "Vec("),
+        }
+        for name, src in variants.items():
+            with self.subTest(name=name):
+                self.assertNotEqual(src, src0)
+                nodes = convert_source(src, "x.py")[0]["nodes"]
+                self.assertEqual(set(nodes), set(base))
+                for t, spec in base.items():
+                    self.assertEqual(nodes[t]["compute"], spec["compute"], t)
+                    self.assertEqual(nodes[t]["attributes"], spec["attributes"], t)
+
+    def test_alias_shadowed_by_local(self):
+        """関数の中で同じ名前に値を入れていれば、その関数の中では別名として扱わない"""
+        src = (TEMPLATE % textwrap.indent(textwrap.dedent('''
+            mt = data.inputValue(TestNode.aIn).asDouble()
+            data.outputValue(TestNode.aOut).setDouble(mt * 2.0)
+        ''').strip("\n"), " " * 8)).replace("import math\n", "import math as mt\n")
+        data, results, _p = convert_source(src, "t.py")
+        self.assertTrue(results[0].ok, results[0].problems)
+        self.assertEqual(data["nodes"]["testNode"]["compute"], ["mt = input", "output = (mt * 2.0)"])
+
+    def test_class_constants(self):
+        """om.MMatrix.identity・kIdentity などのクラスの定数（分からない定数は、名前ではなく定数として報告する）"""
+        src = TEMPLATE.replace('TestNode.aIn = nAttr.create("input", "in", om.MFnNumericData.kDouble, 0.0)',
+                               'TestNode.aIn = tAttr.create("input", "in", om.MFnData.kMatrix)')
+        body = '''
+            dataHandle = data.inputValue(self.aIn).data()
+            if dataHandle.isNull():
+                inMat = om.MMatrix.identity
+            else:
+                inMat = om.MFnMatrixData(dataHandle).matrix()
+            q = om.MQuaternion.kIdentity
+            m = inMat * om.MMatrix.kIdentity
+            data.outputValue(TestNode.aOut).setDouble(m.getElement(3, 0) + q.w)
+        '''
+        data, results, _p = convert_source(src % textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8), "t.py")
+        r = results[0]
+        self.assertTrue(r.ok, r.problems)
+        self.assertEqual(r.unknown, {})
+        self.assertEqual(data["nodes"]["testNode"]["compute"], [
+            "dataHandle = input", "if (not connected(input)):", "    inMat = identity()", "else:", "    inMat = dataHandle",
+            "q = [0.0, 0.0, 0.0, 1.0]", "m = (inMat * identity())", "output = (element(m, 3, 0) + q.w)"])
+        body = body.replace("om.MQuaternion.kIdentity", "om.MQuaternion.kSomething")
+        data, results, _p = convert_source(src % textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8), "t.py")
+        r = results[0]
+        self.assertFalse(r.ok)
+        self.assertTrue(any("om.MQuaternion.kSomething（MQuaternion の定数）" in m for _l, m in r.problems), r.problems)
+        self.assertEqual(list(r.unknown), ["MQuaternion.kSomething"])
+
     def test_missing_output_write_is_noted(self):
         data, r = convert_compute("x = data.inputValue(TestNode.aIn).asDouble()")
         self.assertTrue(r.ok, r.problems)
