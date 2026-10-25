@@ -135,10 +135,12 @@ class CurveHistoryTest(unittest.TestCase):
         self.assertIn("形を求められません", "\n".join(_spline_detail(h, {"missing": True})))
         sp["chain"] = [
             {"name": "crvShape", "type": "nurbsCurve", "attr": "ws", "out": {"cvs": 4, "start": [0, 0, 0], "end": [0, 4, 0]},
-             "fileShape": False, "cp": 0},
+             "fileShape": False, "cp": 0, "shown": False},
             {"name": "wire1", "type": "wire", "attr": "og[0]", "out": {"cvs": 4, "start": [0, 0, 0], "end": [0, 4, 0]},
-             "envelope": 1.0, "wires": [{"index": 0, "wire": "drvShape", "base": "baseShape", "sameCount": True,
+             "envelope": 1.0, "tagged": 3, "deformed": 0.0,
+             "wires": [{"index": 0, "wire": "drvShape", "base": "baseShape", "sameCount": True,
                                          "moved": 0.0, "dropoff": 1.0, "dropoffInFile": False,
+                                         "reach": {"cvs": 4, "inside": 1, "nearest": 0.5, "farthest": 3.0},
                                          "wireShape": {"cvs": 4, "start": [0, 0, 0], "end": [0, 4, 0]},
                                          "baseShape": {"cvs": 4, "start": [0, 0, 0], "end": [0, 4, 0]}}]},
             {"name": "drv2", "type": "wire", "attr": "og[0]", "out": None, "envelope": 1.0,
@@ -153,6 +155,10 @@ class CurveHistoryTest(unittest.TestCase):
         self.assertIn("ワイヤー dw[0] drvShape: (0.000, 0.000, 0.000) → (0.000, 4.000, 0.000) ／ ベース bw[0] baseShape", text)
         self.assertIn("影響範囲 dropoff 1.000（ファイルに値がないので既定値）", text)
         self.assertIn("★ ワイヤーがベースから動いていない", text)
+        self.assertIn("画面のカーブ: 描かない", text)
+        self.assertIn("コンポーネントタグで動かす CV 3 個・変形するカーブの CV の最大の移動 0.000", text)
+        self.assertIn("一番近い 0.500・一番遠い 3.000（影響範囲の中の CV 1 / 4 個）", text)
+        self.assertIn("★ 影響範囲 dropoff（1.000）より遠い CV は", text)
         self.assertIn("★ ワイヤーとベースの CV の数が違う", text)
         self.assertIn("drv2（wire）.og[0]: 出力のカーブを求められない", text)
         self.assertIn("★ ワイヤーのカーブの形を求められない理由: 形はファイルになく、作成の入力（create）を評価できない", text)

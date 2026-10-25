@@ -451,10 +451,17 @@ def _spline_detail(h: dict, sp: dict) -> List[str]:
                 extra.append("ファイルの形 %s" % ("あり" if st.get("fileShape") else "なし"))
                 if st.get("cp"):
                     extra.append("制御点の接続 %d 個" % st["cp"])
+                if "shown" in st:
+                    extra.append("画面のカーブ: %s" % ("評価した形で毎フレーム描き直す" if st["shown"]
+                                                      else "描かない（中間オブジェクト・表示しないカーブ。画面に見えるのは別のカーブ）"))
             if st.get("txf"):
                 extra.append("txf: %s" % st["txf"])
             if st["type"] == "wire":
                 extra.append("エンベロープ %.3f" % st.get("envelope", 1))
+                if st.get("tagged") is not None:
+                    extra.append("コンポーネントタグで動かす CV %d 個" % st["tagged"])
+                if st.get("deformed") is not None:
+                    extra.append("変形するカーブの CV の最大の移動 %.3f" % st["deformed"])
             out.append("        %s（%s）.%s: %s%s" % (st["name"], st["type"], st["attr"], where,
                                                   "・" + "・".join(extra) if extra else ""))
             for w in st.get("wires") or []:
@@ -488,6 +495,13 @@ def _spline_detail(h: dict, sp: dict) -> List[str]:
                         w["moved"], w["dropoff"], "" if w.get("dropoffInFile") else "（ファイルに値がないので既定値）"))
                     if w["moved"] < 1e-6:
                         out.append("          ★ ワイヤーがベースから動いていない（ワイヤーを動かすリグが評価できていないか、保存時は動いていない）")
+                    r = w.get("reach")
+                    if r:
+                        out.append("          変形するカーブの CV とベースの距離: 一番近い %.3f・一番遠い %.3f（影響範囲の中の CV %d / %d 個）"
+                                   % (r["nearest"], r["farthest"], r["inside"], r["cvs"]))
+                        if r["inside"] < r["cvs"]:
+                            out.append("          ★ 影響範囲 dropoff（%.3f）より遠い CV は、ビューアの wire では動きません。"
+                                       "Maya の wire の dropoffDistance の値を確認してください" % w["dropoff"])
     if sp["curveLength"] + tol < sp["chainLength"]:
         out.append("      ※ カーブがチェーンより短い（%.4f < %.4f）: 届かない先のジョイントの置き方は、Maya と違うことがあります"
                    % (sp["curveLength"], sp["chainLength"]))
