@@ -136,13 +136,16 @@ class CurveHistoryTest(unittest.TestCase):
         from ma_viewer.rig_report import format_verification
         text = format_verification({"frame": 1, "handles": [
             {"handle": "tail_ik", "solver": "ikSplineSolver", "ok": False, "chain": ["a", "b", "c"],
-             "detail": {"spline": sp, "fileJoints": [[0, 0, 0], [0, 1, 0], [0, 3, 0]],
+             "detail": {"spline": dict(sp, chain=[{"name": "crvShape", "type": "nurbsCurve", "attr": "ws", "out": None,
+                                                    "fileShape": True, "cp": 0}]),
+                        "fileJoints": [[0, 0, 0], [0, 1, 0], [0, 3, 0]],
                         "evalJoints": [[0, 0, 0], [0, 2, 0], [0, 4, 0]], "handle": [0, 4, 0],
                         "fileLengths": [1.0, 2.0], "evalLengths": [2.0, 2.0]},
              "joints": [{"name": "a", "angle": 0, "roll": 0, "bend": 0, "position": 0, "ok": True}]}]})
         self.assertIn("      骨の長さ（ファイル）: 1.00、2.00", text)
         self.assertIn("      骨の長さ（計算）: 2.00、2.00", text)
         self.assertIn("      ジョイントの位置（計算）: a(0.0, 0.0, 0.0) b(0.0, 2.0, 0.0) c(0.0, 4.0, 0.0)", text)
+        self.assertLess(text.index("骨の長さ（計算）"), text.index("カーブの上流"))   # 長いカーブの上流の一覧より前に出す
         self.assertIn("形を求められません", "\n".join(_spline_detail(h, {"missing": True})))
         sp["chain"] = [
             {"name": "crvShape", "type": "nurbsCurve", "attr": "ws", "out": {"cvs": 4, "start": [0, 0, 0], "end": [0, 4, 0]},
