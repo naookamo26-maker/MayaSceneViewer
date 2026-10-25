@@ -125,6 +125,7 @@ python -m ma_viewer node-defs                                                   
 ```
 
 - 実行には Python 3.9 以降が要ります（追加のパッケージは不要）。リポジトリ（または配布した ma_viewer フォルダ）のある場所で `python -m ma_viewer …` として実行します。**exe（MayaSceneViewer.exe）はビューアだけなので、このコマンドはありません。**
+- `import maya.OpenMaya as om`・`import math as mt`・`from math import sqrt`・`from maya.api.OpenMaya import MVector as Vec`・モジュールの先頭の `NumAttr = om.MFnNumericAttribute` のような別名は、元の名前に戻してから読みます。
 - プラグインのコードは **実行しません**（Maya も不要）。Python の構文を解析して、属性と compute の計算を読みます。
 - `initializePlugin` の `registerNode` で登録したノードごとに、変換できたか（○）、できない理由（★ と行番号）、注意（※）を出します。変換できたノードだけを書き出し、1 つでも変換できなければ終了コード 1 です。
 - `plugin` はファイル名（`--plugin` で変更。.ma の `requires` の名前に合わせます）、`pluginVersion` は `MFnPlugin(obj, 作者, 版)` の版（`--version` で変更）です。

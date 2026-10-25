@@ -1538,6 +1538,90 @@ def unknown_calls(fn: ast.FunctionDef, module: "ModuleInfo") -> Dict[str, List[i
 
 
 # ---------------------------------------------------------------------------
+# 別名（import … as・from … import・モジュールの先頭の 別名 = om.MVector など）
+
+def _dotted(node) -> Optional[List[str]]:
+    """om.MFnNumericData.kDouble → ["om", "MFnNumericData", "kDouble"]（名前と . だけの式でなければ None）"""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    return [node.id] + parts[::-1]
+
+
+def _dotted_expr(parts: List[str]) -> ast.expr:
+    node: ast.expr = ast.Name(id=parts[0], ctx=ast.Load())
+    for p in parts[1:]:
+        node = ast.Attribute(value=node, attr=p, ctx=ast.Load())
+    return node
+
+
+class AliasResolver(ast.NodeTransformer):
+    """別名を元の名前に戻す（変換はクラス・メソッドの名前の最後の部分と、math の名前で見るため）。
+    関数の中で同じ名前に値を入れていれば、その関数の中では置き換えない"""
+
+    def __init__(self, tree: ast.Module):
+        self.aliases: Dict[str, List[str]] = {}
+        self.stack: List[set] = []
+        modules: Dict[str, str] = {}
+        star_math = False
+        stmts = []
+        for st in tree.body:                             # try: import … except: … の中も見る
+            stmts.append(st)
+            if isinstance(st, (ast.Try, ast.If)):
+                stmts += list(st.body) + [x for h in getattr(st, "handlers", []) for x in h.body] + list(st.orelse)
+        for st in stmts:
+            if isinstance(st, ast.Import):
+                for a in st.names:
+                    if a.asname:
+                        modules[a.asname] = a.name
+                        if a.name == "math" and a.asname != "math":
+                            self.aliases[a.asname] = ["math"]
+                    else:
+                        modules[a.name.split(".")[0]] = a.name.split(".")[0]
+            elif isinstance(st, ast.ImportFrom):
+                for a in st.names:
+                    if a.name == "*":
+                        star_math = star_math or st.module == "math"
+                        continue
+                    local = a.asname or a.name
+                    if st.module == "math":
+                        self.aliases[local] = ["math", a.name]
+                    else:
+                        modules[local] = "%s.%s" % (st.module, a.name)
+                        if local != a.name:
+                            self.aliases[local] = [a.name]
+            elif isinstance(st, ast.Assign) and len(st.targets) == 1 and isinstance(st.targets[0], ast.Name):
+                parts = _dotted(st.value)
+                if parts and len(parts) >= 2 and (parts[0] in modules or parts[0] in self.aliases):
+                    root = self.aliases.get(parts[0], [parts[0]])
+                    self.aliases[st.targets[0].id] = root + parts[1:]
+        if star_math:
+            for name in _MATH | set(_MATH_RENAME) | {"pi", "e"}:
+                self.aliases.setdefault(name, ["math", name])
+
+    def resolve(self, tree: ast.Module) -> ast.Module:
+        if not self.aliases:
+            return tree
+        return ast.fix_missing_locations(self.visit(tree))
+
+    def visit_FunctionDef(self, node):
+        stored = {a.arg for a in node.args.args + node.args.kwonlyargs}
+        stored |= {n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del))}
+        self.stack.append(stored)
+        self.generic_visit(node)
+        self.stack.pop()
+        return node
+
+    def visit_Name(self, node):
+        if isinstance(node.ctx, ast.Load) and node.id in self.aliases and not any(node.id in s for s in self.stack):
+            return ast.copy_location(_dotted_expr(self.aliases[node.id]), node)
+        return node
+
+
+# ---------------------------------------------------------------------------
 # モジュール（登録・クラス・定数）
 # ---------------------------------------------------------------------------
 
@@ -1705,6 +1789,7 @@ def convert_source(source: str, filename: str = "plugin.py", plugin: Optional[st
         tree = ast.parse(source, filename=filename)
     except SyntaxError as exc:
         return {}, [], ["%d 行目: プラグインの書き方の誤り（%s）" % (exc.lineno or 0, exc.msg)]
+    tree = AliasResolver(tree).resolve(tree)
     module = ModuleInfo(tree)
     regs, version, problems = module.registrations()
     if not regs and not problems:
