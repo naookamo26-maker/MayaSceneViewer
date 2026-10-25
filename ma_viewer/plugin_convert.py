@@ -291,8 +291,14 @@ class AttrScanner:
             a = AttrInfo(long_name, short_name, "enum", line)
             if len(args) >= 3:
                 a.default = _const(args[2])
+        elif kind == "typed":
+            # MFnTypedAttribute: 行列（MFnData.kMatrix）だけ扱える
+            t = _tail(args[2]) if len(args) >= 3 else None
+            a = AttrInfo(long_name, short_name,
+                         "matrix" if t == "kMatrix" else "unsupported:型つきの属性 %s（文字列・形状・配列のデータなど）" % t,
+                         line)
         else:
-            a = AttrInfo(long_name, short_name, "unsupported:%s の属性（文字列・形状・メッセージなど）" % kind, line)
+            a = AttrInfo(long_name, short_name, "unsupported:%s の属性（メッセージなど）" % kind, line)
         for c in a.children:
             c.component_of = a
             c.parent = a
@@ -405,6 +411,7 @@ _SETTERS_VEC = {"setMVector", "setMFloatVector", "setMPoint", "setMFloatPoint"}
 _SETTERS_SPLIT = {"set3Double", "set3Float", "set3Int", "set3Short", "set3Long", "set2Double", "set2Float",
                   "set2Int", "set2Short", "set2Long", "set4Double"}
 _SETTERS_MAT = {"setMMatrix", "setMFloatMatrix"}
+_SETTERS_OBJ = {"setMObject", "setData"}
 _SETTERS_UNIT = {"setMAngle", "setMDistance", "setMTime"}
 _IGNORED_CALLS = {"setClean", "setAllClean", "set", "print", "displayInfo", "displayWarning", "displayError",
                   "inputArrayValue", "outputArrayValue"}
@@ -567,7 +574,7 @@ class Translator:
                   % target.attr, s)
         v = self.expr(value_node)
         if isinstance(target, ast.Name):
-            if v.kind in ("hdl", "ahdl", "bld", "tm"):
+            if v.kind in ("hdl", "ahdl", "bld", "tm", "mfn"):
                 self.env[target.id] = v                  # handle・MTransformationMatrix は変数に入れず、そのまま追う
                 return
             name = self.local(target.id)
@@ -834,6 +841,13 @@ class Translator:
                 _fail("%s に行列以外を渡しています" % name, c)
             self.emit("%s = %s" % (target, v.code))
             return
+        if name in _SETTERS_OBJ and c.args:
+            # 型つきの行列の属性: handle.setMObject(MFnMatrixData().create(m))
+            v = self.expr(c.args[0])
+            if v.kind != "mobj" or info.type != "matrix":
+                _fail("%s は、行列の属性に MFnMatrixData().create(行列) を渡すときだけ変換できます" % name, c)
+            self.emit("%s = %s" % (target, v.code))
+            return
         _fail("出力の %s（%s）は変換できません" % (name, info.long), c)
 
     @staticmethod
@@ -1033,6 +1047,14 @@ class Translator:
             return self.make_vector(name, e)
         if name in _MAT_CLASSES:
             return self.make_matrix(e)
+        if name == "MFnMatrixData":
+            # 型つきの行列の属性のデータ。MFnMatrixData(handle.data()).matrix()・MFnMatrixData().create(m)
+            if not e.args:
+                return Value("mfn")
+            v = self.expr(e.args[0])
+            if v.kind != "mobj":
+                _fail("MFnMatrixData には、行列の属性の handle.data() を渡してください", e)
+            return Value("mfn", mat=v.code)
         if name == "MTransformationMatrix":
             if e.args:
                 m = self.expr(e.args[0])
@@ -1164,6 +1186,21 @@ class Translator:
             _fail("行列の %s は変換できません" % m, e)
         if k == "tm":
             return self.tm_method(base, m, e, kw)
+        if k == "mfn":
+            if m in ("matrix", "transformation"):
+                if base.extra.get("mat") is None:
+                    _fail("データを渡していない MFnMatrixData の %s を呼んでいます" % m, e)
+                if m == "matrix":
+                    return Value("mat", base.extra["mat"])
+                return Value("tm", m=base.extra["mat"], order="0")
+            if m == "create" and args:
+                v = self.expr(args[0])
+                if v.kind == "tm":
+                    v = self.tm_matrix(v)
+                if v.kind != "mat":
+                    _fail("MFnMatrixData.create に行列以外を渡しています", e)
+                return Value("mobj", v.code)
+            _fail("MFnMatrixData の %s は変換できません" % m, e)
         if k == "eul":
             order = base.extra.get("order", "0")
             if m == "asQuaternion":
@@ -1196,6 +1233,10 @@ class Translator:
         code = self.path_text(path)
         if info.array and path[-1][1] is None:
             _fail("配列の属性 %s を、要素を選ばずに読んでいます" % info.long, e)
+        if m == "data":
+            if info.type != "matrix" or h.extra.get("output"):
+                _fail("handle.data() は、入力の行列の属性（MFnMatrixData で読む）だけ変換できます", e)
+            return Value("mobj", code)
         if m in _GETTERS_NUM:
             if info.type in ND.VECTOR_TYPES or info.type in ("matrix", "compound"):
                 _fail("%s（%s）を %s で読んでいます" % (info.long, info.type, m), e)

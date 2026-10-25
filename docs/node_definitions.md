@@ -133,8 +133,8 @@ python -m ma_viewer node-defs                                                   
 | 読むもの | 内容 |
 |---|---|
 | 登録 | `registerNode(型の名前, id, 作成の関数, 初期化の関数)`。クラスの一覧をループで登録していてもよい。名前は定数・クラスの属性から |
-| 属性 | `MFnNumericAttribute`（数・`k3Double` などのベクトル・`createPoint`・`createColor`・子の属性から作る数の compound）・`MFnUnitAttribute`（角度・長さ・時間）・`MFnMatrixAttribute`・`MFnCompoundAttribute`（`addChild`）・`MFnEnumAttribute`。`array`・`writable`・`default`（API 1.0 は `setArray` など）。出力は `attributeAffects` で影響を受ける属性 |
-| 計算 | `inputValue`・`outputValue`・`inputArrayValue`・`outputArrayValue`、`child`、`asDouble`・`asFloat`・`asInt`・`asBool`・`asAngle`・`asDistance`・`asTime`・`asMatrix`・`asVector`・`asDouble3` など、`setDouble`・`set3Double`・`setMVector`・`setMMatrix`・`setMAngle` など |
+| 属性 | `MFnNumericAttribute`（数・`k3Double` などのベクトル・`createPoint`・`createColor`・子の属性から作る数の compound）・`MFnUnitAttribute`（角度・長さ・時間）・`MFnMatrixAttribute`・`MFnTypedAttribute` の行列（`MFnData.kMatrix`）・`MFnCompoundAttribute`（`addChild`）・`MFnEnumAttribute`。`array`・`writable`・`default`（API 1.0 は `setArray` など）。出力は `attributeAffects` で影響を受ける属性 |
+| 計算 | `inputValue`・`outputValue`・`inputArrayValue`・`outputArrayValue`、`child`、`asDouble`・`asFloat`・`asInt`・`asBool`・`asAngle`・`asDistance`・`asTime`・`asMatrix`・`asVector`・`asDouble3` など、`setDouble`・`set3Double`・`setMVector`・`setMMatrix`・`setMAngle` など、型つきの行列の `MFnMatrixData(handle.data()).matrix()`・`.transformation()` と `setMObject(MFnMatrixData().create(行列))` |
 | 配列 | `for i in range(len(arr))`（API 1.0 は `elementCount()`）＋ `jumpToPhysicalElement` / `jumpToArrayElement`、`while not arr.isDone(): … arr.next()`、論理番号（`elementLogicalIndex` / `elementIndex`）と `jumpToLogicalElement` / `jumpToElement`、出力の配列の `builder()`・`addElement(番号)` |
 | 値 | `MVector`・`MPoint`（`*` は内積、`^` は外積、点 × 行列）・`MMatrix`・`MTransformationMatrix`（移動・回転・スケールの取り出しと設定）・`MEulerRotation`・`MQuaternion`・`MAngle`、`math` の関数、`abs`・`min`・`max`・`round` |
 | plug | `if plug == 出力:`・`plug.parent()`・`plug.array()` による出し分けは、すべての出力を計算するものとして扱います |

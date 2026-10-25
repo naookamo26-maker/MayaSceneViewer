@@ -301,6 +301,46 @@
         "    vec = normalize(vec)",
         "normal = vec"
       ]
+    },
+    "matrixOffset": {
+      "description": "sampleRigNodesApi1.py の MatrixOffset から変換（convert-plugin 1.0）",
+      "attributes": [
+        {
+          "name": "inMatrix",
+          "short": "im",
+          "type": "matrix"
+        },
+        {
+          "name": "offset",
+          "short": "of",
+          "type": "vector",
+          "children": [
+            {
+              "name": "offsetX",
+              "short": "ofX"
+            },
+            {
+              "name": "offsetY",
+              "short": "ofY"
+            },
+            {
+              "name": "offsetZ",
+              "short": "ofZ"
+            }
+          ]
+        },
+        {
+          "name": "outMatrix",
+          "short": "om",
+          "type": "matrix",
+          "output": true
+        }
+      ],
+      "compute": [
+        "offset_ = offset",
+        "outObject = compose((translation(inMatrix) + offset_), rotation(inMatrix, 0), scale(inMatrix), 0)",
+        "outMatrix = outObject"
+      ]
     }
   }
 }
