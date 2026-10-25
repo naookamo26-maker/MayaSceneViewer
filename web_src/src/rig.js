@@ -954,10 +954,11 @@ export class RigEvaluator {
       const Wg = gp >= 0 ? this.world(gp) : IDENTITY;
       const WgInv = Wg.clone().invert();
       const attrs = g.attrs || {};
+      const only = this.maskOf(g, k);
       const cvs = c.cvs.map((local, v) => {
         const wv = attrs[`wl[${k}].w[${v}]`];
         const weight = (typeof wv === 'number' ? wv : 1) * en;
-        if (!wires.length || Math.abs(weight) < EPS) return local.clone();
+        if (!wires.length || Math.abs(weight) < EPS || (only && !only.has(v))) return local.clone();
         const p = local.clone().applyMatrix4(Wg);
         const disp = new Vector3();
         for (const { pb, pw, dds, sc } of wires) {
@@ -990,6 +991,15 @@ export class RigEvaluator {
     return out;
   }
 
+  /** コンポーネントタグで選んだ、入力 k の変形する CV の番号（Set）。選んでいなければ null（すべて） */
+  maskOf(g, k) {
+    const list = (g.mask || {})[k];
+    if (!Array.isArray(list)) return null;
+    if (!g.maskSets) g.maskSets = {};
+    if (!g.maskSets[k]) g.maskSets[k] = new Set(list);
+    return g.maskSets[k];
+  }
+
   /**
    * cluster: ハンドルの行列でカーブ（ip[k].ig）の CV を動かす。
    * Maya の p · gm · pm · ma · gm⁻¹（行ベクトル）を three.js の順で gm⁻¹ · ma · pm · gm とし、CV のウェイト（wl[k].w[v]）と
@@ -1008,9 +1018,11 @@ export class RigEvaluator {
       const gp = (g.geom || {})[k];
       const G = Array.isArray(attrs[`gm[${k}]`]) ? new Matrix4().fromArray(attrs[`gm[${k}]`]) : (gp >= 0 ? this.world(gp) : IDENTITY);
       const M = G.clone().invert().multiply(D).multiply(G);
+      const only = this.maskOf(g, k);
       const cvs = c.cvs.map((p, v) => {
         const wv = attrs[`wl[${k}].w[${v}]`];
         const w = (typeof wv === 'number' ? wv : 1) * en;
+        if (only && !only.has(v)) return p.clone();
         return Math.abs(w) < EPS ? p.clone() : p.clone().lerp(p.clone().applyMatrix4(M), w);
       });
       out[`og[${k}]`] = withCvs(c, cvs);
@@ -1176,9 +1188,10 @@ export class RigEvaluator {
       }
       return mats.get(i);
     };
+    const only = this.maskOf(g, 0);
     const cvs = c.cvs.map((p, v) => {
       const list = g.weightsOf.get(v);
-      if (!list) return p.clone();
+      if (!list || (only && !only.has(v))) return p.clone();
       const acc = new Vector3();
       let total = 0;
       for (const [i, w] of list) {

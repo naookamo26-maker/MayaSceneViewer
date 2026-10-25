@@ -57,6 +57,9 @@ ATTR_ALIASES = {
     "weightList": "wl", "weights": "w", "bindPreMatrix": "pm", "geomMatrix": "gm",
     "skinningMethod": "skm", "maxInfluences": "mi", "normalizeWeights": "nw",
     "input": "ip", "inputGeometry": "ig", "outputGeometry": "og", "groupId": "gi",
+    # コンポーネントタグ（Maya 2022 以降。デフォーマが変形する頂点・CV を名前で選ぶ）
+    "componentTagExpression": "gtg", "componentTags": "gtag", "componentTagName": "gtagnm",
+    "componentTagContents": "gtagcmp",
     "vlist": "vl", "vertex": "vt",
     "uvSet": "uvst", "uvSetName": "uvsn", "uvSetPoints": "uvsp", "currentUVSet": "cuvs",
     "instObjGroups": "iog", "objectGroups": "og", "objectGrpCompList": "gcl",
