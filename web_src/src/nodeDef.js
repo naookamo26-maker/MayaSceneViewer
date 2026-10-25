@@ -6,6 +6,7 @@
 //   * 角度はラジアン（ファイルの値・定義の既定値は度。読むときにラジアンにする）
 //   * 行列の積・点の変換は Maya と同じ行ベクトルの規約（m1 * m2 は m1 を先に掛ける）
 import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
+import { decomposeMaya } from './animation.js';
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -88,11 +89,8 @@ function pyRound(x, nd = 0) {
   return (Math.abs(y % 1) === 0.5 ? 2 * Math.round(y / 2) : r) / k;
 }
 
-const decompose = (m) => {
-  const t = new Vector3(), q = new Quaternion(), s = new Vector3();
-  mat(m, '行列の分解').decompose(t, q, s);
-  return { t, q, s };
-};
+// 鏡に映した行列は Z のスケールを負にする（Maya の MTransformationMatrix と同じ分け方）
+const decompose = (m) => decomposeMaya(mat(m, '行列の分解'));
 
 const FUNCS = {
   sin: Math.sin, cos: Math.cos, tan: Math.tan, asin: Math.asin, acos: Math.acos, atan: Math.atan, atan2: Math.atan2,
