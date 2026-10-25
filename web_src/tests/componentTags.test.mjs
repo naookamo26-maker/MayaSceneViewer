@@ -49,3 +49,18 @@ test('タグの式が "*" の cluster は全部の CV を動かす', () => {
   const xs = [0, 8 / 3, 16 / 3, 8];
   c.cvs.forEach((p, k) => assert.ok(nearVec(p, new Vector3(xs[k], 2, -5)), `CV ${k} ${p.toArray()}`));
 });
+
+test('再現チェックのスプライン IK の詳細: ワイヤーの上流の cluster（ハンドル・動かす CV）を並べる', () => {
+  const rig = at(48);
+  const h = rig.verifySaved((n) => rig.fileRestLocal(n)).find((x) => x.handle === 'fin_ik');
+  const w = h.detail.spline.chain.find((s) => s.type === 'wire').wires[0];
+  assert.deepEqual(w.driver.map((s) => s.name),
+    ['fin_drvShape', 'fin_k4', 'fin_k3', 'fin_k2', 'fin_k1', 'fin_drvShapeOrig']);
+  const k4 = w.driver[1];
+  assert.equal(k4.handle, 'fin_k4Handle.wm');
+  assert.deepEqual(k4.handlePos, [0, 3, 0]);
+  assert.equal(k4.pm, 'なし（単位行列）');
+  assert.deepEqual(k4.tagged, [3]);
+  assert.deepEqual(k4.movedCvs, [[3, 3]]);
+  assert.deepEqual(w.driver[4].movedCvs, []);           // fin_k1 のハンドルは動かない
+});

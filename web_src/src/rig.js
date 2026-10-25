@@ -2103,12 +2103,16 @@ export class RigEvaluator {
    * wire は、ワイヤー（dw）とベースワイヤー（bw）の位置・差（ワイヤーがどれだけ動いたか）・影響範囲・エンベロープも出す
    */
   curveChain(g) {
+    return this.chainFrom((g.inputs || {}).ic, 0);
+  }
+
+  /** カーブの出力 src（{ node, attr }）から上流へたどる（curveChain）。depth 0 では wire のワイヤーの上流（driver）もたどる */
+  chainFrom(src, depth) {
     const r3 = (v) => v.toArray().map((x) => Math.round(x * 1e3) / 1e3);
     const ends = (c) => (c && c.isCurve ? { cvs: c.cvs.length, start: r3(c.cvs[0]), end: r3(c.cvs[c.cvs.length - 1]) } : null);
     const steps = [];
-    let src = (g.inputs || {}).ic;
     const seen = new Set();
-    while (src && !seen.has(src.node) && steps.length < 12) {
+    while (src && !seen.has(src.node) && steps.length < 40) {
       seen.add(src.node);
       const n = this.byId.get(src.node);
       if (!n) { steps.push({ name: src.node, type: '?', attr: src.attr, missing: true }); break; }
@@ -2126,6 +2130,21 @@ export class RigEvaluator {
       } else {
         const k = this.indices(n, /^ip\[(\d+)\]\.ig$/)[0];
         next = k !== undefined ? ins[`ip[${k}].ig`] : null;
+      }
+      if (n.type === 'cluster') {
+        // ハンドル（ma の接続元）の位置と、この cluster が動かした CV（入力と出力の差）
+        const name = (x) => (x && this.byId.get(x.node) ? this.byId.get(x.node).name : null);
+        step.handle = ins.ma ? `${name(ins.ma) || '?'}.${ins.ma.attr}` : null;
+        step.handlePos = r3(new Vector3().setFromMatrixPosition(this.mat(n.id, 'ma')));
+        step.pm = ins.pm ? '接続' : ((n.attrs || {}).pm ? 'ファイルの値' : 'なし（単位行列）');
+        const k = this.indices(n, /^ip\[(\d+)\]\.ig$/)[0];
+        const a = k !== undefined ? this.plug(n.id, `ip[${k}].ig`) : null;
+        const b = k !== undefined ? this.plug(n.id, `og[${k}]`) : null;
+        if (a && b && a.isCurve && b.isCurve && a.cvs.length === b.cvs.length) {
+          step.movedCvs = a.cvs.map((p, v) => [v, Math.round(p.distanceTo(b.cvs[v]) * 1e3) / 1e3]).filter(([, d]) => d > 1e-4);
+        }
+        const only = k !== undefined ? this.maskOf(n, k) : null;
+        step.tagged = only ? [...only].sort((x, y) => x - y) : null;
       }
       if (n.type === 'wire') {
         step.envelope = this.num(n.id, 'en', 1);
@@ -2149,7 +2168,8 @@ export class RigEvaluator {
             wireInfo: shapeOf(dw), baseInfo: shapeOf(bw),
             sameCount: !!(W && B && W.isCurve && B.isCurve && W.cvs.length === B.cvs.length),
             dropoff: this.num(n.id, `dds[${i}]`, 1), dropoffInFile: (n.attrs || {})[`dds[${i}]`] !== undefined,
-            reach: B && B.isCurve ? this.wireReach(n, B, this.num(n.id, `dds[${i}]`, 1)) : null };
+            reach: B && B.isCurve ? this.wireReach(n, B, this.num(n.id, `dds[${i}]`, 1)) : null,
+            driver: depth < 1 && dw ? this.chainFrom(dw, depth + 1) : null };
         });
         // 変形するカーブを、wire が実際にどれだけ動かしたか（入力と出力の CV の最大の差。ワールド空間）
         const k = this.indices(n, /^ip\[(\d+)\]\.ig$/)[0];

@@ -441,70 +441,89 @@ def _spline_detail(h: dict, sp: dict) -> List[str]:
                    "（カーブの向き・始点が Maya と違う可能性）" % sp["rootToStart"])
     chain = sp.get("chain") or []
     if chain:
-        f3 = lambda v: "(%s)" % ", ".join("%.3f" % x for x in v)  # noqa: E731
         out.append("      カーブの上流（出力のカーブの始点 → 終点。ワールド空間の出力 ws はワールド、local はカーブのローカル）:")
-        for st in chain:
-            o = st.get("out")
-            where = "%s → %s（CV %d 個）" % (f3(o["start"]), f3(o["end"]), o["cvs"]) if o else "出力のカーブを求められない"
-            extra = []
-            if st["type"] == "nurbsCurve":
-                extra.append("ファイルの形 %s" % ("あり" if st.get("fileShape") else "なし"))
-                if st.get("cp"):
-                    extra.append("制御点の接続 %d 個" % st["cp"])
-                if "shown" in st:
-                    extra.append("画面のカーブ: %s" % ("評価した形で毎フレーム描き直す" if st["shown"]
-                                                      else "描かない（中間オブジェクト・表示しないカーブ。画面に見えるのは別のカーブ）"))
-            if st.get("txf"):
-                extra.append("txf: %s" % st["txf"])
-            if st["type"] == "wire":
-                extra.append("エンベロープ %.3f" % st.get("envelope", 1))
-                if st.get("tagged") is not None:
-                    extra.append("コンポーネントタグで動かす CV %d 個" % st["tagged"])
-                if st.get("deformed") is not None:
-                    extra.append("変形するカーブの CV の最大の移動 %.3f" % st["deformed"])
-            out.append("        %s（%s）.%s: %s%s" % (st["name"], st["type"], st["attr"], where,
-                                                  "・" + "・".join(extra) if extra else ""))
-            for w in st.get("wires") or []:
-                ws, bs = w.get("wireShape"), w.get("baseShape")
-                out.append("          ワイヤー dw[%d] %s: %s ／ ベース bw[%d] %s: %s" % (
-                    w["index"], w.get("wire") or "?", "%s → %s" % (f3(ws["start"]), f3(ws["end"])) if ws else "求められない",
-                    w["index"], w.get("base") or "?", "%s → %s" % (f3(bs["start"]), f3(bs["end"])) if bs else "求められない"))
-                for label, key in (("ワイヤー", "wireInfo"), ("ベース", "baseInfo")):
-                    inf = w.get(key)
-                    shape = w.get("wireShape" if key == "wireInfo" else "baseShape")
-                    if inf is None or shape:
-                        continue
-                    if not inf.get("inGraph"):
-                        why = "リグに入っていない（たどれていない）"
-                    elif inf.get("type") != "nurbsCurve":
-                        why = "nurbsCurve ではない（%s）" % inf.get("type")
-                    elif inf.get("fileShape") and not inf.get("parsed"):
-                        why = "ファイルの形（.cc）はあるが、ビューアが読めない"
-                    elif inf.get("createFrom"):
-                        cf = inf["createFrom"]
-                        why = "形はファイルになく、作成の入力（create）の %s（%s）をビューアで評価できない" % (cf["name"], cf["type"])
-                    elif inf.get("create"):
-                        why = "形はファイルになく、作成の入力（create）を評価できない（上流をカーブの形の上流の木で確認）"
-                    else:
-                        why = "形がファイルにも入力にもない"
-                    out.append("          ★ %sのカーブの形を求められない理由: %s" % (label, why))
-                if not w.get("sameCount"):
-                    out.append("          ★ ワイヤーとベースの CV の数が違う（または求められない）ため、ビューアはこのワイヤーで変形しません")
-                elif w.get("moved") is not None:
-                    out.append("          ワイヤーとベースの差（CV の最大の移動）%.3f・影響範囲 dropoff %.3f%s" % (
-                        w["moved"], w["dropoff"], "" if w.get("dropoffInFile") else "（ファイルに値がないので既定値）"))
-                    if w["moved"] < 1e-6:
-                        out.append("          ★ ワイヤーがベースから動いていない（ワイヤーを動かすリグが評価できていないか、保存時は動いていない）")
-                    r = w.get("reach")
-                    if r:
-                        out.append("          変形するカーブの CV とベースの距離: 一番近い %.3f・一番遠い %.3f（影響範囲の中の CV %d / %d 個）"
-                                   % (r["nearest"], r["farthest"], r["inside"], r["cvs"]))
-                        if r["inside"] < r["cvs"]:
-                            out.append("          ★ 影響範囲 dropoff（%.3f）より遠い CV は、ビューアの wire では動きません。"
-                                       "Maya の wire の dropoffDistance の値を確認してください" % w["dropoff"])
+        out.extend(_chain_lines(chain, "        "))
     if sp["curveLength"] + tol < sp["chainLength"]:
         out.append("      ※ カーブがチェーンより短い（%.4f < %.4f）: 届かない先のジョイントの置き方は、Maya と違うことがあります"
                    % (sp["curveLength"], sp["chainLength"]))
+    return out
+
+
+def _chain_lines(chain, ind: str) -> List[str]:
+    """スプライン IK のカーブの上流（rig.js の curveChain）を 1 段ずつ文章にする。wire はワイヤーの上流（driver）も字下げして並べる"""
+    out: List[str] = []
+    f3 = lambda v: "(%s)" % ", ".join("%.3f" % x for x in v)  # noqa: E731
+    for st in chain:
+        o = st.get("out")
+        where = "%s → %s（CV %d 個）" % (f3(o["start"]), f3(o["end"]), o["cvs"]) if o else "出力のカーブを求められない"
+        extra = []
+        if st["type"] == "nurbsCurve":
+            extra.append("ファイルの形 %s" % ("あり" if st.get("fileShape") else "なし"))
+            if st.get("cp"):
+                extra.append("制御点の接続 %d 個" % st["cp"])
+            if "shown" in st:
+                extra.append("画面のカーブ: %s" % ("評価した形で毎フレーム描き直す" if st["shown"]
+                                                  else "描かない（中間オブジェクト・表示しないカーブ。画面に見えるのは別のカーブ）"))
+        if st.get("txf"):
+            extra.append("txf: %s" % st["txf"])
+        if st["type"] == "wire":
+            extra.append("エンベロープ %.3f" % st.get("envelope", 1))
+            if st.get("tagged") is not None:
+                extra.append("コンポーネントタグで動かす CV %d 個" % st["tagged"])
+            if st.get("deformed") is not None:
+                extra.append("変形するカーブの CV の最大の移動 %.3f" % st["deformed"])
+        if st["type"] == "cluster":
+            extra.append("ハンドル %s の位置 %s" % (st.get("handle") or "（接続なし）", f3(st["handlePos"]) if st.get("handlePos") else "?"))
+            extra.append("bindPreMatrix: %s" % st.get("pm", "?"))
+            if st.get("tagged") is not None:
+                extra.append("タグで動かす CV: %s" % (", ".join(str(v) for v in st["tagged"][:12]) or "なし"))
+            if st.get("movedCvs") is not None:
+                mv = st["movedCvs"]
+                extra.append("動いた CV: %s" % (", ".join("%d（%.3f）" % (v, d) for v, d in mv[:12])
+                                                 + (" …" if len(mv) > 12 else "") if mv else "なし"))
+        out.append(ind + "%s（%s）.%s: %s%s" % (st["name"], st["type"], st["attr"], where,
+                                              "・" + "・".join(extra) if extra else ""))
+        for w in st.get("wires") or []:
+            ws, bs = w.get("wireShape"), w.get("baseShape")
+            out.append(ind + "  " + "ワイヤー dw[%d] %s: %s ／ ベース bw[%d] %s: %s" % (
+                w["index"], w.get("wire") or "?", "%s → %s" % (f3(ws["start"]), f3(ws["end"])) if ws else "求められない",
+                w["index"], w.get("base") or "?", "%s → %s" % (f3(bs["start"]), f3(bs["end"])) if bs else "求められない"))
+            for label, key in (("ワイヤー", "wireInfo"), ("ベース", "baseInfo")):
+                inf = w.get(key)
+                shape = w.get("wireShape" if key == "wireInfo" else "baseShape")
+                if inf is None or shape:
+                    continue
+                if not inf.get("inGraph"):
+                    why = "リグに入っていない（たどれていない）"
+                elif inf.get("type") != "nurbsCurve":
+                    why = "nurbsCurve ではない（%s）" % inf.get("type")
+                elif inf.get("fileShape") and not inf.get("parsed"):
+                    why = "ファイルの形（.cc）はあるが、ビューアが読めない"
+                elif inf.get("createFrom"):
+                    cf = inf["createFrom"]
+                    why = "形はファイルになく、作成の入力（create）の %s（%s）をビューアで評価できない" % (cf["name"], cf["type"])
+                elif inf.get("create"):
+                    why = "形はファイルになく、作成の入力（create）を評価できない（上流をカーブの形の上流の木で確認）"
+                else:
+                    why = "形がファイルにも入力にもない"
+                out.append(ind + "  " + "★ %sのカーブの形を求められない理由: %s" % (label, why))
+            if not w.get("sameCount"):
+                out.append(ind + "  " + "★ ワイヤーとベースの CV の数が違う（または求められない）ため、ビューアはこのワイヤーで変形しません")
+            elif w.get("moved") is not None:
+                out.append(ind + "  " + "ワイヤーとベースの差（CV の最大の移動）%.3f・影響範囲 dropoff %.3f%s" % (
+                    w["moved"], w["dropoff"], "" if w.get("dropoffInFile") else "（ファイルに値がないので既定値）"))
+                if w["moved"] < 1e-6:
+                    out.append(ind + "  " + "★ ワイヤーがベースから動いていない（ワイヤーを動かすリグが評価できていないか、保存時は動いていない）")
+                r = w.get("reach")
+                if r:
+                    out.append(ind + "  " + "変形するカーブの CV とベースの距離: 一番近い %.3f・一番遠い %.3f（影響範囲の中の CV %d / %d 個）"
+                               % (r["nearest"], r["farthest"], r["inside"], r["cvs"]))
+                    if r["inside"] < r["cvs"]:
+                        out.append(ind + "  " + "★ 影響範囲 dropoff（%.3f）より遠い CV は、ビューアの wire では動きません。"
+                                   "Maya の wire の dropoffDistance の値を確認してください" % w["dropoff"])
+            if w.get("driver"):
+                out.append(ind + "  " + "ワイヤー dw[%d] の上流:" % w["index"])
+                out.extend(_chain_lines(w["driver"], ind + "    "))
     return out
 
 
