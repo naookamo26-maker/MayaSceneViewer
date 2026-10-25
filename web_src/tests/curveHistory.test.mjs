@@ -65,3 +65,18 @@ test('再現チェックのスプライン IK の詳細: Maya の答え（ファ
   }).find((x) => x.handle === 'spC_ik');
   assert.ok(near(off.detail.spline.fileToCurve[0], 1, 1e-3), JSON.stringify(off.detail.spline.fileToCurve));
 });
+
+test('rootOnCurve オフ: 開始ジョイントがカーブから離れても、残りのジョイントはカーブの形をなぞって一様にずれる', () => {
+  const anim = JSON.parse(JSON.stringify(data.animation));
+  const g = anim.graph.find((x) => x.name === 'spC_ik');
+  g.attrs = { ...(g.attrs || {}), roc: 0 };
+  for (const f of [1, 12, 24]) {
+    const rig = new RigEvaluator(new AnimationClip(anim), data.nodes, (ni) => new Matrix4().fromArray(data.nodes[ni].matrix));
+    rig.evaluate(f);
+    // 開始ジョイントは (20, 0, 0) のまま。カーブは x = 20 + tx なので、チェーンは -tx ずれた位置でカーブと平行
+    for (let i = 0; i < 5; i++) {
+      const p = new Vector3().setFromMatrixPosition(rig.world(idx(`spC_${i}`)));
+      assert.ok(near(p.x, 20) && near(p.y, 2 * i) && near(p.z, 0), `フレーム ${f}: spC_${i} ${p.toArray()}`);
+    }
+  }
+});

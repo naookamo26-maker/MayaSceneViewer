@@ -1693,14 +1693,24 @@ export class RigEvaluator {
     const poly = polyline(curve);
     const roc = this.num(id, 'roc', 0) >= 0.5;
     let start, seg = 0;
+    let shift = null;
     if (roc) {
       const s = Math.min(Math.max(this.num(id, 'off', 0), 0), 1) * poly.total;
       start = pointAtLength(poly, s);
       while (seg < poly.len.length - 2 && poly.len[seg + 1] < s) seg++;
     } else {
-      start = pos[0].clone();
+      // rootOnCurve オフ: 開始ジョイントはそのまま。開始ジョイントにいちばん近いカーブ上の点から並べ、
+      // 開始ジョイントとその点のずれの分だけ、チェーン全体をずらす（カーブから離れても、カーブの形をなぞる）
       let best = Infinity;
-      poly.pts.forEach((p, k) => { const d = p.distanceToSquared(start); if (d < best) { best = d; seg = Math.max(0, k - 1); } });
+      for (let k = 0; k < poly.pts.length - 1; k++) {
+        const a = poly.pts[k], ab = new Vector3().subVectors(poly.pts[k + 1], a);
+        const t = ab.lengthSq() > 0 ? Math.max(0, Math.min(1, new Vector3().subVectors(pos[0], a).dot(ab) / ab.lengthSq())) : 0;
+        const c = a.clone().addScaledVector(ab, t);
+        const d = c.distanceToSquared(pos[0]);
+        if (d < best) { best = d; start = c; seg = k; }
+      }
+      if (!start) start = pos[0].clone();
+      shift = new Vector3().subVectors(pos[0], start);
     }
     const q = [start];
     const endDir = new Vector3().subVectors(poly.pts[poly.pts.length - 1], poly.pts[poly.pts.length - 2]).normalize();
@@ -1708,6 +1718,7 @@ export class RigEvaluator {
       const r = pointAtDistance(poly, q[i], lens[i], seg);
       if (r) { q.push(r.point); seg = r.seg; } else q.push(q[i].clone().addScaledVector(endDir, lens[i]));
     }
+    if (shift) for (const p of q) p.add(shift);
     const bones = n - 1;
     let Qnew;
     if (this.num(id, 'dtce', 0) >= 0.5 && Math.round(this.num(id, 'dwut', 0)) !== 7) {

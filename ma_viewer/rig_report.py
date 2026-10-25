@@ -347,10 +347,14 @@ def _spline_detail(h: dict, sp: dict) -> List[str]:
     out.append("      カーブからの距離（ファイル = Maya の答え）: %s" % pair(sp["fileToCurve"]))
     out.append("      カーブからの距離（計算 = ビューア）: %s" % pair(sp["evalToCurve"]))
     tol = 1e-3 * max(1.0, sp["chainLength"])
-    worst = max(sp["fileToCurve"] or [0.0])
+    dists = sp["fileToCurve"] or [0.0]
+    worst = max(dists)
     if worst <= tol:
         out.append("      → Maya のジョイントは、こちらのカーブの上にあります（カーブの形・位置は Maya と同じ）。"
                    "ずれは、ジョイントをカーブに並べる位置か、ひねりの解き方の違いです")
+    elif not sp["rootOnCurve"] and worst - min(dists) <= tol:
+        out.append("      → Maya のジョイントは、カーブの形をなぞったまま、どれもカーブから %.4f 離れています"
+                   "（rootOnCurve オフで、開始ジョイントがカーブから離れているため。ビューアも同じ解き方です）" % worst)
     else:
         out.append("      → Maya のジョイントが、こちらのカーブから最大 %.4f 離れています（カーブの形・位置が Maya と違う）。"
                    "カーブの変形（skinCluster・cluster・wire）、ヒストリから求めた形、カーブの transform の位置を疑ってください"
@@ -411,6 +415,10 @@ def format_verification(result: Optional[dict]) -> str:
             else:
                 out.append("    ✓ 肘（膝）の向き: 極ベクトル＋ひねりの入力は Maya と一致（%+.2f°）" % pe)
         det = h.get("detail")
+        if det and det.get("spline") is not None and not h["ok"]:
+            # スプライン IK は、詳細の本数の制限とは別に、カーブとジョイントの関係をいつも出す
+            out.append("    ［スプライン IK］ワールド空間")
+            out.extend(_spline_detail(h, det["spline"]))
         if det and not h["ok"] and shown_detail[0] < 3:
             shown_detail[0] += 1
             fmt3 = lambda v: "(%s)" % ", ".join("%.4f" % x for x in v)  # noqa: E731
@@ -421,8 +429,6 @@ def format_verification(result: Optional[dict]) -> str:
                 out.append("      %s: ファイル %s ／ 計算 %s" % (name, fmt3(fj) if fj else "-", fmt3(ej) if ej else "-"))
             out.append("      ハンドルの位置（計算）%s" % fmt3(det["handle"]))
             out.append("      骨の長さ: ファイル %s ／ 計算 %s" % (det["fileLengths"], det["evalLengths"]))
-            if det.get("spline") is not None:
-                out.extend(_spline_detail(h, det["spline"]))
             if det.get("pv") is not None:
                 out.append("      極ベクトル（ワールド・計算）%s・ひねり %.4f°・ikBlend %.3f"
                            % (fmt3(det["pv"]), det["twist"], det["ikBlend"]))

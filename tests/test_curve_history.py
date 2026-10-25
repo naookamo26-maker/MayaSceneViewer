@@ -119,6 +119,9 @@ class CurveHistoryTest(unittest.TestCase):
         self.assertIn("rootOnCurve なのに、Maya の開始ジョイントがこちらのカーブの始点から 0.5000 離れています", text)
         self.assertIn("カーブがチェーンより短い", text)
         self.assertIn("形を求められません", "\n".join(_spline_detail(h, {"missing": True})))
+        sp.update(fileToCurve=[0.5, 0.5, 0.5], rootOnCurve=False, curveLength=4.0)
+        text = "\n".join(_spline_detail(h, sp))
+        self.assertIn("カーブの形をなぞったまま、どれもカーブから 0.5000 離れています（rootOnCurve オフ", text)
 
     def test_unsupported_circle_options(self):
         scene, report = self.load_variant('\tsetAttr ".r" 2;', '\tsetAttr ".r" 2;\n\tsetAttr ".sw" 180;')
