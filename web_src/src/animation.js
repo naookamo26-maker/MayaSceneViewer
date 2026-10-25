@@ -188,21 +188,44 @@ const _e = new Euler();
 const _f = new Matrix4();
 
 /**
- * 行列を移動・回転・スケールに分ける（Maya の decomposeMatrix・MTransformationMatrix と同じ分け方）。
- * 鏡に映した行列（行列式が負）では、反転を Z のスケールに入れる（three.js の decompose は X に入れるので、
- * 残りの回転が Y 軸まわりに 180° ずれる）。例: diag(1, 1, −1) → 回転なし・スケール (1, 1, −1)
+ * 行列を移動・回転・スケール・せん断に分ける（Maya の decomposeMatrix・MTransformationMatrix と同じ分け方）。
+ * Maya の行列（行ベクトル）は S · Sh · R · T（Sh は行の順に (1, 0, 0)・(xy, 1, 0)・(xz, yz, 1)）。軸（three.js の列 =
+ * Maya の行）を X・Y・Z の順に直交させ（グラム・シュミット）、X 軸の向きをそのまま回転の X 軸にする。
+ * 残りはせん断 (xy, xz, yz)。three.js の decompose は軸を正規化するだけなので、せん断があると回転がずれる。
+ * 鏡に映した行列（行列式が負）は、反転を Z のスケールに入れる（three.js は X に入れる）。
+ * 例: diag(1, 1, −1) → 回転なし・スケール (1, 1, −1)
  */
-export function decomposeMaya(m, t = new Vector3(), q = new Quaternion(), s = new Vector3()) {
-  if (m.determinant() >= 0) {
-    m.decompose(t, q, s);
-    return { t, q, s };
-  }
-  const f = m.clone();
-  const e = f.elements;
-  e[8] = -e[8]; e[9] = -e[9]; e[10] = -e[10];            // Z の軸を反転してから分ける
-  f.decompose(t, q, s);
-  s.z = -s.z;
-  return { t, q, s };
+export function decomposeMaya(m, t = new Vector3(), q = new Quaternion(), s = new Vector3(), sh = new Vector3()) {
+  const e = m.elements;
+  t.set(e[12], e[13], e[14]);
+  const x = new Vector3(e[0], e[1], e[2]), y = new Vector3(e[4], e[5], e[6]), z = new Vector3(e[8], e[9], e[10]);
+  const sx = x.length();
+  if (sx < 1e-12) { m.decompose(t, q, s); sh.set(0, 0, 0); return { t, q, s, sh }; }
+  x.divideScalar(sx);
+  const dxy = y.dot(x);
+  y.addScaledVector(x, -dxy);
+  const sy = y.length();
+  if (sy < 1e-12) { m.decompose(t, q, s); sh.set(0, 0, 0); return { t, q, s, sh }; }
+  y.divideScalar(sy);
+  const dxz = z.dot(x), dyz = z.dot(y);
+  z.addScaledVector(x, -dxz).addScaledVector(y, -dyz);
+  let sz = z.length();
+  if (sz < 1e-12) { m.decompose(t, q, s); sh.set(0, 0, 0); return { t, q, s, sh }; }
+  z.divideScalar(sz);
+  if (new Vector3().crossVectors(x, y).dot(z) < 0) { sz = -sz; z.negate(); }   // 鏡に映した行列: 反転は Z
+  q.setFromRotationMatrix(new Matrix4().makeBasis(x, y, z));
+  s.set(sx, sy, sz);
+  sh.set(dxy / sy, dxz / sz, dyz / sz);
+  return { t, q, s, sh };
+}
+
+/** Maya の composeMatrix と同じ行列（行ベクトルの S · Sh · R · T）。q は回転の四元数、sh はせん断 (xy, xz, yz) */
+export function composeMaya(t, q, s, sh = [0, 0, 0], target = new Matrix4()) {
+  const R = new Matrix4().makeRotationFromQuaternion(q);
+  const Sh = new Matrix4().set(1, sh[0], sh[1], 0, 0, 1, sh[2], 0, 0, 0, 1, 0, 0, 0, 0, 1);
+  const S = new Matrix4().makeScale(s[0], s[1], s[2]);
+  target.makeTranslation(t[0], t[1], t[2]).multiply(R).multiply(Sh).multiply(S);
+  return target;
 }
 
 /**

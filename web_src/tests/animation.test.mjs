@@ -1,6 +1,6 @@
 // アニメーションの評価の検証: node --test tests/
 // 前提: python tools/make_anim_sample.py（samples/anim_sample.json と期待値を作る）
-import { Matrix4 } from 'three';
+import { Euler, Matrix4, Quaternion } from 'three';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { applyPoseSource, buildScene } from '../src/sceneBuilder.js';
 import {
-  AnimationClip, INFINITY, TANGENT, composeLocalMatrix, decodeArray, evaluateCurve, prepareCurve, worldRotationDegrees, decomposeMaya,
+  AnimationClip, INFINITY, TANGENT, composeLocalMatrix, decodeArray, evaluateCurve, prepareCurve, worldRotationDegrees, decomposeMaya, composeMaya,
 } from '../src/animation.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -169,4 +169,21 @@ test('行列の分解（Maya と同じ）: 鏡に映した行列は Z のスケ�
   // 反転のない行列は three.js の decompose と同じ
   const p = composeLocalMatrix({ t: [0, 0, 0], r: [5, 6, 7], s: [1, 2, 3], ro: 0, joint: false }, null);
   decomposeMaya(p).s.toArray().forEach((v, k) => assert.ok(Math.abs(v - [1, 2, 3][k]) < 1e-9));
+});
+
+test('行列の分解（Maya と同じ）: せん断のある行列は、せん断を分けてから回転にする（three.js の decompose とは回転が違う）', () => {
+  // Maya の transform の式（S · Sh · R · T）で組んだ行列
+  const x = { t: [1, -2, 3], r: [25, -40, 70], s: [0.4, 1.5, 2], sh: [0.3, -0.2, 0.5], ro: 0, joint: false };
+  const m = composeLocalMatrix(x, null);
+  const { t, q, s, sh } = decomposeMaya(m);
+  const want = new Quaternion().setFromEuler(new Euler(25 * Math.PI / 180, -40 * Math.PI / 180, 70 * Math.PI / 180, 'ZYX'));
+  assert.ok(Math.abs(Math.abs(q.dot(want)) - 1) < 1e-9, '回転');
+  [[t, x.t], [s, x.s], [sh, x.sh]].forEach(([got, w]) => got.toArray().forEach((v, k) => assert.ok(Math.abs(v - w[k]) < 1e-9, `${got.toArray()} != ${w}`)));
+  // composeMatrix と同じ組み立て（composeMaya）で、元の行列に戻る
+  const back = composeMaya(t.toArray(), q, s.toArray(), sh.toArray());
+  back.elements.forEach((v, k) => assert.ok(Math.abs(v - m.elements[k]) < 1e-9));
+  // three.js の decompose は、せん断があると回転がずれる
+  const q3 = new Quaternion();
+  m.decompose(new (t.constructor)(), q3, new (t.constructor)());
+  assert.ok(Math.abs(Math.abs(q3.dot(want)) - 1) > 1e-4);
 });

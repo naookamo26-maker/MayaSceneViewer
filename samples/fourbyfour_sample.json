@@ -433,6 +433,77 @@
    "drivenBy":[
     "r ← dm_mr（decomposeMatrix）"
    ]
+  },
+  {
+   "name":"jF",
+   "path":"|jF",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "r ← dm_sh（decomposeMatrix）"
+   ]
   }
  ],
  "meshes":[],
@@ -449,8 +520,8 @@
  "textures":[],
  "warnings":[],
  "stats":{
-  "nodes":6,
-  "joints":5,
+  "nodes":7,
+  "joints":6,
   "meshes":0,
   "curves":0,
   "cameras":0,
@@ -461,7 +532,7 @@
   "textures":0,
   "texturesMissing":0,
   "bindPoseNodes":0,
-  "drivenNodes":6
+  "drivenNodes":7
  },
  "animation":{
   "fps":24.0,
@@ -681,6 +752,36 @@
      0.0,
      0.0
     ]
+   },
+   {
+    "node":6,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
    }
   ],
   "graph":[
@@ -705,11 +806,11 @@
     "dag":1,
     "inputs":{
      "t":{
-      "node":12,
+      "node":15,
       "attr":"ot"
      },
      "r":{
-      "node":12,
+      "node":15,
       "attr":"or"
      }
     }
@@ -851,6 +952,64 @@
    },
    {
     "id":12,
+    "name":"jF",
+    "type":"joint",
+    "dag":6,
+    "inputs":{
+     "r":{
+      "node":14,
+      "attr":"or"
+     }
+    }
+   },
+   {
+    "id":13,
+    "name":"cm_sh",
+    "type":"composeMatrix",
+    "dag":-1,
+    "attrs":{
+     "it":[
+      1.0,
+      2.0,
+      3.0
+     ],
+     "ir":[
+      20.0,
+      -35.0,
+      60.0
+     ],
+     "is":[
+      0.5,
+      2.0,
+      1.5
+     ],
+     "ish":[
+      0.4,
+      -0.3,
+      0.2
+     ]
+    },
+    "inputs":{
+     "itx":{
+      "node":0,
+      "attr":"tx"
+     }
+    }
+   },
+   {
+    "id":14,
+    "name":"dm_sh",
+    "type":"decomposeMatrix",
+    "dag":-1,
+    "inputs":{
+     "imat":{
+      "node":13,
+      "attr":"omat"
+     }
+    }
+   },
+   {
+    "id":15,
     "name":"dm",
     "type":"decomposeMatrix",
     "dag":-1,
@@ -891,9 +1050,9 @@
    "curves":2,
    "keys":4,
    "channels":2,
-   "nodes":6,
-   "graphNodes":13,
-   "seconds":0.0016
+   "nodes":7,
+   "graphNodes":16,
+   "seconds":0.0014
   }
  }
 }
