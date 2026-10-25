@@ -580,15 +580,19 @@ def format_verification(result: Optional[dict]) -> str:
         if det and det.get("spline") is not None and not h["ok"]:
             # スプライン IK は、詳細の本数の制限とは別に、カーブとジョイントの関係をいつも出す
             out.append("    ［スプライン IK］ワールド空間")
-            out.extend(_spline_detail(h, det["spline"]))
+            lines = _spline_detail(h, det["spline"])
+            extra = []
             if det.get("fileLengths") is not None and det.get("evalLengths") is not None:
                 f1 = lambda xs: "、".join("%.2f" % x for x in xs)  # noqa: E731
-                out.append("      骨の長さ（ファイル）: %s" % f1(det["fileLengths"]))
-                out.append("      骨の長さ（計算）: %s" % f1(det["evalLengths"]))
+                extra.append("      骨の長さ（ファイル）: %s" % f1(det["fileLengths"]))
+                extra.append("      骨の長さ（計算）: %s" % f1(det["evalLengths"]))
             if det.get("evalJoints"):
-                out.append("      ジョイントの位置（計算）: %s" % " ".join(
+                extra.append("      ジョイントの位置（計算）: %s" % " ".join(
                     "%s(%s)" % (name, ", ".join("%.1f" % x for x in p))
                     for name, p in zip(h["chain"], det["evalJoints"])))
+            # カーブの上流の一覧（長い）の前に出す
+            at = next((k for k, ln in enumerate(lines) if ln.startswith("      カーブの上流")), len(lines))
+            out.extend(lines[:at] + extra + lines[at:])
         if det and not h["ok"] and shown_detail[0] < 3:
             shown_detail[0] += 1
             fmt3 = lambda v: "(%s)" % ", ".join("%.4f" % x for x in v)  # noqa: E731
