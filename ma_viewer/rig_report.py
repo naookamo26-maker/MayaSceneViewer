@@ -327,6 +327,43 @@ def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
     return "\n".join(out)
 
 
+def _spline_detail(h: dict, sp: dict) -> List[str]:
+    """スプライン IK の再現チェックの詳細と、ずれの原因の見立て"""
+    out = []
+    if sp.get("missing"):
+        out.append("      ★ スプライン IK のカーブ（ic）の形を求められません（カーブの形・変形の評価を疑う）")
+        return out
+    src = sp.get("curveFrom") or {}
+    out.append("      カーブ: %s.%s（CV %d 個・%d 次。ファイルの形 %s）%s" % (
+        src.get("name", "?"), src.get("attr", "?"), sp["cvs"], sp["degree"], "あり" if src.get("hasFileShape") else "なし",
+        "・入力 " + "・".join(src["inputs"]) if src.get("inputs") else ""))
+    out.append("      カーブの長さ %.4f ／ チェーンの長さ（ファイル）%.4f・始点 (%s)・終点 (%s)" % (
+        sp["curveLength"], sp["chainLength"], ", ".join("%.4f" % x for x in sp["start"]),
+        ", ".join("%.4f" % x for x in sp["end"])))
+    out.append("      rootOnCurve %s・offset %.4f・上級ツイスト %s" % (
+        "オン" if sp["rootOnCurve"] else "オフ", sp["offset"], "オン" if sp["advancedTwist"] else "オフ"))
+    names = h.get("chain") or []
+    pair = lambda vals: "・".join("%s %.4f" % (names[k] if k < len(names) else k, v) for k, v in enumerate(vals))  # noqa: E731
+    out.append("      カーブからの距離（ファイル = Maya の答え）: %s" % pair(sp["fileToCurve"]))
+    out.append("      カーブからの距離（計算 = ビューア）: %s" % pair(sp["evalToCurve"]))
+    tol = 1e-3 * max(1.0, sp["chainLength"])
+    worst = max(sp["fileToCurve"] or [0.0])
+    if worst <= tol:
+        out.append("      → Maya のジョイントは、こちらのカーブの上にあります（カーブの形・位置は Maya と同じ）。"
+                   "ずれは、ジョイントをカーブに並べる位置か、ひねりの解き方の違いです")
+    else:
+        out.append("      → Maya のジョイントが、こちらのカーブから最大 %.4f 離れています（カーブの形・位置が Maya と違う）。"
+                   "カーブの変形（skinCluster・cluster・wire）、ヒストリから求めた形、カーブの transform の位置を疑ってください"
+                   % worst)
+    if sp["rootOnCurve"] and sp.get("rootToStart") is not None and sp["rootToStart"] > tol:
+        out.append("      ★ rootOnCurve なのに、Maya の開始ジョイントがこちらのカーブの始点から %.4f 離れています"
+                   "（カーブの向き・始点が Maya と違う可能性）" % sp["rootToStart"])
+    if sp["curveLength"] + tol < sp["chainLength"]:
+        out.append("      ※ カーブがチェーンより短い（%.4f < %.4f）: 届かない先のジョイントの置き方は、Maya と違うことがあります"
+                   % (sp["curveLength"], sp["chainLength"]))
+    return out
+
+
 def format_verification(result: Optional[dict]) -> str:
     """ビューアの保存時のフレームの再現チェック（mayaViewer.verifyRig() の結果）を文章にする"""
     out = ["■ 保存時のフレームの再現チェック（IK）"]
@@ -384,6 +421,8 @@ def format_verification(result: Optional[dict]) -> str:
                 out.append("      %s: ファイル %s ／ 計算 %s" % (name, fmt3(fj) if fj else "-", fmt3(ej) if ej else "-"))
             out.append("      ハンドルの位置（計算）%s" % fmt3(det["handle"]))
             out.append("      骨の長さ: ファイル %s ／ 計算 %s" % (det["fileLengths"], det["evalLengths"]))
+            if det.get("spline") is not None:
+                out.extend(_spline_detail(h, det["spline"]))
             if det.get("pv") is not None:
                 out.append("      極ベクトル（ワールド・計算）%s・ひねり %.4f°・ikBlend %.3f"
                            % (fmt3(det["pv"]), det["twist"], det["ikBlend"]))

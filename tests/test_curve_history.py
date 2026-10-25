@@ -102,6 +102,24 @@ class CurveHistoryTest(unittest.TestCase):
                                            'connectAttr "rbDShape.ws" "spC_ik.ic";')
         self.assertIn("スプライン IK のカーブ rbDShape の形が分かりません（形を作るノード rbD_rebuild（rebuildCurve。", report)
 
+    def test_spline_verification_text(self):
+        """再現チェックのスプライン IK の詳細の文章: カーブの上にあるか・離れているかで見立てを変える"""
+        from ma_viewer.rig_report import _spline_detail
+        h = {"chain": ["a", "b", "c"]}
+        sp = {"curveLength": 4.0, "chainLength": 4.0, "start": [0, 0, 0], "end": [0, 4, 0], "cvs": 4, "degree": 3,
+              "fileToCurve": [0.0, 0.0002, 0.0], "evalToCurve": [0.0, 0.0, 0.0], "rootToStart": 0.0,
+              "rootOnCurve": True, "offset": 0.0, "advancedTwist": False,
+              "curveFrom": {"name": "crvShape", "attr": "ws", "inputs": ["cr ← skin（skinCluster）"], "hasFileShape": True}}
+        text = "\n".join(_spline_detail(h, sp))
+        self.assertIn("カーブ: crvShape.ws（CV 4 個・3 次。ファイルの形 あり）・入力 cr ← skin（skinCluster）", text)
+        self.assertIn("Maya のジョイントは、こちらのカーブの上にあります", text)
+        sp.update(fileToCurve=[0.5, 0.3, 0.1], rootToStart=0.5, curveLength=3.0)
+        text = "\n".join(_spline_detail(h, sp))
+        self.assertIn("こちらのカーブから最大 0.5000 離れています", text)
+        self.assertIn("rootOnCurve なのに、Maya の開始ジョイントがこちらのカーブの始点から 0.5000 離れています", text)
+        self.assertIn("カーブがチェーンより短い", text)
+        self.assertIn("形を求められません", "\n".join(_spline_detail(h, {"missing": True})))
+
     def test_unsupported_circle_options(self):
         scene, report = self.load_variant('\tsetAttr ".r" 2;', '\tsetAttr ".r" 2;\n\tsetAttr ".sw" 180;')
         self.assertNotIn("ringAShape", [c["name"] for c in scene["curves"]])

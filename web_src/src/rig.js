@@ -2009,7 +2009,59 @@ export class RigEvaluator {
         };
       });
     }
+    if (g.ik.solver === 'ikSplineSolver') detail.spline = this.splineDetail(g, filePos, evalPos);
     return { joints, reach, poleError, detail, error: joints.reduce((m, j) => Math.max(m, j.angle), 0) };
+  }
+
+  /**
+   * スプライン IK の再現チェックの詳細: Maya の答え（ファイルのジョイントの位置）が、こちらのカーブの上にあるか。
+   * 上にあれば、カーブは Maya と同じで、ずれはジョイントの並べ方（ソルバー）の違い。離れていれば、カーブの形・位置の違い
+   */
+  splineDetail(g, filePos, evalPos) {
+    const c = this.plug(g.id, 'ic');
+    if (!c || !c.isCurve) return { missing: true };
+    const { pts, total } = polyline(c, 64);
+    const seg = (p, a, b) => {
+      const ab = b.clone().sub(a);
+      const t = ab.lengthSq() > 0 ? Math.max(0, Math.min(1, p.clone().sub(a).dot(ab) / ab.lengthSq())) : 0;
+      return p.distanceTo(a.clone().addScaledVector(ab, t));
+    };
+    const toCurve = (p) => {
+      let best = Infinity;
+      for (let k = 1; k < pts.length; k++) best = Math.min(best, seg(p, pts[k - 1], pts[k]));
+      return best;
+    };
+    const r4 = (x) => Math.round(x * 1e4) / 1e4;
+    const r3 = (v) => v.toArray().map(r4);
+    const chainLength = filePos.slice(1).reduce((sum, p, k) => sum + p.distanceTo(filePos[k]), 0);
+    return {
+      curveLength: r4(total),
+      chainLength: r4(chainLength),
+      start: r3(pts[0]),
+      end: r3(pts[pts.length - 1]),
+      cvs: c.cvs.length,
+      degree: c.degree,
+      fileToCurve: filePos.map((p) => r4(toCurve(p))),
+      evalToCurve: evalPos.map((p) => r4(toCurve(p))),
+      rootToStart: filePos.length ? r4(filePos[0].distanceTo(pts[0])) : null,
+      rootOnCurve: this.num(g.id, 'roc', 0) >= 0.5,
+      offset: r4(this.num(g.id, 'off', 0)),
+      advancedTwist: this.num(g.id, 'dtce', 0) >= 0.5,
+      curveFrom: this.curveSource(g),
+    };
+  }
+
+  /** スプライン IK のカーブ（ic）が、どのノードから来ているか（カーブの名前と、形を決める入力） */
+  curveSource(g) {
+    const src = (g.inputs || {}).ic;
+    if (!src) return null;
+    const cg = this.byId.get(src.node);
+    if (!cg) return null;
+    const ins = Object.entries(cg.inputs || {}).filter(([k]) => k === 'cr' || /^cp\[/.test(k)).map(([k, v]) => {
+      const sg = this.byId.get(v.node);
+      return `${k} ← ${sg ? sg.name : '?'}（${sg ? sg.type : '?'}）`;
+    });
+    return { name: cg.name, attr: src.attr, inputs: ins.slice(0, 4), hasFileShape: !!(cg.attrs && cg.attrs.cc) };
   }
 
   /**
