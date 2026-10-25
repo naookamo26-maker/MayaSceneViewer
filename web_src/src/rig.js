@@ -133,6 +133,19 @@ const _v = new Vector3();
 const _v2 = new Vector3();
 const _s = new Vector3();
 const _q = new Quaternion();
+
+/** 折れ線 pts の、点 p に一番近い点（線分 j の割合 t と距離 d） */
+function closestOnPolyline(pts, p) {
+  let best = Infinity, bj = 0, bt = 0;
+  for (let j = 0; j < pts.length - 1; j++) {
+    const ab = _v.subVectors(pts[j + 1], pts[j]);
+    const L = ab.lengthSq();
+    const t = L > EPS ? Math.min(1, Math.max(0, _v2.subVectors(p, pts[j]).dot(ab) / L)) : 0;
+    const d = _v2.copy(pts[j]).addScaledVector(ab, t).distanceToSquared(p);
+    if (d < best) { best = d; bj = j; bt = t; }
+  }
+  return { d: Math.sqrt(best), j: bj, t: bt };
+}
 const _e = new Euler();
 const _m = new Matrix4();
 
@@ -929,6 +942,15 @@ export class RigEvaluator {
     return o;
   }
 
+  /** wire の入力 k のカーブ（ワールド空間の CV）と、ワールド行列（変形するカーブの transform） */
+  wireInput(g, k) {
+    const c = this.plug(g.id, `ip[${k}].ig`);
+    if (!c || !c.isCurve) return null;
+    const gp = (g.geom || {})[k];
+    const Wg = gp >= 0 ? this.world(gp) : IDENTITY;
+    return { curve: c, Wg, world: c.cvs.map((p) => p.clone().applyMatrix4(Wg)) };
+  }
+
   /**
    * wire: ワイヤー（dw[i]）とベースワイヤー（bw[i]）の差で、カーブ（ip[k].ig）の CV を動かす（ワールド空間で計算）。
    * CV ごとにベースワイヤーの一番近い点（パラメータ u）を求め、距離 d と影響範囲 dds[i] から重み f = (1 − (d/dds)²)²。
@@ -962,16 +984,7 @@ export class RigEvaluator {
         const p = local.clone().applyMatrix4(Wg);
         const disp = new Vector3();
         for (const { pb, pw, dds, sc } of wires) {
-          // ベースワイヤーの一番近い点（折れ線の線分 j の割合 t）
-          let best = Infinity, bj = 0, bt = 0;
-          for (let j = 0; j < pb.length - 1; j++) {
-            const ab = _v.subVectors(pb[j + 1], pb[j]);
-            const L = ab.lengthSq();
-            const t = L > EPS ? Math.min(1, Math.max(0, _v2.subVectors(p, pb[j]).dot(ab) / L)) : 0;
-            const d = _v2.copy(pb[j]).addScaledVector(ab, t).distanceToSquared(p);
-            if (d < best) { best = d; bj = j; bt = t; }
-          }
-          const d = Math.sqrt(best);
+          const { d, j: bj, t: bt } = closestOnPolyline(pb, p);
           if (dds <= EPS || d >= dds) continue;
           const x = d / dds;
           const f = (1 - x * x) * (1 - x * x);
@@ -2106,6 +2119,7 @@ export class RigEvaluator {
         next = ins.cr || null;
         step.fileShape = !!(n.attrs && n.attrs.cc);
         step.cp = Object.keys(ins).filter((k) => /^cp\[/.test(k)).length;
+        step.shown = typeof n.shape === 'number' && n.shape >= 0;   // 画面のカーブを、評価した形で描き直すか
       } else if (n.type === 'groupParts' || n.type === 'transformGeometry') {
         next = ins.ig || null;
         if (n.type === 'transformGeometry') step.txf = ins.txf ? '接続' : ((n.attrs || {}).txf ? 'ファイルの値' : '単位行列');
@@ -2134,13 +2148,34 @@ export class RigEvaluator {
           return { index: i, wire: name(dw), base: name(bw), wireShape: ends(W), baseShape: ends(B), moved,
             wireInfo: shapeOf(dw), baseInfo: shapeOf(bw),
             sameCount: !!(W && B && W.isCurve && B.isCurve && W.cvs.length === B.cvs.length),
-            dropoff: this.num(n.id, `dds[${i}]`, 1), dropoffInFile: (n.attrs || {})[`dds[${i}]`] !== undefined };
+            dropoff: this.num(n.id, `dds[${i}]`, 1), dropoffInFile: (n.attrs || {})[`dds[${i}]`] !== undefined,
+            reach: B && B.isCurve ? this.wireReach(n, B, this.num(n.id, `dds[${i}]`, 1)) : null };
         });
+        // 変形するカーブを、wire が実際にどれだけ動かしたか（入力と出力の CV の最大の差。ワールド空間）
+        const k = this.indices(n, /^ip\[(\d+)\]\.ig$/)[0];
+        const inp = k !== undefined ? this.wireInput(n, k) : null;
+        const og = k !== undefined ? this.plug(n.id, `og[${k}]`) : null;
+        if (inp && og && og.isCurve && og.cvs.length === inp.world.length) {
+          step.deformed = Math.round(Math.max(...og.cvs.map((p, v) => p.clone().applyMatrix4(inp.Wg).distanceTo(inp.world[v]))) * 1e3) / 1e3;
+        }
+        const only = k !== undefined ? this.maskOf(n, k) : null;
+        if (only) step.tagged = only.size;
       }
       steps.push(step);
       src = next;
     }
     return steps;
+  }
+
+  /** wire の変形するカーブの CV と、ベースワイヤー B との距離（影響範囲 dds の中にある CV の数・一番近い・一番遠い） */
+  wireReach(n, B, dds) {
+    const k = this.indices(n, /^ip\[(\d+)\]\.ig$/)[0];
+    const inp = k !== undefined ? this.wireInput(n, k) : null;
+    if (!inp) return null;
+    const pb = polyline(B, 32).pts;
+    const ds = inp.world.map((p) => closestOnPolyline(pb, p).d);
+    const r = (x) => Math.round(x * 1e3) / 1e3;
+    return { cvs: ds.length, inside: ds.filter((d) => d < dds).length, nearest: r(Math.min(...ds)), farthest: r(Math.max(...ds)) };
   }
 
   /** スプライン IK のカーブ（ic）が、どのノードから来ているか（カーブの名前と、形を決める入力） */

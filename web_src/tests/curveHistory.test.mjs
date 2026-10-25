@@ -108,5 +108,9 @@ test('再現チェックのスプライン IK の詳細: カーブの上流（wi
   assert.equal(w.wire, 't2_wireShape');
   assert.equal(w.base, 't2_wireBaseWireShape');
   assert.ok(w.sameCount && w.moved > 0.1, JSON.stringify(w));
+  assert.deepEqual(w.reach, { cvs: 4, inside: 4, nearest: 0, farthest: 0 });
+  assert.ok(chain[1].deformed > 0.1, JSON.stringify(chain[1]));
+  assert.equal(chain[0].shown, true);
+  assert.equal(chain[2].shown, false);                  // 中間オブジェクト（Orig）は描かない
   assert.equal(chain[2].fileShape, true);
 });
