@@ -2068,7 +2068,57 @@ export class RigEvaluator {
       offset: r4(this.num(g.id, 'off', 0)),
       advancedTwist: this.num(g.id, 'dtce', 0) >= 0.5,
       curveFrom: this.curveSource(g),
+      chain: this.curveChain(g),
     };
+  }
+
+  /**
+   * スプライン IK のカーブの上流（カーブ ← 変形 ← … ← 元のカーブ）を順にたどり、それぞれの出力のカーブの始点・終点を並べる。
+   * wire は、ワイヤー（dw）とベースワイヤー（bw）の位置・差（ワイヤーがどれだけ動いたか）・影響範囲・エンベロープも出す
+   */
+  curveChain(g) {
+    const r3 = (v) => v.toArray().map((x) => Math.round(x * 1e3) / 1e3);
+    const ends = (c) => (c && c.isCurve ? { cvs: c.cvs.length, start: r3(c.cvs[0]), end: r3(c.cvs[c.cvs.length - 1]) } : null);
+    const steps = [];
+    let src = (g.inputs || {}).ic;
+    const seen = new Set();
+    while (src && !seen.has(src.node) && steps.length < 12) {
+      seen.add(src.node);
+      const n = this.byId.get(src.node);
+      if (!n) { steps.push({ name: src.node, type: '?', attr: src.attr, missing: true }); break; }
+      const step = { name: n.name, type: n.type, attr: src.attr, out: ends(this.plug(src.node, src.attr)) };
+      const ins = n.inputs || {};
+      let next = null;
+      if (n.type === 'nurbsCurve') {
+        next = ins.cr || null;
+        step.fileShape = !!(n.attrs && n.attrs.cc);
+        step.cp = Object.keys(ins).filter((k) => /^cp\[/.test(k)).length;
+      } else if (n.type === 'groupParts' || n.type === 'transformGeometry') {
+        next = ins.ig || null;
+        if (n.type === 'transformGeometry') step.txf = ins.txf ? '接続' : ((n.attrs || {}).txf ? 'ファイルの値' : '単位行列');
+      } else {
+        const k = this.indices(n, /^ip\[(\d+)\]\.ig$/)[0];
+        next = k !== undefined ? ins[`ip[${k}].ig`] : null;
+      }
+      if (n.type === 'wire') {
+        step.envelope = this.num(n.id, 'en', 1);
+        step.wires = this.indices(n, /^dw\[(\d+)\]$/).map((i) => {
+          const W = this.plug(n.id, `dw[${i}]`), B = this.plug(n.id, `bw[${i}]`);
+          const dw = ins[`dw[${i}]`], bw = ins[`bw[${i}]`];
+          const name = (x) => (x && this.byId.get(x.node) ? this.byId.get(x.node).name : null);
+          let moved = null;
+          if (W && W.isCurve && B && B.isCurve && W.cvs.length === B.cvs.length) {
+            moved = Math.round(Math.max(...W.cvs.map((p, k) => p.distanceTo(B.cvs[k]))) * 1e3) / 1e3;
+          }
+          return { index: i, wire: name(dw), base: name(bw), wireShape: ends(W), baseShape: ends(B), moved,
+            sameCount: !!(W && B && W.isCurve && B.isCurve && W.cvs.length === B.cvs.length),
+            dropoff: this.num(n.id, `dds[${i}]`, 1), dropoffInFile: (n.attrs || {})[`dds[${i}]`] !== undefined };
+        });
+      }
+      steps.push(step);
+      src = next;
+    }
+    return steps;
   }
 
   /** スプライン IK のカーブ（ic）が、どのノードから来ているか（カーブの名前と、形を決める入力） */

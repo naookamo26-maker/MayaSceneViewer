@@ -362,6 +362,36 @@ def _spline_detail(h: dict, sp: dict) -> List[str]:
     if sp["rootOnCurve"] and sp.get("rootToStart") is not None and sp["rootToStart"] > tol:
         out.append("      ★ rootOnCurve なのに、Maya の開始ジョイントがこちらのカーブの始点から %.4f 離れています"
                    "（カーブの向き・始点が Maya と違う可能性）" % sp["rootToStart"])
+    chain = sp.get("chain") or []
+    if chain:
+        f3 = lambda v: "(%s)" % ", ".join("%.3f" % x for x in v)  # noqa: E731
+        out.append("      カーブの上流（出力のカーブの始点 → 終点。ワールド空間の出力 ws はワールド、local はカーブのローカル）:")
+        for st in chain:
+            o = st.get("out")
+            where = "%s → %s（CV %d 個）" % (f3(o["start"]), f3(o["end"]), o["cvs"]) if o else "出力のカーブを求められない"
+            extra = []
+            if st["type"] == "nurbsCurve":
+                extra.append("ファイルの形 %s" % ("あり" if st.get("fileShape") else "なし"))
+                if st.get("cp"):
+                    extra.append("制御点の接続 %d 個" % st["cp"])
+            if st.get("txf"):
+                extra.append("txf: %s" % st["txf"])
+            if st["type"] == "wire":
+                extra.append("エンベロープ %.3f" % st.get("envelope", 1))
+            out.append("        %s（%s）.%s: %s%s" % (st["name"], st["type"], st["attr"], where,
+                                                  "・" + "・".join(extra) if extra else ""))
+            for w in st.get("wires") or []:
+                ws, bs = w.get("wireShape"), w.get("baseShape")
+                out.append("          ワイヤー dw[%d] %s: %s ／ ベース bw[%d] %s: %s" % (
+                    w["index"], w.get("wire") or "?", "%s → %s" % (f3(ws["start"]), f3(ws["end"])) if ws else "求められない",
+                    w["index"], w.get("base") or "?", "%s → %s" % (f3(bs["start"]), f3(bs["end"])) if bs else "求められない"))
+                if not w.get("sameCount"):
+                    out.append("          ★ ワイヤーとベースの CV の数が違う（または求められない）ため、ビューアはこのワイヤーで変形しません")
+                elif w.get("moved") is not None:
+                    out.append("          ワイヤーとベースの差（CV の最大の移動）%.3f・影響範囲 dropoff %.3f%s" % (
+                        w["moved"], w["dropoff"], "" if w.get("dropoffInFile") else "（ファイルに値がないので既定値）"))
+                    if w["moved"] < 1e-6:
+                        out.append("          ★ ワイヤーがベースから動いていない（ワイヤーを動かすリグが評価できていないか、保存時は動いていない）")
     if sp["curveLength"] + tol < sp["chainLength"]:
         out.append("      ※ カーブがチェーンより短い（%.4f < %.4f）: 届かない先のジョイントの置き方は、Maya と違うことがあります"
                    % (sp["curveLength"], sp["chainLength"]))
