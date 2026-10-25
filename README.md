@@ -256,7 +256,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 | 計算ノード | unitConversion・pairBlend（成分ごとのモード・四元数の補間を含む）・blendColors・multiplyDivide・plusMinusAverage（1D・2D・3D）・reverse・condition・addDoubleLinear・multDoubleLinear・clamp・setRange・remapValue（値のランプ。補間なし・線形・スムーズ、スプラインはスムーズで近似）・distanceBetween（行列も使う）・vectorProduct（内積・外積・ベクトル × 行列・点 × 行列・正規化）・blendTwoAttr・blendWeighted・choice |
 | ドリブンキー | animCurveUA・UL・UU（ドライバーの値 .i でキーを引く。角度のドライバーは Maya が挟む unitConversion で度になる）。キーの目盛り・再生範囲には含めない |
 | アニメーションレイヤー | animBlendNodeAdditive・DL・DA・F・FL・FA・I16・I32・Rotation、animBlendNodeTime（入力 A × ウェイト A + 入力 B × ウェイト B。整数の型は丸める）、animBlendNodeAdditiveScale（Accumulation Mode が Scale（既定）なら A ×（1 +（B − 1）× ウェイト B）、Additive なら足し算）、animBlendNodeBoolean・Enum（ウェイト B が 0.5 以上なら B、それ以外は A）、animLayer（ウェイト .w とミュート .m を読む）。Rotation は成分ごとに足し合わせます（回転の重ね方「レイヤーごと（クォータニオン）」は未対応） |
-| 行列ノード | multMatrix（Maya と同じく i[0] · i[1] · … の順）・decomposeMatrix（回転順 .ro）・composeMatrix（オイラー角・四元数）・inverseMatrix。DAG ノードの行列の属性（worldMatrix・parentMatrix など）も入力にできる |
+| 行列ノード | multMatrix（Maya と同じく i[0] · i[1] · … の順）・decomposeMatrix（回転順 .ro）・composeMatrix（オイラー角・四元数）・inverseMatrix・fourByFourMatrix（16 個の数 i00〜i33 を行の順に並べた行列）。DAG ノードの行列の属性（worldMatrix・parentMatrix など）も入力にできる |
 | 四元数ノード | quatToEuler・eulerToQuat（回転順 .iro）・quatProd（Maya と同じく入力 1 を先に回す）・quatInvert・quatNormalize・quatSlerp |
 | expression | 式（.ixp）を解釈して評価する。入力 .I[n]・出力 .O[n]・frame・time・変数（$x。float / int）・代入（= += -= *= /= ++ --）・四則演算と %（整数どうしの割り算は切り捨て）・比較・論理・? :・if / else・for・while・数学関数（sin・cos・tan・sind など度の版・asin・acos・atan・atan2・abs・sqrt・pow・exp・log・floor・ceil・sign・min・max・clamp・smoothstep・linstep・deg_to_rad・rad_to_deg・fmod・hypot など）。フレームごとに最初から評価する。frame・time を使う式があれば、キーがなくてもタイムラインを出す |
 | cluster（カーブの変形） | ハンドルの行列（.ma）と bindPreMatrix（.pm）で CV を動かす（Maya の p · gm · pm · ma · gm⁻¹）。CV のウェイト（.wl）とエンベロープで元の位置と混ぜる。クラスタで動くワイヤーにも使える。relative（ハンドルの親の動きを除く）には未対応 |
@@ -388,6 +388,7 @@ python tests/qt_rig_test.py                             # リグ（IK・コン�
 ```
 
 自作ノードの定義のテストは `tests/test_node_defs.py`（読み込み・検証・シーンへの適用）と `web_src/tests/nodeDef.test.mjs`（評価）です。サンプルとテスト用の定義は `python tools/make_nodedef_sample.py` で作ります（`samples/nodedef_sample_defs.json`。ビューアには同梱しません）。
+fourByFourMatrix のテストは `web_src/tests/fourByFour.test.mjs` です（サンプルは `python tools/make_fourbyfour_sample.py`）。
 プラグインからの変換のテストは `tests/test_plugin_convert.py`（変換の結果・変換できない書き方・CLI）と `web_src/tests/pluginConvert.test.mjs`（変換した定義の評価をプラグインの式と比べる）です。サンプルのプラグインは `samples/plugins/`、変換した定義とシーンは `python tools/make_plugin_convert_sample.py` で作ります（`samples/plugin_convert_defs.json`・`samples/plugin_convert_sample.ma`）。
 
 画面のない Linux では `xvfb-run -a` を付けて実行します。

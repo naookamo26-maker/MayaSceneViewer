@@ -91,6 +91,7 @@ const OUTPUTS = {
   animCurveUA: /^(o|output)$/, animCurveUL: /^(o|output)$/, animCurveUU: /^(o|output)$/,
   character: /^(lv|av|uv|tv)\[\d+\]$/,
   multMatrix: /^o$/, decomposeMatrix: /^o(t|r|s|sh)[xyz]?$|^oq[xyzw]?$/, composeMatrix: /^omat$/, inverseMatrix: /^omat$/,
+  fourByFourMatrix: /^(o|output)$/,
 };
 // DAG ノードの、値が決まると行列が変わる属性
 const CHANNEL_RE = /^([trs][xyz]?|opm)$/;
@@ -759,6 +760,19 @@ export class RigEvaluator {
         break;
       }
       case 'inverseMatrix': o = { omat: this.mat(id, 'imat').clone().invert() }; break;
+      case 'fourByFourMatrix': {
+        // 16 個の数（i00〜i33 = 行・列。長い名前は in00〜in33）を、Maya の行の順に並べた行列。既定値は単位行列
+        const v = [];
+        for (let r = 0; r < 4; r++) {
+          for (let c = 0; c < 4; c++) {
+            const x = this.plug(id, `i${r}${c}`) ?? this.plug(id, `in${r}${c}`);
+            v.push(typeof x === 'number' ? x : (r === c ? 1 : 0));
+          }
+        }
+        const m = new Matrix4().fromArray(v);
+        o = { o: m, output: m };
+        break;
+      }
       case 'quatToEuler': {
         const e = new Euler().setFromQuaternion(this.quat(id, 'iq').normalize(), this.order(id, 'iro'));
         o = expand('ort', [e.x, e.y, e.z], XYZ);
