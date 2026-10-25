@@ -133,6 +133,25 @@ class CurveHistoryTest(unittest.TestCase):
         self.assertIn("rootOnCurve なのに、Maya の開始ジョイントがこちらのカーブの始点から 0.5000 離れています", text)
         self.assertIn("カーブがチェーンより短い", text)
         self.assertIn("形を求められません", "\n".join(_spline_detail(h, {"missing": True})))
+        sp["chain"] = [
+            {"name": "crvShape", "type": "nurbsCurve", "attr": "ws", "out": {"cvs": 4, "start": [0, 0, 0], "end": [0, 4, 0]},
+             "fileShape": False, "cp": 0},
+            {"name": "wire1", "type": "wire", "attr": "og[0]", "out": {"cvs": 4, "start": [0, 0, 0], "end": [0, 4, 0]},
+             "envelope": 1.0, "wires": [{"index": 0, "wire": "drvShape", "base": "baseShape", "sameCount": True,
+                                         "moved": 0.0, "dropoff": 1.0, "dropoffInFile": False,
+                                         "wireShape": {"cvs": 4, "start": [0, 0, 0], "end": [0, 4, 0]},
+                                         "baseShape": {"cvs": 4, "start": [0, 0, 0], "end": [0, 4, 0]}}]},
+            {"name": "drv2", "type": "wire", "attr": "og[0]", "out": None, "envelope": 1.0,
+             "wires": [{"index": 0, "wire": "a", "base": "b", "sameCount": False, "moved": None, "dropoff": 1.0,
+                        "dropoffInFile": True, "wireShape": None, "baseShape": None}]}]
+        text = "\n".join(_spline_detail(h, sp))
+        self.assertIn("crvShape（nurbsCurve）.ws: (0.000, 0.000, 0.000) → (0.000, 4.000, 0.000)（CV 4 個）・ファイルの形 なし", text)
+        self.assertIn("ワイヤー dw[0] drvShape: (0.000, 0.000, 0.000) → (0.000, 4.000, 0.000) ／ ベース bw[0] baseShape", text)
+        self.assertIn("影響範囲 dropoff 1.000（ファイルに値がないので既定値）", text)
+        self.assertIn("★ ワイヤーがベースから動いていない", text)
+        self.assertIn("★ ワイヤーとベースの CV の数が違う", text)
+        self.assertIn("drv2（wire）.og[0]: 出力のカーブを求められない", text)
+        del sp["chain"]
         sp.update(fileToCurve=[0.5, 0.5, 0.5], rootOnCurve=False, curveLength=4.0)
         text = "\n".join(_spline_detail(h, sp))
         self.assertIn("カーブの形をなぞったまま、どれもカーブから 0.5000 離れています（rootOnCurve オフ", text)

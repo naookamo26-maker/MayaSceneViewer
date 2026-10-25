@@ -95,3 +95,18 @@ test('リグとして動く transformGeometry（行列が接続）: スプライ
     else assert.ok(end.x > 40 + 0.1, `フレーム ${f}: 終端がコントローラーに付いてくる ${end.toArray()}`);
   }
 });
+
+test('再現チェックのスプライン IK の詳細: カーブの上流（wire のワイヤー・ベース・元のカーブ）を並べる', () => {
+  const d6 = JSON.parse(readFileSync(path.resolve(here, '../../samples/rig6_sample.json'), 'utf8'));
+  const rig = new RigEvaluator(new AnimationClip(d6.animation), d6.nodes, (ni) => new Matrix4().fromArray(d6.nodes[ni].matrix));
+  rig.evaluate(24);
+  const h = rig.verifySaved((n) => rig.fileRestLocal(n)).find((x) => x.handle === 't2_ik');
+  const chain = h.detail.spline.chain;
+  assert.deepEqual(chain.map((s) => `${s.name}:${s.type}`),
+    ['t2_curveShape:nurbsCurve', 't2_wireDef:wire', 't2_curveShapeOrig:nurbsCurve']);
+  const w = chain[1].wires[0];
+  assert.equal(w.wire, 't2_wireShape');
+  assert.equal(w.base, 't2_wireBaseWireShape');
+  assert.ok(w.sameCount && w.moved > 0.1, JSON.stringify(w));
+  assert.equal(chain[2].fileShape, true);
+});
