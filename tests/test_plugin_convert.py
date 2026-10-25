@@ -771,6 +771,20 @@ class ComputeTest(unittest.TestCase):
                          [("input", 2.0), ("output", None)])
         self.assertTrue(any("重なる" in n for n in twice.notes), twice.notes)
 
+    def test_attribute_error_lists_attributes(self):
+        """定義の検証が属性の誤りを返したら、変換した属性の一覧（長い名前・短い名前・型）を出す"""
+        from unittest import mock
+
+        def broken(*_args, **_kw):
+            raise ND.DefError("属性の名前 in が重なっています")
+        with mock.patch.object(ND, "NodeDef", broken):
+            _data, r = convert_compute("data.outputValue(TestNode.aOut).setDouble(1.0)")
+        self.assertFalse(r.ok)
+        msg = r.problems[0][1]
+        self.assertIn("属性の名前 in が重なっています", msg)
+        self.assertIn("変換した属性: input（in・double）、values（vs・double）", msg)
+        self.assertIn("output（o・double・出力）", msg)
+
     def test_unknown_attribute_message(self):
         """分からない属性は、書いたとおりの式と、作った属性の一覧つきで報告する"""
         _data, r = convert_compute("x = data.inputValue(self.aMissing).asDouble()")

@@ -2096,6 +2096,17 @@ class NodeResult:
         return self.spec is not None and not self.problems
 
 
+def _attr_summary(spec: dict) -> str:
+    """{"name": "aaa_in", "short": "in", "type": "matrix"} → aaa_in（in・matrix）"""
+    text = "%s（%s・%s%s）" % (spec["name"], spec.get("short", spec["name"]), spec.get("type", "double"),
+                            "・出力" if spec.get("output") else "")
+    kids = spec.get("children") or []
+    if kids:
+        text += "［%s］" % "・".join(k["name"] + ("/" + k["short"] if k.get("short") else "") if isinstance(k, dict)
+                                   else str(k) for k in kids)
+    return text
+
+
 def _names_of(a: AttrInfo) -> set:
     names = {a.long, a.short}
     for c in a.children:
@@ -2197,6 +2208,9 @@ def convert_source(source: str, filename: str = "plugin.py", plugin: Optional[st
             where = ""
             if exc.line and 0 < exc.line <= len(spec["compute"]):
                 where = "\n        変換した計算の %d 行目: %s" % (exc.line, spec["compute"][exc.line - 1].strip())
+            elif not exc.line:
+                # 属性の誤り（名前の重なりなど）→ 変換した属性の一覧
+                where = "\n        変換した属性: %s" % "、".join(_attr_summary(a) for a in spec["attributes"])
             r.problems.append((0, "変換した計算の検証で誤り（変換ツールの不具合の可能性があります）: %s%s"
                                % (exc.text(), where)))
             continue
