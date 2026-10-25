@@ -174,6 +174,26 @@ class CurveHistoryTest(unittest.TestCase):
                                            'connectAttr "rbDShape.ws" "spC_ik.ic";')
         self.assertIn("★ rbD_rebuild（rebuildCurve）.oc: ビューアでは評価できない", report)
 
+    def test_named_setattr_outside_block(self):
+        """カーブの形が、ノードのブロックの外にノード名つきで書かれている（setAttr "spC_curveShapeOrig.cc" …）・長い名前 .cached"""
+        line = [ln for ln in self.text.splitlines() if ln.startswith('\tsetAttr ".cc"') and "8 0;" in ln][0]
+        for name in ("cc", "cached"):
+            with self.subTest(name=name):
+                moved = self.text.replace('\tsetAttr ".io" yes;\n' + line + "\n", '\tsetAttr ".io" yes;\n', 1)
+                self.assertNotEqual(moved, self.text)
+                moved = moved.replace("// End of curve_history_sample.ma",
+                                      line.replace('\tsetAttr ".cc"', 'setAttr "spC_curveShapeOrig.%s"' % name)
+                                      + "\n// End of curve_history_sample.ma")
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = os.path.join(tmp, "named.ma")
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(moved)
+                    scene = load_ma(path, animation=True)
+                curves = {c["name"]: c for c in scene["curves"]}
+                self.assertIn("spC_curveShape", curves)
+                cvs = cvs_of(curves["spC_curveShape"]["cc"])
+                self.assertTrue(all(abs(p[0] - 20) < 1e-6 for p in cvs), cvs)
+
     def test_unsupported_circle_options(self):
         scene, report = self.load_variant('\tsetAttr ".r" 2;', '\tsetAttr ".r" 2;\n\tsetAttr ".sw" 180;')
         self.assertNotIn("ringAShape", [c["name"] for c in scene["curves"]])

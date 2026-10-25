@@ -2116,7 +2116,7 @@ export class RigEvaluator {
             if (!c) return x ? { inGraph: false } : null;
             const cc = (c.attrs || {}).cc;
             return { inGraph: true, type: c.type, fileShape: !!cc, parsed: !!(cc && parseNurbsCurve(cc)),
-              create: !!(c.inputs || {}).cr };
+              create: !!(c.inputs || {}).cr, createFrom: c.createFrom || null };
           };
           return { index: i, wire: name(dw), base: name(bw), wireShape: ends(W), baseShape: ends(B), moved,
             wireInfo: shapeOf(dw), baseInfo: shapeOf(bw),
