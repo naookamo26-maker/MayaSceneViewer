@@ -183,8 +183,11 @@ class ComputeTest(unittest.TestCase):
         ''')
         self.assertTrue(r.ok, r.problems)
         code = data["nodes"]["testNode"]["compute"]
-        self.assertIn("p = xform_point([1.0, 0.0, 0.0], compose((v * 2.0), euler_from_quat(q, 0), "
-                      "[1.0, 1.0, 1.0], 0))", code)
+        # MTransformationMatrix は変数に書き出し、変更のたびに書き直す
+        self.assertEqual(code[3:7], ["m = compose([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0], 0)",
+                                     "m = compose((v * 2.0), rotation(m, 0), scale(m), 0)",
+                                     "m = compose(translation(m), euler_from_quat(q, 0), scale(m), 0)",
+                                     "p = xform_point([1.0, 0.0, 0.0], m)"])
         self.assertEqual(code[-1], "output = (p.x + dot(v, [1.0, 0.0, 0.0]))")
 
     def test_unsupported(self):
@@ -222,7 +225,7 @@ class ComputeTest(unittest.TestCase):
         ''')
         self.assertTrue(r.ok, r.problems)
         self.assertEqual(data["nodes"]["testNode"]["compute"], [
-            "x = input", "if (x < 0.0):", "    output = 0.0", "else:", "    if not (x > 10.0):",
+            "h = input", "x = h", "if (x < 0.0):", "    output = 0.0", "else:", "    if not (x > 10.0):",
             "        output = (x * 2.0)"])
 
     def test_plug_and_isnull(self):
@@ -412,6 +415,47 @@ class ComputeTest(unittest.TestCase):
         self.assertFalse(r.ok)
         self.assertTrue(any("om.MQuaternion.kSomething（MQuaternion の定数）" in m for _l, m in r.problems), r.problems)
         self.assertEqual(list(r.unknown), ["MQuaternion.kSomething"])
+
+    def test_reused_names(self):
+        """同じ名前の使い回し・if の分かれ道ごとの代入・if の中での変更でも、Maya と同じ順に値が決まる"""
+        src = TEMPLATE.replace('TestNode.aIn = nAttr.create("input", "in", om.MFnNumericData.kDouble, 0.0)',
+                               'TestNode.aIn = tAttr.create("input", "in", om.MFnData.kMatrix)')
+        cases = {
+            # MTransformationMatrix を if の中で変更する → その分かれ道だけに効く
+            '''
+            tm = om.MTransformationMatrix(data.inputValue(TestNode.aIn).asMatrix())
+            if tm.translation(om.MSpace.kWorld).x > 0:
+                tm.setTranslation(om.MVector(0.0, 0.0, 0.0), om.MSpace.kWorld)
+            data.outputValue(TestNode.aOut).setDouble(tm.asMatrix().getElement(3, 0))
+            ''': ["tm = input", "if (translation(tm).x > 0):",
+                  "    tm = compose([0.0, 0.0, 0.0], rotation(tm, 0), scale(tm), 0)", "output = element(tm, 3, 0)"],
+            # 元の行列の変数を使い回しても、MTransformationMatrix は作った時点の行列
+            '''
+            m = data.inputValue(TestNode.aIn).asMatrix()
+            tm = om.MTransformationMatrix(m)
+            m = om.MMatrix()
+            t = tm.translation(om.MSpace.kWorld)
+            data.outputValue(TestNode.aOut).setDouble(t.x + m.getElement(3, 0))
+            ''': ["m = input", "tm = m", "m = identity()", "t = translation(tm)", "output = (t.x + element(m, 3, 0))"],
+            # if の分かれ道ごとに、同じ変数へ違う属性の handle を入れる
+            '''
+            first = data.inputValue(TestNode.aIn).asMatrix().getElement(3, 0)
+            if first > 0:
+                h = data.inputValue(TestNode.aIn)
+            else:
+                h = data.inputArrayValue(TestNode.aArr)
+                h.jumpToLogicalElement(0)
+                h = h.inputValue()
+            data.outputValue(TestNode.aOut).setDouble(first)
+            ''': ["first = element(input, 3, 0)", "if (first > 0):", "    h = input", "else:", "    h = values[0]",
+                  "output = first"],
+        }
+        for body, expect in cases.items():
+            with self.subTest(body=body):
+                data, results, _p = convert_source(
+                    src % textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8), "t.py")
+                self.assertTrue(results[0].ok, results[0].problems)
+                self.assertEqual(data["nodes"]["testNode"]["compute"], expect)
 
     def test_missing_output_write_is_noted(self):
         data, r = convert_compute("x = data.inputValue(TestNode.aIn).asDouble()")
