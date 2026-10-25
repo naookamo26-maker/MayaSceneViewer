@@ -152,6 +152,15 @@ CAMERA_KEYS = ("fl", "hfa", "vfa", "ncp", "fcp", "ow", "hfo", "vfo", "lsr", "cs"
 PROP_KEYS = {"node": VIS_KEYS, "mesh": VIS_KEYS, "camera": CAMERA_KEYS}
 
 
+def _curve_without_shape(ms: MaScene, curve: MaNode):
+    """形（.cc）が分からないカーブなら、上流で止まったノード（計算できない形を作るノード）。分かれば None"""
+    from .extract_ma import curve_shape_source
+    from .curve_history import shape_blocker
+    if curve_shape_source(ms, curve, parse_attrs(ms.text, curve))[0] is not None:
+        return None
+    return shape_blocker(ms, curve)
+
+
 def wire_shapes(ms: MaScene, wire: MaNode) -> Dict[int, MaNode]:
     """デフォーマ（wire・cluster）の出力（og[k]）の先にある、変形されるカーブ（ほかのデフォーマを経由してもよい）"""
     out: Dict[int, MaNode] = {}
@@ -323,6 +332,10 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
                 entry["problem"] = "ikRPsolver のジョイントが %d 個しかありません" % n_joints
             elif entry["solver"] == "ikSplineSolver" and (curve is None or curve[0].type != "nurbsCurve"):
                 entry["problem"] = "スプライン IK のカーブ（nurbsCurve）が見つかりません"
+            elif entry["solver"] == "ikSplineSolver" and _curve_without_shape(ms, curve[0]):
+                blocker = _curve_without_shape(ms, curve[0])
+                entry["problem"] = ("スプライン IK のカーブ %s の形が分かりません（形を作るノード %s（%s）を計算できません。"
+                                    "ヒストリを削除して保存してください）" % (curve[0].name, blocker.name, blocker.type))
             elif entry["solver"] == "ikSplineSolver":
                 entry["curve"] = curve[0]
         info.ik.append(entry)
@@ -478,7 +491,7 @@ def parse_attrs(text: str, node: MaNode, skip=(), angle_k: Optional[float] = Non
     # ノードのブロックと、リファレンスの編集で変えた属性（あとから当てるので後ろ）
     spans = [s for s in (node.span, node.espan) if s is not None]
     if not spans or not text:
-        return out
+        return dict(node.baked) if node.baked else out
     angles = set()
     if angle_k is not None:
         for a, b in spans:
@@ -526,6 +539,8 @@ def parse_attrs(text: str, node: MaNode, skip=(), angle_k: Optional[float] = Non
         out = {rename_attr(k, node.attr_map): v for k, v in out.items()}
     if node.node_def is not None:                        # 自作ノードの定義: 属性名を定義の短い名前にそろえる
         out = {node.node_def.normalize_plug(k): v for k, v in out.items()}
+    if node.baked:                                       # 読み込みで求めた属性（ヒストリから求めたカーブの形など）
+        out.update(node.baked)
     return out
 
 

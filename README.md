@@ -11,6 +11,7 @@ Maya ASCII（.ma）のモデル形状・ジョイント・スキンウェイト�
 - **ライト**: 標準（カメラに追従する平行光と環境光）と、フラット（ライトの影響なし。Maya のフラットライトと同じく、テクスチャやマテリアルの色をそのまま表示）を切り替えられます。
 - **骨の確認**: ジョイントの階層と位置を Maya 風の骨の形で表示します（初期状態では非表示。J キーかツールバーのジョイントのアイコンで切り替え）。ローカル軸（選択中のジョイントのみ、またはすべて）も表示できます。
 - **カーブの表示**: NURBS カーブ（コントローラーの形・スプライン IK のカーブなど）を線で表示します。色は Maya の描画のオーバーライド（色番号・RGB）とディスプレイレイヤーの色を使い、指定がなければ明るい灰色です。テンプレート表示は灰色、非表示のシェイプと中間オブジェクトは描きません。カーブをクリックすると、その transform を選択します（テンプレート・リファレンスのカーブは、Maya と同じくクリックでは選びません）。ツールバーのカーブのアイコンで表示を切り替えられます。アニメーションやコントローラーの移動にはそのままついていき、skinCluster や制御点の接続で形が変わるカーブは、変形した形で表示します。
+- **ヒストリのあるカーブ**: Maya はヒストリ（形を作るノード）のあるカーブの形を .ma に保存しません。ビューアは、circle（makeNurbCircle。次数 1・3、sweep 360 度）とフリーズトランスフォームなどの transformGeometry から形を計算して、表示とスプライン IK に使います。それ以外の形を作るノード（rebuildCurve など）のカーブは表示できないため、警告とリグの診断（「ヒストリのあるカーブ」）に、カーブと形を作るノードの型を出します。Maya でヒストリを削除して保存すると表示できます。
 - **選択**: ビューポートのクリックで選ぶものを、ツールバーで「オブジェクト」（既定）と「頂点」から選べます（F8 で切り替え）。オブジェクトの選択では、クリックしたメッシュの transform を選び、そのメッシュを選択の色のワイヤーで強調します。頂点の選択では、いちばん近い頂点のウェイトを表示します。右パネル（プロパティ）は、選んでいるものに関係する欄だけを出します（頂点のウェイトの欄は頂点の選択のときだけ、カメラの欄はカメラを選んだときだけ）。
   - **Maya での選択の可否**: Maya のビューポートで選べないもの（テンプレート、描画のオーバーライドやディスプレイレイヤーの表示の種類がテンプレート・リファレンスのもの。祖先の設定も引き継ぐ）は、クリックしても選びません（階層の一覧からは選べます。選択情報に理由を表示）。ツールバーの鍵のアイコン「選択の制限を無視」をオンにすると、これらもクリックで選べます。
 - **階層**: 左パネルの階層に、transform・ジョイントと、その下のメッシュを表示します。行をクリックすると選択します（メッシュの行ならそのメッシュ。右パネルの［選択］に、頂点数・スキン・UV・マテリアルとテクスチャの状態を表示）。リファレンスから読み込んだノードは、Maya のアウトライナと同じくアイコンに青い菱形の印を付け、名前空間（`armA:` など）を薄く表示します。
@@ -252,7 +253,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 | aimConstraint | aim ベクトル（.a）をターゲットへ向け、up ベクトル（.u）を world up の側に向ける。world up はシーンの上・オブジェクト（.wum の位置）・オブジェクトの回転・ベクトル（.wu）・なし。world up がなしのときと、aim と up が平行なとき（ひねりが決まらない）は、Maya と同じく親の空間で回転 0 の向き（jointOrient・rotateAxis を含む）から測る最短の回転。オフセット（.o） |
 | IK（ikRPsolver） | 2 ボーン（開始・中間・終端のジョイント）は、ハンドルに届くように余弦定理で曲げ、極ベクトル（ハンドルの親の空間。ファイルに値がなければ Maya の既定値 (0, 0, 1)）の側に肘を置き、ひねり（twist）で回す。届かないときはまっすぐ伸ばす。ikBlend で FK と混ぜる。まっすぐなチェーンは優先角（.pa）で曲げる向きを決める。3 ボーン以上は、FK の形を極ベクトルの面に合わせて回してから、面の上で FABRIK（反復の解き方）で解く（曲がり方の配分は Maya と違うことがある） |
 | IK（ikSCsolver） | 1 ボーンは、終端がハンドルの方を向くよう開始ジョイントを最短の回転で回す。2 ボーン以上は回転プレーンと同じ解き方で、極ベクトルの代わりに FK の形の側に曲げる（Maya の SC はハンドルの回転で面を決めるので、ずれることがある） |
-| IK（ikSplineSolver） | ジョイントをカーブ（.ic の nurbsCurve）に沿って並べる。骨の長さを保ち、次のジョイントはカーブの上で骨の長さだけ離れた点に置く。rootOnCurve なら開始ジョイントをカーブの始点（+ オフセット .off）に置く。向きは、最小の回転 + ひねり（roll は全体、twist は終端に向けて配分）。上級ツイスト（dtce）は world up（シーンの上・オブジェクト・オブジェクトの回転・ベクトル）に up 軸（.dwua）を向け、forward 軸（.dfa）を骨の向きに合わせる。始点と終点を使う種類は、始点の up を骨に沿って運び、終点の up とのなす角（ひねり）を始点からの長さに比例して配る（向きの差が大きくても途中で潰れない）。up 軸の Closest は、＋と−のうち world up に近い方を使う。カーブは、ファイルの形（.cc）、skinCluster・wire による変形、制御点（controlPoints）への接続（ロケーターの worldPosition など）で決まる |
+| IK（ikSplineSolver） | ジョイントをカーブ（.ic の nurbsCurve）に沿って並べる。骨の長さを保ち、次のジョイントはカーブの上で骨の長さだけ離れた点に置く。rootOnCurve なら開始ジョイントをカーブの始点（+ オフセット .off）に置く。向きは、最小の回転 + ひねり（roll は全体、twist は終端に向けて配分）。上級ツイスト（dtce）は world up（シーンの上・オブジェクト・オブジェクトの回転・ベクトル）に up 軸（.dwua）を向け、forward 軸（.dfa）を骨の向きに合わせる。始点と終点を使う種類は、始点の up を骨に沿って運び、終点の up とのなす角（ひねり）を始点からの長さに比例して配る（向きの差が大きくても途中で潰れない）。up 軸の Closest は、＋と−のうち world up に近い方を使う。カーブは、ファイルの形（.cc）、ヒストリ（circle・transformGeometry から計算した形）、skinCluster・wire による変形、制御点（controlPoints）への接続（ロケーターの worldPosition など）で決まる |
 | 計算ノード | unitConversion・pairBlend（成分ごとのモード・四元数の補間を含む）・blendColors・multiplyDivide・plusMinusAverage（1D・2D・3D）・reverse・condition・addDoubleLinear・multDoubleLinear・clamp・setRange・remapValue（値のランプ。補間なし・線形・スムーズ、スプラインはスムーズで近似）・distanceBetween（行列も使う）・vectorProduct（内積・外積・ベクトル × 行列・点 × 行列・正規化）・blendTwoAttr・blendWeighted・choice |
 | ドリブンキー | animCurveUA・UL・UU（ドライバーの値 .i でキーを引く。角度のドライバーは Maya が挟む unitConversion で度になる）。キーの目盛り・再生範囲には含めない |
 | アニメーションレイヤー | animBlendNodeAdditive・DL・DA・F・FL・FA・I16・I32・Rotation、animBlendNodeTime（入力 A × ウェイト A + 入力 B × ウェイト B。整数の型は丸める）、animBlendNodeAdditiveScale（Accumulation Mode が Scale（既定）なら A ×（1 +（B − 1）× ウェイト B）、Additive なら足し算）、animBlendNodeBoolean・Enum（ウェイト B が 0.5 以上なら B、それ以外は A）、animLayer（ウェイト .w とミュート .m を読む）。Rotation は成分ごとに足し合わせます（回転の重ね方「レイヤーごと（クォータニオン）」は未対応） |
@@ -337,6 +338,7 @@ maya_ma_viewer/
 │  ├─ trax.py             キャラクターセットと Trax のクリップ（clipLibrary・clipScheduler・animClip）
 │  ├─ expression.py       expression の式が解釈できるかの判定
 │  ├─ custom_nodes.py     自作ノードの割り当て（設定ファイル）
+│  ├─ curve_history.py    カーブのヒストリ（circle などの形を作るノード）から形を求める
 │  ├─ node_defs.py        自作ノードの定義の読み込み・計算の検証と IR への変換（node_defs/ に同梱した定義）
 │  ├─ plugin_convert.py   Python のノードプラグイン → 自作ノードの定義（convert-plugin）
 │  ├─ rig_report.py       リグの診断
@@ -388,6 +390,7 @@ python tests/qt_rig_test.py                             # リグ（IK・コン�
 ```
 
 自作ノードの定義のテストは `tests/test_node_defs.py`（読み込み・検証・シーンへの適用）と `web_src/tests/nodeDef.test.mjs`（評価）です。サンプルとテスト用の定義は `python tools/make_nodedef_sample.py` で作ります（`samples/nodedef_sample_defs.json`。ビューアには同梱しません）。
+ヒストリのあるカーブのテストは `tests/test_curve_history.py`（形の計算・警告・リグの診断）と `web_src/tests/curveHistory.test.mjs`（表示とスプライン IK）です（サンプルは `python tools/make_curve_history_sample.py`）。
 fourByFourMatrix のテストは `web_src/tests/fourByFour.test.mjs` です（サンプルは `python tools/make_fourbyfour_sample.py`）。
 プラグインからの変換のテストは `tests/test_plugin_convert.py`（変換の結果・変換できない書き方・CLI）と `web_src/tests/pluginConvert.test.mjs`（変換した定義の評価をプラグインの式と比べる）です。サンプルのプラグインは `samples/plugins/`、変換した定義とシーンは `python tools/make_plugin_convert_sample.py` で作ります（`samples/plugin_convert_defs.json`・`samples/plugin_convert_sample.ma`）。
 

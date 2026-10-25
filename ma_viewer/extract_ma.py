@@ -437,7 +437,11 @@ def render_settings(ms: MaScene) -> dict:
 def curve_entry(ms: MaScene, n: MaNode, a: dict, t_idx: int) -> Optional[dict]:
     cc, from_input = curve_shape_source(ms, n, a)
     if cc is None:
-        ms.warn("%s: カーブの形（.cc）が見つからないため表示しません（ヒストリを削除して保存してください）" % n.name,
+        from .curve_history import shape_blocker
+        blocker = shape_blocker(ms, n)
+        why = ("形を作るノード %s（%s）をビューアで計算できない" % (blocker.name, blocker.type) if blocker is not None
+               else "カーブの形（.cc）が保存されていない")
+        ms.warn("%s: %sため表示しません（スプライン IK などにも使えません。ヒストリを削除して保存してください）" % (n.name, why),
                 key="#カーブの形なし", limit=10)
         return None
     if _num(cc[0]) < 1:
@@ -1057,6 +1061,14 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     for t, why in sorted(ms.node_defs.errors.items()):
         if t.endswith(".json") or any(n.type == t for n in ms.nodes):
             ms.warn("自作ノードの定義 %s を使えません: %s" % (t, why), key="#自作ノードの定義の誤り " + t)
+    # カーブのヒストリ（circle などの形を作るノード）: 計算できるものは、カーブの形（.cc）にする
+    from .curve_history import bake_curve_history
+    curve_problems = bake_curve_history(ms)
+    if ms.curve_history_baked:
+        ms.warn("ヒストリのあるカーブ %d 本の形を、形を作るノード（circle など）から計算しました。" % ms.curve_history_baked)
+    if curve_problems:
+        ms.warn("形を計算できないカーブがあります（形を作るノードの型: %s）。Maya でヒストリを削除して保存すると表示できます。"
+                % "、".join("%s %d 本" % (t, len(v)) for t, v in sorted(curve_problems.items(), key=lambda kv: -len(kv[1]))))
     # 自作のトランスフォームノード（プラグイン）は transform として扱う
     ms.custom_transforms = promote_custom_transforms(ms)
     for t, names in sorted(ms.custom_transforms.items()):

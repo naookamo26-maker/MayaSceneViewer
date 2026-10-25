@@ -190,7 +190,7 @@ def _sparse_into(weights: Dict[int, Dict[int, float]], a: int, b: int, vals) -> 
 class MaNode:
     __slots__ = ("name", "type", "parent", "children", "path", "order", "is_dag",
                  "xattrs", "mesh", "skin", "tweak", "inputs", "raw", "skip_attrs", "span", "attr_map", "ns", "espan",
-                 "node_def")
+                 "node_def", "baked")
 
     def __init__(self, name: str, node_type: str, parent: Optional["MaNode"], order: int, ns: str = ""):
         self.name = name
@@ -212,6 +212,7 @@ class MaNode:
         self.ns = ns                                    # リファレンスから読んだノードなら、その名前の前置き（"rig:"）
         self.espan: Optional[Tuple[int, int]] = None    # リファレンスの編集で変えた属性（setAttr を並べた範囲）
         self.node_def = None                            # 自作ノードの定義（node_defs.NodeDef）で評価するとき
+        self.baked: Optional[Dict[str, object]] = None  # 読み込みで求めた属性（ヒストリから求めたカーブの形 cc など）
 
     @property
     def is_shape(self) -> bool:
