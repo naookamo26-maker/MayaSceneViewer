@@ -1164,10 +1164,18 @@ class ViewerApp {
       normalizeSetting: e.data.skin ? (e.data.skin.normalize ?? 1) : null,
       normalized: e.skin ? e.skin.normalize : false,
     }));
+    // このノードがカメラの transform なら、いまのフレームの値（キー・リグで決まる焦点距離など）
+    const cameras = [];
+    this.cameras.forEach((cam, ci) => {
+      if (cam.transform !== ni) return;
+      const over = this.cameraProps.get(ci);
+      cameras.push({ index: ci, cam, p: cameraParams(cam, over), animated: over ? Object.keys(over) : [],
+        viewing: ci === this.viewCamera, render: this.data.render });
+    });
     return {
       node: n,
       worldPos: _v.setFromMatrixPosition(obj.matrixWorld).toArray(),
-      usage, meshes, posed: this.pose.has(ni),
+      usage, meshes, cameras, posed: this.pose.has(ni),
       hiddenSelf: !!(this.hidden && this.isNodeHidden(ni)),
       hiddenByRig: !!(this.rigHidden && this.rigHidden.has(ni) && !this.rigShown.has(ni) && !this.hidden.has(ni)),
       hiddenByParent: !!(this.hiddenEff && this.hiddenEff[ni] && !(this.hidden && this.isNodeHidden(ni))),
@@ -1626,6 +1634,7 @@ class ViewerApp {
     this.updateCameraIcons();
     this.updateGate();
     if (!opts.quiet) this.ui.setMessage(ci >= 0 ? `カメラ ${this.cameras[ci].name} から表示します（Shift+C で自由視点）` : '自由視点に戻しました');
+    if (this.selected >= 0 && this.built) this.ui.showNodeInfo(this.nodeInfo(this.selected));   // 「このカメラから見る」の状態
     this.requestRender();
   }
 

@@ -86,7 +86,7 @@
           <div class="menu-sep"></div>
           <label class="check"><input type="checkbox" id="opt-camera-icons" checked> シーンのカメラを表示（形と視野）</label>
           <label class="check"><input type="checkbox" id="opt-camera-gate" checked> 解像度ゲートの外側を暗くする</label>
-          <p class="muted small" id="camera-note">カメラから見ている間は、ドラッグでの視点操作はできません（自由視点に戻すと操作できます）。焦点距離・フィルムバック・フィルムフィット・クリップ面・平行投影を再現します。</p>
+          <p class="muted small" id="camera-note">焦点距離・フィルムバック・フィルムフィット・クリップ面・平行投影を再現します。</p>
         </div>
       </div>
       <div class="menu">
@@ -200,13 +200,13 @@
   </section>
 
   <aside id="right" class="panel" aria-label="プロパティ">
-    <button class="panel-strip" id="right-expand" title="右パネルを開く" aria-label="右パネルを開く" aria-controls="right" aria-expanded="false"><span class="strip-icon" aria-hidden="true">‹</span><span class="strip-label">選択・頂点・警告</span></button>
+    <button class="panel-strip" id="right-expand" title="右パネルを開く" aria-label="右パネルを開く" aria-controls="right" aria-expanded="false"><span class="strip-icon" aria-hidden="true">‹</span><span class="strip-label">プロパティ</span></button>
     <div class="panel-content">
       <div class="panel-head"><button class="collapse-btn" id="right-collapse" title="右パネルを最小化" aria-label="右パネルを最小化" aria-controls="right" aria-expanded="true">›</button><span>プロパティ</span></div>
       <details open id="sec-select">
         <summary>選択</summary>
         <div class="sec-body">
-          <div id="select-head"><p class="muted">ジョイントやメッシュをクリックすると、ここに情報を表示します。</p></div>
+          <div id="select-head"><p class="muted">ジョイント・メッシュ・カメラをクリックすると、ここに情報を表示します。</p></div>
           <div id="pose-ctrls" hidden>
             <p class="sub">ポーズ確認<span class="sub-note">ファイル上の姿勢への追加分・保存されません</span></p>
             <div class="pose-vec pv-head"><span></span><span>X</span><span>Y</span><span>Z</span></div>
@@ -234,7 +234,8 @@
           <div id="select-info"></div>
         </div>
       </details>
-      <details open id="sec-vertex">
+      <!-- 頂点を選んでいるとき・頂点の選択に切り替えたときだけ出す（ui.showVertexInfo） -->
+      <details open id="sec-vertex" hidden>
         <summary>頂点のウェイト</summary>
         <div id="vertex-body" class="sec-body"><p class="muted">メッシュをクリックすると、いちばん近い頂点のウェイトを表示します。</p></div>
       </details>

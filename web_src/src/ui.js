@@ -561,13 +561,14 @@ export class UI {
     const head = $('select-head');
     const body = $('select-info');
     if (!info) {
-      head.innerHTML = '<p class="muted">ジョイントやメッシュをクリックすると、ここに情報を表示します。</p>';
+      head.innerHTML = '<p class="muted">ジョイント・メッシュ・カメラをクリックすると、ここに情報を表示します。</p>';
       body.innerHTML = '';
       return;
     }
     const n = info.node;
     const a = n.attrs || {};
-    const typeLabel = { joint: 'ジョイント', transform: 'トランスフォーム' }[n.type] || n.type;
+    const typeLabel = info.cameras && info.cameras.length ? 'カメラ'
+      : ({ joint: 'ジョイント', transform: 'トランスフォーム' }[n.type] || n.type);
     head.innerHTML = `<p class="info-title">${esc(n.name)}<span class="info-type">${esc(typeLabel)}</span>`
       + `${info.posed ? '<span class="posed-badge">ポーズ変更中</span>' : ''}</p>`
       + `<p class="info-path">${esc(n.path)}</p>`;
@@ -580,8 +581,11 @@ export class UI {
       h += `<tr><th>リファレンス</th><td>${esc(info.reference.namespace)}（${esc(fileName(info.reference.resolved || info.reference.path))}）</td></tr>`;
     }
     if (info.unselectable) h += `<tr><th>Maya での選択</th><td>ビューポートでは選択できない（${esc(info.unselectable)}）</td></tr>`;
-    h += `<tr><th>姿勢の基準</th><td>${info.usingBind ? 'バインドポーズ' : 'ファイルの値'}</td></tr>`;
-    h += `<tr><th>バインドポーズの情報</th><td>${info.bindSource ? esc(SRC[info.bindSource] || info.bindSource) : 'なし'}</td></tr>`;
+    // 姿勢の基準は、バインドポーズの情報があるノードとジョイントだけ（ほかは常にファイルの値）
+    if (info.bindSource || n.type === 'joint') {
+      h += `<tr><th>姿勢の基準</th><td>${info.usingBind ? 'バインドポーズ' : 'ファイルの値'}</td></tr>`;
+      h += `<tr><th>バインドポーズの情報</th><td>${info.bindSource ? esc(SRC[info.bindSource] || info.bindSource) : 'なし'}</td></tr>`;
+    }
     h += '</table>';
     const anim = info.animChannels || [];
     const rig = info.rigDrivers || [];
@@ -591,6 +595,8 @@ export class UI {
       if (rig.length) h += `<tr><th>リグ</th><td>${rig.slice(0, 6).map(esc).join('<br>')}${rig.length > 6 ? '<br>ほか' : ''}</td></tr>`;
       h += '</table>';
     }
+    // カメラはレンズの情報を先に出す（カメラを選んだときに知りたいもの）
+    for (const c of info.cameras || []) h += this.cameraHtml(c);
     // アニメーションを読み込んだあとは、カーブ・リグで評価する値は注記から外す
     // （リグで求められたノード（推定・不明でない）は、接続で決まる値もすべて評価している）
     const evaluated = /（animCurveT[LAU]）$/;
@@ -645,16 +651,53 @@ export class UI {
       }
     }
     body.innerHTML = h;
+    body.querySelectorAll('[data-view-camera]').forEach((el) => {
+      el.addEventListener('click', () => this.app.setCamera(+el.dataset.viewCamera));
+    });
+  }
+
+  /**
+   * 選択情報のカメラの欄（レンズ・フィルムバック・投影・クリップ面・レンダーの解像度）。
+   * c: { index, cam（共通 JSON の cameras の 1 件）, p（いまのフレームの値。cameraParams）, animated（キー・リグで決まる属性）, viewing }
+   */
+  cameraHtml(c) {
+    const { cam, p } = c;
+    const MM = 25.4;
+    const anim = (k) => (c.animated.includes(k) ? '<span class="sub-note">キー・リグ</span>' : '');
+    const FIT = ['フィル', '水平', '垂直', 'オーバースキャン'];
+    // 画角: フィルムの幅（インチ）と焦点距離（mm）から。カメラスケールの分だけ広がる
+    const fov = (film) => 2 * Math.atan((film * MM * p.cs) / (2 * p.fl)) * 180 / Math.PI;
+    let h = `<p class="sub">カメラ ${esc(cam.shape || cam.name)}</p>`;
+    h += c.viewing ? '<p class="muted small">このカメラから見ています（Shift+C で自由視点）</p>'
+      : `<div class="pose-btns"><button class="btn" data-view-camera="${c.index}">このカメラから見る</button></div>`;
+    h += '<table class="kv">';
+    if (p.ortho) {
+      h += `<tr><th>投影</th><td>平行投影</td></tr><tr><th>幅</th><td>${fmt(p.ow, 3)}${anim('ow')}</td></tr>`;
+    } else {
+      h += `<tr><th>焦点距離</th><td>${fmt(p.fl, 2)} mm${anim('fl')}</td></tr>`;
+      h += `<tr><th>画角（水平 / 垂直）</th><td>${fmt(fov(p.hfa * p.lsr), 2)}° / ${fmt(fov(p.vfa), 2)}°</td></tr>`;
+    }
+    h += `<tr><th>フィルムバック</th><td title="${fmt(p.hfa, 4)} × ${fmt(p.vfa, 4)} インチ">`
+      + `${fmt(p.hfa * MM, 2)} × ${fmt(p.vfa * MM, 2)} mm${anim('hfa') || anim('vfa')}</td></tr>`;
+    h += `<tr><th>フィルムフィット</th><td>${FIT[p.fit] || p.fit}</td></tr>`;
+    if (Math.abs(p.lsr - 1) > 1e-6) h += `<tr><th>レンズスクイーズ</th><td>${fmt(p.lsr, 3)}</td></tr>`;
+    if (p.hfo || p.vfo) h += `<tr><th>フィルムオフセット</th><td>${fmt(p.hfo, 3)}, ${fmt(p.vfo, 3)} in${anim('hfo') || anim('vfo')}</td></tr>`;
+    if (Math.abs(p.cs - 1) > 1e-6) h += `<tr><th>カメラスケール</th><td>${fmt(p.cs, 3)}</td></tr>`;
+    h += `<tr><th>クリップ面</th><td>${fmt(p.near, 3)} 〜 ${fmt(p.far, 1)}${anim('ncp') || anim('fcp')}</td></tr>`;
+    const r = c.render || {};
+    if (r.width && r.height) h += `<tr><th>レンダーの解像度</th><td>${num(r.width)} × ${num(r.height)}</td></tr>`;
+    if (cam.renderable === false) h += '<tr><th>レンダー</th><td>対象外（renderable がオフ）</td></tr>';
+    return h + '</table>';
   }
 
   // ---------------------------------------------------------------- 頂点
   /** @param mode 選択の対象（'object' のときは、頂点の選び方を案内する） */
   showVertexInfo(info, mode = this.app.settings.pickMode) {
     const body = $('vertex-body');
+    // 頂点の欄は、頂点を選んでいるときと、頂点の選択に切り替えたとき（案内）だけ出す
+    $('sec-vertex').hidden = !info && mode !== 'vertex';
     if (!info) {
-      body.innerHTML = mode === 'vertex'
-        ? '<p class="muted">メッシュをクリックすると、いちばん近い頂点のウェイトを表示します。</p>'
-        : '<p class="muted">頂点のウェイトを見るには、ツールバーで「頂点を選択」に切り替えて（F8）、メッシュをクリックします。</p>';
+      body.innerHTML = '<p class="muted">メッシュをクリックすると、いちばん近い頂点のウェイトを表示します。</p>';
       return;
     }
     let h = `<p class="info-title">${esc(info.meshName)}.vtx[${info.vertex}]</p>`;

@@ -221,6 +221,7 @@ body.right-collapsed #right .panel-strip {
 
 /* ---- 右パネル ------------------------------------------------------ */
 details { border-bottom: 1px solid var(--line); }
+details[hidden] { display: none; }
 summary {
   padding: 8px 10px;
   cursor: pointer;
