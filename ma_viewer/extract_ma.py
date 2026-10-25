@@ -48,19 +48,17 @@ class _Ctx:
             return m
         ro_i = int(n.xattrs.get("ro", 0) or 0)
         ro = M.ROTATE_ORDERS[ro_i] if 0 <= ro_i < 6 else "xyz"
+        src = n.inverse_scale_source()                  # 親のスケールの打ち消し（ジョイントの segmentScaleCompensate など）
+        ips = src.vec3("s") if src is not None else None
         if n.type == "joint":
-            ips = None
-            if n.flag("ssc", True):
-                src = n.inputs.get("is")
-                if src is not None:
-                    ips = src[0].vec3("s")
             m = M.joint_matrix(t=n.vec3("t"), r=self.rad(n.vec3("r")), s=n.vec3("s"), ro=ro,
                                ra=self.rad(n.vec3("ra")), jo=self.rad(n.vec3("jo")),
                                inverse_parent_scale=ips)
         else:
             m = M.transform_matrix(t=n.vec3("t"), r=self.rad(n.vec3("r")), s=n.vec3("s"), ro=ro,
                                    ra=self.rad(n.vec3("ra")), rp=n.vec3("rp"), sp=n.vec3("sp"),
-                                   rpt=n.vec3("rpt"), spt=n.vec3("spt"), sh=n.vec3("sh"))
+                                   rpt=n.vec3("rpt"), spt=n.vec3("spt"), sh=n.vec3("sh"),
+                                   inverse_parent_scale=ips)
         opm = n.xattrs.get("opm")
         if opm is not None and len(opm) == 16:
             m = M.mul(m, opm)               # offsetParentMatrix: ワールド行列 = ローカル · opm · 親
@@ -1044,14 +1042,16 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     lap = _Lap()
     ctx = _Ctx(ms)
     # 自作ノードの割り当て（設定ファイル）: 同じ計算をする標準ノードとして扱う
-    from .custom_nodes import apply_node_map, load_node_map
+    from .custom_nodes import apply_node_map, load_node_map, normalize_spec
     if getattr(ms, "node_map", None) is None:
         ms.node_map = load_node_map(ms.source_path, ms.warn)
+    ms.node_map = {t: normalize_spec(v) for t, v in ms.node_map.items()}
     ms.mapped_nodes = apply_node_map(ms, ms.node_map)
     for t, names in sorted(ms.mapped_nodes.items()):
-        ms.warn("自作ノードの型 %s（%s%s）を、設定ファイルのとおり %s として扱います。"
+        ms.warn("自作ノードの型 %s（%s%s）を、設定ファイルのとおり %s として扱います%s。"
                 % (t, "、".join(names[:5]), " ほか %d 個" % (len(names) - 5) if len(names) > 5 else "",
-                   ms.node_map[t]["as"]), key="#自作ノードの割り当て " + t)
+                   ms.node_map[t]["as"], "（親のスケールを打ち消す）" if ms.node_map[t].get("ssc") else ""),
+                key="#自作ノードの割り当て " + t)
     # 自作ノードの定義（ma_viewer/node_defs に同梱）: 属性と計算を書いた定義で評価する
     from .node_defs import apply_definitions, load_definitions, plugin_version_warnings
     if getattr(ms, "node_defs", None) is None:
@@ -1317,6 +1317,8 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             entry["unselectable"] = why     # Maya のビューポートでは選択できない（テンプレート・リファレンス）
         if x.type == "joint":
             entry["segmentScaleCompensate"] = x.flag("ssc", True)
+        if x.ssc_parent:
+            entry["compensatesParentScale"] = True   # 自作ノードの割り当てで、親のスケールを打ち消すと指定したノード
         if id(x) in bind_local:
             entry["bindMatrix"] = schema.matrix_list(bind_local[id(x)])
             entry["bindSource"] = bind_src[id(x)][2]

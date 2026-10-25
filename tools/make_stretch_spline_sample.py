@@ -12,6 +12,11 @@
   * スイッチ: sb_switchCtrl.tx（10）× 0.1 を expression で sb_root.stretch_switch へ、それを別の expression で各 blendColors の
     blender へ（.O[0] = .I[0]）
   ジョイントは、カーブの上の点 sb_poc0〜4 に乗る（骨の長さ = 点どうしの距離）
+  * 伸び縮みするジョイント sb_1 の子に、型を知らないノード sb_comp（型 myCompXform。回転 (0, 30, 0)）。
+    ジョイント sb_follow は sb_comp への pointConstraint・orientConstraint（オフセットなし）で動く。
+    sb_1 のスケールは X だけが 1 以外になるので、親のスケールを受け継ぐ transform として扱うと sb_comp の行列がゆがむ。
+    割り当て {"myCompXform": {"as": "transform", "segmentScaleCompensate": true}}（親のスケールを打ち消す）を使った
+    結果は samples/stretch_spline_mapped.json（sb_comp のワールドのスケールは 1、sb_follow の向きは sb_1 の向き · (0, 30, 0)）
 保存時のフレーム（1）の各ノードの値は、リグの計算結果と一致するように書く（カーブはまっすぐで、骨の長さはどれも 2）。
 """
 from __future__ import annotations
@@ -26,6 +31,8 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 OUT = os.path.join(ROOT, "samples", "stretch_spline_sample.ma")
+# 自作ノードの割り当て（ma_viewer_nodes.json と同じ書き方）: 親のスケールを打ち消す transform として扱う
+NODE_MAP = {"myCompXform": {"as": "transform", "segmentScaleCompensate": True}}
 
 
 def fmt(v):
@@ -112,6 +119,18 @@ def main():
         A('\tsetAttr ".op" 2;')
         A('\tsetAttr ".i2" -type "float3" 2 1 1 ;')
 
+    # 伸び縮みするジョイントの子の、型を知らないノードと、それにコンストレイントで付くジョイント
+    A('createNode myCompXform -n "sb_comp" -p "sb_1";')
+    uid("sb_comp")
+    A('\tsetAttr ".r" -type "double3" 0 30 0 ;')
+    node("joint", "sb_follow", t=(2, 0, z), r=(0, 30, 0))
+    for kind in ("pointConstraint", "orientConstraint"):
+        A('createNode %s -n "sb_follow_%s" -p "sb_follow";' % (kind, kind))
+        uid("sb_follow_" + kind)
+        A('\taddAttr -dcb 0 -ci true -k true -sn "w0" -ln "sb_compW0" -dv 1 -min 0 -at "double";')
+        A('\tsetAttr -k on ".nds";')
+        A('\tsetAttr -k on ".w0";')
+
     node("script", "sceneConfigurationScriptNode")
     A('\tsetAttr ".b" -type "string" "playbackOptions -min 1 -max 48 -ast 1 -aet 48 ";')
     A('createNode ikSplineSolver -n "ikSplineSolver";')
@@ -149,6 +168,21 @@ def main():
         C(":time1.o", "sb_bcExpr%d.tim" % i)
         C("sb_bc%d.opr" % i, "sb_md%d.i1x" % i)
         C("sb_md%d.ox" % i, "sb_%d.sx" % i)
+    pc, oc = "sb_follow_pointConstraint", "sb_follow_orientConstraint"
+    for a in "xyz":
+        C("%s.ct%s" % (pc, a), "sb_follow.t%s" % a)
+        C("%s.cr%s" % (oc, a), "sb_follow.r%s" % a)
+    for c in (pc, oc):
+        C("sb_follow.pim", c + ".cpim")
+        C(c + ".w0", c + ".tg[0].tw")
+    C("sb_follow.rp", pc + ".crp")
+    C("sb_follow.rpt", pc + ".crt")
+    C("sb_follow.ro", oc + ".cro")
+    C("sb_follow.jo", oc + ".cjo")
+    for src, dst in (("t", "tt"), ("rp", "trp"), ("rpt", "trt"), ("pm", "tpm")):
+        C("sb_comp.%s" % src, "%s.tg[0].%s" % (pc, dst))
+    for src, dst in (("r", "tr"), ("ro", "tro"), ("pm", "tpm")):
+        C("sb_comp.%s" % src, "%s.tg[0].%s" % (oc, dst))
     A('// End of stretch_spline_sample.ma')
 
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:
@@ -157,7 +191,10 @@ def main():
     scene = load_ma(OUT, animation=True)
     with open(os.path.join(ROOT, "samples", "stretch_spline_sample.json"), "w", encoding="utf-8") as f:
         json.dump(scene, f, ensure_ascii=False, separators=(",", ":"), indent=1)
-    print("書き出しました: stretch_spline_sample.ma / stretch_spline_sample.json")
+    mapped = load_ma(OUT, animation=True, node_map=NODE_MAP)
+    with open(os.path.join(ROOT, "samples", "stretch_spline_mapped.json"), "w", encoding="utf-8") as f:
+        json.dump(mapped, f, ensure_ascii=False, separators=(",", ":"), indent=1)
+    print("書き出しました: stretch_spline_sample.ma / stretch_spline_sample.json / stretch_spline_mapped.json")
 
 
 if __name__ == "__main__":

@@ -84,8 +84,10 @@ export class PoseState {
     target.copy(base);
     const n = this.data.nodes[ni];
     const pi = n.parent;
-    if (n.type !== 'joint' || n.segmentScaleCompensate === false || n.inheritsTransform === false) return target;
-    if (pi < 0 || this.data.nodes[pi].type !== 'joint') return target;
+    if (n.inheritsTransform === false || pi < 0) return target;
+    // ジョイント（segmentScaleCompensate。親もジョイント）か、自作ノードの割り当てで親のスケールを打ち消すと指定したノード
+    const joint = n.type === 'joint' && n.segmentScaleCompensate !== false && this.data.nodes[pi].type === 'joint';
+    if (!joint && !n.compensatesParentScale) return target;
     const pp = this.poses.get(pi);
     if (!pp) return target;
     const s = pp.s;

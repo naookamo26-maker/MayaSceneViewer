@@ -367,9 +367,7 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
     rest_nodes = []
     for ni in sorted(kept_nodes):
         n = kept_nodes[ni]
-        is_src = None
-        if n.type == "joint" and n.flag("ssc", True) and "is" in n.inputs:
-            is_src = n.inputs["is"][0]
+        is_src = n.inverse_scale_source()
         is_idx = out_index.get(id(is_src)) if is_src is not None else None
         if ni not in animated and ni not in in_graph and not (is_idx is not None and is_idx in scaled):
             continue
@@ -481,11 +479,11 @@ def rest_entry(n: MaNode, ni: int, ang_k: float, is_src: Optional[MaNode], is_id
     opm = n.xattrs.get("opm")
     if opm is not None and len(opm) == 16 and any(abs(a - b) > 1e-12 for a, b in zip(opm, M.identity())):
         e["opm"] = [float(x) for x in opm]
+    if is_src is not None:                             # 親のスケールの打ち消し（ジョイントの segmentScaleCompensate など）
+        e["isNode"] = is_idx if is_idx is not None else -1
+        e["isScale"] = list(is_src.vec3("s"))
     if n.type == "joint":
         e["jo"] = deg(n.vec3("jo"))
-        if is_src is not None:
-            e["isNode"] = is_idx if is_idx is not None else -1
-            e["isScale"] = list(is_src.vec3("s"))
     else:
         for k in ("rp", "sp", "rpt", "spt", "sh"):
             v = n.vec3(k)
@@ -498,12 +496,13 @@ def rest_matrix(e: dict) -> List[float]:
     """rest_entry からローカル行列を組み立てる（ビューアの計算と同じ。テスト用）"""
     rad = lambda v: [x * math.pi / 180.0 for x in v]  # noqa: E731
     ro = M.ROTATE_ORDERS[e.get("ro", 0)]
+    ips = e.get("isScale") if "isScale" in e else None
     if e["joint"]:
-        ips = e.get("isScale") if "isScale" in e else None
         m = M.joint_matrix(t=e["t"], r=rad(e["r"]), s=e["s"], ro=ro, ra=rad(e["ra"]), jo=rad(e.get("jo", [0, 0, 0])),
                            inverse_parent_scale=ips)
     else:
         z = [0.0, 0.0, 0.0]
         m = M.transform_matrix(t=e["t"], r=rad(e["r"]), s=e["s"], ro=ro, ra=rad(e["ra"]), rp=e.get("rp", z),
-                               sp=e.get("sp", z), rpt=e.get("rpt", z), spt=e.get("spt", z), sh=e.get("sh", z))
+                               sp=e.get("sp", z), rpt=e.get("rpt", z), spt=e.get("spt", z), sh=e.get("sh", z),
+                               inverse_parent_scale=ips)
     return M.mul(m, e["opm"]) if "opm" in e else m
