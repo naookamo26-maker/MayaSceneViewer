@@ -188,13 +188,30 @@ const _e = new Euler();
 const _f = new Matrix4();
 
 /**
+ * 行列を移動・回転・スケールに分ける（Maya の decomposeMatrix・MTransformationMatrix と同じ分け方）。
+ * 鏡に映した行列（行列式が負）では、反転を Z のスケールに入れる（three.js の decompose は X に入れるので、
+ * 残りの回転が Y 軸まわりに 180° ずれる）。例: diag(1, 1, −1) → 回転なし・スケール (1, 1, −1)
+ */
+export function decomposeMaya(m, t = new Vector3(), q = new Quaternion(), s = new Vector3()) {
+  if (m.determinant() >= 0) {
+    m.decompose(t, q, s);
+    return { t, q, s };
+  }
+  const f = m.clone();
+  const e = f.elements;
+  e[8] = -e[8]; e[9] = -e[9]; e[10] = -e[10];            // Z の軸を反転してから分ける
+  f.decompose(t, q, s);
+  s.z = -s.z;
+  return { t, q, s };
+}
+
+/**
  * ワールド行列の回転を、回転順 ro（'xyz' などの文字列か 0〜5）の角度（度）にする。
  * Maya の xform -q -ws -ro と同じ値（ジョイントの向き・rotateAxis・親の回転を含む。スケールは除く）
  */
 export function worldRotationDegrees(m, ro = 0) {
   const i = typeof ro === 'string' ? ROTATE_ORDERS.indexOf(ro) : Math.round(ro);
-  const q = new Quaternion();
-  m.decompose(new Vector3(), q, new Vector3());
+  const { q } = decomposeMaya(m);
   const e = new Euler().setFromQuaternion(q, THREE_ORDER[i] || 'ZYX');
   return [e.x / D2R, e.y / D2R, e.z / D2R];
 }

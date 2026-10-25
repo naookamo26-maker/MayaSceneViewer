@@ -9,6 +9,9 @@
     → output（長い名前）→ decomposeMatrix → jA.t = (tx, ty, 5)・jA.r = (0, 0, 30)
     → o（短い名前）→ jB.offsetParentMatrix（jB.t = (1, 0, 0)）→ jB のワールドの位置 = (cos30 + tx, sin30 + ty, 5)
   * fbf_id: 値も接続もない → 単位行列 → jC.offsetParentMatrix（jC.t = (0, 3, 0)）→ jC のワールドの位置 = (0, 3, 0)
+  * 鏡に映した行列（行列式が負）の decomposeMatrix。Maya は反転を Z のスケールに入れる:
+      fbf_mz: diag(1, 1, -1)（移動 i30 ← ctrl.tx）→ dm_mz → jD.r = (0, 0, 0)（dm_mz.os = (1, 1, -1)）
+      fbf_mr: 行 X = (0, 1, 0)・Y = (-1, 0, 0)・Z = (0, 0, -1) → dm_mr → jE.r = (0, 0, 90)（dm_mr.os = (1, 1, -1)）
 """
 from __future__ import annotations
 
@@ -35,6 +38,11 @@ def main():
              '\tsetAttr ".i00" %r;' % c, '\tsetAttr ".i01" %r;' % s,
              '\tsetAttr ".i10" %r;' % -s, '\tsetAttr ".i11" %r;' % c, '\tsetAttr ".i32" 5;',
              'createNode fourByFourMatrix -n "fbf_id";',
+             'createNode joint -n "jD";', 'createNode joint -n "jE";',
+             'createNode fourByFourMatrix -n "fbf_mz";', '\tsetAttr ".i22" -1;',
+             'createNode fourByFourMatrix -n "fbf_mr";', '\tsetAttr ".i00" 0;', '\tsetAttr ".i01" 1;',
+             '\tsetAttr ".i10" -1;', '\tsetAttr ".i11" 0;', '\tsetAttr ".i22" -1;',
+             'createNode decomposeMatrix -n "dm_mz";', 'createNode decomposeMatrix -n "dm_mr";',
              'createNode decomposeMatrix -n "dm";',
              'createNode animCurveTL -n "ctrl_translateX";', '\tsetAttr ".tan" 2;',
              '\tsetAttr -s 2 ".ktv[0:1]"  1 0 24 10;',
@@ -52,6 +60,12 @@ def main():
              'connectAttr "dm.or" "jA.r";',
              'connectAttr "fbf.o" "jB.opm";',
              'connectAttr "fbf_id.o" "jC.opm";',
+             'connectAttr "ctrl.tx" "fbf_mz.i30";',
+             'connectAttr "fbf_mz.o" "dm_mz.imat";',
+             'connectAttr "dm_mz.or" "jD.r";',
+             'connectAttr "ctrl.tx" "fbf_mr.i30";',
+             'connectAttr "fbf_mr.o" "dm_mr.imat";',
+             'connectAttr "dm_mr.or" "jE.r";',
              '// End of fourbyfour_sample.ma']
     with open(OUT_MA, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")

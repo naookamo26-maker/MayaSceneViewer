@@ -49,3 +49,17 @@ test('offsetParentMatrix への接続（出力の短い名前 o）と、値の�
     assert.ok(near(c.x, 0) && near(c.y, 3) && near(c.z, 0), `フレーム ${f}: jC ${c.toArray()}`);
   }
 });
+
+test('鏡に映した行列の decomposeMatrix: 反転は Z のスケール（Maya と同じ。回転は残りの部分）', () => {
+  const gid = (n) => data.animation.graph.find((g) => g.name === n).id;
+  for (const f of FRAMES) {
+    const { rig } = at(f);
+    const d = rig.chan(idx('jD')).r, e = rig.chan(idx('jE')).r;
+    assert.ok(near(d[0], 0) && near(d[1], 0) && near(d[2], 0), `フレーム ${f}: jD.r ${d}`);
+    assert.ok(near(e[0], 0) && near(e[1], 0) && near(e[2], 90), `フレーム ${f}: jE.r ${e}`);
+    for (const n of ['dm_mz', 'dm_mr']) {
+      const s = rig.plug(gid(n), 'os');
+      assert.ok(near(s[0], 1) && near(s[1], 1) && near(s[2], -1), `フレーム ${f}: ${n}.os ${s}`);
+    }
+  }
+});

@@ -8,7 +8,7 @@
 //   * 循環（自分の結果を自分で使う）に当たったら、そこはファイルの値で打ち切る
 // 完全な再現は目指さず、Maya と同じ考え方の近似にする（docs/data_format.md「animation.graph」）。
 import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
-import { composeLocalMatrix, evaluateCurve } from './animation.js';
+import { composeLocalMatrix, decomposeMaya, evaluateCurve } from './animation.js';
 import { compileExpression } from './expression.js';
 import { evaluateTrax } from './trax.js';
 import { compileNodeDef, componentPlug } from './nodeDef.js';
@@ -754,7 +754,7 @@ export class RigEvaluator {
       }
       case 'decomposeMatrix': {
         const t = new Vector3(), q = new Quaternion(), s = new Vector3();
-        this.mat(id, 'imat').decompose(t, q, s);
+        decomposeMaya(this.mat(id, 'imat'), t, q, s);     // 鏡に映した行列は Z のスケールを負にする（Maya と同じ）
         const e = new Euler().setFromQuaternion(q, THREE_ORDER[Math.round(this.num(id, 'ro', 0))] || 'ZYX');
         o = { ...expand('ot', t.toArray(), XYZ), ...expand('or', [e.x, e.y, e.z], XYZ), ...expand('os', s.toArray(), XYZ),
           ...expand('osh', [0, 0, 0], XYZ), ...expand('oq', [q.x, q.y, q.z, q.w], ['x', 'y', 'z', 'w']) };
