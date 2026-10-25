@@ -845,6 +845,22 @@ class Translator:
         if base.kind == "hdl":
             self.write_output(base, name, c)
             return
+        if base.kind == "mat" and name in ("setElement", "setToIdentity", "setToProduct"):
+            if not base.code.isidentifier():
+                _fail("%s は、行列の変数に対してだけ変換できます" % name, c)
+            if name == "setElement" and len(c.args) >= 3:
+                self.emit("%s = set_element(%s, %s, %s, %s)" % (base.code, base.code, self.num(c.args[0]).code,
+                                                                self.num(c.args[1]).code, self.num(c.args[2]).code))
+                return
+            if name == "setToIdentity":
+                self.emit("%s = identity()" % base.code)
+                return
+            if name == "setToProduct" and len(c.args) >= 2:
+                a, b = self.expr(c.args[0]), self.expr(c.args[1])
+                if a.kind != "mat" or b.kind != "mat":
+                    _fail("setToProduct に行列以外を渡しています", c)
+                self.emit("%s = (%s * %s)" % (base.code, a.code, b.code))
+                return
         if base.kind in ("vec", "pt") and name == "normalize":
             self.emit("%s = normalize(%s)" % (base.code, base.code))
             return
@@ -975,7 +991,19 @@ class Translator:
             items = [self.num(x).code for x in e.elts]
             return Value("vec", "[%s]" % ", ".join(items))
         if isinstance(e, ast.Subscript):
+            if isinstance(e.value, ast.Subscript):
+                inner = self.expr_obj(e.value.value)
+                if inner is not None and inner.kind == "mat":
+                    # API 1.0 の m[行][列]
+                    return Value("num", "element(%s, %s, %s)" % (inner.code, self.num(e.value.slice).code,
+                                                                 self.num(e.slice).code))
             base = self.expr(e.value)
+            if base.kind == "mat":
+                # API 2.0 の m[番号]（0〜15、行の順）
+                i = _const(e.slice)
+                if isinstance(i, int) and not isinstance(i, bool) and 0 <= i < 16:
+                    return Value("num", "element(%s, %d, %d)" % (base.code, i // 4, i % 4))
+                return Value("num", "matrix_values(%s)[%s]" % (base.code, self.num(e.slice).code))
             if base.kind not in ("vec", "pt", "quat", "eul"):
                 _fail("%s に添字は使えません" % base.kind, e)
             return Value("num", "%s[%s]" % (base.code, self.num(e.slice).code))
@@ -1099,6 +1127,10 @@ class Translator:
                 fn = _MATH_RENAME.get(f.attr, f.attr)
                 return Value("num", "%s(%s)" % (fn, ", ".join(self.num(a).code for a in e.args)))
             _fail("math.%s は変換できません" % f.attr, e)
+        if isinstance(f, ast.Name) and f.id in self.env and self.env[f.id].kind == "mat" and len(e.args) == 2:
+            # API 1.0 の m(行, 列)
+            return Value("num", "element(%s, %s, %s)" % (self.env[f.id].code, self.num(e.args[0]).code,
+                                                         self.num(e.args[1]).code))
         if isinstance(f, ast.Name):
             if f.id in ("abs", "min", "max", "pow", "round", "float", "int", "bool") and f.id not in self.env:
                 return Value("num", "%s(%s)" % (f.id, ", ".join(self.num(a).code for a in e.args)))
@@ -1258,6 +1290,20 @@ class Translator:
                 return Value("mat", "transpose(%s)" % base.code)
             if m == "homogenize":
                 return base
+            if m == "getElement" and len(args) >= 2:
+                return Value("num", "element(%s, %s, %s)" % (base.code, self.num(args[0]).code, self.num(args[1]).code))
+            if m == "det4x4":
+                return Value("num", "determinant(%s)" % base.code)
+            if m == "det3x3":
+                return Value("num", "determinant3(%s)" % base.code)
+            if m == "isEquivalent" and args:
+                other = self.expr(args[0])
+                if other.kind != "mat":
+                    _fail("isEquivalent に行列以外を渡しています", e)
+                tol = ", %s" % self.num(args[1]).code if len(args) > 1 else ""
+                return Value("num", "equivalent(%s, %s%s)" % (base.code, other.code, tol))
+            if m == "isSingular":
+                return Value("num", "(abs(determinant(%s)) < 1e-10)" % base.code)
             _fail("行列の %s は変換できません" % m, e)
         if k == "tm":
             return self.tm_method(base, m, e, kw)
@@ -1394,7 +1440,8 @@ class Translator:
             return Value("vec", parts["t"])
         if m in ("rotation", "eulerRotation"):
             as_q = kw.get("asQuaternion") or (e.args[0] if e.args else None)
-            if as_q is not None and _const(as_q):
+            if m == "rotation" and self.module.api == 1 or as_q is not None and _const(as_q):
+                # API 1.0 の rotation() は MQuaternion（API 2.0 は asQuaternion=True のとき）
                 return Value("quat", "quat_from_euler(%s, %s)" % (parts["r"], parts["order"]))
             return Value("eul", parts["r"], order=parts["order"])
         if m == "rotationComponents":
@@ -1446,7 +1493,8 @@ _KNOWN_METHODS = (_GETTERS_NUM | _GETTERS_VEC | _GETTERS_MAT | _GETTERS_UNIT | _
                       "setRotation", "rotateTo", "setScale", "setRotationOrder", "matrix", "transformation", "create",
                       "data", "isNull", "parent", "array", "attribute", "slerp", "thisMObject", "findPlug",
                       "isConnected", "elementByLogicalIndex", "numElements", "evaluateNumElements", "asMObject",
-                      "asMAngle", "asMDistance", "asMTime"})
+                      "asMAngle", "asMDistance", "asMTime", "getElement", "det4x4", "det3x3", "isEquivalent",
+                      "isSingular", "setElement", "setToIdentity", "setToProduct"})
 _KNOWN_CLASSES = _VEC_CLASSES | _PT_CLASSES | _MAT_CLASSES | {
     "MTransformationMatrix", "MEulerRotation", "MQuaternion", "MAngle", "MDistance", "MTime", "MFnMatrixData",
     "MPlug", "MFnDependencyNode"}
@@ -1457,6 +1505,7 @@ def unknown_calls(fn: ast.FunctionDef, module: "ModuleInfo") -> Dict[str, List[i
     """compute の中の、解釈できない関数・メソッドの呼び出し → 行番号（実行の流れに関係なく、すべて）"""
     self_name = fn.args.args[0].arg if fn.args.args else "self"
     found: Dict[str, List[int]] = {}
+    local_names = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
 
     def add(name, node):
         found.setdefault(name, [])
@@ -1467,7 +1516,9 @@ def unknown_calls(fn: ast.FunctionDef, module: "ModuleInfo") -> Dict[str, List[i
             continue
         f = node.func
         if isinstance(f, ast.Name):
-            if f.id in module.functions:
+            if f.id in local_names:
+                pass                                     # 変数の呼び出し（API 1.0 の m(行, 列) など）
+            elif f.id in module.functions:
                 add("%s()（プラグインの関数）" % f.id, node)
             elif f.id not in _KNOWN_FUNCTIONS and f.id not in _KNOWN_CLASSES:
                 add("%s()" % f.id, node)
@@ -1497,6 +1548,7 @@ class ModuleInfo:
         self.classes: Dict[str, ast.ClassDef] = {}
         self.functions: Dict[str, ast.FunctionDef] = {}
         self.tuples: Dict[str, List[ast.expr]] = {}
+        self.api = self.detect_api(tree)
         for s in tree.body:
             if isinstance(s, ast.ClassDef):
                 self.classes[s.name] = s
@@ -1509,6 +1561,25 @@ class ModuleInfo:
                     self.consts[name] = v
                 elif isinstance(s.value, (ast.Tuple, ast.List)):
                     self.tuples[name] = list(s.value.elts)
+
+    @staticmethod
+    def detect_api(tree: ast.Module) -> int:
+        """Maya の Python API の版（2: maya.api.OpenMaya・maya_useNewAPI、1: maya.OpenMaya・OpenMayaMPx）"""
+        old = False
+        for s in ast.walk(tree):
+            if isinstance(s, ast.FunctionDef) and s.name == "maya_useNewAPI":
+                return 2
+            names = []
+            if isinstance(s, ast.Import):
+                names = [a.name for a in s.names]
+            elif isinstance(s, ast.ImportFrom):
+                names = [s.module or ""] + ["%s.%s" % (s.module, a.name) for a in s.names]
+            for n in names:
+                if n.startswith("maya.api"):
+                    return 2
+                if n.startswith("maya.OpenMaya") or n == "maya":
+                    old = True
+        return 1 if old else 2
 
     def constant(self, name: str, cls: Optional[ast.ClassDef] = None):
         return self.consts.get(name)

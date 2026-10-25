@@ -254,13 +254,13 @@ class ComputeTest(unittest.TestCase):
             if obj.isNull():
                 return
             m = om.MFnMatrixData(obj).matrix()
-            data.outputValue(TestNode.aOut).setDouble(m.getElement(3, 0) + n + first + linked)
+            data.outputValue(TestNode.aOut).setDouble(m.adjoint() + n + first + linked)
         '''
         data, results, _p = convert_source(src % textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8), "t.py")
         r = results[0]
-        self.assertFalse(r.ok)                                   # getElement は未対応 → 一覧に出る
-        self.assertEqual(list(r.unknown), [".getElement()"])
-        body = body.replace("m.getElement(3, 0)", "1.0")
+        self.assertFalse(r.ok)                                   # adjoint は未対応 → 一覧に出る
+        self.assertEqual(list(r.unknown), [".adjoint()"])
+        body = body.replace("m.adjoint()", "1.0")
         data, results, _p = convert_source(src % textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8), "t.py")
         r = results[0]
         self.assertTrue(r.ok, r.problems)
@@ -305,6 +305,47 @@ class ComputeTest(unittest.TestCase):
         ''')
         self.assertFalse(r.ok)
         self.assertTrue(any("16 個" in msg for _l, msg in r.problems), r.problems)
+
+    def test_matrix_elements(self):
+        """行列の積を入れた変数の要素・行列式・比較・書き換え（API 2.0 の m[i]・API 1.0 の m(行, 列) / m[行][列]）"""
+        src = TEMPLATE.replace('TestNode.aIn = nAttr.create("input", "in", om.MFnNumericData.kDouble, 0.0)',
+                               'TestNode.aIn = tAttr.create("input", "in", om.MFnData.kMatrix)')
+        body = '''
+            a = data.inputValue(TestNode.aIn).asMatrix()
+            m = a * om.MMatrix()
+            x = m.getElement(3, 0) + m[13] + m(3, 2) + m[0][0] + m.det4x4() + m.det3x3()
+            if m.isEquivalent(a) and not m.isSingular():
+                m.setElement(3, 0, x)
+            n = om.MMatrix()
+            n.setToProduct(m, a)
+            n.setToIdentity()
+            data.outputValue(TestNode.aOut).setDouble(m.inverse().getElement(3, 0) + n[15])
+        '''
+        data, results, _p = convert_source(src % textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8), "t.py")
+        r = results[0]
+        self.assertTrue(r.ok, r.problems)
+        self.assertEqual(r.unknown, {})
+        self.assertEqual(data["nodes"]["testNode"]["compute"], [
+            "a = input", "m = (a * identity())",
+            "x = (((((element(m, 3, 0) + element(m, 3, 1)) + element(m, 3, 2)) + element(m, 0, 0)) + determinant(m)) "
+            "+ determinant3(m))",
+            "if (equivalent(m, a) and (not (abs(determinant(m)) < 1e-10))):", "    m = set_element(m, 3, 0, x)",
+            "n = identity()", "n = (m * a)", "n = identity()",
+            "output = (element(inverse(m), 3, 0) + element(n, 3, 3))"])
+
+    def test_api1_rotation_is_quaternion(self):
+        """API 1.0 の MTransformationMatrix.rotation() は MQuaternion（API 2.0 は MEulerRotation）"""
+        body = '''
+            m = om.MMatrix()
+            q = om.MTransformationMatrix(m).rotation()
+            data.outputValue(TestNode.aOut).setDouble(q.w)
+        '''
+        src = TEMPLATE % textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8)
+        data, results, _p = convert_source(src, "t.py")
+        self.assertIn("q = rotation(m, 0)", data["nodes"]["testNode"]["compute"])      # API 2.0
+        api1 = src.replace("import maya.api.OpenMaya as om", "import maya.OpenMaya as om")
+        data, results, _p = convert_source(api1, "t.py")
+        self.assertIn("q = quat_from_euler(rotation(m, 0), 0)", data["nodes"]["testNode"]["compute"])
 
     def test_missing_output_write_is_noted(self):
         data, r = convert_compute("x = data.inputValue(TestNode.aIn).asDouble()")

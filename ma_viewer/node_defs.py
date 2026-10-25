@@ -59,6 +59,8 @@ FUNCTIONS: Dict[str, Tuple[int, Optional[int]]] = {
     # 行列（Maya と同じ行ベクトルの規約。m1 * m2 は m1 を先に掛ける）
     "identity": (0, 0), "matrix": (1, 1), "inverse": (1, 1), "transpose": (1, 1), "compose": (3, 4),
     "translation": (1, 1), "rotation": (1, 2), "scale": (1, 1), "xform_point": (2, 2), "xform_vector": (2, 2),
+    "element": (3, 3), "set_element": (4, 4), "matrix_values": (1, 1), "determinant": (1, 1), "determinant3": (1, 1),
+    "equivalent": (2, 3),
     # 四元数（[x, y, z, w]）
     "quat_from_euler": (1, 2), "euler_from_quat": (1, 2), "quat_from_matrix": (1, 1), "matrix_from_quat": (1, 1),
     "quat_mul": (2, 2), "quat_slerp": (3, 3), "quat_inverse": (1, 1), "quat_normalize": (1, 1),
