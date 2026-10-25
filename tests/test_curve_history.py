@@ -79,22 +79,36 @@ class CurveHistoryTest(unittest.TestCase):
 
     def test_warnings_and_report(self):
         warnings = "\n".join(self.scene["warnings"])
-        self.assertIn("ヒストリのあるカーブ 4 本の形を、形を作るノード（circle など）から計算しました", warnings)
+        self.assertIn("ヒストリのあるカーブ 3 本の形を、形を作るノード（circle など）から計算しました", warnings)
         self.assertIn("形を作るノードの型: makeTextCurves 1 本、rebuildCurve 1 本", warnings)
         self.assertIn("rbDShape: 形を作るノード rbD_rebuild（rebuildCurve。カーブの作り直し", warnings)
         self.assertIn("txFShape: 形を作るノード txF_freeze の入力: txF_text（makeTextCurves。文字のカーブ", warnings)
         report = rig_report_file(SAMPLE)
-        self.assertIn("✓ 形を計算したカーブ: 4 本", report)
+        self.assertIn("✓ 形を計算したカーブ: 3 本", report)
         self.assertIn("★ rebuildCurve で形を作るカーブ: 1 本", report)
         # transformGeometry の入力が makeTextCurves → いちばん奥の makeTextCurves として数え、理由を出す
         self.assertIn("★ makeTextCurves で形を作るカーブ: 1 本", report)
         self.assertIn("txFShape（txF_freeze の入力: txF_text（makeTextCurves。文字のカーブ。形はフォントから作られるため", report)
 
     def test_world_space_input(self):
-        """transformGeometry の入力がカーブのワールド空間の形（.worldSpace）→ そのカーブの transform のワールド行列を掛ける"""
+        """transformGeometry の入力がカーブのワールド空間の形（.worldSpace）→ そのカーブの transform のワールド行列を掛ける。
+        ワールド空間の形は動きうるので焼き付けず、表示の形（読み込んだときの値）だけを求め、リグとして評価する"""
+        self.assertTrue(self.curves["wsEShape"].get("fromInput"))
+        graph = {g["name"]: g for g in self.scene["animation"]["graph"]}
+        self.assertEqual(graph["wsE_freeze"]["type"], "transformGeometry")
         cvs = cvs_of(self.curves["wsEShape"]["cc"])
         self.assertTrue(all(abs(p[2] - 7) < 1e-6 for p in cvs), cvs)
         self.assertEqual([round(p[1], 4) for p in cvs], [0.0, 2.6667, 5.3333, 8.0])
+
+    def test_rig_transform_geometry_is_not_baked(self):
+        """行列が接続された transformGeometry は焼き付けず、接続を残してリグとして評価する（コントローラーに付いてくる）"""
+        graph = {g["name"]: g for g in self.scene["animation"]["graph"]}
+        self.assertIn("rgTG", graph)
+        self.assertEqual(sorted(graph["rgTG"]["inputs"]), ["ig", "txf"])
+        self.assertIn("cr", graph["rgCrvShape"]["inputs"])
+        self.assertTrue(self.curves["rgCrvShape"].get("fromInput"))
+        # 表示の形（読み込んだときの値。txf は接続なので単位行列）
+        self.assertEqual(len(cvs_of(self.curves["rgCrvShape"]["cc"])), 4)
 
     def test_spline_ik_with_unknown_curve_shape(self):
         """スプライン IK のカーブの形が分からなければ、IK の問題として理由を出す"""

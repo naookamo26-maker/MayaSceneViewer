@@ -224,6 +224,15 @@ def bake_curve_history(ms, world=None) -> Dict[str, List[Tuple[str, str]]]:
         cc = _attrs(ms, n).get("cc")
         if isinstance(cc, list) and len(cc) > 6:
             continue
+        if x.type == "transformGeometry" and not is_static(x, sattr):
+            # 動く transformGeometry（行列が接続されている・入力が変形やワールド空間の形）: 接続を残し、
+            # ビューアがリグとして評価する。上流に形の元（保存された形・計算できる形を作るノード）がなければ報告する
+            exc = _base_problem(ms, x, sattr, world)
+            if exc is not None:
+                key = exc.node.type if exc.node is not None and exc.node.type != "nurbsCurve" else x.type
+                reasons[id(n)] = "%s の入力: %s" % (x.name, exc)
+                problems.setdefault(key, []).append((n.name, reasons[id(n)]))
+            continue
         # 変形（skinCluster など）を経由するものは、変形の入力のカーブ（ShapeOrig）のほうで扱う
         if x.type not in PRODUCERS and x.type != "nurbsCurve":
             if not _is_deformer(x):
@@ -248,6 +257,48 @@ def bake_curve_history(ms, world=None) -> Dict[str, List[Tuple[str, str]]]:
     ms.curve_history_problems = problems
     ms.curve_history_reasons = reasons
     return problems
+
+
+def is_static(node, attr: str = "", depth: int = 0) -> bool:
+    """形が動かない（読み込んだときの値だけで決まる）ヒストリか。動くものは焼き付けず、リグとして評価する"""
+    if depth > 32:
+        return False
+    if node.type == "nurbsCurve":
+        if attr.startswith("ws") or attr.startswith("worldSpace"):
+            return False                                  # ワールド空間の形は、親の transform とともに動く
+        if any(k.startswith("cp[") for k in node.inputs):
+            return False
+        src = node.inputs.get("cr")
+        return src is None or is_static(src[0], src[1], depth + 1)
+    if node.type == "makeNurbCircle":
+        return True                                       # 円は、ビューアでは保存された値で作る
+    if node.type == "transformGeometry":
+        if set(node.inputs) - {"ig"}:
+            return False                                  # 行列（txf）などが接続されている
+        src = node.inputs.get("ig")
+        return src is not None and is_static(src[0], src[1], depth + 1)
+    return False
+
+
+def _base_problem(ms, node, attr: str, world, depth: int = 0) -> Optional[Unsupported]:
+    """動くヒストリの上流に、形の元（保存された形・計算できる形を作るノード）があるか。なければその理由"""
+    if depth > 32:
+        return Unsupported("ヒストリが深すぎる", node)
+    try:
+        output_cc(ms, node, attr, world=world)
+        return None
+    except Unsupported as exc:
+        d = exc.node
+        if d is None or not _is_deformer(d):
+            return exc
+        # 変形（skinCluster・groupParts など）は、その入力のカーブをたどる
+        keys = sorted(k for k in d.inputs if k.startswith(_DEFORM_INPUT_PREFIX) and k.endswith(".ig"))
+        if not keys and "ig" in d.inputs:
+            keys = ["ig"]
+        if not keys:
+            return exc
+        s = d.inputs[keys[0]]
+        return _base_problem(ms, s[0], s[1], world, depth + 1)
 
 
 def shape_problem(ms, shape) -> str:
@@ -277,7 +328,7 @@ def shape_blocker(ms, shape) -> Optional[object]:
         last = x
         if x.type == "nurbsCurve":
             nxt = x.inputs.get("cr")
-        elif x.type == "groupParts":
+        elif x.type in ("groupParts", "transformGeometry"):
             nxt = x.inputs.get("ig")
         else:
             keys = sorted(k for k in x.inputs if k.startswith(_DEFORM_INPUT_PREFIX) and k.endswith(".ig"))

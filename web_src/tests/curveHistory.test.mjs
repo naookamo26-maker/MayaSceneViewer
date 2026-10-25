@@ -19,7 +19,7 @@ const tx = (f) => 5 * (f - 1) / 23;
 
 test('形を作るノード（circle・transformGeometry）から求めた形のカーブを表示する', () => {
   const byName = Object.fromEntries(data.curves.map((c) => [c.name, c]));
-  assert.deepEqual(Object.keys(byName).sort(), ['hexBShape', 'ringAShape', 'spC_curveShape', 'wsEShape']);
+  assert.deepEqual(Object.keys(byName).sort(), ['hexBShape', 'rgCrvShape', 'rgSrcShape', 'ringAShape', 'spC_curveShape', 'wsEShape']);
   const ring = parseNurbsCurve(byName.ringAShape.cc);
   assert.ok(ring, 'ringAShape');
   // 半径 2 の円: カーブ上の点は、中心から距離 2（法線 +Y なので y = 0）
@@ -78,5 +78,20 @@ test('rootOnCurve オフ: 開始ジョイントがカーブから離れても、
       const p = new Vector3().setFromMatrixPosition(rig.world(idx(`spC_${i}`)));
       assert.ok(near(p.x, 20) && near(p.y, 2 * i) && near(p.z, 0), `フレーム ${f}: spC_${i} ${p.toArray()}`);
     }
+  }
+});
+
+test('リグとして動く transformGeometry（行列が接続）: スプライン IK のカーブがコントローラーに付いてきて、ジョイントもカーブに乗る', () => {
+  for (const f of [1, 12, 24]) {
+    const rig = new RigEvaluator(new AnimationClip(data.animation), data.nodes, (ni) => new Matrix4().fromArray(data.nodes[ni].matrix));
+    rig.evaluate(f);
+    const res = rig.verifySaved((n) => rig.fileRestLocal(n));
+    const sp = res.find((x) => x.handle === 'spR_ik').detail.spline;
+    assert.ok(sp.evalToCurve.every((d) => d < 5e-3), `フレーム ${f}: ${sp.evalToCurve}`);   // 曲がったカーブの折れ線の近似の差
+    // カーブは rgSrcShape と同じ場所（グループの移動 (0, 0, 10) が二重に掛からない）
+    assert.ok(near(sp.start[0], 40) && near(sp.start[1], 0) && near(sp.start[2], 10), `フレーム ${f}: 始点 ${sp.start}`);
+    const end = new Vector3().setFromMatrixPosition(rig.world(idx('spR_4')));
+    if (f === 1) assert.ok(near(end.x, 40) && near(end.y, 8) && near(end.z, 10), `フレーム 1: 終端 ${end.toArray()}`);
+    else assert.ok(end.x > 40 + 0.1, `フレーム ${f}: 終端がコントローラーに付いてくる ${end.toArray()}`);
   }
 });
