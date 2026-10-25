@@ -327,6 +327,15 @@ class TestSequencer(unittest.TestCase):
                          ("shotB", 10.0, 0.0, 2.0, 3))
         self.assertFalse(any("フレーム" in w for w in sc["warnings"]))
 
+    def test_render_aspect(self):
+        """解像度ゲートの縦横比: .dar があればそれ、なければ 幅 / 高さ × ピクセルの縦横比（.pa）"""
+        from ma_viewer.extract_ma import render_settings
+        head = 'requires maya "2024";\ncurrentUnit -l centimeter -a degree -t film;\nselect -ne :defaultResolution;\n'
+        r = render_settings(parse_ma_text(head + '\tsetAttr ".w" 1440;\n\tsetAttr ".h" 1080;\n\tsetAttr ".pa" 1.3333333;\n', "t.ma"))
+        self.assertAlmostEqual(r["deviceAspectRatio"], 16 / 9, places=5)
+        r = render_settings(parse_ma_text(head + '\tsetAttr ".w" 1920;\n\tsetAttr ".h" 1080;\n\tsetAttr ".dar" 1.777;\n', "t.ma"))
+        self.assertAlmostEqual(r["deviceAspectRatio"], 1.777)
+
     def test_sequence_end_frame(self):
         """sequenceEndFrame = 開始 + preHold + (endFrame − startFrame) × scale + postHold"""
         s = self.shots["SH030"]

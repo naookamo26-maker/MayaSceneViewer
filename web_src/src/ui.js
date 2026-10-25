@@ -243,7 +243,7 @@ export class UI {
     group.textContent = '';
     const add = (value, text, sub) => {
       const b = document.createElement('button');
-      Object.assign(b, { type: 'button', textContent: text });
+      Object.assign(b, { type: 'button', textContent: text, title: text });
       b.setAttribute('role', 'radio');
       b.dataset.value = String(value);
       if (sub) { const s2 = document.createElement('span'); s2.className = 'c-sub'; s2.textContent = sub; b.appendChild(s2); }
@@ -302,7 +302,14 @@ export class UI {
         const open = b.getAttribute('aria-expanded') !== 'true';
         close(b);
         b.setAttribute('aria-expanded', String(open));
-        $(b.getAttribute('aria-controls')).hidden = !open;
+        const panel = $(b.getAttribute('aria-controls'));
+        panel.hidden = !open;
+        if (open) {
+          // 画面の下端までに収める（はみ出す分はメニューの中でスクロール）。選んでいる項目が見えるところまで送る
+          panel.style.maxHeight = `${Math.max(160, window.innerHeight - panel.getBoundingClientRect().top - 12)}px`;
+          const checked = panel.querySelector('.choices.list.scroll [aria-checked="true"]');
+          if (checked) checked.scrollIntoView({ block: 'nearest' });
+        }
       });
     }
     // メニューの外をクリックしたら閉じる（メニューの中の操作では閉じない）

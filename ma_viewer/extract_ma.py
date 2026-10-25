@@ -428,7 +428,9 @@ def render_settings(ms: MaScene) -> dict:
     """レンダーの解像度（defaultResolution）。カメラから見るときの解像度ゲートの縦横比に使う"""
     r = ms.resolution
     w, h = _raw_num(r, "w", 640.0), _raw_num(r, "h", 480.0)
-    dar = _raw_num(r, "dar", w / h if h > 0 else 4.0 / 3.0)
+    pa = _raw_num(r, "pa", 1.0)                       # ピクセルの縦横比
+    # 解像度ゲートの縦横比（deviceAspectRatio = 幅 / 高さ × ピクセルの縦横比）。書かれていなければ幅・高さから求める
+    dar = _raw_num(r, "dar", w / h * pa if h > 0 else 4.0 / 3.0)
     return {"width": int(w), "height": int(h), "deviceAspectRatio": dar}
 
 

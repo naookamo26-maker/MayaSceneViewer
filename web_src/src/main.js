@@ -1653,7 +1653,11 @@ class ViewerApp {
     const vp = document.getElementById('viewport');
     const W = Math.max(1, vp.clientWidth), H = Math.max(1, vp.clientHeight);
     const render = (this.data && this.data.render) || {};
-    const fr = cameraFrustum(cameraParams(c, this.cameraProps.get(this.viewCamera)), W, H, render.deviceAspectRatio);
+    // 解像度ゲートは、左上のタイトルと下端のタイムライン（ビューポートに重ねて表示）を避けた範囲に収める
+    const title = document.getElementById('vp-title'), tl = document.getElementById('timeline');
+    const inset = { top: title && title.textContent ? title.offsetTop + title.offsetHeight + 4 : 0,
+      bottom: tl && !tl.hidden ? tl.offsetHeight : 0 };
+    const fr = cameraFrustum(cameraParams(c, this.cameraProps.get(this.viewCamera)), W, H, render.deviceAspectRatio, 1.06, inset);
     if (fr.ortho) {
       Object.assign(cam, { left: fr.left, right: fr.right, top: fr.top, bottom: fr.bottom, near: fr.near, far: fr.far });
       cam.updateProjectionMatrix();
