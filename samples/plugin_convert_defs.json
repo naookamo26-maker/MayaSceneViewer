@@ -1,0 +1,306 @@
+{
+  "format": "maya-scene-viewer-node-definitions",
+  "version": 1,
+  "plugin": "sampleRigNodes",
+  "pluginVersion": "1.2",
+  "nodes": {
+    "weightedSumNode": {
+      "description": "sampleRigNodes.py の WeightedSumNode から変換（convert-plugin 1.0）",
+      "attributes": [
+        {
+          "name": "input",
+          "short": "in",
+          "type": "double",
+          "array": true
+        },
+        {
+          "name": "weight",
+          "short": "w",
+          "type": "double",
+          "array": true,
+          "default": 1.0
+        },
+        {
+          "name": "output",
+          "short": "o",
+          "type": "double",
+          "output": true
+        }
+      ],
+      "compute": [
+        "total = 0.0",
+        "for _i1 in indices(input):",
+        "    index = _i1",
+        "    value = input[_i1]",
+        "    total = (total + (value * weight[index]))",
+        "output = total"
+      ]
+    },
+    "targetAverage": {
+      "description": "sampleRigNodes.py の TargetAverage から変換（convert-plugin 1.0）",
+      "attributes": [
+        {
+          "name": "target",
+          "short": "tg",
+          "type": "compound",
+          "array": true,
+          "children": [
+            {
+              "name": "targetMatrix",
+              "short": "tm",
+              "type": "matrix"
+            },
+            {
+              "name": "targetWeight",
+              "short": "tw",
+              "type": "double",
+              "default": 1.0
+            }
+          ]
+        },
+        {
+          "name": "outTranslate",
+          "short": "ot",
+          "type": "vector",
+          "output": true,
+          "children": [
+            {
+              "name": "outTranslateX",
+              "short": "otX"
+            },
+            {
+              "name": "outTranslateY",
+              "short": "otY"
+            },
+            {
+              "name": "outTranslateZ",
+              "short": "otZ"
+            }
+          ]
+        }
+      ],
+      "compute": [
+        "pos = [0.0, 0.0, 0.0]",
+        "wsum = 0.0",
+        "for _i1 in indices(target):",
+        "    w = target[_i1].targetWeight",
+        "    m = target[_i1].targetMatrix",
+        "    pos = (pos + (translation(m) * w))",
+        "    wsum = (wsum + w)",
+        "if (wsum > 1e-06):",
+        "    pos = (pos / wsum)",
+        "outTranslate = [pos.x, pos.y, pos.z]"
+      ]
+    },
+    "angleScale": {
+      "description": "sampleRigNodes.py の AngleScale から変換（convert-plugin 1.0）",
+      "attributes": [
+        {
+          "name": "inAngle",
+          "short": "ia",
+          "type": "angle"
+        },
+        {
+          "name": "factor",
+          "short": "f",
+          "type": "double",
+          "default": 2.0
+        },
+        {
+          "name": "offsetAngle",
+          "short": "oa",
+          "type": "angle"
+        },
+        {
+          "name": "outAngle",
+          "short": "out",
+          "type": "angle",
+          "output": true
+        }
+      ],
+      "compute": [
+        "rad = inAngle",
+        "factor_ = factor",
+        "offset = degrees(offsetAngle)",
+        "result = ((rad * factor_) + radians(offset))",
+        "outAngle = result"
+      ]
+    },
+    "aimMatrix2": {
+      "description": "sampleRigNodes.py の AimMatrix から変換（convert-plugin 1.0）",
+      "attributes": [
+        {
+          "name": "baseMatrix",
+          "short": "bm",
+          "type": "matrix"
+        },
+        {
+          "name": "targetMatrix",
+          "short": "tgm",
+          "type": "matrix"
+        },
+        {
+          "name": "upVector",
+          "short": "up",
+          "type": "vector",
+          "children": [
+            {
+              "name": "upVector0",
+              "short": "up0"
+            },
+            {
+              "name": "upVector1",
+              "short": "up1"
+            },
+            {
+              "name": "upVector2",
+              "short": "up2"
+            }
+          ],
+          "default": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "name": "outMatrix",
+          "short": "om",
+          "type": "matrix",
+          "output": true
+        }
+      ],
+      "compute": [
+        "base = baseMatrix",
+        "target = targetMatrix",
+        "up_ = upVector",
+        "origin = xform_point([0.0, 0.0, 0.0], base)",
+        "goal = xform_point([0.0, 0.0, 0.0], target)",
+        "x = normalize((goal - origin))",
+        "z = normalize(cross(x, up_))",
+        "y = cross(z, x)",
+        "m = matrix([x.x, x.y, x.z, 0.0, y.x, y.y, y.z, 0.0, z.x, z.y, z.z, 0.0, origin.x, origin.y, origin.z, 1.0])",
+        "outMatrix = m"
+      ]
+    },
+    "stretchArray": {
+      "description": "sampleRigNodes.py の StretchArray から変換（convert-plugin 1.0）",
+      "attributes": [
+        {
+          "name": "inValue",
+          "short": "iv",
+          "type": "double",
+          "array": true
+        },
+        {
+          "name": "stretch",
+          "short": "st",
+          "type": "double",
+          "default": 1.0
+        },
+        {
+          "name": "outValue",
+          "short": "ov",
+          "type": "double",
+          "array": true,
+          "output": true
+        }
+      ],
+      "compute": [
+        "scale_ = stretch",
+        "for _i1 in indices(inValue):",
+        "    idx = _i1",
+        "    outValue[idx] = ((inValue[_i1] * scale_) if ((idx % 2) == 0) else (-inValue[_i1]))"
+      ]
+    },
+    "legacySum": {
+      "description": "sampleRigNodesApi1.py の LegacySum から変換（convert-plugin 1.0）",
+      "attributes": [
+        {
+          "name": "values",
+          "short": "vals",
+          "type": "float",
+          "array": true
+        },
+        {
+          "name": "gain",
+          "short": "gn",
+          "type": "float",
+          "default": 1.0
+        },
+        {
+          "name": "result",
+          "short": "res",
+          "type": "float",
+          "output": true
+        }
+      ],
+      "compute": [
+        "gain_ = gain",
+        "total = 0.0",
+        "for _i1 in indices(values):",
+        "    total = (total + values[_i1])",
+        "result = (total * gain_)"
+      ]
+    },
+    "vectorLength": {
+      "description": "sampleRigNodesApi1.py の VectorLength から変換（convert-plugin 1.0）",
+      "attributes": [
+        {
+          "name": "inVector",
+          "short": "iv",
+          "type": "vector",
+          "children": [
+            {
+              "name": "inVectorX",
+              "short": "ivx"
+            },
+            {
+              "name": "inVectorY",
+              "short": "ivy"
+            },
+            {
+              "name": "inVectorZ",
+              "short": "ivz"
+            }
+          ]
+        },
+        {
+          "name": "length",
+          "short": "len",
+          "type": "double",
+          "output": true
+        },
+        {
+          "name": "normal",
+          "short": "nrm",
+          "type": "vector",
+          "output": true,
+          "children": [
+            {
+              "name": "normal0",
+              "short": "nrm0"
+            },
+            {
+              "name": "normal1",
+              "short": "nrm1"
+            },
+            {
+              "name": "normal2",
+              "short": "nrm2"
+            }
+          ]
+        }
+      ],
+      "compute": [
+        "v = inVector",
+        "vec = [v[0], v[1], v[2]]",
+        "length_ = length(vec)",
+        "length = length_",
+        "if (length_ > 0.0):",
+        "    vec = normalize(vec)",
+        "normal = vec"
+      ]
+    }
+  }
+}

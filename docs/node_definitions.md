@@ -114,6 +114,43 @@ output = total * settings.gain + p.x       # 出力の属性に代入する
 
 `compose` は Maya の変換と同じく、スケール → 回転 → 移動の順の行列（`S · R · T`）です。
 
+## プラグインからの変換（convert-plugin）
+
+Python で書いたノードプラグイン（.py）からは、定義を自動で作れます。配布者が一度だけ実行し、できた定義を同梱します。
+
+```
+python -m ma_viewer convert-plugin myPlugin.py                                  # 結果と変換した計算の表示だけ
+python -m ma_viewer convert-plugin myPlugin.py -o ma_viewer/node_defs/myPlugin.json   # 書き出す
+python -m ma_viewer node-defs                                                   # 同梱した定義を確かめる
+```
+
+- プラグインのコードは **実行しません**（Maya も不要）。Python の構文を解析して、属性と compute の計算を読みます。
+- `initializePlugin` の `registerNode` で登録したノードごとに、変換できたか（✓）、できない理由（★ と行番号）、注意（※）を出します。変換できたノードだけを書き出し、1 つでも変換できなければ終了コード 1 です。
+- `plugin` はファイル名（`--plugin` で変更。.ma の `requires` の名前に合わせます）、`pluginVersion` は `MFnPlugin(obj, 作者, 版)` の版（`--version` で変更）です。
+- 変換した計算は人が読める形で書き出すので、必要なら手で直せます（`-o` を付けずに実行すると内容を確かめられます）。
+
+| 読むもの | 内容 |
+|---|---|
+| 登録 | `registerNode(型の名前, id, 作成の関数, 初期化の関数)`。クラスの一覧をループで登録していてもよい。名前は定数・クラスの属性から |
+| 属性 | `MFnNumericAttribute`（数・`k3Double` などのベクトル・`createPoint`・`createColor`・子の属性から作る数の compound）・`MFnUnitAttribute`（角度・長さ・時間）・`MFnMatrixAttribute`・`MFnCompoundAttribute`（`addChild`）・`MFnEnumAttribute`。`array`・`writable`・`default`（API 1.0 は `setArray` など）。出力は `attributeAffects` で影響を受ける属性 |
+| 計算 | `inputValue`・`outputValue`・`inputArrayValue`・`outputArrayValue`、`child`、`asDouble`・`asFloat`・`asInt`・`asBool`・`asAngle`・`asDistance`・`asTime`・`asMatrix`・`asVector`・`asDouble3` など、`setDouble`・`set3Double`・`setMVector`・`setMMatrix`・`setMAngle` など |
+| 配列 | `for i in range(len(arr))`（API 1.0 は `elementCount()`）＋ `jumpToPhysicalElement` / `jumpToArrayElement`、`while not arr.isDone(): … arr.next()`、論理番号（`elementLogicalIndex` / `elementIndex`）と `jumpToLogicalElement` / `jumpToElement`、出力の配列の `builder()`・`addElement(番号)` |
+| 値 | `MVector`・`MPoint`（`*` は内積、`^` は外積、点 × 行列）・`MMatrix`・`MTransformationMatrix`（移動・回転・スケールの取り出しと設定）・`MEulerRotation`・`MQuaternion`・`MAngle`、`math` の関数、`abs`・`min`・`max`・`round` |
+| plug | `if plug == 出力:`・`plug.parent()`・`plug.array()` による出し分けは、すべての出力を計算するものとして扱います |
+
+変換できない書き方（そのノードは書き出しません）:
+
+- `self` に値を覚える（前回の計算の結果を使う）。ビューアはフレームごとに独立して計算します。
+- `maya.cmds`・ほかのノードを直接見る処理、文字列・メッシュ・カーブなど形状の属性を読む計算。
+- `while`（配列をたどる `while not arr.isDone()` は可）、`try`、計算の途中の `return`（plug による出し分けの `return` は可）。
+- `self` のメソッドやプラグインの中の関数の呼び出し（計算を compute の中に書いてください）。
+
+扱えない型の属性（文字列など）は、compute で読んでいなければ定義から外し、注意（※）を出します。出力に書き込む文が見つからなければ、その出力は既定値のままになるので注意を出します。
+
+`create(…, k3Double)` で作ったベクトルの成分の属性は、Maya と同じく名前に `0`・`1`・`2` を付けた名前（`upVector0`、短い名前 `up0`）、`createPoint` は `X`・`Y`・`Z`、`createColor` は `R`・`G`・`B` です。
+
+サンプル: `samples/plugins/sampleRigNodes.py`（API 2.0）・`samples/plugins/sampleRigNodesApi1.py`（API 1.0）。変換した定義は `samples/plugin_convert_defs.json`（`python tools/make_plugin_convert_sample.py`）。
+
 ## 制限
 
 - 計算はフレームごとに独立して行います。前のフレームの結果を持ち越すノード（シミュレーション・積分など）は再現できません。
