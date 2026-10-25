@@ -79,18 +79,28 @@ class CurveHistoryTest(unittest.TestCase):
 
     def test_warnings_and_report(self):
         warnings = "\n".join(self.scene["warnings"])
-        self.assertIn("ヒストリのあるカーブ 3 本の形を、形を作るノード（circle など）から計算しました", warnings)
-        self.assertIn("形を作るノードの型: rebuildCurve 1 本", warnings)
-        self.assertIn("rbDShape: 形を作るノード rbD_rebuild（rebuildCurve）をビューアで計算できない", warnings)
+        self.assertIn("ヒストリのあるカーブ 4 本の形を、形を作るノード（circle など）から計算しました", warnings)
+        self.assertIn("形を作るノードの型: makeTextCurves 1 本、rebuildCurve 1 本", warnings)
+        self.assertIn("rbDShape: 形を作るノード rbD_rebuild（rebuildCurve。カーブの作り直し", warnings)
+        self.assertIn("txFShape: 形を作るノード txF_freeze の入力: txF_text（makeTextCurves。文字のカーブ", warnings)
         report = rig_report_file(SAMPLE)
-        self.assertIn("✓ 形を計算したカーブ: 3 本", report)
+        self.assertIn("✓ 形を計算したカーブ: 4 本", report)
         self.assertIn("★ rebuildCurve で形を作るカーブ: 1 本", report)
+        # transformGeometry の入力が makeTextCurves → いちばん奥の makeTextCurves として数え、理由を出す
+        self.assertIn("★ makeTextCurves で形を作るカーブ: 1 本", report)
+        self.assertIn("txFShape（txF_freeze の入力: txF_text（makeTextCurves。文字のカーブ。形はフォントから作られるため", report)
+
+    def test_world_space_input(self):
+        """transformGeometry の入力がカーブのワールド空間の形（.worldSpace）→ そのカーブの transform のワールド行列を掛ける"""
+        cvs = cvs_of(self.curves["wsEShape"]["cc"])
+        self.assertTrue(all(abs(p[2] - 7) < 1e-6 for p in cvs), cvs)
+        self.assertEqual([round(p[1], 4) for p in cvs], [0.0, 2.6667, 5.3333, 8.0])
 
     def test_spline_ik_with_unknown_curve_shape(self):
         """スプライン IK のカーブの形が分からなければ、IK の問題として理由を出す"""
         _scene, report = self.load_variant('connectAttr "spC_curveShape.ws" "spC_ik.ic";',
                                            'connectAttr "rbDShape.ws" "spC_ik.ic";')
-        self.assertIn("スプライン IK のカーブ rbDShape の形が分かりません（形を作るノード rbD_rebuild（rebuildCurve）", report)
+        self.assertIn("スプライン IK のカーブ rbDShape の形が分かりません（形を作るノード rbD_rebuild（rebuildCurve。", report)
 
     def test_unsupported_circle_options(self):
         scene, report = self.load_variant('\tsetAttr ".r" 2;', '\tsetAttr ".r" 2;\n\tsetAttr ".sw" 180;')
