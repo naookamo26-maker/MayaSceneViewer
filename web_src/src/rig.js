@@ -2126,6 +2126,9 @@ export class RigEvaluator {
         step.fileShape = !!(n.attrs && n.attrs.cc);
         step.cp = Object.keys(ins).filter((k) => /^cp\[/.test(k)).length;
         step.shown = typeof n.shape === 'number' && n.shape >= 0;   // 画面のカーブを、評価した形で描き直すか
+        // CV の位置（Maya の xform -q -ws -t と見比べるため。ws ならワールド、local ならカーブのローカル）
+        const c = this.plug(src.node, src.attr);
+        if (c && c.isCurve) step.points = c.cvs.map((p) => p.toArray().map((x) => Math.round(x * 10) / 10));
       } else if (n.type === 'groupParts' || n.type === 'transformGeometry') {
         next = ins.ig || null;
         if (n.type === 'transformGeometry') step.txf = ins.txf ? '接続' : ((n.attrs || {}).txf ? 'ファイルの値' : '単位行列');

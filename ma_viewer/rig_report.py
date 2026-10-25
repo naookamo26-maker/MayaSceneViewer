@@ -483,6 +483,9 @@ def _chain_lines(chain, ind: str) -> List[str]:
                                                  + (" …" if len(mv) > 12 else "") if mv else "なし"))
         out.append(ind + "%s（%s）.%s: %s%s" % (st["name"], st["type"], st["attr"], where,
                                               "・" + "・".join(extra) if extra else ""))
+        if st.get("points"):
+            out.append(ind + "  CV: " + " ".join("%d(%s)" % (k, ", ".join("%.1f" % x for x in p))
+                                                 for k, p in enumerate(st["points"])))
         for w in st.get("wires") or []:
             ws, bs = w.get("wireShape"), w.get("baseShape")
             out.append(ind + "  " + "ワイヤー dw[%d] %s: %s ／ ベース bw[%d] %s: %s" % (
