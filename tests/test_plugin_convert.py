@@ -245,6 +245,19 @@ class CliTest(unittest.TestCase):
         self.assertIn("--- legacySum の計算", text)
         self.assertIn("for _i1 in indices(values):", text)
 
+    def test_cp932_console(self):
+        """出力が cp932（Windows の日本語の環境でファイル・パイプに出すときなど）でも止まらない"""
+        import subprocess
+        env = dict(os.environ, PYTHONIOENCODING="cp932")
+        sample = os.path.join(ROOT, "samples", "plugin_convert_sample.ma")
+        for argv, expect in ((["convert-plugin", API1], 0), (["convert-plugin", API2], 1), (["node-defs"], 0),
+                             (["rig", sample], 0)):
+            with self.subTest(argv=argv):
+                r = subprocess.run([sys.executable, "-m", "ma_viewer"] + argv, cwd=ROOT, env=env,
+                                   capture_output=True)
+                self.assertEqual(r.returncode, expect, r.stderr.decode("cp932", "replace"))
+                self.assertNotIn(b"UnicodeEncodeError", r.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
