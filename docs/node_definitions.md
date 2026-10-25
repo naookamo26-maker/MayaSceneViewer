@@ -134,6 +134,7 @@ python -m ma_viewer node-defs                                                   
 | 読むもの | 内容 |
 |---|---|
 | 登録 | `registerNode(型の名前, id, 作成の関数, 初期化の関数)`。クラスの一覧をループで登録していてもよい。名前は定数・クラスの属性から |
+| クラス | 初期化の関数・compute・属性は親クラス（同じファイルの中）にあってもよい。クラスの直下に書いた関数セット（`nAttr = om.MFnNumericAttribute()`）・属性の作成（`aIn = nAttr.create(…)`）・名前の定数（`kIn = "inMatrix"`）も読む。compute からは `self.aIn`・`Cls.aIn`・`self.__class__.aIn`・`type(self).aIn` で参照できる |
 | 属性 | `MFnNumericAttribute`（数・`k3Double` などのベクトル・`createPoint`・`createColor`・子の属性から作る数の compound）・`MFnUnitAttribute`（角度・長さ・時間）・`MFnMatrixAttribute`・`MFnTypedAttribute` の行列（`MFnData.kMatrix`）・`MFnCompoundAttribute`（`addChild`）・`MFnEnumAttribute`。`array`・`writable`・`default`（API 1.0 は `setArray` など）。出力は `attributeAffects` で影響を受ける属性 |
 | 計算 | `inputValue`・`outputValue`・`inputArrayValue`・`outputArrayValue`、`child`、`asDouble`・`asFloat`・`asInt`・`asBool`・`asAngle`・`asDistance`・`asTime`・`asMatrix`・`asVector`・`asDouble3` など、`setDouble`・`set3Double`・`setMVector`・`setMMatrix`・`setMAngle` など、型つきの行列の `MFnMatrixData(handle.data()).matrix()`・`.transformation()` と `setMObject(MFnMatrixData().create(行列))`、`MScriptUtil.createMatrixFromList(16 個の数のリスト, 行列)` |
 | 配列 | `for i in range(len(arr))`（API 1.0 は `elementCount()`）＋ `jumpToPhysicalElement` / `jumpToArrayElement`、`while not arr.isDone(): … arr.next()`、論理番号（`elementLogicalIndex` / `elementIndex`）と `jumpToLogicalElement` / `jumpToElement`、出力の配列の `builder()`・`addElement(番号)` |

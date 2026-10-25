@@ -457,6 +457,134 @@ class ComputeTest(unittest.TestCase):
                 self.assertTrue(results[0].ok, results[0].problems)
                 self.assertEqual(data["nodes"]["testNode"]["compute"], expect)
 
+    def test_class_level_attributes(self):
+        """クラスの直下の関数セット・属性の作成・名前の定数、親クラス、self.__class__ / type(self) からの参照"""
+        HEAD = "import maya.api.OpenMaya as om\ndef maya_useNewAPI(): pass\n"
+        REG = ("\ndef initializePlugin(obj):\n    p = om.MFnPlugin(obj)\n"
+               "    p.registerNode('n', om.MTypeId(1), N.creator, N.initialize)\n")
+        cases = {
+        "基本（クラスの直下に MObject・cls で作る）": '''
+        class N(om.MPxNode):
+            inA = om.MObject()
+            outA = om.MObject()
+            @staticmethod
+            def creator(): return N()
+            @classmethod
+            def initialize(cls):
+                nAttr = om.MFnNumericAttribute()
+                cls.inA = nAttr.create("inA", "ia", om.MFnNumericData.kDouble, 1.0)
+                cls.outA = nAttr.create("outA", "oa", om.MFnNumericData.kDouble, 0.0)
+                nAttr.writable = False
+                cls.addAttribute(cls.inA); cls.addAttribute(cls.outA)
+                cls.attributeAffects(cls.inA, cls.outA)
+            def compute(self, plug, data):
+                data.outputValue(self.outA).setDouble(data.inputValue(self.inA).asDouble() * 2.0)
+        ''',
+        "1 関数セットをクラスの直下に": '''
+        class N(om.MPxNode):
+            nAttr = om.MFnNumericAttribute()
+            inA = om.MObject()
+            outA = om.MObject()
+            @staticmethod
+            def creator(): return N()
+            @classmethod
+            def initialize(cls):
+                cls.inA = cls.nAttr.create("inA", "ia", om.MFnNumericData.kDouble, 1.0)
+                cls.outA = cls.nAttr.create("outA", "oa", om.MFnNumericData.kDouble, 0.0)
+                cls.nAttr.writable = False
+                cls.addAttribute(cls.inA); cls.addAttribute(cls.outA)
+                cls.attributeAffects(cls.inA, cls.outA)
+            def compute(self, plug, data):
+                data.outputValue(self.outA).setDouble(data.inputValue(self.inA).asDouble() * 2.0)
+        ''',
+        "2 属性をクラスの直下で作る": '''
+        class N(om.MPxNode):
+            _n = om.MFnNumericAttribute()
+            inA = _n.create("inA", "ia", om.MFnNumericData.kDouble, 1.0)
+            outA = _n.create("outA", "oa", om.MFnNumericData.kDouble, 0.0)
+            _n.writable = False
+            @staticmethod
+            def creator(): return N()
+            @classmethod
+            def initialize(cls):
+                cls.addAttribute(cls.inA); cls.addAttribute(cls.outA)
+                cls.attributeAffects(cls.inA, cls.outA)
+            def compute(self, plug, data):
+                data.outputValue(self.outA).setDouble(data.inputValue(self.inA).asDouble() * 2.0)
+        ''',
+        "3 属性の名前をクラスの定数に": '''
+        class N(om.MPxNode):
+            kIn = "inA"
+            kOut = "outA"
+            inA = om.MObject()
+            outA = om.MObject()
+            @staticmethod
+            def creator(): return N()
+            @classmethod
+            def initialize(cls):
+                nAttr = om.MFnNumericAttribute()
+                cls.inA = nAttr.create(cls.kIn, "ia", om.MFnNumericData.kDouble, 1.0)
+                cls.outA = nAttr.create(N.kOut, "oa", om.MFnNumericData.kDouble, 0.0)
+                nAttr.writable = False
+                cls.addAttribute(cls.inA); cls.addAttribute(cls.outA)
+                cls.attributeAffects(cls.inA, cls.outA)
+            def compute(self, plug, data):
+                data.outputValue(self.outA).setDouble(data.inputValue(self.inA).asDouble() * 2.0)
+        ''',
+        "4 親クラス": '''
+        class Base(om.MPxNode):
+            inA = om.MObject()
+            outA = om.MObject()
+            @classmethod
+            def initialize(cls):
+                nAttr = om.MFnNumericAttribute()
+                cls.inA = nAttr.create("inA", "ia", om.MFnNumericData.kDouble, 1.0)
+                cls.outA = nAttr.create("outA", "oa", om.MFnNumericData.kDouble, 0.0)
+                nAttr.writable = False
+                cls.addAttribute(cls.inA); cls.addAttribute(cls.outA)
+                cls.attributeAffects(cls.inA, cls.outA)
+            def compute(self, plug, data):
+                data.outputValue(self.outA).setDouble(data.inputValue(self.inA).asDouble() * 2.0)
+        class N(Base):
+            @staticmethod
+            def creator(): return N()
+        ''',
+        "5 self.__class__ / type(self)": '''
+        class N(om.MPxNode):
+            inA = om.MObject()
+            outA = om.MObject()
+            @staticmethod
+            def creator(): return N()
+            @classmethod
+            def initialize(cls):
+                nAttr = om.MFnNumericAttribute()
+                cls.inA = nAttr.create("inA", "ia", om.MFnNumericData.kDouble, 1.0)
+                cls.outA = nAttr.create("outA", "oa", om.MFnNumericData.kDouble, 0.0)
+                nAttr.writable = False
+                cls.addAttribute(cls.inA); cls.addAttribute(cls.outA)
+                cls.attributeAffects(cls.inA, cls.outA)
+            def compute(self, plug, data):
+                data.outputValue(type(self).outA).setDouble(data.inputValue(self.__class__.inA).asDouble() * 2.0)
+        ''',
+        }
+        for name, body in cases.items():
+            with self.subTest(name=name):
+                data, results, problems = convert_source(HEAD + textwrap.dedent(body) + REG, "x.py")
+                self.assertEqual(problems, [])
+                self.assertTrue(results[0].ok, results[0].problems)
+                spec = data["nodes"]["n"]
+                self.assertEqual(spec["compute"], ["outA = (inA * 2.0)"])
+                self.assertEqual([(a["name"], a.get("default"), a.get("output", False)) for a in spec["attributes"]],
+                                 [("inA", 1.0, False), ("outA", None, True)])
+
+    def test_unknown_attribute_message(self):
+        """分からない属性は、書いたとおりの式と、作った属性の一覧つきで報告する"""
+        _data, r = convert_compute("x = data.inputValue(self.aMissing).asDouble()")
+        self.assertFalse(r.ok)
+        msg = r.problems[0][1]
+        self.assertIn("属性 self.aMissing が分かりません", msg)
+        self.assertIn("作った属性: aAng・aArr・aIn・aName・aOut", msg)
+
     def test_missing_output_write_is_noted(self):
         data, r = convert_compute("x = data.inputValue(TestNode.aIn).asDouble()")
         self.assertTrue(r.ok, r.problems)
