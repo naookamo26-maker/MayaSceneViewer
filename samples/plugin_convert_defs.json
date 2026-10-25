@@ -344,7 +344,8 @@
       "compute": [
         "inObject = inMatrix",
         "if connected(inMatrix):",
-        "    inMatrix_ = inObject",
+        "    inData = inObject",
+        "    inMatrix_ = inData",
         "    offset_ = offset",
         "    mode_ = mode",
         "    if (mode_ == 1):",

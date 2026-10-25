@@ -452,6 +452,10 @@ class Translator:
     def emit(self, line: str):
         self.lines.append("    " * self.indent + line)
 
+    def emit_assign(self, name: str, code: str):
+        if code != name:                                 # x = x は書かない
+            self.emit("%s = %s" % (name, code))
+
     def local(self, name: str) -> str:
         """プラグインの変数名 → 定義の変数名（属性・関数の名前と重なれば _ を付ける）"""
         if name not in self.names:
@@ -598,11 +602,28 @@ class Translator:
                   % target.attr, s)
         v = self.expr(value_node)
         if isinstance(target, ast.Name):
+            # 値を読める入力の handle・MTransformationMatrix・MFnMatrixData は、代入した時点の値を変数に書き出す
+            # （同じ名前の使い回し・if の分かれ道ごとの代入・if の中での変更でも、Maya と同じ順に値が決まるように）
+            if v.kind == "hdl" and self.readable_handle(v):
+                name = self.local(target.id)
+                self.emit("%s = %s" % (name, self.path_text(v.extra["path"])))
+                self.env[target.id] = Value("hdl", **dict(v.extra, var=name))
+                return
+            if v.kind == "tm":
+                name = self.local(target.id)
+                self.emit_assign(name, self.tm_matrix(v).code)
+                self.env[target.id] = Value("tm", m=name, order=v.extra.get("order", "0"), var=name)
+                return
+            if v.kind == "mfn" and v.extra.get("mat") is not None:
+                name = self.local(target.id)
+                self.emit_assign(name, v.extra["mat"])
+                self.env[target.id] = Value("mfn", mat=name)
+                return
             if v.kind in ("hdl", "ahdl", "bld", "tm", "mfn", "this", "depfn"):
-                self.env[target.id] = v                  # handle・MTransformationMatrix は変数に入れず、そのまま追う
+                self.env[target.id] = v                  # 配列・compound・出力の handle などは変数に入れず、そのまま追う
                 return
             name = self.local(target.id)
-            self.emit("%s = %s" % (name, v.code))
+            self.emit_assign(name, v.code)
             self.env[target.id] = Value(v.kind, name, **v.extra)
             return
         if isinstance(target, (ast.Tuple, ast.List)):
@@ -1377,6 +1398,15 @@ class Translator:
             _fail("MQuaternion の %s は変換できません" % m, e)
         _fail("%s の %s は変換できません" % (k, m), e)
 
+    @staticmethod
+    def readable_handle(h: Value) -> bool:
+        """値をそのまま読める入力の handle（出力・要素を選んでいない配列・compound・扱えない属性は除く）"""
+        path = h.extra.get("path") or []
+        if h.extra.get("output") or not path:
+            return False
+        info, idx = path[-1]
+        return info.supported and info.type != "compound" and not (info.array and idx is None)
+
     def plug_value(self, attr: "AttrInfo") -> Value:
         return Value("hdl", path=[(attr, None)], output=False, plug=True)
 
@@ -1408,13 +1438,13 @@ class Translator:
             return Value("hdl", path=list(path) + [(child, None)], output=h.extra.get("output"))
         if h.extra.get("output") and m not in _GETTERS_NUM | _GETTERS_VEC | _GETTERS_MAT | _GETTERS_UNIT:
             _fail("出力の handle の %s は変換できません" % m, e)
-        code = self.path_text(path)
+        code = h.extra.get("var") or self.path_text(path)
         if info.array and path[-1][1] is None:
             _fail("配列の属性 %s を、要素を選ばずに読んでいます" % info.long, e)
         if m == "data":
             if info.type != "matrix" or h.extra.get("output"):
                 _fail("handle.data() は、入力の行列の属性（MFnMatrixData で読む）だけ変換できます", e)
-            return Value("mobj", code, path=code)
+            return Value("mobj", code, path=self.path_text(path))
         if m in _GETTERS_NUM:
             if info.type in ND.VECTOR_TYPES or info.type in ("matrix", "compound"):
                 _fail("%s（%s）を %s で読んでいます" % (info.long, info.type, m), e)
@@ -1487,9 +1517,18 @@ class Translator:
         elif m in ("setScale",) and c.args:
             parts["s"] = self.expr(c.args[0]).code
         elif m == "setRotationOrder":
-            parts["order"] = self.num(c.args[0]).code
+            # 回転そのものは変えず、回転順だけ変える（Maya の既定の reorder=True）
+            x["order"] = self.num(c.args[0]).code
+            return
         else:
             _fail("MTransformationMatrix の %s は変換できません" % m, c)
+        var = x.get("var")
+        if var:
+            # 変数の MTransformationMatrix は、変更したところで書き出す（if の中の変更を、その分かれ道だけに効かせる）
+            self.emit("%s = compose(%s, %s, %s, %s)" % (var, parts["t"], parts["r"], parts["s"], parts["order"]))
+            x.clear()
+            x.update(m=var, order=parts["order"], var=var)
+            return
         x.clear()
         x.update(parts)
 

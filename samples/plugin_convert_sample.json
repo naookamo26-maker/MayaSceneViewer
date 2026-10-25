@@ -2592,11 +2592,22 @@
         "set",
         [
          "l",
-         "inMatrix_"
+         "inData"
         ],
         [
          "l",
          "inObject"
+        ]
+       ],
+       [
+        "set",
+        [
+         "l",
+         "inMatrix_"
+        ],
+        [
+         "l",
+         "inData"
         ]
        ],
        [
@@ -3614,7 +3625,7 @@
    "channels":2,
    "nodes":12,
    "graphNodes":24,
-   "seconds":0.0051
+   "seconds":0.0013
   }
  }
 }
