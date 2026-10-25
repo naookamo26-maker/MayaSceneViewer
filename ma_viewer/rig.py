@@ -453,6 +453,21 @@ def _value(tok: str):
     return R.to_float(tok)
 
 
+def _curve_tokens(toks: List[str]) -> List[str]:
+    """-type "nurbsCurve" の値のうち、カーブの形の部分だけ。
+    Maya 2022 以降は CV の後ろにコンポーネントタグ（"gtag" 数 "名前" 数 "cv[0]" …）を続けて書くので、
+    先頭の数（次数・スパン数・形・有理・次元、ノット数、CV 数）から長さを決めて、その後ろは読まない。"""
+    try:
+        rational = _value(toks[3]) != 0
+        dim = int(R.to_float(toks[4]))
+        nk = int(R.to_float(toks[5]))
+        ncv = int(R.to_float(toks[6 + nk]))
+    except (ValueError, TypeError, IndexError):
+        return toks
+    end = 7 + nk + ncv * (dim + (1 if rational else 0))
+    return toks[:end] if end <= len(toks) else toks
+
+
 def _addattr_angle_names(rest: str) -> List[str]:
     """addAttr が角度の属性（-at doubleAngle）なら、その短い名前と長い名前（違えば空）"""
     toks = R.tokenize(rest)
@@ -520,8 +535,11 @@ def parse_attrs(text: str, node: MaNode, skip=(), angle_k: Optional[float] = Non
         if not key or _base(key) in skip:
             continue
         vals = []
+        toks = sa.values()
+        if sa.type == "nurbsCurve":
+            toks = _curve_tokens(toks)
         try:
-            for tok in sa.values():
+            for tok in toks:
                 vals.append(_value(tok))
         except (ValueError, TypeError):
             continue

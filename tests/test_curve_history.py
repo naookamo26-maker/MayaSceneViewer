@@ -194,6 +194,19 @@ class CurveHistoryTest(unittest.TestCase):
                 cvs = cvs_of(curves["spC_curveShape"]["cc"])
                 self.assertTrue(all(abs(p[0] - 20) < 1e-6 for p in cvs), cvs)
 
+    def test_component_tags_after_cvs(self):
+        """Maya 2022 以降の書き方: .cc の CV の後ろにコンポーネントタグ（"gtag" …）が続いても形を読む"""
+        line = [ln for ln in self.text.splitlines() if ln.startswith('\tsetAttr ".cc"') and "8 0;" in ln][0]
+        tags = ('\tsetAttr ".gtag[0].gtagnm" -type "string" "clusterQ";\n'
+                '\tsetAttr ".gtag[0].gtagcmp" -type "componentList" 1 "cv[0:1]";\n')
+        tagged = tags + line[:-1] + ' "gtag" 2 "clusterQ" 1 "cv[0:1]" "clusterR" 1 "cv[2:3]";'
+        scene, _report = self.load_variant(line, tagged)
+        curves = {c["name"]: c for c in scene["curves"]}
+        self.assertIn("spC_curveShape", curves)
+        cvs = cvs_of(curves["spC_curveShape"]["cc"])
+        self.assertEqual(len(cvs), 4)
+        self.assertTrue(all(abs(p[0] - 20) < 1e-6 for p in cvs[:1]), cvs)
+
     def test_unsupported_circle_options(self):
         scene, report = self.load_variant('\tsetAttr ".r" 2;', '\tsetAttr ".r" 2;\n\tsetAttr ".sw" 180;')
         self.assertNotIn("ringAShape", [c["name"] for c in scene["curves"]])
