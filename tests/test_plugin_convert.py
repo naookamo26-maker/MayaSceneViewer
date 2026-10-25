@@ -785,6 +785,65 @@ class ComputeTest(unittest.TestCase):
         self.assertIn("変換した属性: input（in・double）、values（vs・double）", msg)
         self.assertIn("output（o・double・出力）", msg)
 
+    LENS_PLUGIN = textwrap.dedent('''\
+        import maya.api.OpenMaya as om
+
+        def maya_useNewAPI():
+            pass
+
+        class Lens(om.MPxNode):
+            @staticmethod
+            def creator():
+                return Lens()
+
+            @staticmethod
+            def initialize():
+                t = om.MFnTypedAttribute()
+                m = om.MFnMatrixAttribute()
+                n = om.MFnNumericAttribute()
+                c = om.MFnCompoundAttribute()
+                # 古い版の名前で一度作り、作り直している（作り直したほうは addAttribute していない）
+                Lens.aBase = t.create("qq_base", "base", om.MFnData.kMatrix)
+                Lens.addAttribute(Lens.aBase)
+                Lens.aBase = m.create("base", "bs")
+                Lens.aZoom = n.create("zoom", "zm", om.MFnNumericData.kDouble, 2.0)
+                Lens.aBias = n.create("bias", "bi", om.MFnNumericData.kDouble, 0.5)
+                Lens.aSettings = c.create("settings", "st")
+                c.addChild(Lens.aZoom)
+                c.addChild(Lens.aBias)
+                Lens.addAttribute(Lens.aSettings)
+                Lens.aOut = n.create("result", "res", om.MFnNumericData.kDouble, 0.0)
+                n.writable = False
+                Lens.addAttribute(Lens.aOut)
+                Lens.attributeAffects(Lens.aBase, Lens.aOut)
+                Lens.attributeAffects(Lens.aSettings, Lens.aOut)
+
+            def compute(self, plug, data):
+                raw = data.inputValue(Lens.aBase).data()
+                zoom = data.inputValue(Lens.aZoom).asDouble()
+                bias = data.inputValue(Lens.aSettings).child(Lens.aBias).asDouble()
+                data.outputValue(Lens.aOut).setDouble(zoom + bias)
+
+
+        def initializePlugin(obj):
+            om.MFnPlugin(obj).registerNode("lensNode", om.MTypeId(1), Lens.creator, Lens.initialize)
+    ''')
+
+    def test_dropped_and_child_attributes(self):
+        """定義から外した同じ名前の属性・compound の子を直接読む → 定義に入れた属性・親.子 として読む"""
+        data, results, problems = convert_source(self.LENS_PLUGIN, "lens.py")
+        self.assertEqual(problems, [])
+        r = results[0]
+        self.assertTrue(r.ok, r.problems)
+        self.assertEqual(data["nodes"]["lensNode"]["compute"], [
+            "raw = qq_base", "zoom_ = settings.zoom", "bias_ = settings.bias", "result = (zoom_ + bias_)"])
+        self.assertTrue(any("qq_base として読みます" in n for n in r.notes), r.notes)
+        # 配列の compound の子を、要素を選ばずに読む → 分かりやすい誤り
+        arr = self.LENS_PLUGIN.replace("c.addChild(Lens.aBias)", "c.addChild(Lens.aBias)\n        c.array = True")
+        _data, results, _p = convert_source(arr, "lens.py")
+        self.assertFalse(results[0].ok)
+        self.assertTrue(any("要素を選ばずに読んでいます" in m for _l, m in results[0].problems), results[0].problems)
+
     def test_unknown_attribute_message(self):
         """分からない属性は、書いたとおりの式と、作った属性の一覧つきで報告する"""
         _data, r = convert_compute("x = data.inputValue(self.aMissing).asDouble()")
