@@ -648,6 +648,11 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
         if n.type in ("wire", "cluster"):
             # 変形するカーブの transform（ワールド空間へ移して変形し、戻す）
             entry["geom"] = {str(k): out_index.get(id(shape.parent), -1) for k, shape in wire_shapes(ms, n).items()}
+        if n.type in ("wire", "cluster", "skinCluster"):
+            from .component_tags import deformer_masks
+            masks = deformer_masks(ms, n)
+            if masks:
+                entry["mask"] = masks                     # コンポーネントタグで選んだ、変形する CV（入力ごと）
         if n.type == "skinCluster" and n.skin is not None:
             sk = n.skin
             entry["skin"] = {

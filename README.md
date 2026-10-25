@@ -262,6 +262,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 | expression | 式（.ixp）を解釈して評価する。入力 .I[n]・出力 .O[n]・frame・time・変数（$x。float / int）・代入（= += -= *= /= ++ --）・四則演算と %（整数どうしの割り算は切り捨て）・比較・論理・? :・if / else・for・while・数学関数（sin・cos・tan・sind など度の版・asin・acos・atan・atan2・abs・sqrt・pow・exp・log・floor・ceil・sign・min・max・clamp・smoothstep・linstep・deg_to_rad・rad_to_deg・fmod・hypot など）。フレームごとに最初から評価する。frame・time を使う式があれば、キーがなくてもタイムラインを出す |
 | transformGeometry（カーブ） | 入力のカーブ（.ig）の CV に行列（.txf。接続でもよい）を掛ける。invertTransform なら逆行列 |
 | cluster（カーブの変形） | ハンドルの行列（.ma）と bindPreMatrix（.pm）で CV を動かす（Maya の p · gm · pm · ma · gm⁻¹）。CV のウェイト（.wl）とエンベロープで元の位置と混ぜる。クラスタで動くワイヤーにも使える。relative（ハンドルの親の動きを除く）には未対応 |
+| コンポーネントタグ（Maya 2022 以降） | cluster・wire・skinCluster（カーブ）は、入力のタグの式（.ip[k].gtg。`*`・和 `+`・差 `-`・共通部分 `^`・ワイルドカード）で選んだ CV だけを動かす。タグは入力をさかのぼったカーブ（ふつうは Orig）の .gtag[i] か、.cc の CV の後ろ（"gtag" …）から読む。式が空のものはタグを使わない書き方として、全部の CV を対象にする |
 | wire（カーブの変形） | ワイヤー（.dw）とベースワイヤー（.bw）の差でカーブの CV を動かす（尻尾・胴体のスプライン IK のカーブなど）。ワールド空間で、CV ごとにベースワイヤーの一番近い点を求め、そこでのワイヤーの移動・向きの変化（.rot）・スケール（.sc）を、影響範囲（.dds）による減衰 (1 − (距離/範囲)²)² で掛ける。エンベロープ（.en）と CV のウェイト（.wl）も使う。Maya の計算式は公開されていないため近似（tension・localInfluence・ホルダーは使わない）。メッシュの wire には未対応 |
 | そのほか | distanceDimShape（距離の寸法。開始点 .sp と終了点 .ep（ふつうはロケーターの worldPosition）の距離 .dist。伸びる IK などに使う）、curveInfo（カーブの長さ .al。ストレッチの計算などに使う）、pointOnCurveInfo（パラメータ .pr の点 .p・接線 .t・正規化した接線 .nt・法線 .n・.nn・曲率の中心と半径。turnOnPercentage なら .pr は長さの割合）、displayLayer（値を読むだけ） |
 
@@ -391,7 +392,7 @@ python tests/qt_rig_test.py                             # リグ（IK・コン�
 ```
 
 自作ノードの定義のテストは `tests/test_node_defs.py`（読み込み・検証・シーンへの適用）と `web_src/tests/nodeDef.test.mjs`（評価）です。サンプルとテスト用の定義は `python tools/make_nodedef_sample.py` で作ります（`samples/nodedef_sample_defs.json`。ビューアには同梱しません）。
-ヒストリのあるカーブのテストは `tests/test_curve_history.py`（形の計算・警告・リグの診断）と `web_src/tests/curveHistory.test.mjs`（表示とスプライン IK）です（サンプルは `python tools/make_curve_history_sample.py`）。
+ヒストリのあるカーブのテストは `tests/test_curve_history.py`（形の計算・警告・リグの診断）と `web_src/tests/curveHistory.test.mjs`（表示とスプライン IK）です（サンプルは `python tools/make_curve_history_sample.py`）。コンポーネントタグのテストは `tests/test_component_tags.py`（タグと式の読み取り・リグの診断）と `web_src/tests/componentTags.test.mjs`（cluster → wire → スプライン IK）です（サンプルは `python tools/make_component_tag_sample.py`）。
 fourByFourMatrix のテストは `web_src/tests/fourByFour.test.mjs` です（サンプルは `python tools/make_fourbyfour_sample.py`）。
 プラグインからの変換のテストは `tests/test_plugin_convert.py`（変換の結果・変換できない書き方・CLI）と `web_src/tests/pluginConvert.test.mjs`（変換した定義の評価をプラグインの式と比べる）です。サンプルのプラグインは `samples/plugins/`、変換した定義とシーンは `python tools/make_plugin_convert_sample.py` で作ります（`samples/plugin_convert_defs.json`・`samples/plugin_convert_sample.ma`）。
 

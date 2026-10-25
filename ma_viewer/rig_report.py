@@ -197,6 +197,11 @@ def _curve_tree(ms: MaScene, node: MaNode, attr: str, indent: str = "    ", seen
         line = "%s %s（nurbsCurve）.%s: %s%s" % (mark, node.name, attr, how, extra)
     elif node.type in GEOMETRY_TYPES:
         line = "✓ %s（%s）.%s: 評価できる" % (node.name, node.type, attr)
+        if node.type in ("wire", "cluster", "skinCluster"):
+            from .component_tags import deformer_masks
+            for k, cvs in sorted(deformer_masks(ms, node).items()):
+                shown = ", ".join(str(v) for v in cvs[:12]) + (" …" if len(cvs) > 12 else "")
+                line += "・コンポーネントタグで動かす CV（入力 %s）: %s" % (k, shown or "なし")
     elif node.type in PRODUCERS:
         line = "✓ %s（%s）.%s: 形を作るノード（計算できる）" % (node.name, node.type, attr)
     elif node.type in ("multMatrix", "decomposeMatrix", "composeMatrix", "inverseMatrix") or node.is_dag:
