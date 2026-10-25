@@ -2592,6 +2592,17 @@
         "set",
         [
          "l",
+         "inMatrix_"
+        ],
+        [
+         "l",
+         "inObject"
+        ]
+       ],
+       [
+        "set",
+        [
+         "l",
          "offset_"
         ],
         [
@@ -2657,58 +2668,124 @@
         "set",
         [
          "l",
-         "outObject"
+         "offsetMatrix"
         ],
         [
          "c",
-         "compose",
+         "identity",
+         []
+        ]
+       ],
+       [
+        "set",
+        [
+         "l",
+         "offsetMatrix"
+        ],
+        [
+         "c",
+         "matrix",
          [
           [
-           "b",
-           "+",
-           [
-            "c",
-            "translation",
-            [
-             [
-              "l",
-              "inObject"
-             ]
-            ]
-           ],
-           [
-            "l",
-            "offset_"
-           ]
-          ],
-          [
-           "c",
-           "rotation",
+           "v",
            [
             [
-             "l",
-             "inObject"
+             "n",
+             1.0
             ],
             [
              "n",
-             0
-            ]
-           ]
-          ],
-          [
-           "c",
-           "scale",
-           [
+             0.0
+            ],
             [
-             "l",
-             "inObject"
+             "n",
+             0.0
+            ],
+            [
+             "n",
+             0.0
+            ],
+            [
+             "n",
+             0.0
+            ],
+            [
+             "n",
+             1.0
+            ],
+            [
+             "n",
+             0.0
+            ],
+            [
+             "n",
+             0.0
+            ],
+            [
+             "n",
+             0.0
+            ],
+            [
+             "n",
+             0.0
+            ],
+            [
+             "n",
+             1.0
+            ],
+            [
+             "n",
+             0.0
+            ],
+            [
+             "g",
+             [
+              "l",
+              "offset_"
+             ],
+             0
+            ],
+            [
+             "g",
+             [
+              "l",
+              "offset_"
+             ],
+             1
+            ],
+            [
+             "g",
+             [
+              "l",
+              "offset_"
+             ],
+             2
+            ],
+            [
+             "n",
+             1.0
             ]
            ]
-          ],
-          [
-           "n",
-           0
           ]
+         ]
+        ]
+       ],
+       [
+        "set",
+        [
+         "l",
+         "outObject"
+        ],
+        [
+         "b",
+         "*",
+         [
+          "l",
+          "inMatrix_"
+         ],
+         [
+          "l",
+          "offsetMatrix"
          ]
         ]
        ],
@@ -3537,7 +3614,7 @@
    "channels":2,
    "nodes":12,
    "graphNodes":24,
-   "seconds":0.003
+   "seconds":0.0051
   }
  }
 }

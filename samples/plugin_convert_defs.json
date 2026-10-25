@@ -344,11 +344,14 @@
       "compute": [
         "inObject = inMatrix",
         "if connected(inMatrix):",
+        "    inMatrix_ = inObject",
         "    offset_ = offset",
         "    mode_ = mode",
         "    if (mode_ == 1):",
         "        offset_ = (-offset_)",
-        "    outObject = compose((translation(inObject) + offset_), rotation(inObject, 0), scale(inObject), 0)",
+        "    offsetMatrix = identity()",
+        "    offsetMatrix = matrix([1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, offset_.x, offset_.y, offset_.z, 1.0])",
+        "    outObject = (inMatrix_ * offsetMatrix)",
         "    outMatrix = outObject"
       ]
     }
