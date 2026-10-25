@@ -980,6 +980,209 @@
    "drivenBy":[
     "ty ← fin_allHandle_translateY（animCurveTL）"
    ]
+  },
+  {
+   "name":"fin_lead",
+   "path":"|fin_lead",
+   "type":"transform",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     1.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   },
+   "drivenBy":[
+    "ty ← fin_lead_translateY（animCurveTL）"
+   ]
+  },
+  {
+   "name":"fin_follow",
+   "path":"|fin_follow",
+   "type":"transform",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     3.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   },
+   "drivenBy":[
+    "tx ← fin_follow_pc（parentConstraint）",
+    "rx ← fin_follow_pc（parentConstraint）",
+    "ty ← fin_follow_pc（parentConstraint）",
+    "ry ← fin_follow_pc（parentConstraint）",
+    "tz ← fin_follow_pc（parentConstraint）",
+    "rz ← fin_follow_pc（parentConstraint）"
+   ]
+  },
+  {
+   "name":"fin_followJnt",
+   "path":"|fin_follow|fin_followJnt",
+   "type":"joint",
+   "parent":16,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true
   }
  ],
  "meshes":[],
@@ -1144,8 +1347,8 @@
  "textures":[],
  "warnings":[],
  "stats":{
-  "nodes":15,
-  "joints":5,
+  "nodes":18,
+  "joints":6,
   "meshes":0,
   "curves":4,
   "cameras":0,
@@ -1156,7 +1359,7 @@
   "textures":0,
   "texturesMissing":0,
   "bindPoseNodes":0,
-  "drivenNodes":3
+  "drivenNodes":5
  },
  "animation":{
   "fps":24.0,
@@ -1197,6 +1400,16 @@
     "weighted":false,
     "pre":0,
     "post":0
+   },
+   {
+    "name":"fin_lead_translateY",
+    "type":"TL",
+    "offset":6,
+    "count":2,
+    "tangent":2,
+    "weighted":false,
+    "pre":0,
+    "post":0
    }
   ],
   "channels":[
@@ -1214,6 +1427,11 @@
     "node":14,
     "attr":"ty",
     "curve":2
+   },
+   {
+    "node":15,
+    "attr":"ty",
+    "curve":3
    }
   ],
   "nodes":[
@@ -1613,6 +1831,76 @@
     ],
     "ra":[
      0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":15,
+    "joint":false,
+    "ro":0,
+    "t":[
+     1.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rp":[
+     6.0,
+     0.0,
+     0.0
+    ],
+    "sp":[
+     6.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":16,
+    "joint":false,
+    "ro":0,
+    "t":[
+     3.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rp":[
+     4.0,
+     0.0,
+     0.0
+    ],
+    "sp":[
+     4.0,
      0.0,
      0.0
     ]
@@ -2076,6 +2364,116 @@
     "geom":{
      "0":13
     }
+   },
+   {
+    "id":28,
+    "name":"fin_lead",
+    "type":"transform",
+    "dag":15,
+    "inputs":{
+     "ty":{
+      "curve":3
+     }
+    }
+   },
+   {
+    "id":29,
+    "name":"fin_follow",
+    "type":"transform",
+    "dag":16,
+    "inputs":{
+     "tx":{
+      "node":30,
+      "attr":"ctx"
+     },
+     "rx":{
+      "node":30,
+      "attr":"crx"
+     },
+     "ty":{
+      "node":30,
+      "attr":"cty"
+     },
+     "ry":{
+      "node":30,
+      "attr":"cry"
+     },
+     "tz":{
+      "node":30,
+      "attr":"ctz"
+     },
+     "rz":{
+      "node":30,
+      "attr":"crz"
+     }
+    }
+   },
+   {
+    "id":30,
+    "name":"fin_follow_pc",
+    "type":"parentConstraint",
+    "dag":-1,
+    "attrs":{
+     "w0":1.0,
+     "fin_leadW0":1.0
+    },
+    "inputs":{
+     "cro":{
+      "node":29,
+      "attr":"ro"
+     },
+     "cpim":{
+      "node":29,
+      "attr":"pim"
+     },
+     "crp":{
+      "node":29,
+      "attr":"rp"
+     },
+     "crt":{
+      "node":29,
+      "attr":"rpt"
+     },
+     "tg[0].tt":{
+      "node":28,
+      "attr":"t"
+     },
+     "tg[0].trp":{
+      "node":28,
+      "attr":"rp"
+     },
+     "tg[0].trt":{
+      "node":28,
+      "attr":"rpt"
+     },
+     "tg[0].tr":{
+      "node":28,
+      "attr":"r"
+     },
+     "tg[0].tro":{
+      "node":28,
+      "attr":"ro"
+     },
+     "tg[0].ts":{
+      "node":28,
+      "attr":"s"
+     },
+     "tg[0].tpm":{
+      "node":28,
+      "attr":"pm"
+     },
+     "tg[0].tw":{
+      "node":30,
+      "attr":"w0"
+     }
+    },
+    "driven":16,
+    "targets":[
+     {
+      "index":0,
+      "node":28
+     }
+    ]
    }
   ],
   "nodeDefs":{},
@@ -2084,18 +2482,18 @@
   "props":[],
   "times":{
    "dtype":"float32",
-   "count":6,
-   "data":"AACAPwAAQEIAAIA/AABAQgAAgD8AAEBC"
+   "count":8,
+   "data":"AACAPwAAQEIAAIA/AABAQgAAgD8AAEBCAACAPwAAQEI="
   },
   "values":{
    "dtype":"float32",
-   "count":6,
-   "data":"AAAAAAAAQEAAAAAAAADAPwAAAAAAAABA"
+   "count":8,
+   "data":"AAAAAAAAQEAAAAAAAADAPwAAAAAAAABAAAAAAAAAAEA="
   },
   "tangentTypes":{
    "dtype":"uint8",
-   "count":12,
-   "data":"AAAAAAAAAAAAAAAA"
+   "count":16,
+   "data":"AAAAAAAAAAAAAAAAAAAAAA=="
   },
   "fixedTangents":{
    "dtype":"float32",
@@ -2104,12 +2502,12 @@
   },
   "warnings":[],
   "stats":{
-   "curves":3,
-   "keys":6,
-   "channels":3,
-   "nodes":7,
-   "graphNodes":28,
-   "seconds":0.006
+   "curves":4,
+   "keys":8,
+   "channels":4,
+   "nodes":9,
+   "graphNodes":31,
+   "seconds":0.0044
   }
  }
 }

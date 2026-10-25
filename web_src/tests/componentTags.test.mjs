@@ -64,3 +64,14 @@ test('再現チェックのスプライン IK の詳細: ワイヤーの上流�
   assert.deepEqual(k4.movedCvs, [[3, 3]]);
   assert.deepEqual(w.driver[4].movedCvs, []);           // fin_k1 のハンドルは動かない
 });
+
+test('parentConstraint はターゲットの回転ピボットに、動かされるノードの回転ピボットを合わせる', () => {
+  for (const f of [1, 24, 48]) {
+    const rig = at(f);
+    const lead = new Vector3().setFromMatrixPosition(rig.world(idx('fin_lead')));
+    const follow = new Vector3().setFromMatrixPosition(rig.world(idx('fin_follow')));
+    assert.ok(nearVec(lead, new Vector3(1, lin(f, 0, 2), 0)), `フレーム ${f}: fin_lead ${lead.toArray()}`);
+    // ピボットのワールド位置: fin_lead (6 + 1, y, 0) = fin_follow (4 + tx, y, 0) → tx = 3
+    assert.ok(nearVec(follow, new Vector3(3, lin(f, 0, 2), 0)), `フレーム ${f}: fin_follow ${follow.toArray()}`);
+  }
+});

@@ -246,7 +246,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 |---|---|
 | pointConstraint | ターゲットの回転ピボットの重み付き平均 + オフセット（.o） |
 | orientConstraint | ターゲットのワールドの向きの重み付き平均（四元数）· オフセット（.o） |
-| parentConstraint | ターゲットごとに（ターゲット · オフセットの移動 · オフセットの回転）を求め、位置と向きを重み付き平均 |
+| parentConstraint | ターゲットごとに（ターゲット · オフセットの移動 · オフセットの回転）を求め、位置と向きを重み付き平均。ターゲットの空間の原点は、ターゲットの回転ピボット（Maya と同じ。cluster のハンドルのようにピボットが原点から離れたターゲットでは、動かされるノードの回転ピボットがターゲットの回転ピボットに付く） |
 | scaleConstraint | ターゲットのワールドのスケールの重み付き平均 × オフセット（.o） |
 | poleVectorConstraint | ターゲットの位置 − 開始の位置（IK ハンドルの極ベクトル）。Maya と同じく、開始の位置はコンストレイントの属性 (constraintRotatePivot + constraintRotateTranslate) を pivotSpace でワールドへ移したもの（ふつうは開始ジョイントの位置。crp がつながっていなければ親の原点などになる）、ターゲットの位置は (targetTranslate + targetRotatePivot + targetRotateTranslate) を targetParentMatrix で移したもの |
 | lookAt（カメラとエイム） | Maya の［カメラとエイム］・［カメラ、エイム、アップ］のグループ。aimConstraint と同じ解き方（aim の既定はカメラの −Z）に、world up がシーンの上・ベクトルのときは twist（.tws）で視線のまわりに回す（ロール。正の値は、カメラからターゲットへの向きのまわりに左ねじの向き。Maya と見比べて確認済み）。twist はキー・別のノードの属性・カメラのシェイプの独自の属性からつないでもよい（独自の角度の属性 doubleAngle の値はラジアンに直して読む）。twist・オフセット・up などの補助の入力が未対応のノードにつながっているときは、その接続だけを外してファイルの値で評価する（エイムの向きは求め、警告を出す） |

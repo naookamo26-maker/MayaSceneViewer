@@ -12,6 +12,10 @@
   * fin_k4Handle.ty にキー 0 → 3、fin_k3Handle.ty にキー 0 → 1.5（ほかのハンドルは動かない）。
     タグを使わずに全部の CV を動かすと、ワイヤーは曲がらずに 4.5 上がるだけになる。
   * 比べるための cluster fin_all（.ip[0].gtg = "*"。ワイヤー fin_allShape の全部の CV を動かす）。ハンドル fin_allHandle.ty にキー 0 → 2
+  * ピボットが原点から離れたノードどうしの parentConstraint（cluster のハンドルをほかのハンドルに付けるリグと同じ形）:
+      fin_lead（回転・スケールピボット (6, 0, 0)、移動 (1, 0, 0)、ty にキー 0 → 2）
+      fin_follow（ピボット (4, 0, 0)。子にジョイント fin_followJnt）は fin_lead への parentConstraint（オフセットなし）。Maya はピボットどうしを合わせるので
+      fin_follow の移動は fin_lead の移動 + (6 − 4, 0, 0)（保存時のフレームで (3, 0, 0)）
 保存時のフレーム（1）の各ノードの値は、リグの計算結果と一致するように書く。
 """
 from __future__ import annotations
@@ -115,6 +119,17 @@ def main():
     A('\tsetAttr ".ip[0].gtg" -type "string" "*";')
     anim("fin_allHandle_translateY", [(1, 0), (48, 2)])
 
+    # ピボットが原点から離れたノードどうしの parentConstraint
+    node("transform", "fin_lead", t=(1, 0, 0), rp=(6, 0, 0), sp=(6, 0, 0))
+    node("transform", "fin_follow", t=(3, 0, 0), rp=(4, 0, 0), sp=(4, 0, 0))
+    node("joint", "fin_followJnt", "fin_follow")
+    A('createNode parentConstraint -n "fin_follow_pc" -p "fin_follow";')
+    uid("fin_follow_pc")
+    A('\taddAttr -dcb 0 -ci true -k true -sn "w0" -ln "fin_leadW0" -dv 1 -min 0 -at "double";')
+    A('\tsetAttr -k on ".nds";')
+    A('\tsetAttr -k on ".w0";')
+    anim("fin_lead_translateY", [(1, 0), (48, 2)])
+
     node("script", "sceneConfigurationScriptNode")
     A('\tsetAttr ".b" -type "string" "playbackOptions -min 1 -max 48 -ast 1 -aet 48 ";')
     A('createNode ikSplineSolver -n "ikSplineSolver";')
@@ -147,6 +162,15 @@ def main():
     C("fin_allHandle.wm", "fin_all.ma")
     C("fin_allHandleShape.x", "fin_all.x")
     C("fin_allHandle_translateY.o", "fin_allHandle.ty")
+    C("fin_lead_translateY.o", "fin_lead.ty")
+    for a in "xyz":
+        C("fin_follow_pc.ct%s" % a, "fin_follow.t%s" % a)
+        C("fin_follow_pc.cr%s" % a, "fin_follow.r%s" % a)
+    for src, dst in (("ro", "cro"), ("pim", "cpim"), ("rp", "crp"), ("rpt", "crt")):
+        C("fin_follow.%s" % src, "fin_follow_pc.%s" % dst)
+    for src, dst in (("t", "tt"), ("rp", "trp"), ("rpt", "trt"), ("r", "tr"), ("ro", "tro"), ("s", "ts"), ("pm", "tpm")):
+        C("fin_lead.%s" % src, "fin_follow_pc.tg[0].%s" % dst)
+    C("fin_follow_pc.w0", "fin_follow_pc.tg[0].tw")
     A('// End of component_tag_sample.ma')
 
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:

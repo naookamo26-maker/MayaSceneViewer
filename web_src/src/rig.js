@@ -1361,9 +1361,11 @@ export class RigEvaluator {
         return expand('cr', toRotate(q.multiply(radQuat(o))), XYZ);
       }
       case 'parentConstraint': {
+        // ターゲットの空間は、ターゲットの回転ピボット（原点ではない）を原点にする（Maya と同じ。cluster のハンドルのように
+        // ピボットが原点から離れたターゲットで、動かされるノードのピボットがターゲットのピボットに付く）
         const list = targets.map((t) => {
           const tot = this.vec(id, `tg[${t.index}].tot`), tor = this.vec(id, `tg[${t.index}].tor`);
-          const m = this.world(t.ni).clone()
+          const m = this.world(t.ni).clone().setPosition(pivot(t))
             .multiply(_m.makeTranslation(tot[0], tot[1], tot[2]))
             .multiply(_m.makeRotationFromQuaternion(radQuat(tor, _q)));
           return { m, w: t.w };
