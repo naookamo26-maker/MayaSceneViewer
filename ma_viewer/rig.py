@@ -52,12 +52,14 @@ UTILITY_TYPES = {"unitConversion", "pairBlend", "blendColors", "multiplyDivide",
 # 入力をたどらない（値を読むだけの）ノード
 _NO_INPUT_TYPES = {"displayLayer", "animLayer"}       # animLayer はウェイトとミュートを読むだけ
 # カーブと、それを動かすノード（必要な入力だけをたどる）
-GEOMETRY_TYPES = {"nurbsCurve", "skinCluster", "tweak", "groupParts", "locator", "wire", "cluster"}
+GEOMETRY_TYPES = {"nurbsCurve", "skinCluster", "tweak", "groupParts", "locator", "wire", "cluster", "transformGeometry"}
 _GEOMETRY_INPUTS = {
     "nurbsCurve": re.compile(r"^(cr|cp\[\d+\].*)$"),            # create・controlPoints
     "skinCluster": re.compile(r"^(ma\[\d+\]|pm\[\d+\]|ip\[\d+\]\.ig)$"),
     "tweak": re.compile(r"^ip\[\d+\]\.ig$"),
     "groupParts": re.compile(r"^ig$"),
+    # transformGeometry: 入力のカーブ（ig）に行列（txf。transform の逆行列などを接続することもある）を掛ける
+    "transformGeometry": re.compile(r"^(ig|txf|itf)$"),
     # wire: 変形するカーブ・ワイヤー（dw）・ベースワイヤー（bw）・影響範囲（dds）・スケール（sc）・回転・エンベロープ
     "cluster": re.compile(r"^(ip\[\d+\]\.ig|ma|pm|en)$"),         # ハンドルのワールド行列・bindPreMatrix
     "wire": re.compile(r"^(ip\[\d+\]\.ig|dw\[\d+\]|bw\[\d+\]|dds\[\d+\]|sc\[\d+\]|rot|en)$"),

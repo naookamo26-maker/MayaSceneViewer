@@ -80,7 +80,7 @@ const OUTPUTS = {
   quatToEuler: /^ort[xyz]?$/, eulerToQuat: /^oq[xyzw]?$/, quatProd: /^oq[xyzw]?$/, quatInvert: /^oq[xyzw]?$/,
   quatNormalize: /^oq[xyzw]?$/, quatSlerp: /^oq[xyzw]?$/, curveInfo: /^(al|arcLength)$/,
   nurbsCurve: /^(ws|worldSpace|l|local)(\[\d+\])?$/, skinCluster: /^og(\[\d+\])?$/, tweak: /^og(\[\d+\])?$/,
-  groupParts: /^og$/, wire: /^og(\[\d+\])?$/, locator: /^(wp|worldPosition)(\[\d+\])?$/, expression: /^(out|output)\[\d+\]$/,
+  groupParts: /^og$/, transformGeometry: /^og$/, wire: /^og(\[\d+\])?$/, locator: /^(wp|worldPosition)(\[\d+\])?$/, expression: /^(out|output)\[\d+\]$/,
   addDoubleLinear: /^o$/, multDoubleLinear: /^o$/, clamp: /^op[rgb]?$/, setRange: /^o[xyz]?$/, remapValue: /^(ov|outValue)$/,
   distanceBetween: /^d$/, vectorProduct: /^o[xyz]?$/, blendTwoAttr: /^o$/, blendWeighted: /^o$/, choice: /^o$/,
   animBlendNodeAdditiveDL: /^o$/, animBlendNodeAdditiveDA: /^o$/, animBlendNodeAdditiveRotation: /^o[xyz]?$/, animLayer: /^fo$/,
@@ -913,6 +913,15 @@ export class RigEvaluator {
       case 'groupParts': {
         const c = this.plug(id, 'ig');
         o = c && c.isCurve ? { og: c } : null;
+        break;
+      }
+      case 'transformGeometry': {
+        // 入力のカーブの CV に行列を掛ける（Maya の行ベクトルの p · txf。invertTransform なら逆行列）
+        const c = this.plug(id, 'ig');
+        if (!c || !c.isCurve) { o = null; break; }
+        const m = this.mat(id, 'txf').clone();
+        if (this.num(id, 'itf', 0) >= 0.5) m.invert();
+        o = { og: withCvs(c, c.cvs.map((p) => p.clone().applyMatrix4(m))) };
         break;
       }
       default: break;

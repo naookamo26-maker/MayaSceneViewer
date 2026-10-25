@@ -222,7 +222,7 @@ def curve_shape_source(ms: MaScene, shape: MaNode, attrs: dict):
         return cc, False
     seen = set()
     src = shape.inputs.get("cr")
-    x = src[0] if src else None
+    x, xattr = src if src else (None, "")
     while x is not None and id(x) not in seen:
         seen.add(id(x))
         if x.type == "nurbsCurve":
@@ -232,10 +232,17 @@ def curve_shape_source(ms: MaScene, shape: MaNode, attrs: dict):
             nxt = x.inputs.get("cr")
         elif x.type == "groupParts":
             nxt = x.inputs.get("ig")
+        elif x.type == "transformGeometry":
+            # リグとして評価する transformGeometry: 読み込んだときの値で計算した形（アニメーションを読み込むと評価した形）
+            from .curve_history import Unsupported, output_cc
+            try:
+                return output_cc(ms, x, xattr, world=getattr(ms, "curve_world", None)), True
+            except Unsupported:
+                nxt = x.inputs.get("ig")
         else:
             keys = sorted(k for k in x.inputs if _CURVE_DEFORM_INPUT.match(k))
             nxt = x.inputs.get(keys[0]) if keys else None
-        x = nxt[0] if nxt else None
+        x, xattr = nxt if nxt else (None, "")
     return None, False
 
 
@@ -1060,6 +1067,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             ms.warn("自作ノードの定義 %s を使えません: %s" % (t, why), key="#自作ノードの定義の誤り " + t)
     # カーブのヒストリ（circle などの形を作るノード）: 計算できるものは、カーブの形（.cc）にする
     from .curve_history import bake_curve_history
+    ms.curve_world = ctx.world_matrix                   # ワールド空間の形を入力にするヒストリの計算に使う
     curve_problems = bake_curve_history(ms, world=ctx.world_matrix)
     if ms.curve_history_baked:
         ms.warn("ヒストリのあるカーブ %d 本の形を、形を作るノード（circle など）から計算しました。" % ms.curve_history_baked)

@@ -14,6 +14,10 @@
     → wsEShape.create（形の CV は z = 7。表示では wsE の移動が加わって z = 14）
   * txF: makeTextCurves（文字のカーブ。ビューアでは計算できない）→ transformGeometry → txFShape.create
     （集計では、いちばん奥の makeTextCurves として数える）
+  * リグとして動く transformGeometry（焼き付けずに評価する）:
+    rgSrcShape（ワールドで (40, 0〜8, 10) のまっすぐなカーブ。終端の CV は rgLoc の worldPosition。rgLoc.tx にキー 40 → 44）
+    のワールド空間の形 → rgTG（txf ← rgGrp.worldInverseMatrix。rgGrp は移動 (0, 0, 10)）→ rgGrp の下の rgCrvShape.create
+    → rgCrvShape のワールド空間の形は rgSrcShape と同じ。spR_0〜spR_4（根元 (40, 0, 10)、+Y、骨の長さ 2）のスプライン IK のカーブ
 """
 from __future__ import annotations
 
@@ -83,6 +87,27 @@ def main():
     A('createNode nurbsCurve -n "txFShape" -p "txF";')
     A('createNode makeTextCurves -n "txF_text";')
     A('createNode transformGeometry -n "txF_freeze";')
+    A('createNode transform -n "rgGrp";')
+    A('\tsetAttr ".t" -type "double3" 0 0 10 ;')
+    A('createNode transform -n "rgCrv" -p "rgGrp";')
+    A('createNode nurbsCurve -n "rgCrvShape" -p "rgCrv";')
+    A('createNode transform -n "rgSrc";')
+    A('createNode nurbsCurve -n "rgSrcShape" -p "rgSrc";')
+    A('\tsetAttr ".cc" -type "nurbsCurve" 3 1 0 no 3 6 0 0 0 1 1 1 4 40 0 10 40 2.66666667 10 40 5.33333333 10 40 8 10;')
+    A('createNode transform -n "rgLoc";')
+    A('\tsetAttr ".t" -type "double3" 40 8 10 ;')
+    A('createNode locator -n "rgLocShape" -p "rgLoc";')
+    A('createNode transformGeometry -n "rgTG";')
+    for i in range(5):
+        A('createNode joint -n "spR_%d"%s;' % (i, ' -p "spR_%d"' % (i - 1) if i else ""))
+        A('\tsetAttr ".t" -type "double3" %s ;' % ("40 0 10" if i == 0 else "0 2 0"))
+    A('createNode ikEffector -n "spR_eff" -p "spR_3";')
+    A('\tsetAttr ".t" -type "double3" 0 2 0 ;')
+    A('createNode ikHandle -n "spR_ik";')
+    A('\tsetAttr ".roc" yes;')
+    A('createNode animCurveTL -n "rgLoc_translateX";')
+    A('\tsetAttr ".tan" 2;')
+    A('\tsetAttr -s 2 ".ktv[0:1]"  1 40 24 44;')
     A('createNode animCurveTL -n "spC_curve_translateX";')
     A('\tsetAttr ".tan" 2;')
     A('\tsetAttr -s 2 ".ktv[0:1]"  1 0 24 5;')
@@ -108,6 +133,17 @@ def main():
     C("wsE_freeze.og", "wsEShape.cr")
     C("txF_text.oc[0]", "txF_freeze.ig")
     C("txF_freeze.og", "txFShape.cr")
+    C("rgLoc_translateX.o", "rgLoc.tx")
+    C("rgLocShape.wp", "rgSrcShape.cp[3]")
+    C("rgSrcShape.ws", "rgTG.ig")
+    C("rgGrp.wim", "rgTG.txf")
+    C("rgTG.og", "rgCrvShape.cr")
+    C("spR_0.msg", "spR_ik.hsj")
+    C("spR_eff.hp", "spR_ik.hee")
+    C("ikSplineSolver.msg", "spR_ik.hsv")
+    for ax in "xyz":
+        C("spR_4.t%s" % ax, "spR_eff.t%s" % ax)
+    C("rgCrvShape.ws", "spR_ik.ic")
     A('// End of curve_history_sample.ma')
     with open(OUT_MA, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(L) + "\n")
