@@ -19,7 +19,7 @@
   * vl（vectorLength、API 1.0）: inVector = (0, 3, 4)、成分 inVectorX（ivx）← ctrl.tx
       → length → jG.ty = √(tx² + 25)、normal → jH.t
   * mo（matrixOffset、API 1.0・型つきの行列の属性）: inMatrix ← locD.wm（移動 (tx, 2, 3)・回転 (30, 45, 60) 度）、
-      offset = (1, 2, 3) → outMatrix → decomposeMatrix → jI.t = (tx + 1, 4, 6)・jI.r は locD と同じ回転
+      offset = (1, 2, 3)、mode = 1（引く）→ outMatrix → decomposeMatrix → jI.t = (tx - 1, 0, 0)・jI.r は locD と同じ回転
 """
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def main():
               'createNode stretchArray -n "sa";', '\tsetAttr ".iv[1]" 5;', '\tsetAttr ".st" 3;',
               'createNode legacySum -n "ls";', '\tsetAttr ".vals[1]" 2;', '\tsetAttr ".gn" 0.5;',
               'createNode vectorLength -n "vl";', '\tsetAttr ".iv" -type "double3" 0 3 4 ;',
-              'createNode matrixOffset -n "mo";', '\tsetAttr ".of" -type "double3" 1 2 3 ;',
+              'createNode matrixOffset -n "mo";', '\tsetAttr ".of" -type "double3" 1 2 3 ;', '\tsetAttr ".md" 1;',
               'createNode decomposeMatrix -n "dm2";',
               'createNode animCurveTL -n "ctrl_translateX";', '\tsetAttr ".tan" 2;',
               '\tsetAttr -s 2 ".ktv[0:1]"  1 0 24 10;',

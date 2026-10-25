@@ -87,12 +87,12 @@ test('API 1.0: legacySum（elementCount と next）・vectorLength（数の comp
   }
 });
 
-test('API 1.0: matrixOffset（型つきの行列の属性・MFnMatrixData の読み書き）', () => {
+test('API 1.0: matrixOffset（型つきの行列の属性・MFnMatrixData の読み書き・isNull・MPlug の asShort）', () => {
   const D2R = Math.PI / 180;
   const rot = new Matrix4().makeRotationFromEuler(new Euler(30 * D2R, 45 * D2R, 60 * D2R, 'ZYX'));
   for (const f of FRAMES) {
     const c = at(f).chan(idx('jI'));
-    const t = [tx(f) + 1, 4, 6];
+    const t = [tx(f) - 1, 0, 0];                     // mode = 1 なので offset を引く
     for (let k = 0; k < 3; k++) assert.ok(near(c.t[k], t[k]), `フレーム ${f}: t ${c.t}`);
     const got = new Matrix4().makeRotationFromEuler(new Euler(...c.r.map((v) => v * D2R), 'ZYX'));
     for (let k = 0; k < 16; k++) assert.ok(near(got.elements[k], rot.elements[k], 1e-6), `フレーム ${f}: r ${c.r}`);

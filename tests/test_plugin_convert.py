@@ -97,8 +97,8 @@ class SamplePluginTest(unittest.TestCase):
         # 型つきの行列の属性（MFnTypedAttribute・MFnData.kMatrix）と、MFnMatrixData の読み書き
         mo = data["nodes"]["matrixOffset"]
         self.assertEqual({a["name"]: a["type"] for a in mo["attributes"]},
-                         {"inMatrix": "matrix", "offset": "vector", "outMatrix": "matrix"})
-        self.assertEqual(mo["compute"][-1], "outMatrix = outObject")
+                         {"inMatrix": "matrix", "offset": "vector", "mode": "enum", "outMatrix": "matrix"})
+        self.assertEqual(mo["compute"][-1], "    outMatrix = outObject")
 
     def test_attributes(self):
         data, _results, _problems = convert_file(API2)
@@ -193,8 +193,7 @@ class ComputeTest(unittest.TestCase):
             "import maya.cmds as cmds\ny = cmds.getAttr('a.tx')": "import",
             "s = data.inputValue(TestNode.aName).asString()": "label",
             "try:\n    x = 1\nexcept Exception:\n    x = 2": "try",
-            "x = data.inputValue(TestNode.aIn).asDouble()\nif x > 0:\n    return\n"
-            "data.outputValue(TestNode.aOut).setDouble(x)": "return",
+            "for i in range(3):\n    return": "return",
             "self.count = 1": "self.count",
             "data.inputValue(TestNode.aIn).setDouble(1.0)": "入力の handle",
             "x = data.inputValue(TestNode.aArr).asDouble()": "要素を選ばずに",
@@ -206,6 +205,86 @@ class ComputeTest(unittest.TestCase):
                 _data, r = convert_compute(body + "\ndata.outputValue(TestNode.aOut).setDouble(1.0)")
                 self.assertFalse(r.ok)
                 self.assertTrue(any(word in m for _l, m in r.problems), r.problems)
+
+    def test_early_return(self):
+        """if 条件: return は、残りの文を else に入れた if に書き換える"""
+        data, r = convert_compute('''
+            if plug != TestNode.aOut:
+                return
+            h = data.inputValue(TestNode.aIn)
+            x = h.asDouble()
+            if x < 0.0:
+                data.outputValue(TestNode.aOut).setDouble(0.0)
+                return
+            elif x > 10.0:
+                return
+            data.outputValue(TestNode.aOut).setDouble(x * 2.0)
+        ''')
+        self.assertTrue(r.ok, r.problems)
+        self.assertEqual(data["nodes"]["testNode"]["compute"], [
+            "x = input", "if (x < 0.0):", "    output = 0.0", "else:", "    if not (x > 10.0):",
+            "        output = (x * 2.0)"])
+
+    def test_plug_and_isnull(self):
+        """MPlug（thisMObject・findPlug）で読む値、MObject の isNull（繋がっていない）"""
+        data, r = convert_compute('''
+            this = self.thisMObject()
+            mode = om.MPlug(this, TestNode.aIn).asShort()
+            fn = om.MFnDependencyNode(this)
+            n = fn.findPlug("values", False).numElements()
+            first = fn.findPlug(TestNode.aArr, False).elementByLogicalIndex(0).asDouble()
+            linked = om.MPlug(this, TestNode.aIn).isConnected()
+            obj = data.inputValue(TestNode.aIn).data()
+            if obj.isNull():
+                return
+            data.outputValue(TestNode.aOut).setDouble(mode + n + first + linked)
+        ''')
+        # aIn は数の属性なので、data() は使えない（行列の属性だけ）
+        self.assertFalse(r.ok)
+        self.assertTrue(any("data()" in m for _l, m in r.problems), r.problems)
+        src = TEMPLATE.replace('TestNode.aIn = nAttr.create("input", "in", om.MFnNumericData.kDouble, 0.0)',
+                               'TestNode.aIn = tAttr.create("input", "in", om.MFnData.kMatrix)')
+        body = '''
+            this = self.thisMObject()
+            fn = om.MFnDependencyNode(this)
+            n = fn.findPlug("values", False).numElements()
+            first = fn.findPlug(TestNode.aArr, False).elementByLogicalIndex(0).asDouble()
+            linked = om.MPlug(this, TestNode.aIn).isConnected()
+            obj = data.inputValue(TestNode.aIn).data()
+            if obj.isNull():
+                return
+            m = om.MFnMatrixData(obj).matrix()
+            data.outputValue(TestNode.aOut).setDouble(m.getElement(3, 0) + n + first + linked)
+        '''
+        data, results, _p = convert_source(src % textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8), "t.py")
+        r = results[0]
+        self.assertFalse(r.ok)                                   # getElement は未対応 → 一覧に出る
+        self.assertEqual(list(r.unknown), [".getElement()"])
+        body = body.replace("m.getElement(3, 0)", "1.0")
+        data, results, _p = convert_source(src % textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8), "t.py")
+        r = results[0]
+        self.assertTrue(r.ok, r.problems)
+        self.assertEqual(r.unknown, {})
+        self.assertEqual(data["nodes"]["testNode"]["compute"], [
+            "n = count(values)", "first = values[0]", "linked = connected(input)", "obj = input",
+            "if connected(input):", "    m = obj", "    output = (((1.0 + n) + first) + linked)"])
+        self.assertTrue(any("isNull" in n for n in r.notes), r.notes)
+
+    def test_unknown_calls_listed(self):
+        """解釈できない関数・メソッドは、実行の流れに関係なくすべて一覧にする"""
+        data, r = convert_compute('''
+            x = data.inputValue(TestNode.aIn).asDouble()
+            y = om.MRampAttribute(self.thisMObject(), TestNode.aIn).getValueAtPosition(x)
+            z = helper(x) + math.gamma(x) + self.cache(x)
+            data.outputValue(TestNode.aOut).setDouble(x.foo())
+        ''')
+        self.assertFalse(r.ok)
+        self.assertEqual(set(r.unknown), {"MRampAttribute()", ".getValueAtPosition()", "helper()", "math.gamma()",
+                                          "self.cache()", ".foo()"})
+        from ma_viewer.plugin_convert import report_text
+        text = report_text("t.py", data, [r], [])
+        self.assertIn("■ 解釈できない関数・メソッドの一覧", text)
+        self.assertIn("  .getValueAtPosition(): testNode（", text)
 
     def test_missing_output_write_is_noted(self):
         data, r = convert_compute("x = data.inputValue(TestNode.aIn).asDouble()")

@@ -138,13 +138,17 @@ python -m ma_viewer node-defs                                                   
 | 配列 | `for i in range(len(arr))`（API 1.0 は `elementCount()`）＋ `jumpToPhysicalElement` / `jumpToArrayElement`、`while not arr.isDone(): … arr.next()`、論理番号（`elementLogicalIndex` / `elementIndex`）と `jumpToLogicalElement` / `jumpToElement`、出力の配列の `builder()`・`addElement(番号)` |
 | 値 | `MVector`・`MPoint`（`*` は内積、`^` は外積、点 × 行列）・`MMatrix`・`MTransformationMatrix`（移動・回転・スケールの取り出しと設定）・`MEulerRotation`・`MQuaternion`・`MAngle`、`math` の関数、`abs`・`min`・`max`・`round` |
 | plug | `if plug == 出力:`・`plug.parent()`・`plug.array()` による出し分けは、すべての出力を計算するものとして扱います |
+| MPlug | `MPlug(self.thisMObject(), 属性)`・`MFnDependencyNode(self.thisMObject()).findPlug(属性 / "名前")` の値（`asShort` など）、`isConnected`（→ `connected`）、`elementByLogicalIndex`、`numElements`、`asMObject` |
+| return | `if 条件: … return` は、残りの文を else に入れた if に書き換えます（`if obj.isNull(): return` など）。`isNull` は「その属性に接続がない」として扱います |
 
 変換できない書き方（そのノードは書き出しません）:
 
 - `self` に値を覚える（前回の計算の結果を使う）。ビューアはフレームごとに独立して計算します。
 - `maya.cmds`・ほかのノードを直接見る処理、文字列・メッシュ・カーブなど形状の属性を読む計算。
-- `while`（配列をたどる `while not arr.isDone()` は可）、`try`、計算の途中の `return`（plug による出し分けの `return` は可）。
+- `while`（配列をたどる `while not arr.isDone()` は可）、`try`、ループの中の `return`。
 - `self` のメソッドやプラグインの中の関数の呼び出し（計算を compute の中に書いてください）。
+
+変換できなかったノードがあると、結果の最後に **「解釈できない関数・メソッドの一覧」** を出します。compute の中の呼び出しを実行の流れに関係なくすべて調べて、変換ツールが知らない名前（`.getElement()`・`MRampAttribute()`・`self.helper()` など）を、ノードと行番号つきで並べます。対応を相談するときは、この一覧を見せてください。
 
 扱えない型の属性（文字列など）は、compute で読んでいなければ定義から外し、注意（※）を出します。出力に書き込む文が見つからなければ、その出力は既定値のままになるので注意を出します。
 

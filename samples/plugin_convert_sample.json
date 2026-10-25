@@ -1769,7 +1769,8 @@
       1.0,
       2.0,
       3.0
-     ]
+     ],
+     "md":1.0
     },
     "inputs":{
      "im":{
@@ -2522,6 +2523,12 @@
       ]
      },
      {
+      "name":"mode",
+      "short":"md",
+      "type":"enum",
+      "default":0.0
+     },
+     {
       "name":"outMatrix",
       "short":"om",
       "type":"matrix",
@@ -2551,61 +2558,150 @@
       "set",
       [
        "l",
-       "offset_"
+       "inObject"
       ],
       [
        "a",
        [
         [
-         "of",
+         "im",
          null
         ]
        ]
       ]
      ],
      [
-      "set",
-      [
-       "l",
-       "outObject"
-      ],
+      "if",
       [
        "c",
-       "compose",
+       "connected",
        [
         [
-         "b",
-         "+",
+         "p",
          [
-          "c",
-          "translation",
           [
-           [
-            "a",
-            [
-             [
-              "im",
-              null
-             ]
-            ]
-           ]
+           "im",
+           null
           ]
-         ],
+         ]
+        ]
+       ]
+      ],
+      [
+       [
+        "set",
+        [
+         "l",
+         "offset_"
+        ],
+        [
+         "a",
+         [
+          [
+           "of",
+           null
+          ]
+         ]
+        ]
+       ],
+       [
+        "set",
+        [
+         "l",
+         "mode_"
+        ],
+        [
+         "a",
+         [
+          [
+           "md",
+           null
+          ]
+         ]
+        ]
+       ],
+       [
+        "if",
+        [
+         "b",
+         "==",
          [
           "l",
-          "offset_"
+          "mode_"
+         ],
+         [
+          "n",
+          1
          ]
         ],
         [
+         [
+          "set",
+          [
+           "l",
+           "offset_"
+          ],
+          [
+           "u",
+           "-",
+           [
+            "l",
+            "offset_"
+           ]
+          ]
+         ]
+        ],
+        []
+       ],
+       [
+        "set",
+        [
+         "l",
+         "outObject"
+        ],
+        [
          "c",
-         "rotation",
+         "compose",
          [
           [
-           "a",
+           "b",
+           "+",
+           [
+            "c",
+            "translation",
+            [
+             [
+              "l",
+              "inObject"
+             ]
+            ]
+           ],
+           [
+            "l",
+            "offset_"
+           ]
+          ],
+          [
+           "c",
+           "rotation",
            [
             [
-             "im",
-             null
+             "l",
+             "inObject"
+            ],
+            [
+             "n",
+             0
+            ]
+           ]
+          ],
+          [
+           "c",
+           "scale",
+           [
+            [
+             "l",
+             "inObject"
             ]
            ]
           ],
@@ -2614,44 +2710,26 @@
            0
           ]
          ]
-        ],
+        ]
+       ],
+       [
+        "set",
         [
-         "c",
-         "scale",
+         "o",
          [
           [
-           "a",
-           [
-            [
-             "im",
-             null
-            ]
-           ]
+           "om",
+           null
           ]
          ]
         ],
         [
-         "n",
-         0
-        ]
-       ]
-      ]
-     ],
-     [
-      "set",
-      [
-       "o",
-       [
-        [
-         "om",
-         null
+         "l",
+         "outObject"
         ]
        ]
       ],
-      [
-       "l",
-       "outObject"
-      ]
+      []
      ]
     ]
    },
@@ -3459,7 +3537,7 @@
    "channels":2,
    "nodes":12,
    "graphNodes":24,
-   "seconds":0.0019
+   "seconds":0.003
   }
  }
 }

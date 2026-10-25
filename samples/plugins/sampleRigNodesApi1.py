@@ -4,7 +4,8 @@
   * legacySum   : 配列の入力を MArrayDataHandle の elementCount と next でたどる合計（× gain）
   * vectorLength: double3 の入力（子の属性 inVectorX〜Z）の長さと、正規化したベクトル
   * matrixOffset: 型つきの行列の属性（MFnTypedAttribute・MFnData.kMatrix）。MFnMatrixData で読み書きし、
-                  入力の行列の移動に offset を足す
+                  入力の行列の移動に offset を足す（mode = 1 なら引く。mode は MPlug の asShort で読む）。
+                  入力のデータがなければ（isNull）何もしない
 """
 import sys
 
@@ -112,6 +113,7 @@ def lengthInitializer():
 class MatrixOffset(OpenMayaMPx.MPxNode):
     aInMatrix = OpenMaya.MObject()
     aOffset = OpenMaya.MObject()
+    aMode = OpenMaya.MObject()
     aOutMatrix = OpenMaya.MObject()
 
     def __init__(self):
@@ -120,9 +122,15 @@ class MatrixOffset(OpenMayaMPx.MPxNode):
     def compute(self, plug, dataBlock):
         if plug != MatrixOffset.aOutMatrix:
             return OpenMaya.kUnknownParameter
-        inData = OpenMaya.MFnMatrixData(dataBlock.inputValue(MatrixOffset.aInMatrix).data())
+        inObject = dataBlock.inputValue(MatrixOffset.aInMatrix).data()
+        if inObject.isNull():
+            return
+        inData = OpenMaya.MFnMatrixData(inObject)
         xform = OpenMaya.MTransformationMatrix(inData.matrix())
         offset = dataBlock.inputValue(MatrixOffset.aOffset).asVector()
+        mode = OpenMaya.MPlug(self.thisMObject(), MatrixOffset.aMode).asShort()
+        if mode == 1:
+            offset = -offset
         xform.setTranslation(xform.getTranslation(OpenMaya.MSpace.kTransform) + offset, OpenMaya.MSpace.kTransform)
         outData = OpenMaya.MFnMatrixData()
         outObject = outData.create(xform.asMatrix())
@@ -137,16 +145,22 @@ def offsetCreator():
 def offsetInitializer():
     tAttr = OpenMaya.MFnTypedAttribute()
     nAttr = OpenMaya.MFnNumericAttribute()
+    eAttr = OpenMaya.MFnEnumAttribute()
     MatrixOffset.aInMatrix = tAttr.create("inMatrix", "im", OpenMaya.MFnData.kMatrix)
     MatrixOffset.aOffset = nAttr.createPoint("offset", "of")
+    MatrixOffset.aMode = eAttr.create("mode", "md", 0)
+    eAttr.addField("add", 0)
+    eAttr.addField("subtract", 1)
     MatrixOffset.aOutMatrix = tAttr.create("outMatrix", "om", OpenMaya.MFnData.kMatrix)
     tAttr.setWritable(False)
     tAttr.setStorable(False)
     MatrixOffset.addAttribute(MatrixOffset.aInMatrix)
     MatrixOffset.addAttribute(MatrixOffset.aOffset)
+    MatrixOffset.addAttribute(MatrixOffset.aMode)
     MatrixOffset.addAttribute(MatrixOffset.aOutMatrix)
     MatrixOffset.attributeAffects(MatrixOffset.aInMatrix, MatrixOffset.aOutMatrix)
     MatrixOffset.attributeAffects(MatrixOffset.aOffset, MatrixOffset.aOutMatrix)
+    MatrixOffset.attributeAffects(MatrixOffset.aMode, MatrixOffset.aOutMatrix)
 
 
 def initializePlugin(mobject):
