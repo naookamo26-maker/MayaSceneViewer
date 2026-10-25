@@ -162,6 +162,42 @@ class AttrScanner:
         self.fns: Dict[str, FnState] = {}
         self.local: Dict[str, AttrInfo] = {}
         self.notes: List[str] = []
+        self.in_class = False                    # クラスの直下の文を読んでいる
+
+    def fn_of(self, node) -> Optional[FnState]:
+        """nAttr・cls.nAttr・self.nAttr・Cls.nAttr → 関数セット（クラスの直下に書いたものは @名前）"""
+        if isinstance(node, ast.Name):
+            return self.fns.get(node.id)
+        if isinstance(node, ast.Attribute):
+            return self.fns.get("@" + node.attr)
+        return None
+
+    def scan_class(self, cls: ast.ClassDef):
+        """クラスの直下の文（nAttr = om.MFnNumericAttribute()、aIn = nAttr.create(…) など）"""
+        self.in_class = True
+        try:
+            self.block([st for st in cls.body if not isinstance(st, (ast.FunctionDef, ast.ClassDef))], {})
+        finally:
+            self.in_class = False
+
+    def name_value(self, node):
+        """属性の名前など: 定数・モジュールの定数・クラスの定数（Cls.kName・cls.kName・self.kName）"""
+        v = _const(node)
+        if v is not None:
+            return v
+        if isinstance(node, ast.Name):
+            if node.id in self.module.consts:
+                return self.module.consts[node.id]
+            if self.in_class and self.cls is not None:
+                return self.module.class_constant(self.cls.name, node.id)
+            return None
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            owner = node.value.id
+            if owner in self.module.classes:
+                return self.module.class_constant(owner, node.attr)
+            if self.cls is not None:
+                return self.module.class_constant(self.cls.name, node.attr)
+        return None
 
     def ref(self, node, env) -> Optional[AttrInfo]:
         """Cls.aX・self.aX・aX → 属性"""
@@ -189,8 +225,13 @@ class AttrScanner:
             fn_kind = self.fn_kind(value)
             if fn_kind:
                 for t in targets:
+                    fn = FnState(fn_kind)
                     if isinstance(t, ast.Name):
-                        self.fns[t.id] = FnState(fn_kind)
+                        self.fns[t.id] = fn
+                        if self.in_class:
+                            self.fns["@" + t.id] = fn    # メソッドの中からは cls.nAttr・self.nAttr で参照する
+                    elif isinstance(t, ast.Attribute):
+                        self.fns["@" + t.attr] = fn
                 return
             attr = self.create(value)
             if attr is not None:
@@ -199,8 +240,8 @@ class AttrScanner:
                 return
             # 設定: nAttr.array = True など（API 2.0 のプロパティ）
             for t in targets:
-                if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id in self.fns:
-                    self.setting(self.fns[t.value.id], t.attr, value)
+                if isinstance(t, ast.Attribute) and self.fn_of(t.value) is not None:
+                    self.setting(self.fn_of(t.value), t.attr, value)
                     return
             # 属性の参照の別名（a = Cls.aX、Cls.aX = a）
             src = self.ref(value, env)
@@ -226,7 +267,9 @@ class AttrScanner:
                 self.block(h.body, env)
 
     def bind(self, target, attr: AttrInfo):
-        if isinstance(target, ast.Name):
+        if isinstance(target, ast.Name) and self.in_class:
+            self.attrs[target.id] = attr                 # クラスの直下: メソッドの中からは self.aIn・cls.aIn
+        elif isinstance(target, ast.Name):
             self.local[target.id] = attr
             self.attrs.setdefault(target.id, attr)
         elif isinstance(target, ast.Attribute):
@@ -241,16 +284,18 @@ class AttrScanner:
     def create(self, value) -> Optional[AttrInfo]:
         """fn.create(…) / createPoint / createColor → 属性"""
         if not (isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
-                and isinstance(value.func.value, ast.Name) and value.func.value.id in self.fns):
+                and self.fn_of(value.func.value) is not None):
             return None
-        fn = self.fns[value.func.value.id]
+        fn = self.fn_of(value.func.value)
         method = value.func.attr
         if method not in ("create", "createPoint", "createColor", "createAddr"):
             return None
         args = value.args
-        long_name, short_name = (_const(args[0]) if args else None), (_const(args[1]) if len(args) > 1 else None)
+        long_name = self.name_value(args[0]) if args else None
+        short_name = self.name_value(args[1]) if len(args) > 1 else None
         if not isinstance(long_name, str):
-            _fail("属性の名前が定数ではありません", value)
+            _fail("属性の名前（%s）が分かりません。文字列か、モジュール・クラスの定数にしてください"
+                  % (ast.unparse(args[0]) if args else "なし"), value)
         short_name = short_name if isinstance(short_name, str) else long_name
         line = value.lineno
         kind = fn.kind
@@ -334,8 +379,8 @@ class AttrScanner:
         f = c.func
         name = _tail(f)
         # nAttr.setArray(True) など（API 1.0）・cAttr.addChild(…)
-        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id in self.fns:
-            fn = self.fns[f.value.id]
+        if isinstance(f, ast.Attribute) and self.fn_of(f.value) is not None:
+            fn = self.fn_of(f.value)
             if name == "addChild" and c.args:
                 child = self.ref(c.args[0], env)
                 if child is not None and fn.current is not None:
@@ -477,7 +522,10 @@ class Translator:
 
     # ---- 属性の参照
     def attr_ref(self, node) -> Optional[AttrInfo]:
-        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        if isinstance(node, ast.Attribute):
+            # self.aIn・Cls.aIn・cls.aIn・self.__class__.aIn・type(self).aIn（変数の値の属性は除く）
+            if isinstance(node.value, ast.Name) and node.value.id in self.env:
+                return None
             return self.sc.attrs.get(node.attr)
         if isinstance(node, ast.Name) and node.id not in self.env:
             return self.sc.attrs.get(node.id)
@@ -486,7 +534,9 @@ class Translator:
     def need_attr(self, node) -> AttrInfo:
         a = self.attr_ref(node)
         if a is None:
-            _fail("属性が分かりません（初期化の関数で作った属性を指していません）", node)
+            known = sorted({k for k, v in self.sc.attrs.items() if v.parent is None and k not in self.sc.local})
+            _fail("属性 %s が分かりません（初期化の関数で作った属性を指していません。作った属性: %s）"
+                  % (ast.unparse(node), "・".join(known) or "なし"), node)
         if not a.supported:
             _fail("属性 %s は扱えません（%s）" % (a.long, a.type.split(":", 1)[-1]), node)
         return a
@@ -1551,7 +1601,7 @@ _KNOWN_METHODS = (_GETTERS_NUM | _GETTERS_VEC | _GETTERS_MAT | _GETTERS_UNIT | _
 _KNOWN_CLASSES = _VEC_CLASSES | _PT_CLASSES | _MAT_CLASSES | {
     "MTransformationMatrix", "MEulerRotation", "MQuaternion", "MAngle", "MDistance", "MTime", "MFnMatrixData",
     "MPlug", "MFnDependencyNode"}
-_KNOWN_FUNCTIONS = {"abs", "min", "max", "pow", "round", "float", "int", "bool", "len", "range", "print"}
+_KNOWN_FUNCTIONS = {"abs", "min", "max", "pow", "round", "float", "int", "bool", "len", "range", "print", "type"}
 
 
 _KNOWN_CONSTANTS = ({"kIdentity", "identity", "kWorld", "kTransform", "kObject", "kPreTransform", "kPostTransform",
@@ -1738,18 +1788,37 @@ class ModuleInfo:
     def constant(self, name: str, cls: Optional[ast.ClassDef] = None):
         return self.consts.get(name)
 
+    def chain(self, cls: ast.ClassDef) -> List[ast.ClassDef]:
+        """クラスと、このファイルの中の親クラス（子 → 親の順）"""
+        out, todo = [], [cls]
+        while todo:
+            c = todo.pop(0)
+            if c in out:
+                continue
+            out.append(c)
+            for b in c.bases:
+                name = _tail(b)
+                if name in self.classes:
+                    todo.append(self.classes[name])
+        return out
+
     def class_constant(self, cls_name: str, attr: str):
         cls = self.classes.get(cls_name)
         if cls is None:
             return None
-        for s in cls.body:
-            if isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name) \
-                    and s.targets[0].id == attr:
-                return _const(s.value)
+        for c in self.chain(cls):
+            for s in c.body:
+                if isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name) \
+                        and s.targets[0].id == attr:
+                    return _const(s.value)
         return None
 
     def method(self, cls: ast.ClassDef, name: str) -> Optional[ast.FunctionDef]:
-        return next((s for s in cls.body if isinstance(s, ast.FunctionDef) and s.name == name), None)
+        for c in self.chain(cls):
+            m = next((s for s in c.body if isinstance(s, ast.FunctionDef) and s.name == name), None)
+            if m is not None:
+                return m
+        return None
 
     def registrations(self) -> Tuple[List[dict], Optional[str], List[str]]:
         """[(型の名前, クラス, 初期化の関数, 行)]・プラグインの版・問題"""
@@ -1879,6 +1948,8 @@ def convert_source(source: str, filename: str = "plugin.py", plugin: Optional[st
         init_fn, _init_cls = reg["init"]
         scanner = AttrScanner(module, cls)
         try:
+            for c in reversed(module.chain(cls)):
+                scanner.scan_class(c)
             scanner.scan(init_fn)
         except ConvertError as exc:
             r.problems.append((exc.line, "属性: %s" % exc))
