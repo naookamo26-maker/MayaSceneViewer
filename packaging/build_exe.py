@@ -28,6 +28,9 @@ def main() -> int:
     if missing:
         print("ビューアのファイルが足りません: %s（web_src で npm run build を実行してください）" % ", ".join(missing))
         return 1
+    if not os.path.isfile(os.path.join(ROOT, "ma_viewer", "icon", "MayaSceneViewer.ico")):
+        print("アイコン（ma_viewer/icon/MayaSceneViewer.ico）がありません（python packaging/make_icon.py で作ってください）")
+        return 1
     # 同梱する自作ノードの定義を検証する（誤りのある定義は配らない）
     sys.path.insert(0, ROOT)
     from ma_viewer.node_defs import DEF_DIR, load_definitions

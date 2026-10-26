@@ -56,3 +56,21 @@ def web_dir() -> str:
 
 def index_html() -> str:
     return os.path.join(web_dir(), "index.html")
+
+
+ICON_FILE = "MayaSceneViewer.ico"
+
+
+def icon_path():
+    """アプリのアイコン（ma_viewer/icon/MayaSceneViewer.ico）。exe 化したときは一時展開フォルダの ma_viewer/icon。
+    見つからなければ None（アイコンなしで動く）"""
+    dirs = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if getattr(sys, "frozen", False) and meipass:
+        dirs.append(os.path.join(meipass, "ma_viewer", "icon"))
+    dirs.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon"))
+    for d in dirs:
+        p = os.path.join(d, ICON_FILE)
+        if os.path.isfile(p):
+            return p
+    return None
