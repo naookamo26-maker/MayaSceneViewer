@@ -24,7 +24,7 @@ import { RigEvaluator, visibleFrom } from './rig.js';
 import { Timeline } from './timeline.js';
 import { CurveOverlay } from './curveOverlay.js';
 import { CameraIcons, cameraFrustum, cameraParams } from './cameraView.js';
-import { SequencerPanel, activeShot, shotTime } from './sequencer.js';
+import { SequencerPanel, activeShot, shotStarts, shotTime } from './sequencer.js';
 
 const VERSION = '1.0.0';
 const D2R = Math.PI / 180;
@@ -1042,7 +1042,15 @@ class ViewerApp {
     if (this.frame < start || this.frame > end) this.scrubTo(Math.min(Math.max(this.frame, start), end));
   }
 
-  togglePlay() { if (this.playing) this.pause(); else this.play(); }
+  /** 再生／停止（下部の再生ボタン・Alt+V）。シーケンスの再生中は、シーンの再生に切り替えずにシーケンスを止める */
+  togglePlay() {
+    if (this.seqPlaying) this.pauseSequence();
+    else if (this.playing) this.pause();
+    else this.play();
+  }
+
+  /** 下部の再生ボタンの表示（シーケンスの再生中もシーンのフレームが進むので、停止のボタンにする） */
+  updatePlayButton() { this.timeline.setPlaying(this.playing || this.seqPlaying); }
 
   /** 再生（実時間。間に合わないときはフレームを飛ばす。範囲の最後まで行くと先頭に戻る） */
   play() {
@@ -1055,12 +1063,13 @@ class ViewerApp {
     this.endCameraEdit();
     this.playing = true;
     this.updateNavigation();
-    this.timeline.setPlaying(true);
+    this.updatePlayButton();
     const t0 = performance.now();
     this.startFpsMeter(this.clip.fps);
     const tick = (now) => {
       if (!this.playing || !this.clip) return;
-      const f = this.clip.wrap(from + Math.floor(((now - t0) / 1000) * this.clip.fps));
+      // requestAnimationFrame の時刻は t0 より前のことがある（そのまま使うと 1 フレーム前に戻る）
+      const f = this.clip.wrap(from + Math.floor((Math.max(now - t0, 0) / 1000) * this.clip.fps));
       if (f !== this.frame) { this.applyFrame(f); this.countShownFrame(now); }
       this.playHandle = requestAnimationFrame(tick);
     };
@@ -1073,7 +1082,7 @@ class ViewerApp {
     cancelAnimationFrame(this.playHandle);
     this.updateNavigation();
     this.stopFpsMeter();
-    this.timeline.setPlaying(false);
+    this.updatePlayButton();
     // 再生中は省いていた、パネルの情報を更新する
     if (this.built) this.afterPoseChange();
   }
@@ -1535,6 +1544,7 @@ class ViewerApp {
   setSequenceFrame(f, opts = {}) {
     if (!this.sequence) return;
     this.seqFrame = Math.min(Math.max(f, this.sequence.start), this.sequence.end);
+    if (this.seqPlaying) this.seqClock = { from: this.seqFrame, t0: performance.now() };   // 再生中なら、ここから再生を続ける
     if (opts.follow && !this.seqFollow) this.seqFollow = true;
     if (this.seqFollow) this.applySequence();
     this.updateSequencePanel();
@@ -1566,10 +1576,10 @@ class ViewerApp {
     this.seqPanel.update(this.seqFrame, activeShot(this.sequence.shots, this.seqFrame), this.cameras, this.seqFollow, this.seqPlaying);
   }
 
-  /** 前・次のショットの先頭へ（ミュートしたショットは飛ばす） */
+  /** 前・次のショットの先頭へ（使うショットが変わるフレーム。shotStarts） */
   stepShot(d) {
     if (!this.sequence) return;
-    const starts = [...new Set(this.sequence.shots.filter((s) => !s.mute).map((s) => s.sequenceStartFrame))].sort((a, b) => a - b);
+    const starts = shotStarts(this.sequence.shots);
     const t = d > 0 ? starts.find((x) => x > this.seqFrame + 1e-6) : [...starts].reverse().find((x) => x < this.seqFrame - 1e-6);
     if (t !== undefined) this.setSequenceFrame(t, { follow: true });
   }
@@ -1584,15 +1594,16 @@ class ViewerApp {
     this.endCameraEdit();
     this.seqPlaying = true;
     this.updateNavigation();
+    this.updatePlayButton();
     const fps = (this.clip && this.clip.fps) || 24;
     const { start, end } = this.sequence;
-    const from = this.seqFrame >= end ? start : Math.floor(this.seqFrame);
-    const t0 = performance.now();
+    this.seqClock = { from: this.seqFrame >= end ? start : Math.floor(this.seqFrame), t0: performance.now() };
     this.startFpsMeter(fps);
     const tick = (now) => {
       if (!this.seqPlaying) return;
       const span = end - start + 1;
-      const f = start + ((from - start + Math.floor(((now - t0) / 1000) * fps)) % span);
+      const { from, t0 } = this.seqClock;      // 再生中にショット送りなどでフレームを動かすと変わる
+      const f = start + ((Math.floor(from) - start + Math.floor((Math.max(now - t0, 0) / 1000) * fps)) % span);
       if (f !== this.seqFrame) { this.seqFrame = f; this.applySequence(); this.updateSequencePanel(); this.countShownFrame(now); }
       this.seqHandle = requestAnimationFrame(tick);
     };
@@ -1605,6 +1616,7 @@ class ViewerApp {
     this.seqPlaying = false;
     cancelAnimationFrame(this.seqHandle);
     this.updateNavigation();
+    this.updatePlayButton();
     this.stopFpsMeter();
     if (this.built) this.afterPoseChange();
     this.updateSequencePanel();

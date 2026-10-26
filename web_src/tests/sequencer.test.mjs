@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { activeShot, shotTime } from '../src/sequencer.js';
+import { activeShot, shotStarts, shotTime } from '../src/sequencer.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const data = JSON.parse(readFileSync(path.resolve(here, '../../samples/sequencer_sample.json'), 'utf8'));
@@ -37,4 +37,12 @@ test('scale と preHold: 長さが scale 倍になり、preHold の間は最初�
 
 test('ショットのないフレーム', () => {
   assert.equal(at(0), null);
+});
+
+test('ショット送りは使うショットが変わるフレームに止まる（隠れたショット・ミュートの先頭には止まらない）', () => {
+  const starts = shotStarts(shots);
+  assert.ok(!starts.includes(5), 'SH015（トラック 2・SH010 に隠れる）の先頭には止まらない');
+  assert.deepEqual(starts.map((f) => activeShot(shots, f).shotName), [...new Set(starts.map((f) => activeShot(shots, f).shotName))]);
+  assert.deepEqual(starts.slice(0, 3).map((f) => [f, activeShot(shots, f).shotName]), [[1, 'SH010'], [13, 'SH020'], [26, 'SH030']]);
+  assert.ok(starts.some((f) => activeShot(shots, f).shotName === 'SH035'), 'トラック 1 が空いて見えるトラック 2 のショットには止まる');
 });

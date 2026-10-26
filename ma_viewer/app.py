@@ -27,10 +27,14 @@ def main(argv=None) -> int:
     os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--ignore-gpu-blocklist")
 
     # QtWebEngine は QApplication より先に import する必要がある
-    from .qt_compat import QtCore, QtWidgets, require_webengine
+    from .qt_compat import QtCore, QtGui, QtWidgets, require_webengine
+    from .resources import icon_path
     QtCore.QCoreApplication.setAttribute(QtCore.Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv[:1])
     app.setApplicationName("Maya シーンビューア")
+    icon = icon_path()
+    if icon:                            # タイトルバー・タスクバーのアイコン（exe のアイコンは spec で指定）
+        app.setWindowIcon(QtGui.QIcon(icon))
     apply_dark_style(app)
 
     try:

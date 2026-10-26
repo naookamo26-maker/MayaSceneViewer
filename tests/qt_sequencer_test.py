@@ -138,6 +138,40 @@ def main() -> int:
             nxt()
         js("document.getElementById('seq-play').click(); 'ok'", lambda _: state(started))
 
+    BTN_JS = """JSON.stringify({ tl: document.getElementById('tl-play').getAttribute('aria-pressed'),
+                                 seq: window.mayaViewer.getStats().sequence, anim: window.mayaViewer.getStats().animation })"""
+
+    def s_buttons(nxt):
+        """シーケンスの再生と、下端のタイムラインの再生ボタン・ショット送りを組み合わせる"""
+        def playing(r):
+            check(r["seq"]["playing"] and r["tl"] == "true",
+                  "シーケンスの再生中は、下端の再生ボタンも停止の表示: %s" % r["tl"])
+            js("document.getElementById('seq-next-shot').click(); 'ok'", lambda _: js(BTN_JS, shot, 0), 100)
+
+        def shot(r):
+            f = r["seq"]["frame"]
+            check(r["seq"]["playing"] and 13 <= f < 20,
+                  "再生中のショット送りは、次のショット（SH020・13）から再生を続ける（SH015 の 5 には止まらない）: %s" % f)
+            js("document.getElementById('tl-play').click(); 'ok'", lambda _: js(BTN_JS, stopped, 300))
+
+        def stopped(r):
+            check(not r["seq"]["playing"] and r["seq"]["follow"] and not r["anim"]["playing"] and r["tl"] == "false",
+                  "シーケンスの再生中に下端の再生ボタンを押すと、シーケンスを止める（シーンの再生に切り替えない）: %s / %s"
+                  % (r["seq"], r["anim"]["playing"]))
+            js("document.getElementById('tl-play').click(); 'ok'", lambda _: js(BTN_JS, scene, 0))
+
+        def scene(r):
+            check(r["anim"]["playing"] and not r["seq"]["playing"] and not r["seq"]["follow"] and r["tl"] == "true",
+                  "もう一度押すと、シーンのタイムラインを再生（シーケンスで見るはオフ）")
+            js("document.getElementById('seq-play').click(); 'ok'", lambda _: js(BTN_JS, back, 0))
+
+        def back(r):
+            check(r["seq"]["playing"] and not r["anim"]["playing"] and r["tl"] == "true",
+                  "シーンの再生中にシーケンスの再生ボタンを押すと、シーケンスの再生に切り替える")
+            js("document.getElementById('tl-play').click(); 'ok'", lambda _: nxt())
+        js("window.mayaViewer.debug.app.setSequenceFrame(1, { follow: true }); document.getElementById('seq-play').click(); 'ok'",
+           lambda _: js(BTN_JS, playing, 0), 100)
+
     def s_trax(nxt):
         def got(s):
             check(not s["panel"], "ショットのないシーンではパネルを出さない")
@@ -149,7 +183,7 @@ def main() -> int:
         open_and_wait(TRAX, got)
 
     win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(200, lambda: run(
-        [s_open, s_click, s_play, s_trax, lambda _: (win.a_anim.setChecked(load_setting), app.quit())])))
+        [s_open, s_click, s_play, s_buttons, s_trax, lambda _: (win.a_anim.setChecked(load_setting), app.quit())])))
     QtCore.QTimer.singleShot(90000, lambda: (print("NG タイムアウト"), ok.update(v=False), app.quit()))
     app.exec()
     print("結果:", "OK" if ok["v"] else "NG")

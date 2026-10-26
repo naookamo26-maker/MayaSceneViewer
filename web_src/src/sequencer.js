@@ -16,6 +16,15 @@ export function activeShot(shots, seq) {
   return best;
 }
 
+/**
+ * ショット送りで止まるフレーム（昇順）: 使うショット（activeShot）が変わるところ。ミュートしたショットと、
+ * 上の段のショットに隠れているショットの先頭には止まらず、上の段のショットが終わって下の段のショットが見えるところには止まる
+ */
+export function shotStarts(shots) {
+  const edges = [...new Set((shots || []).filter((s) => !s.mute).flatMap((s) => [s.sequenceStartFrame, s.sequenceEndFrame + 1]))];
+  return edges.filter((f) => { const s = activeShot(shots, f); return s && s !== activeShot(shots, f - 1); }).sort((a, b) => a - b);
+}
+
 /** シーケンスのフレーム seq に対応する、ショットのシーンのフレーム */
 export function shotTime(shot, seq) {
   const scale = Math.abs(shot.scale) > 1e-9 ? shot.scale : 1;
