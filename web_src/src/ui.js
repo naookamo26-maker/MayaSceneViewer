@@ -150,7 +150,7 @@ export class UI {
       el.addEventListener('change', () => this.app.setMapToggle(el.dataset.map, el.checked));
     });
     $('opt-jsize').addEventListener('input', (e) => s('jointSize', parseFloat(e.target.value)));
-    const toggles = { 'opt-wire': 'wire', 'opt-skin': 'skin', 'opt-joints': 'joints', 'opt-curves': 'curves', 'opt-xray': 'xray', 'opt-tex': 'textures', 'opt-grid': 'grid' };
+    const toggles = { 'opt-wire': 'wire', 'opt-skin': 'skin', 'opt-joints': 'joints', 'opt-controls': 'controls', 'opt-curves': 'curves', 'opt-xray': 'xray', 'opt-tex': 'textures', 'opt-grid': 'grid' };
     for (const [id, key] of Object.entries(toggles)) {
       $(id).addEventListener('click', (e) => {
         const on = e.currentTarget.getAttribute('aria-pressed') !== 'true';
@@ -192,6 +192,7 @@ export class UI {
     $('opt-wire').setAttribute('aria-pressed', String(st.wire));
     $('opt-skin').setAttribute('aria-pressed', String(st.skin));
     $('opt-joints').setAttribute('aria-pressed', String(st.joints));
+    $('opt-controls').setAttribute('aria-pressed', String(st.controls !== false));
     $('opt-curves').setAttribute('aria-pressed', String(st.curves !== false));
     $('opt-xray').setAttribute('aria-pressed', String(st.xray));
     $('opt-grid').setAttribute('aria-pressed', String(!!st.grid));
@@ -224,7 +225,7 @@ export class UI {
    * @param hints {ボタンの id: 理由}（載っていないボタンは通常の表示）
    */
   setToolbarHints(hints) {
-    for (const id of ['opt-wire', 'opt-tex', 'opt-skin', 'opt-joints', 'opt-curves', 'opt-xray', 'opt-bind', 'opt-grid']) {
+    for (const id of ['opt-wire', 'opt-tex', 'opt-skin', 'opt-joints', 'opt-controls', 'opt-curves', 'opt-xray', 'opt-bind', 'opt-grid']) {
       const b = $(id);
       if (b.dataset.baseTitle === undefined) b.dataset.baseTitle = b.title;
       const why = hints[id];

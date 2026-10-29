@@ -1,5 +1,6 @@
 // ジョイントの表示（球・骨・ローカル軸）とピック。リグのコントローラーの目印（八面体）も描く。
 // 骨はシーン階層とは別のオーバーレイとして描くので、Maya 側で骨の親が非表示でも表示できる。
+// ジョイントとコントローラーは別のグループに入れ、表示を別々に切り替える（Maya のジョイントとロケーターの表示と同じ）。
 import {
   BufferGeometry, Color, DynamicDrawUsage, Float32BufferAttribute, Group, InstancedMesh,
   LineBasicMaterial, LineSegments, Matrix4, MeshBasicMaterial, OctahedronGeometry, Quaternion, SphereGeometry, Vector3,
@@ -41,6 +42,9 @@ export class JointOverlay {
   constructor() {
     this.group = new Group();
     this.group.name = '__jointOverlay';
+    this.jointGroup = new Group();       // 球・骨・ローカル軸
+    this.controlGroup = new Group();     // コントローラーの目印
+    this.group.add(this.jointGroup, this.controlGroup);
     this.size = 1;
     this.xray = true;
     this.axesMode = 'selected';
@@ -66,10 +70,10 @@ export class JointOverlay {
 
   clear() {
     for (const o of [this.spheres, this.bones, this.axes]) {
-      if (o) { this.group.remove(o); if (o.isLineSegments) o.geometry.dispose(); else o.dispose?.(); }
+      if (o) { this.jointGroup.remove(o); if (o.isLineSegments) o.geometry.dispose(); else o.dispose?.(); }
     }
     this.spheres = this.bones = this.axes = null;
-    if (this.controlMesh) { this.group.remove(this.controlMesh); this.controlMesh.dispose(); }
+    if (this.controlMesh) { this.controlGroup.remove(this.controlMesh); this.controlMesh.dispose(); }
     this.controlMesh = null;
     this.controls = [];
     this.statusOf = null;
@@ -119,7 +123,7 @@ export class JointOverlay {
     ag.setAttribute('color', new Float32BufferAttribute(col, 3));
     this.axes = new LineSegments(ag, this.axesMat);
     this.axes.frustumCulled = false;
-    this.group.add(this.bones, this.spheres, this.axes);
+    this.jointGroup.add(this.bones, this.spheres, this.axes);
     this.applyXray();
     this.update();
   }
@@ -135,14 +139,14 @@ export class JointOverlay {
 
   /** リグのコントローラー（ジョイント・メッシュ以外でリグを動かすノード）の目印を描く */
   setControllers(list) {
-    if (this.controlMesh) { this.group.remove(this.controlMesh); this.controlMesh.dispose(); }
+    if (this.controlMesh) { this.controlGroup.remove(this.controlMesh); this.controlMesh.dispose(); }
     this.controls = list.slice();
     this.controlMesh = null;
     if (this.controls.length) {
       this.controlMesh = new InstancedMesh(this.controlGeo, this.controlMat, this.controls.length);
       this.controlMesh.instanceMatrix.setUsage(DynamicDrawUsage);
       this.controlMesh.frustumCulled = false;
-      this.group.add(this.controlMesh);
+      this.controlGroup.add(this.controlMesh);
     }
     this.applyXray();
     this.update();
@@ -152,7 +156,10 @@ export class JointOverlay {
   setSize(v) { this.size = v; this.update(); }
   setAxesMode(v) { this.axesMode = v; this.update(); }
   setSelected(ni) { this.selected = ni; this.update(); }
-  setVisible(v) { this.group.visible = v; }
+  /** ジョイント（球・骨・ローカル軸）の表示 */
+  setVisible(v) { this.jointGroup.visible = v; }
+  /** コントローラーの目印の表示 */
+  setControlsVisible(v) { this.controlGroup.visible = v; }
   /** 推定・不明のノードの色分け（null で解除） */
   setStatus(fn) { this.statusOf = fn; this.update(); }
   /** @param hidden 配列（nodeIndex → 非表示なら true）または null */
@@ -247,14 +254,14 @@ export class JointOverlay {
     }
   }
 
-  /** レイが当たったジョイントの nodeIndex（なければ -1） */
+  /** レイが当たったジョイント・コントローラーの nodeIndex（なければ -1）。表示していないほうは選ばない */
   pick(raycaster) {
-    if (!this.spheres || !this.group.visible) return -1;
-    if (this.joints.length) {
+    if (!this.spheres) return -1;
+    if (this.jointGroup.visible && this.joints.length) {
       const hits = raycaster.intersectObject(this.spheres, false);
       if (hits.length && hits[0].instanceId !== undefined) return this.joints[hits[0].instanceId];
     }
-    if (this.controlMesh) {
+    if (this.controlGroup.visible && this.controlMesh) {
       const hits = raycaster.intersectObject(this.controlMesh, false);
       if (hits.length && hits[0].instanceId !== undefined) return this.controls[hits[0].instanceId];
     }

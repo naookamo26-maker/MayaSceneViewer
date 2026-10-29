@@ -31,6 +31,7 @@ const D2R = Math.PI / 180;
 const DEFAULTS = {
   shading: 'smooth', wire: false, skin: true, joints: false, xray: true, grid: true,   // 骨は初期状態で非表示（J で切り替え）
   curves: true,                  // NURBS カーブ（コントローラーの形など）
+  controls: true,                // カーブの形のないコントローラーの目印（八面体。L で切り替え。Maya のロケーターの表示と同じく既定で表示）
   axes: 'selected', jointSize: 1, weightMode: 'off',
   textures: true, alpha: 'material', alphaStyle: 'cutout',
   poseSource: 'bind',
@@ -290,6 +291,7 @@ class ViewerApp {
       else if (k === '5') { set('shading', 'smooth'); set('textures', false); }   // Maya と同じ: 5 = テクスチャなし
       else if (k === '6') { set('shading', 'smooth'); set('textures', true); }    //               6 = テクスチャあり
       else if (k === 'j') set('joints', !this.settings.joints);
+      else if (k === 'l') set('controls', !this.settings.controls);
       else if (k === 'b') this.togglePoseSource();
       else if (k === 'f8') set('pickMode', this.settings.pickMode === 'vertex' ? 'object' : 'vertex');   // Maya と同じ: F8
       else if (k === 'c') {
@@ -564,6 +566,7 @@ class ViewerApp {
         if (this.picked) this.ui.showVertexInfo(this.vertexInfo());
         break;
       case 'joints': this.overlay.setVisible(value); break;
+      case 'controls': this.overlay.setControlsVisible(value); break;
       case 'cameraIcons': this.updateCameraIcons(); break;
       case 'hud': this.updateHud(); this.updateCacheView(); break;
       case 'pickMode':
@@ -599,6 +602,7 @@ class ViewerApp {
   applyAll() {
     const st = this.settings;
     this.overlay.setVisible(st.joints);
+    this.overlay.setControlsVisible(st.controls);
     this.curves.setVisible(st.curves);
     this.overlay.setXray(st.xray);
     this.overlay.setAxesMode(st.axes);
@@ -1283,7 +1287,7 @@ class ViewerApp {
     const force = !!this.settings.pickAll;
     const nodes = this.data.nodes;
     const okNode = (ni) => force || !nodes[ni].unselectable;
-    if (this.settings.joints) {
+    if (this.settings.joints || this.settings.controls) {
       const ni = this.overlay.pick(this.raycaster);
       if (ni >= 0 && okNode(ni)) { this.select(ni, { notify: true }); return; }
     }
@@ -1530,7 +1534,7 @@ class ViewerApp {
     const st = this.settings, b = this.built;
     const hints = {};
     if (!b) {
-      for (const id of ['opt-wire', 'opt-tex', 'opt-skin', 'opt-joints', 'opt-curves', 'opt-xray', 'opt-bind']) hints[id] = 'シーンを読み込むと使えます';
+      for (const id of ['opt-wire', 'opt-tex', 'opt-skin', 'opt-joints', 'opt-controls', 'opt-curves', 'opt-xray', 'opt-bind']) hints[id] = 'シーンを読み込むと使えます';
       this.ui.setToolbarHints(hints);
       return;
     }
@@ -1544,8 +1548,13 @@ class ViewerApp {
     else if (st.poseSource === 'bind' && hasBind && !(this.pose && this.pose.size)) {
       hints['opt-skin'] = 'バインドポーズでは、スキン変形の有無で形は変わりません（B でファイルの値にするか、ポーズ確認で動かすと違いが出ます）';
     }
-    if (!b.jointIndices.length && !(this.overlay.controls || []).length) hints['opt-joints'] = 'ジョイントがありません';
-    if (!st.joints) hints['opt-xray'] = 'ジョイントを表示していないため効果がありません（J でジョイントを表示）';
+    if (!b.jointIndices.length) hints['opt-joints'] = 'ジョイントがありません';
+    if (!(this.overlay.controls || []).length) {
+      hints['opt-controls'] = this.rig ? 'カーブの形のないコントローラーがありません（カーブのコントローラーはカーブの表示で切り替えます）'
+        : 'コントローラーはアニメーション（リグ）を読み込むと表示します';
+    }
+    const controlsShown = st.controls && (this.overlay.controls || []).length;
+    if (!st.joints && !controlsShown) hints['opt-xray'] = 'ジョイント・コントローラーを表示していないため効果がありません（J でジョイント、L でコントローラーを表示）';
     if (!this.curves.items.some(Boolean)) hints['opt-curves'] = 'このシーンには NURBS カーブがありません';
     if (!hasBind) hints['opt-bind'] = 'このシーンにはバインドポーズの情報がありません（ファイルの値で表示します）';
     this.ui.setToolbarHints(hints);
