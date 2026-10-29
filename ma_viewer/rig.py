@@ -132,10 +132,15 @@ def _dag_like(n: MaNode) -> bool:
     return n.is_dag and not n.is_shape and n.type not in SUPPORTED_DG and n.node_def is None
 
 
+# 出力を計算で求めるシェイプ（値はファイルに残らない。ビューアは計算しないので未対応として扱う）。
+# follicle: サーフェス・メッシュの UV の位置と向き（outTranslate・outRotate）。ribbon のリグで多い
+_COMPUTED_SHAPES = {"follicle", "nurbsSurface", "hairSystem", "nParticle", "particle", "subdiv", "lattice", "baseLattice"}
+
+
 def _value_shape(n: MaNode) -> bool:
     """値を読むだけのシェイプ（カメラのシェイプの独自の属性など。形は評価しない）"""
     return (n.is_shape and n.type not in GEOMETRY_TYPES and n.type not in SUPPORTED_DG and n.type != "mesh"
-            and n.node_def is None)
+            and n.type not in _COMPUTED_SHAPES and n.node_def is None)
 
 
 def _evaluable(n: MaNode, info: Optional["GraphInfo"] = None) -> bool:
@@ -165,6 +170,9 @@ class GraphInfo:
         # 未対応のノードにつながるため、接続を外してファイルの値で再生する補助の入力: [(使う側, 属性, 未対応のノード)]
         self.soft_dropped: List[Tuple[MaNode, str, MaNode]] = []
         self.graph_driven: Set[int] = set()            # チャンネルの接続元がすべて評価できるノード
+        # 推定もできないノード（tainted）の、値を求められない接続（ノードの番号 → 属性）。ビューアはこの接続を使わず
+        # ファイルの値にする（未対応のノードの先の、値の分からない入力で形が崩れないように）
+        self.tainted_keys: Dict[int, List[str]] = {}
         self.expressions: Dict[int, str] = {}          # 解釈できる expression の式
         self.expression_problems: Dict[str, str] = {}  # 解釈できない expression の名前 → 理由
         # 移動・回転・スケール以外の、接続で決まる属性: [(種類, 使う側, 属性, 元, 元の属性)]（PROP_KEYS）
@@ -368,8 +376,8 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
             curve = handle.inputs.get("ic")
             if entry["solver"] not in ("ikRPsolver", "ikSCsolver", "ikSplineSolver"):
                 entry["problem"] = "%s は未対応です" % entry["solver"]
-            elif entry["solver"] == "ikRPsolver" and n_joints < 3:
-                entry["problem"] = "ikRPsolver のジョイントが %d 個しかありません" % n_joints
+            elif n_joints < 2:
+                entry["problem"] = "%s のジョイントが %d 個しかありません" % (entry["solver"], n_joints)
             elif entry["solver"] == "ikSplineSolver" and (curve is None or curve[0].type != "nurbsCurve"):
                 entry["problem"] = "スプライン IK のカーブ（nurbsCurve）が見つかりません"
             elif entry["solver"] == "ikSplineSolver" and _curve_without_shape(ms, curve[0]):
@@ -403,6 +411,23 @@ _SOFT_INPUTS = {t: re.compile(r"^(tws|twist|o[xyz]?|wu[xyz]?|u[xyz]?|a[xyz]?|w\d
 _SOFT_INPUTS["ikHandle"] = re.compile(r"^(twi|twist|rol|roll)$")
 
 
+_CONSTRAINT_OUTPUT_RE = re.compile(r"^(c[trs][xyz]?|constraint(Translate|Rotate|Scale)[XYZ]?)$")
+
+
+def _upstream_of(info: GraphInfo, src: MaNode, sattr: str) -> List[Tuple[MaNode, str]]:
+    """src.sattr の値を決める接続。読む属性そのものに接続があればそれだけ（値をそのまま通す）。コンストレイントの出力
+    （ct・cr・cs）以外の属性（ウェイト w0 など）は、その属性の接続だけ。ほかの計算ノードは、すべての入力から出力が決まる。
+    DAG ノード・シェイプの属性は、その属性の入力だけ"""
+    edges = info.edges.get(id(src), {})
+    if sattr in edges:
+        return [edges[sattr]]
+    if id(src) in info.dg and not _value_shape(src):
+        if src.type in CONSTRAINT_TYPES and not _CONSTRAINT_OUTPUT_RE.match(_base(sattr)):
+            return []
+        return list(edges.values())
+    return []
+
+
 def _drop_soft_unsupported(info: GraphInfo):
     """補助の入力（_SOFT_INPUTS）のうち、上流に未対応のノードがあるものの接続を外す。警告もそれに合わせる"""
     if not info.unsupported_at:
@@ -420,11 +445,7 @@ def _drop_soft_unsupported(info: GraphInfo):
         if key in seen:
             return None
         seen.add(key)
-        edges = info.edges.get(id(src), {})
-        if id(src) in info.dg and not _value_shape(src):
-            ups = list(edges.values())                   # 計算ノードは、すべての入力から出力が決まる
-        else:
-            ups = [edges[sattr]] if sattr in edges else []   # DAG ノード・シェイプの属性は、その属性の入力だけ
+        ups = _upstream_of(info, src, sattr)
         found = None
         for s2, a2 in ups:
             found = bad_up(s2, a2, seen)
@@ -455,12 +476,7 @@ def _drop_soft_unsupported(info: GraphInfo):
             return
         seen.add((id(src), sattr))
         reached.add(id(src))
-        edges = info.edges.get(id(src), {})
-        if id(src) in info.dg and not _value_shape(src):
-            ups = list(edges.values())
-        else:
-            ups = [edges[sattr]] if sattr in edges else []
-        for s2, a2 in ups:
+        for s2, a2 in _upstream_of(info, src, sattr):
             mark(s2, a2)
 
     for cid, edges in info.edges.items():
@@ -798,6 +814,9 @@ def analyze_fallback(info: GraphInfo, kept: List[MaNode], bind_ids: Set[int], ou
                              "unresolved": unresolved(n)})
         elif tainted(n):
             tainted_out.append(ni)
+            keys = [k for k in unresolved(n) if _base(k) in _CHANNEL_KEYS]
+            if keys:
+                info.tainted_keys[ni] = keys
     return fallback, tainted_out
 
 

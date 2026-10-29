@@ -278,19 +278,20 @@ const _f = new Matrix4();
  * Maya の行列（行ベクトル）は S · Sh · R · T（Sh は行の順に (1, 0, 0)・(xy, 1, 0)・(xz, yz, 1)）。軸（three.js の列 =
  * Maya の行）を X・Y・Z の順に直交させ（グラム・シュミット）、X 軸の向きをそのまま回転の X 軸にする。
  * 残りはせん断 (xy, xz, yz)。three.js の decompose は軸を正規化するだけなので、せん断があると回転がずれる。
- * 鏡に映した行列（行列式が負）は、反転を Z のスケールに入れる（three.js は X に入れる）。
- * 例: diag(1, 1, −1) → 回転なし・スケール (1, 1, −1)
+ * 鏡に映した行列（行列式が負）は、反転を 3 軸すべてのスケールに入れる（スケール (−sx, −sy, −sz)。three.js は X に入れる）。
+ * 例: diag(1, 1, −1) → Z まわりに 180° の回転・スケール (−1, −1, −1)。Maya が保存したコンストレイントの結果（.lr）と
+ * IK の回転で確かめた（左右を反転して作ったリグの右側）
  */
 export function decomposeMaya(m, t = new Vector3(), q = new Quaternion(), s = new Vector3(), sh = new Vector3()) {
   const e = m.elements;
   t.set(e[12], e[13], e[14]);
   const x = new Vector3(e[0], e[1], e[2]), y = new Vector3(e[4], e[5], e[6]), z = new Vector3(e[8], e[9], e[10]);
-  const sx = x.length();
+  let sx = x.length();
   if (sx < 1e-12) { m.decompose(t, q, s); sh.set(0, 0, 0); return { t, q, s, sh }; }
   x.divideScalar(sx);
   const dxy = y.dot(x);
   y.addScaledVector(x, -dxy);
-  const sy = y.length();
+  let sy = y.length();
   if (sy < 1e-12) { m.decompose(t, q, s); sh.set(0, 0, 0); return { t, q, s, sh }; }
   y.divideScalar(sy);
   const dxz = z.dot(x), dyz = z.dot(y);
@@ -298,7 +299,10 @@ export function decomposeMaya(m, t = new Vector3(), q = new Quaternion(), s = ne
   let sz = z.length();
   if (sz < 1e-12) { m.decompose(t, q, s); sh.set(0, 0, 0); return { t, q, s, sh }; }
   z.divideScalar(sz);
-  if (new Vector3().crossVectors(x, y).dot(z) < 0) { sz = -sz; z.negate(); }   // 鏡に映した行列: 反転は Z
+  if (new Vector3().crossVectors(x, y).dot(z) < 0) {     // 鏡に映した行列: 反転は 3 軸すべて（せん断はそのまま）
+    sx = -sx; sy = -sy; sz = -sz;
+    x.negate(); y.negate(); z.negate();
+  }
   q.setFromRotationMatrix(new Matrix4().makeBasis(x, y, z));
   s.set(sx, sy, sz);
   sh.set(dxy / sy, dxz / sz, dyz / sz);
@@ -312,6 +316,37 @@ export function composeMaya(t, q, s, sh = [0, 0, 0], target = new Matrix4()) {
   const S = new Matrix4().makeScale(s[0], s[1], s[2]);
   target.makeTranslation(t[0], t[1], t[2]).multiply(R).multiply(Sh).multiply(S);
   return target;
+}
+
+const AXIS_VEC = [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)];
+const AXIS_INDEX = { X: 0, Y: 1, Z: 2 };
+const wrapAngle = (a) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
+
+/**
+ * 回転（四元数）を、Maya と同じ選び方でオイラー角（ラジアン。[x, y, z]）にする。ro は回転順（0〜5 か three.js の順の文字列）。
+ * 同じ回転を表す 2 通りの角度（(a, b, c) と (a + π, π − b, c + π)）のうち、ref がなければ 0 に近い方（二乗和が小さい方）、
+ * ref（ラジアン）があれば ref に近い方（各成分を ref から ±π の範囲に寄せたうえで）を選ぶ。真ん中の軸が ±90° のときは、
+ * 最後にかかる軸を 0 にして最初にかかる軸にまとめる。Maya が保存したコンストレイントの結果（.lr）で確かめた
+ * （例: Y まわりに 150° → three.js は (180, 30, 180)、Maya は (0, 150, 0)）
+ */
+export function mayaEuler(q, ro = 0, ref = null) {
+  const order = typeof ro === 'string' ? ro : (THREE_ORDER[Math.round(ro)] || 'ZYX');
+  const e = _e.setFromQuaternion(q, order);
+  const a = [e.x, e.y, e.z];
+  const last = AXIS_INDEX[order[0]], mid = AXIS_INDEX[order[1]], first = AXIS_INDEX[order[2]];   // q = q(last)·q(mid)·q(first)
+  if (Math.abs(Math.abs(a[mid]) - Math.PI / 2) < 1e-7) {
+    a[last] = 0;
+    const qf = new Quaternion().setFromAxisAngle(AXIS_VEC[mid], a[mid]).invert().multiply(q);
+    a[first] = wrapAngle(2 * Math.atan2([qf.x, qf.y, qf.z][first], qf.w));
+  }
+  const alt = a.slice();
+  alt[first] = wrapAngle(a[first] + Math.PI);
+  alt[mid] = wrapAngle(Math.PI - a[mid]);
+  alt[last] = wrapAngle(a[last] + Math.PI);
+  const near = (v) => (ref ? v.map((x, i) => ref[i] + wrapAngle(x - ref[i])) : v);
+  const cost = (v) => v.reduce((sum, x, i) => sum + (x - (ref ? ref[i] : 0)) ** 2, 0);
+  const c1 = near(a), c2 = near(alt);
+  return cost(c2) < cost(c1) - 1e-12 ? c2 : c1;
 }
 
 /**

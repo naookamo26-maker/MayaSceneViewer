@@ -9,9 +9,9 @@
     → output（長い名前）→ decomposeMatrix → jA.t = (tx, ty, 5)・jA.r = (0, 0, 30)
     → o（短い名前）→ jB.offsetParentMatrix（jB.t = (1, 0, 0)）→ jB のワールドの位置 = (cos30 + tx, sin30 + ty, 5)
   * fbf_id: 値も接続もない → 単位行列 → jC.offsetParentMatrix（jC.t = (0, 3, 0)）→ jC のワールドの位置 = (0, 3, 0)
-  * 鏡に映した行列（行列式が負）の decomposeMatrix。Maya は反転を Z のスケールに入れる:
-      fbf_mz: diag(1, 1, -1)（移動 i30 ← ctrl.tx）→ dm_mz → jD.r = (0, 0, 0)（dm_mz.os = (1, 1, -1)）
-      fbf_mr: 行 X = (0, 1, 0)・Y = (-1, 0, 0)・Z = (0, 0, -1) → dm_mr → jE.r = (0, 0, 90)（dm_mr.os = (1, 1, -1)）
+  * 鏡に映した行列（行列式が負）の decomposeMatrix。Maya は反転を 3 軸のスケールに入れる:
+      fbf_mz: diag(1, 1, -1)（移動 i30 ← ctrl.tx）→ dm_mz → jD.r = (0, 0, 180)（dm_mz.os = (-1, -1, -1)）
+      fbf_mr: 行 X = (0, 1, 0)・Y = (-1, 0, 0)・Z = (0, 0, -1) → dm_mr → jE.r = (0, 0, -90)（dm_mr.os = (-1, -1, -1)）
   * せん断: composeMatrix cm_sh（移動 (1, 2, 3)・回転 (20, -35, 60)・スケール (0.5, 2, 1.5)・せん断 (0.4, -0.3, 0.2)。
     移動 X ← ctrl.tx）→ dm_sh（decomposeMatrix）→ jF.r = (20, -35, 60)・dm_sh.os・dm_sh.osh は元の値に戻る
 """

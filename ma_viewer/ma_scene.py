@@ -276,7 +276,8 @@ class MaNode:
             return True
         if self.type in TRANSFORM_TYPES:
             return False
-        return self.type.endswith("Shape") and not self.children
+        # 型名が Shape で終わる DAG ノード（blendShape のような DG ノードはシェイプではない）
+        return self.is_dag and self.type.endswith("Shape") and not self.children
 
     def vec3(self, name: str) -> Tuple[float, float, float]:
         v = self.xattrs.get(name)
