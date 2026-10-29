@@ -1,5 +1,6 @@
 // Qt（Python）との通信。QWebChannel が使えない環境（通常のブラウザ）では何もしない。
 //   JS → Python : bridge.nodeSelected(path) / bridge.jsReady() / bridge.log(level, text)
+//                 bridge.saveSetting(key, value) / bridge.loadSetting(key, callback)（次回の起動でも使う設定）
 //   Python → JS : window.mayaViewer.* を runJavaScript で呼ぶ
 
 export function isQtHost() {

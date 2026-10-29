@@ -54,6 +54,9 @@
             <input type="range" id="opt-jsize" min="0.2" max="4" step="0.1" value="1"></div>
           <div class="menu-sep"></div>
           <label class="check"><input type="checkbox" id="opt-hud" checked> 再生のフレームレートを表示（ヘッドアップディスプレイ）</label>
+          <div class="menu-sep"></div>
+          <p class="menu-label">リグの再生キャッシュ（メモリの上限）</p>
+          <div class="choices grid cols3" id="opt-playback-cache" role="radiogroup" aria-label="リグの再生キャッシュの上限" data-setting="playbackCacheMB" title="リグの評価結果をフレームごとに覚えて、2 周目以降の再生を速くする（オフにすると毎回計算する）。設定は次回の起動でも使う"><button type="button" role="radio" aria-checked="false" data-value="0">オフ</button><button type="button" role="radio" aria-checked="false" data-value="128">128MB</button><button type="button" role="radio" aria-checked="false" data-value="256">256MB</button><button type="button" role="radio" aria-checked="false" data-value="512">512MB</button><button type="button" role="radio" aria-checked="false" data-value="1024">1GB</button><button type="button" role="radio" aria-checked="false" data-value="2048">2GB</button></div>
         </div>
       </div>
       <div class="menu">
@@ -130,6 +133,7 @@
     <div id="cam-gate" hidden><i class="g-top"></i><i class="g-bottom"></i><i class="g-left"></i><i class="g-right"></i><span class="g-frame"></span></div>
     <div id="vp-title"></div>
     <div id="vp-hud" hidden role="status" aria-live="off" title="再生中に実際に表示できたフレーム数（1 秒あたり）と、シーンのフレームレート"></div>
+    <div id="vp-cache" hidden role="status" aria-live="off" title="リグの再生キャッシュ: 覚えたフレーム数 / 再生範囲のフレーム数と、使っているメモリ（目安）。タイムラインの上端の緑の帯が覚えたフレーム"></div>
     <div id="legend" hidden></div>
     <div id="vp-hint">左ドラッグ: 回転　中ドラッグ: 移動　右ドラッグ・ホイール: ズーム　クリック: 選択</div>
     <div id="timeline" role="group" aria-label="タイムライン" hidden>

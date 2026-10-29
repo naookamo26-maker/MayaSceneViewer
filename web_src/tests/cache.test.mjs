@@ -120,16 +120,56 @@ test('再生キャッシュを先に作っても、いまのフレームの値�
   }
 });
 
-test('再生キャッシュは上限を超えて覚えない', () => {
-  const data = load('rig6_mapped');
+test('再生キャッシュは上限を超えて覚えない（カーブの形・属性の値も数える）', () => {
+  for (const name of ['rig6_mapped', 'stretch_spline_mapped', 'vis_camera_sample']) {
+    const data = load(name);
+    const rig = makeRig(data);
+    const frames = framesOf(rig);
+    rig.bake(frames.slice(0, 1));
+    const one = rig.snapshotBytes;
+    assert.ok(one >= rig.moving.size * 128, name);
+    rig.setPlaybackLimit(one * 5 + 10);
+    rig.bake(frames);
+    const st = rig.playbackStats();
+    // 1 フレーム目には時間で変わらないカーブの形の分も入るので、2 フレーム目以降は小さいこともある
+    assert.ok(st.frames >= 5 && st.frames < frames.length, `${name}: ${st.frames} フレーム`);
+    assert.ok(st.bytes <= st.limit, `${name}: ${st.bytes} <= ${st.limit}`);
+    assert.ok(st.full, name);
+    assert.deepEqual(state(rig, 20), fresh(data, 20), name);
+  }
+});
+
+test('時間で形が変わるカーブは、フレームごとに大きさを数える（変わらない形は 1 回だけ）', () => {
+  const data = load('stretch_spline_mapped');
   const rig = makeRig(data);
-  const per = rig.moving.size * 128 + 256;
-  rig.playbackLimit = per * 5;
   const frames = framesOf(rig);
   rig.bake(frames);
-  assert.equal(rig.snapshots.size, 5);
-  assert.ok(rig.playbackFull);
-  assert.deepEqual(state(rig, 20), fresh(data, 20));
+  const matsOnly = frames.length * (rig.moving.size * 128);
+  const shapes = rig.curveIds().map((gid) => [...rig.snapshots.values()].map((sn) => sn.curves.get(gid)));
+  const varying = shapes.filter((list) => new Set(list).size > 1).length;
+  assert.ok(varying > 0, '形が変わるカーブがある');
+  assert.ok(rig.snapshotBytes > matsOnly + frames.length * varying * 160, `${rig.snapshotBytes} > ${matsOnly}`);
+});
+
+test('上限を下げると先に覚えたフレームから捨て、0 にすると使わない', () => {
+  const data = load('ik_sample');
+  const rig = makeRig(data);
+  const frames = framesOf(rig);
+  rig.evaluate(30);
+  rig.bake(frames);
+  assert.equal(rig.snapshots.size, frames.length);
+  const half = rig.snapshotBytes / 2;
+  rig.setPlaybackLimit(half);
+  assert.ok(rig.snapshotBytes <= half, `${rig.snapshotBytes} <= ${half}`);
+  assert.ok(rig.hasSnapshot(30), 'いまのフレームは残す');
+  assert.ok(!rig.hasSnapshot(frames[0]), '先に覚えたフレームから捨てる');
+  assert.deepEqual(state(rig, 1), fresh(data, 1));
+  rig.setPlaybackLimit(0);
+  assert.equal(rig.snapshots.size, 0);
+  assert.equal(rig.bake(frames), 0);
+  state(rig, 3);
+  assert.equal(rig.snapshots.size, 0, 'オフのあいだは覚えない');
+  assert.deepEqual(state(rig, 4), fresh(data, 4));
 });
 
 test('再現チェックのあとも、評価の結果は変わらない', () => {

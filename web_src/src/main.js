@@ -42,11 +42,13 @@ const DEFAULTS = {
   cameraIcons: true,             // シーンのカメラの形を描く
   cameraGate: true,              // カメラから見るとき、解像度ゲートの外側を暗くする
   hud: true,                     // ヘッドアップディスプレイ（再生のフレームレート）
+  playbackCacheMB: 256,          // リグの再生キャッシュの上限（MB。0 なら使わない。次回の起動でも使う）
   pickMode: 'object',            // クリックで選ぶもの: 'object'（オブジェクト）・'vertex'（頂点とそのウェイト）
   pickAll: false,                // Maya で選択できないもの（テンプレート・リファレンス）もクリックで選ぶ
 };
 const TOOLS = ['select', 'translate', 'rotate', 'scale'];
 const num = (n) => n.toLocaleString('ja-JP');
+const MB = 1024 * 1024;
 
 
 const _v = new Vector3();
@@ -105,6 +107,13 @@ class ViewerApp {
     connectBridge((b) => {
       this.bridge = b;
       if (b.jsReady) b.jsReady();
+      // 保存した設定（再生キャッシュの上限）を読み戻す
+      if (b.loadSetting) {
+        b.loadSetting('playbackCacheMB', (v) => {
+          const n = Number(v);
+          if (v !== '' && v !== null && Number.isFinite(n) && n >= 0) this.setSetting('playbackCacheMB', n, { restoring: true });
+        });
+      }
       this.historyChanged(this.history);
       this.onWarningsChanged(this.ui.warnings || []);
     });
@@ -481,6 +490,7 @@ class ViewerApp {
     this.rig = null;
     this.rigCurves = null;
     this.timeline.setClip(null);
+    this.updateCacheView();
   }
 
   clearAll() {
@@ -521,9 +531,16 @@ class ViewerApp {
   }
 
   // ------------------------------------------------------------------ 設定
-  setSetting(key, value) {
+  setSetting(key, value, opts = {}) {
     if (key === 'tool' && !TOOLS.includes(value)) return;
+    if (key === 'playbackCacheMB') {
+      value = Math.max(0, Number(value) || 0);
+      if (this.rig) this.rig.setPlaybackLimit(value * MB);
+      // 次回の起動でも使う（Python の QSettings に保存する。読み戻したときは保存し直さない）
+      if (!opts.restoring && this.bridge && this.bridge.saveSetting) this.bridge.saveSetting(key, String(value));
+    }
     this.settings[key] = value;
+    if (key === 'playbackCacheMB') { this.updateCacheView(); this.scheduleBake(); }
     if (key === 'gizmoSize' && this.gizmo) this.gizmo.setSize(value);
     if (key === 'space' && this.gizmo) this.gizmo.setSpace(value);
     if (key === 'grid' && this.grid) this.grid.visible = !!value;      // シーンがなくても切り替えられる
@@ -548,7 +565,7 @@ class ViewerApp {
         break;
       case 'joints': this.overlay.setVisible(value); break;
       case 'cameraIcons': this.updateCameraIcons(); break;
-      case 'hud': this.updateHud(); break;
+      case 'hud': this.updateHud(); this.updateCacheView(); break;
       case 'pickMode':
         if (value !== 'vertex' && this.picked) { this.picked = null; this.marker.visible = false; }
         this.ui.showVertexInfo(this.vertexInfo(), value);
@@ -889,6 +906,7 @@ class ViewerApp {
     // リグ（コンストレイント・IK・計算ノード）を含めて評価する（上で作成）。動かないノードはファイルの値
     // 姿勢の基準が変わったときに子のスケール補正も掛け直すよう、動くノードとその子を覚えておく
     this.rig = new RigEvaluator(clip, this.data.nodes, (ni) => this.built.nodeObjects[ni].userData.fileMatrix);
+    this.rig.setPlaybackLimit(this.settings.playbackCacheMB * MB);
     const touched = new Set();
     for (const ni of this.rig.moving) {
       touched.add(ni);
@@ -984,7 +1002,29 @@ class ViewerApp {
     this.timeline.setFrame(f);
     this.rigBusy = true;
     try { this.afterPoseChange(light); } finally { this.rigBusy = false; }
+    this.updateCacheView();
     this.scheduleBake();
+  }
+
+  /**
+   * 再生キャッシュの表示（タイムラインの帯とヘッドアップディスプレイの行）。覚えたフレームが変わったときだけ描き直す
+   */
+  updateCacheView() {
+    const rig = this.hasTimeline ? this.rig : null;
+    const st = rig ? rig.playbackStats() : null;
+    const key = st ? `${st.frames}|${st.bytes}|${st.limit}|${this.clip.start}|${this.clip.end}|${this.settings.hud}` : '';
+    if (key === this.cacheViewKey && rig === this.cacheViewRig) return;
+    this.cacheViewKey = key;
+    this.cacheViewRig = rig;
+    this.timeline.setCached(st && st.frames ? (f) => rig.hasSnapshot(f) : null);
+    if (!st || !this.settings.hud || !rig.moving.size) { this.ui.setCacheHud(null); return; }
+    if (!st.limit) { this.ui.setCacheHud('キャッシュ オフ', ''); return; }
+    let total = 0, have = 0;
+    for (let f = Math.ceil(this.clip.start); f <= this.clip.end; f++) { total++; if (rig.hasSnapshot(f)) have++; }
+    const size = (b) => (b < MB ? `${Math.max(1, Math.ceil(b / 1024))} KB` : `${(b / MB).toFixed(b >= 100 * MB ? 0 : 1)} MB`);
+    const full = st.full && have < total;
+    this.ui.setCacheHud(`キャッシュ ${num(have)} / ${num(total)} フレーム・${size(st.bytes)}${full ? `（上限 ${size(st.limit)}）` : ''}`,
+      full ? 'full' : '');
   }
 
   /**
@@ -1005,6 +1045,7 @@ class ViewerApp {
       if (!todo.length) return;
       // 空き時間が残っているあいだ続ける（作り終えたら、いまのフレームの状態に戻す）
       const made = rig.bake(todo, () => deadline.timeRemaining() > 4);
+      this.updateCacheView();
       if (made && made < todo.length) this.bakeHandle = idle(step, { timeout: 2000 });
     };
     // 再生中・ポーズ確認の操作中は作らない（フレームごとに待ち直す。止まってから作り始める）
@@ -1067,6 +1108,8 @@ class ViewerApp {
     this.clip.end = end;
     this.timeline.setRange(start, end);
     if (this.frame < start || this.frame > end) this.scrubTo(Math.min(Math.max(this.frame, start), end));
+    this.updateCacheView();
+    this.scheduleBake();                                  // 広げた範囲のフレームを作る
   }
 
   /** 再生／停止（下部の再生ボタン・Alt+V）。シーケンスの再生中は、シーンの再生に切り替えずにシーケンスを止める */

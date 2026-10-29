@@ -101,6 +101,7 @@ const NO_INPUTS = [];
 const NO_POSE = () => null;                // ポーズ確認の追加分なし
 const BUSY = Symbol('busy');               // キャッシュの計算中の印（循環の検出）
 const PLAN = { def: 0, input: 1, component: 2, output: 3, triple: 4, static: 5 };   // plugPlan の種類
+const SNAPSHOT_BASE = 512;                 // 再生キャッシュの 1 フレームの入れ物の大きさ（バイト。目安）
 const NOTHING = () => undefined;
 const NULL = () => null;
 const TIME_RE = /\b(frame|time)\b/;       // expression が時間を読むか
@@ -305,10 +306,12 @@ export class RigEvaluator {
     this.plans = new Map();                  // グラフの id → 属性 → 値の求め方（plugPlan）
     this.chanInputList = new Map();          // ノード番号 → チャンネルの接続（chanInputs）
     this.varying = false;                    // いま計算中の値が、時間で変わる値を読んだか
-    // 再生キャッシュ: 整数のフレーム → { mats（動くノードのローカル行列を並べた Float64Array）, props, curves }。
-    // 2 周目以降の再生はコピーだけにする。上限（バイト）を超えたら覚えない。0 なら使わない
+    // 再生キャッシュ: 整数のフレーム → { mats（動くノードのローカル行列を並べた Float64Array）, props, curves, bytes }。
+    // 2 周目以降の再生はコピーだけにする。上限（バイト）を超えたら覚えない。0 なら使わない（setPlaybackLimit）
     this.snapshots = new Map();
-    this.snapshotBytes = 0;
+    this.snapshotBytes = 0;                  // 再生キャッシュの大きさ（バイト。カーブの形・属性の値を含む目安）
+    this.frameBytes = this.moving.size * 128 + SNAPSHOT_BASE;   // 1 フレームの大きさの見込み（覚えたフレームの最大）
+    this.countedCurves = new WeakSet();      // 大きさを数えたカーブの値（時間で変わらない形は全フレームで同じものを使う）
     this.playbackLimit = 256 * 1024 * 1024;
     this.current = null;                     // いまのフレームの再生キャッシュ（覚えないフレームは null）
     this.reset();
@@ -333,7 +336,32 @@ export class RigEvaluator {
   clearPlayback() {
     this.snapshots.clear();
     this.snapshotBytes = 0;
+    this.countedCurves = new WeakSet();
     this.current = null;
+  }
+
+  /** 再生キャッシュの上限（バイト。0 なら使わない）。いまの大きさが上限を超えたら、先に覚えたフレームから捨てる */
+  setPlaybackLimit(bytes) {
+    this.playbackLimit = Math.max(0, bytes || 0);
+    if (this.playbackLimit === 0) { this.clearPlayback(); return; }
+    for (const [f, snap] of this.snapshots) {
+      if (this.snapshotBytes <= this.playbackLimit) break;
+      if (snap === this.current) continue;
+      this.snapshots.delete(f);
+      this.snapshotBytes -= snap.bytes;
+    }
+  }
+
+  /** 再生キャッシュの状態 { frames, bytes, limit, full } */
+  playbackStats() {
+    return { frames: this.snapshots.size, bytes: this.snapshotBytes, limit: this.playbackLimit, full: this.playbackFull };
+  }
+
+  /** 再生キャッシュに足した値の大きさを数える */
+  addSnapshotBytes(snap, bytes) {
+    snap.bytes += bytes;
+    this.snapshotBytes += bytes;
+    if (snap.bytes > this.frameBytes) this.frameBytes = snap.bytes;
   }
 
   /**
@@ -364,14 +392,13 @@ export class RigEvaluator {
       m.copy(this.localFile(ni));
       target.set(ni, m);
     }
-    const bytes = this.moving.size * 128 + 256;
-    if (playable && this.snapshotBytes + bytes <= this.playbackLimit) {
+    if (playable && !this.playbackFull) {
       const mats = new Float64Array(this.moving.size * 16);
       let o = 0;
       for (const ni of this.moving) { target.get(ni).toArray(mats, o); o += 16; }
-      this.current = { mats, props: null, curves: new Map() };
+      this.current = { mats, props: null, curves: new Map(), bytes: 0 };
       this.snapshots.set(f, this.current);
-      this.snapshotBytes += bytes;
+      this.addSnapshotBytes(this.current, mats.byteLength + SNAPSHOT_BASE);
     }
     return target;
   }
@@ -380,7 +407,7 @@ export class RigEvaluator {
   hasSnapshot(f) { return this.snapshots.has(f); }
 
   /** 再生キャッシュが上限に達したか */
-  get playbackFull() { return this.snapshotBytes + this.moving.size * 128 + 256 > this.playbackLimit; }
+  get playbackFull() { return this.snapshotBytes + this.frameBytes > this.playbackLimit; }
 
   /**
    * 再生キャッシュを先に作る（空き時間に少しずつ呼ぶ）。いまのフレームの評価の結果（matrices と、あとから求める値）は変えない。
@@ -634,7 +661,10 @@ export class RigEvaluator {
       }
       out.push({ kind: p.kind, index: p.index, values, static: p.static || null });
     }
-    if (this.current) this.current.props = out;
+    if (this.current) {
+      this.current.props = out;
+      this.addSnapshotBytes(this.current, out.reduce((n, p) => n + 64 + Object.keys(p.values).length * 48, 64));
+    }
     return out;
   }
 
@@ -649,7 +679,13 @@ export class RigEvaluator {
     const c = this.current;
     if (c && c.curves.has(gid)) return c.curves.get(gid);
     const v = this.plug(gid, 'local');
-    if (c) c.curves.set(gid, v);
+    if (c) {
+      c.curves.set(gid, v);
+      if (v && v.isCurve && !this.countedCurves.has(v)) {   // CV（Vector3）1 個あたり約 64 バイト
+        this.countedCurves.add(v);
+        this.addSnapshotBytes(c, 160 + v.cvs.length * 64);
+      }
+    }
     return v;
   }
 
