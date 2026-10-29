@@ -28,6 +28,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
+## animX（テストの参照実装・同梱なし）
+
+Apache License 2.0 — https://github.com/Autodesk/animx （Copyright Autodesk, Inc.）
+
+`web_src/tests/animxReference.mjs` は animX のカーブの評価を JavaScript に書き写したもの（テストでのみ使用）。
+ビューアのオート系の接線と重み付きの区間の計算（`web_src/src/animation.js`）も animX と同じ式にしている。
+
 ## esbuild（ビルド時のみ使用・同梱なし）
 
 MIT License — https://github.com/evanw/esbuild

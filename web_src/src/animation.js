@@ -1,17 +1,20 @@
 // アニメーション（共通 JSON の animation）の評価。DOM に依存しないので Node.js 上でもテストできる。
 //
 // Python（animation.py）はキーの時刻・値・接線の種類と、固定の接線だけを渡す。
-// 接線の傾きの計算（スプライン・オートなど）とカーブの評価はここで行う。完全な再現は目指さず、
-// Maya の見た目に近い補間にする:
-//   * 重みなしのカーブ: 区間ごとのエルミート補間（Maya と同じ）
-//   * 重み付きのカーブ: 接線の長さを制御点にした 3 次ベジエ
-//   * スプライン・クランプ・オート・プラトーの傾きは近似（オートとプラトーは山・谷で平らにし、行き過ぎを抑える）
+// 接線の傾きの計算（スプライン・オートなど）とカーブの評価はここで行う。
+// Autodesk が公開している animX（Maya と同じ評価をするライブラリ。github.com/Autodesk/animx）と同じにしたもの:
+//   * 重みなしのカーブ: 区間ごとのエルミート補間
+//   * 重み付きのカーブ: 接線の長さを制御点にした 3 次ベジエ（制御点が区間からはみ出すときの直し方も animX と同じ）
+//   * オート・オートミックス・オートイーズの傾き、範囲外（リニア・繰り返し・往復など）
+// animX にない（Maya の計算が公開されていない）ので近似のもの:
+//   * スプライン・クランプ・プラトーの傾き（docs/animation_curves.md）
 // ローカル行列は Maya の式（docs/data_format.md「行列の規約」）で組み立てる。
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 
 // 接線の種類（.ma の kit / kot / .tan の値）
 export const TANGENT = {
   FIXED: 1, LINEAR: 2, FLAT: 3, STEP: 5, SLOW: 6, FAST: 7, SPLINE: 9, CLAMPED: 10, PLATEAU: 16, STEP_NEXT: 17, AUTO: 18,
+  AUTO_MIX: 19, AUTO_EASE: 20, AUTO_CUSTOM: 21,
 };
 // 範囲外の振る舞い（.pre / .pst）
 export const INFINITY = { CONSTANT: 0, LINEAR: 1, CYCLE: 3, CYCLE_RELATIVE: 4, OSCILLATE: 5 };
@@ -35,8 +38,35 @@ export function decodeArray(entry, Ctor = Float32Array) {
 
 function resolveType(k, fallback) {
   if (k === 0) k = fallback || TANGENT.AUTO;
-  if (k >= 19 && k <= 21) return TANGENT.AUTO;        // オートの派生（autoMix・autoEase・autoCustom）
+  // オートカスタムは、係数を Maya の設定から読めないのでオートイーズにする（animX のテストと同じ扱い）
+  if (k === TANGENT.AUTO_CUSTOM) return TANGENT.AUTO_EASE;
   return k;
+}
+
+const sign1 = (x) => (x < 0 ? -1 : 1);       // animX の _SIGN（0 は正）
+const EASE_C = -0.5;                         // オートイーズの係数（animX の kEaseCoefficient）
+
+/**
+ * オート系の接線の傾き（animX の _autoTangent と同じ）。両隣の傾きの間で目標の傾きを決め、
+ * 制御点が両隣のキーの値の範囲から出ないよう、両隣の傾きの 3 倍で抑える（山・谷では平ら）。
+ *   オート: 両隣を結ぶ傾き・オートミックス: 両隣の傾きを時間の比で線形に混ぜる・オートイーズ: 近い側を強く効かせて混ぜる
+ */
+function autoSlope(type, px, x, nx, py, y, ny) {
+  const prevSlope = (y - py) / (x - px), nextSlope = (ny - y) / (nx - x);
+  const prev3 = 3 * prevSlope, next3 = 3 * nextSlope;
+  let target;
+  if (type === TANGENT.AUTO) target = (ny - py) / (nx - px);
+  else {
+    const f = (x - px) / (nx - px);
+    let g = f;
+    if (type === TANGENT.AUTO_EASE) {
+      const h = f - 0.5;
+      g = 0.5 + h * (1 - EASE_C + 4 * EASE_C * h * h);
+    }
+    target = (1 - g) * prevSlope + g * nextSlope;
+  }
+  if (sign1(prev3) !== sign1(next3) || sign1(target) !== sign1(next3)) return 0;
+  return next3 >= 0 ? Math.min(target, next3, prev3) : Math.max(target, next3, prev3);
 }
 
 /** 1 本のカーブを評価できる形にする（接線の傾きと重みを計算する） */
@@ -68,7 +98,10 @@ export function prepareCurve(meta, times, values, types, fixedOf) {
         if (Math.abs(v[i] - v[i - 1]) < EPS || Math.abs(v[i + 1] - v[i]) < EPS) return 0;
         return secant(i - 1, i + 1);
       }
-      case TANGENT.AUTO: case TANGENT.PLATEAU: {
+      case TANGENT.AUTO: case TANGENT.AUTO_MIX: case TANGENT.AUTO_EASE:
+        if (!hasPrev || !hasNext) return 0;                 // 両端は平ら
+        return autoSlope(type, t[i - 1], t[i], t[i + 1], v[i - 1], v[i], v[i + 1]);
+      case TANGENT.PLATEAU: {                               // 近似（Maya の計算は公開されていない）
         if (!hasPrev || !hasNext) return 0;                 // 両端は平ら
         if (prev * next <= 0) return 0;                     // 山・谷は平ら
         const s = secant(i - 1, i + 1);
@@ -124,26 +157,77 @@ function segmentValue(c, i, x) {
   }
   // 重み付き: 制御点 (t0 + wo/3, v0 + so·wo/3), (t1 − wi/3, v1 − si·wi/3) の 3 次ベジエ
   const wo = c.outW[i] || dt, wi = c.inW[i + 1] || dt;
-  const x1 = Math.min(t0 + wo / 3, t1), x2 = Math.max(t1 - wi / 3, t0);
-  const y1 = v0 + c.outSlope[i] * (x1 - t0), y2 = v1 - c.inSlope[i + 1] * (t1 - x2);
-  const bez = (p0, p1, p2, p3, s) => {
-    const u = 1 - s;
-    return u * u * u * p0 + 3 * u * u * s * p1 + 3 * u * s * s * p2 + s * s * s * p3;
-  };
-  // x(s) = x は単調なので二分法で解く
-  let lo = 0, hi = 1, s = (x - t0) / dt;
-  for (let k = 0; k < 40; k++) {
-    const xs = bez(t0, x1, x2, t1, s);
-    if (Math.abs(xs - x) < 1e-7) break;
-    if (xs < x) lo = s; else hi = s;
-    s = (lo + hi) / 2;
-  }
-  return bez(v0, y1, y2, v1, s);
+  return bezierSegment(t0, v0, t0 + wo / 3, v0 + c.outSlope[i] * wo / 3, t1 - wi / 3, v1 - c.inSlope[i + 1] * wi / 3, t1, v1, x);
 }
+
+/**
+ * 重み付きの区間の値（animX の Tbezier::evaluate と同じ）。制御点の時刻を区間で 0〜1 にし、時刻が逆戻りしない
+ * （x(s) が単調な）ように直してから、x(s) = 時刻 となる s で値を求める。制御点を直すときは接線の傾きを保つ
+ */
+export function bezierSegment(t0, v0, x1, y1, x2, y2, t1, v1, x) {
+  const range = t1 - t0;
+  if (range === 0) return 0;
+  let n1 = (x1 - t0) / range, n2 = (x2 - t0) / range;
+  const linear = Math.abs(n1 - 1 / 3) <= 1e-6 && Math.abs(n2 - 2 / 3) <= 1e-6;
+  const o1 = n1, o2 = n2;
+  if (n1 < 0) n1 = 0;
+  if (n2 > 1) n2 = 1;
+  if (n1 > 1 || n2 < 0) [n1, n2] = checkMonotonic(n1, n2);
+  if (n1 !== o1 && Math.abs(o1) > BEZ_EPS) y1 = v0 + (y1 - v0) * n1 / o1;
+  if (n2 !== o2 && Math.abs(o2 - 1) > BEZ_EPS) y2 = v1 - (v1 - y2) * (1 - n2) / (1 - o2);
+  let s;
+  if (Math.abs(x - t0) <= BEZ_EPS) s = 0;
+  else if (Math.abs(x - t1) <= BEZ_EPS) s = 1;
+  else s = (x - t0) / range;
+  let u = s;
+  if (!linear) {
+    // x(u) = 3·n1·u(1−u)² + 3·n2·u²(1−u) + u³ は [0, 1] で単調なので、二分法で x(u) = s を解く
+    const xa = 3 * n1, xb = 3 * n2 - 6 * n1, xc = 1 + 3 * n1 - 3 * n2;     // x(u) = ((xc·u + xb)·u + xa)·u
+    let lo = 0, hi = 1;
+    for (let k = 0; k < 60; k++) {
+      u = (lo + hi) / 2;
+      if (((xc * u + xb) * u + xa) * u < s) lo = u; else hi = u;
+    }
+    u = (lo + hi) / 2;
+  }
+  const w = 1 - u;
+  return w * w * w * v0 + 3 * w * w * u * y1 + 3 * w * u * u * y2 + u * u * u * v1;
+}
+
+const BEZ_EPS = 1e-10;                   // animX の kDblEpsilon
+
+/** 制御点の時刻（0〜1 にしたもの）を、x(s) が単調になる範囲に入れる（animX の checkMonotonic。1 つ目を優先） */
+function checkMonotonic(n1, n2) {
+  let a = n1, b = 1 - n2;                // 制御の並びを [0, a, 1 − b, 1] にして考える
+  if (a < 0) a = 0;
+  if (b < 0) b = 0;
+  if (a > 1 || b > 1) {
+    const d = a * (a - 2 + b) + b * (b - 2) + 1;
+    if (d + BEZ_EPS > 0) {
+      // 楕円 a² + b² − 2(a + b) + ab + 1 = 0 の内側に入れる
+      if (a + BEZ_EPS < 4 / 3) {
+        const bb = a - 2, cc = a - 1;
+        const discr = Math.sqrt(bb * bb - 4 * cc * cc);
+        let root = (-bb + discr) * 0.5;
+        if (b + BEZ_EPS > root) b = root - BEZ_EPS;
+        else {
+          root = (-bb - discr) * 0.5;
+          if (b < root + BEZ_EPS) b = root + BEZ_EPS;
+        }
+      } else {
+        a = 4 / 3 - BEZ_EPS;
+        b = 1 / 3 - BEZ_EPS;
+      }
+    }
+  }
+  return [a, 1 - b];
+}
+
+const KEY_SNAP = 2.4e-9;     // キーの時刻にこれより近ければキーの値（Maya は 1e-10 秒。24 fps のフレームにしたもの）
 
 function inRange(c, x) {
   const t = c.t, n = c.n;
-  if (x >= t[n - 1]) return c.v[n - 1];
+  if (x >= t[n - 1] - KEY_SNAP) return c.v[n - 1];
   // 再生中は直前の区間の近くを探すことが多いので、前回の位置から調べる
   let i = c.last;
   if (!(i < n - 1 && t[i] <= x && x < t[i + 1])) {
@@ -155,6 +239,8 @@ function inRange(c, x) {
     i = lo;
     c.last = i;
   }
+  if (t[i + 1] - x <= KEY_SNAP) return c.v[i + 1];
+  if (x - t[i] <= KEY_SNAP) return c.v[i];
   return segmentValue(c, i, x);
 }
 

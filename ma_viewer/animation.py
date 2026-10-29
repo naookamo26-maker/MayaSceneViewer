@@ -226,6 +226,38 @@ def _scaled(values, k: float):
     return [v * k for v in values]
 
 
+def curve_record(cv: Curve, offset: int, fps: float, ang_k: float, cm: float):
+    """1 本のカーブを共通 JSON の形にする（単位をそろえる）。
+
+    戻り値: (値, 接線の種類（キーごとに 2 バイト）, 固定の接線（5 つずつ。キーの番号は offset から）, curves の 1 項目)
+    """
+    n = len(cv.times)
+    vk = ang_k if cv.kind in ("TA", "UA") else 1.0
+    tk = (180.0 / math.pi) if cv.kind in ("TA", "UA") else (1.0 / cm if cv.kind in ("TL", "UL") else 1.0)
+    xk = fps if cv.kind[0] == "T" else 1.0           # 固定の接線の x: 時間は秒 → フレーム、ドリブンキーは入力の値のまま
+    chunk = bytearray(2 * n)
+    for k, v in cv.kit.items():
+        if 0 <= k < n:
+            chunk[2 * k] = v & 255
+    for k, v in cv.kot.items():
+        if 0 <= k < n:
+            chunk[2 * k + 1] = v & 255
+    fixed: List[float] = []
+    fx = cv.fixed
+    nan = float("nan")
+    for k in sorted(set(fx["kix"]) | set(fx["kox"])):
+        ix, iy = fx["kix"].get(k), fx["kiy"].get(k)
+        ox, oy = fx["kox"].get(k), fx["koy"].get(k)
+        fixed.extend((offset + k,
+                      ix * xk if ix is not None and iy is not None else nan,
+                      iy * tk if ix is not None and iy is not None else nan,
+                      ox * xk if ox is not None and oy is not None else nan,
+                      oy * tk if ox is not None and oy is not None else nan))
+    meta = {"name": cv.node.name, "type": cv.kind, "offset": offset, "count": n,
+            "tangent": cv.tan, "weighted": cv.weighted, "pre": cv.pre, "post": cv.post}
+    return _scaled(cv.values, vk), chunk, fixed, meta
+
+
 def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn = None) -> Optional[dict]:
     """表示するノード（out_index にあるノード）を動かすカーブを読み、共通 JSON の animation を作る。
 
@@ -236,7 +268,6 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
     fps = fps_of(ms.time_unit)
     ang_k = 180.0 / math.pi if ms.angular_unit in ("rad", "radian") else 1.0
     cm = _CM_PER_UNIT.get(ms.linear_unit, 1.0)
-    rad2deg = 180.0 / math.pi
     warnings: List[str] = []
 
     # --- カーブ → 動かす属性 ---------------------------------------------
@@ -299,36 +330,17 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         n = len(cv.times)
         if n == 0:
             continue
-        vk = ang_k if cv.kind in ("TA", "UA") else 1.0
-        tk = rad2deg if cv.kind in ("TA", "UA") else (1.0 / cm if cv.kind in ("TL", "UL") else 1.0)
-        xk = fps if cv.kind[0] == "T" else 1.0           # 固定の接線の x: 時間は秒 → フレーム、ドリブンキーは入力の値のまま
+        values, chunk, fixed_k, meta = curve_record(cv, offset, fps, ang_k, cm)
         times_chunks.append(cv.times)
         trax = id(node) in trax_curves
         if cv.kind[0] == "T" and not trax:
             range_chunks.append(cv.times)                  # Trax のクリップのキーはクリップの中の時間なので除く
-        values_chunks.append(_scaled(cv.values, vk))
-        chunk = bytearray(2 * n)
-        for k, v in cv.kit.items():
-            if 0 <= k < n:
-                chunk[2 * k] = v & 255
-        for k, v in cv.kot.items():
-            if 0 <= k < n:
-                chunk[2 * k + 1] = v & 255
+        values_chunks.append(values)
         types += chunk
-        fx = cv.fixed
-        for k in sorted(set(fx["kix"]) | set(fx["kox"])):
-            ix, iy = fx["kix"].get(k), fx["kiy"].get(k)
-            ox, oy = fx["kox"].get(k), fx["koy"].get(k)
-            nan = float("nan")
-            fixed.extend((offset + k,
-                          ix * xk if ix is not None and iy is not None else nan,
-                          iy * tk if ix is not None and iy is not None else nan,
-                          ox * xk if ox is not None and oy is not None else nan,
-                          oy * tk if ox is not None and oy is not None else nan))
+        fixed.extend(fixed_k)
         index = len(curves_out)
         curve_index[id(node)] = index
-        curves_out.append({"name": node.name, "type": cv.kind, "offset": offset, "count": n,
-                           "tangent": cv.tan, "weighted": cv.weighted, "pre": cv.pre, "post": cv.post})
+        curves_out.append(meta)
         if trax:
             curves_out[-1]["trax"] = True
         for ni, attr in targets.get(id(node), ()):
