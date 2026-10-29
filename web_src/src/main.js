@@ -32,7 +32,7 @@ const D2R = Math.PI / 180;
 const DEFAULTS = {
   shading: 'smooth', wire: false, skin: true, joints: false, xray: true, grid: true,   // 骨は初期状態で非表示（J で切り替え）
   curves: true,                  // NURBS カーブ（コントローラーの形など）
-  controls: true,                // カーブの形のないコントローラーの目印（八面体。L で切り替え。Maya のロケーターの表示と同じく既定で表示）
+  controls: false,               // カーブの形のないコントローラーの目印（八面体。L で切り替え。初期状態では隠す）
   controlColor: 'role',          // コントローラーの色: 'role'（役割）・'side'（左右）。Maya の描画のオーバーライドの色が優先
   controlSizeMode: 'bone',       // コントローラーの大きさの基準: 'bone'（近くの骨）・'screen'（画面上で一定）
   controlSize: 1,                // コントローラーの大きさの倍率（ジョイントの大きさとは別）

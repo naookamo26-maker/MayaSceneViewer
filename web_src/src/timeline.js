@@ -2,6 +2,8 @@
 // 操作は app（main.js）に任せ、ここは表示と入力だけを扱う。
 const $ = (id) => document.getElementById(id);
 const THUMB = 7;           // スライダーのつまみの半径（目盛りの位置をつまみの中心に合わせる）
+const CACHE_BAND = 2;      // 再生キャッシュの帯の太さ（キャンバスの上端。キーの印より上）
+const KEY_TOP = 5;         // キーの印の上端（キャッシュの帯と隙間を空ける。キャンバスはスライダーより 5px 上から）
 
 const fmtFrame = (f) => (Number.isInteger(f) ? String(f) : f.toFixed(2));
 
@@ -102,7 +104,10 @@ export class Timeline {
     this.drawKeys();
   }
 
-  /** 再生キャッシュにあるフレームを、スライダーの上端に緑の帯で描く。has: (f) => boolean（null で消す） */
+  /**
+   * 再生キャッシュにあるフレームを、スライダーの上端より少し上に緑の帯で描く（キーの印と重ならない高さ）。
+   * has: (f) => boolean（null で消す）
+   */
   setCached(has) {
     this.cached = has;
     this.drawKeys();
@@ -138,16 +143,16 @@ export class Timeline {
         if (f <= f1 && this.cached(f)) { if (run === null) run = f; continue; }
         if (run !== null) {
           const a = Math.floor(left(run)), b = Math.ceil(right(f - 1));
-          g.fillRect(a, 0, Math.max(b - a, 1), 2);
+          g.fillRect(a, 0, Math.max(b - a, 1), CACHE_BAND);
           run = null;
         }
       }
     }
-    // キー
+    // キー（キャッシュの帯の下から）
     g.fillStyle = '#e5675b';
     for (const t of this.keys) {
       if (t < s - 1e-6 || t > e + 1e-6) continue;
-      g.fillRect(Math.round(x(t)) - 1, 0, 2, h);
+      g.fillRect(Math.round(x(t)) - 1, KEY_TOP, 2, h - KEY_TOP);
     }
   }
 }
