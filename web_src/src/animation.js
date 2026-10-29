@@ -80,6 +80,8 @@ export function prepareCurve(meta, times, values, types, fixedOf) {
   const inW = new Float64Array(n);       // 重み付きのときの接線の長さ（フレーム）。0 は既定（区間の長さ）
   const outW = new Float64Array(n);
   const step = new Uint8Array(n);
+  const tinType = new Uint8Array(n);     // 接線の種類（.ma の値。カーブエディタの表示用）
+  const toutType = new Uint8Array(n);
   const weighted = !!meta.weighted;
   const secant = (a, b) => (v[b] - v[a]) / Math.max(t[b] - t[a], EPS);
 
@@ -118,6 +120,8 @@ export function prepareCurve(meta, times, values, types, fixedOf) {
     const k = off + i;
     const tin = resolveType(types.length ? types[2 * k] : 0, meta.tangent);
     const tout = resolveType(types.length ? types[2 * k + 1] : 0, meta.tangent);
+    tinType[i] = (types.length ? types[2 * k] : 0) || meta.tangent || TANGENT.AUTO;
+    toutType[i] = (types.length ? types[2 * k + 1] : 0) || meta.tangent || TANGENT.AUTO;
     if (tout === TANGENT.STEP) step[i] = STEP_HOLD;
     else if (tout === TANGENT.STEP_NEXT) step[i] = STEP_NEXT;
     const fx = fixedOf.get(k);
@@ -137,7 +141,7 @@ export function prepareCurve(meta, times, values, types, fixedOf) {
     }
   }
   return {
-    name: meta.name, type: meta.type, trax: !!meta.trax, n, t, v, inSlope, outSlope, inW, outW, step, weighted,
+    name: meta.name, type: meta.type, trax: !!meta.trax, n, t, v, inSlope, outSlope, inW, outW, step, weighted, tinType, toutType,
     pre: meta.pre || 0, post: meta.post || 0, last: 0,
   };
 }
