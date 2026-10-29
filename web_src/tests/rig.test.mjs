@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { Matrix4, Quaternion, Vector3 } from 'three';
+import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { AnimationClip } from '../src/animation.js';
 import { RigEvaluator } from '../src/rig.js';
 
@@ -161,6 +161,8 @@ test('ジョイントの向き・回転順・rotateAxis があっても、IK と
     const v = PV.clone().sub(A); v.addScaledVector(u, -v.dot(u)).normalize();
     assert.ok(Math.abs(B.clone().sub(A).dot(u.clone().cross(v))) < 1e-3, `フレーム ${f}: 肘が面の上にない`);
     assert.ok(B.clone().sub(A).dot(v) > 0, `フレーム ${f}: 肘が極ベクトルの反対側`);
-    assert.ok(sameRot(rot(rig.world(idx('wrist'))), rot(rig.world(idx('hand_ctrl')))), `フレーム ${f}: 手首の向き`);
+    // Maya のコンストレイントは rotateAxis の入力を持たないので、手首のワールドの向きは「ターゲットの向き · rotateAxis」
+    const ra = new Quaternion().setFromEuler(new Euler(0, 10 * Math.PI / 180, 0, 'ZYX'));
+    assert.ok(sameRot(rot(rig.world(idx('wrist'))), rot(rig.world(idx('hand_ctrl'))).multiply(ra)), `フレーム ${f}: 手首の向き`);
   }
 });

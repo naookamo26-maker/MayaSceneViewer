@@ -8,7 +8,7 @@
 //   * 循環（自分の結果を自分で使う）に当たったら、そこはファイルの値で打ち切る
 // 完全な再現は目指さず、Maya と同じ考え方の近似にする（docs/data_format.md「animation.graph」）。
 import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
-import { clampLimits, composeLocalMatrix, composeMaya, decomposeMaya, evaluateCurve } from './animation.js';
+import { clampLimits, composeLocalMatrix, composeMaya, decomposeMaya, evaluateCurve, mayaEuler } from './animation.js';
 import { compileExpression } from './expression.js';
 import { evaluateTrax } from './trax.js';
 import { compileNodeDef, componentPlug } from './nodeDef.js';
@@ -518,6 +518,36 @@ export class RigEvaluator {
     return n.parent >= 0 && n.inheritsTransform !== false ? this.world(n.parent) : IDENTITY;
   }
 
+  /** offsetParentMatrix（Matrix4。接続があれば評価した値、なければファイルの値。単位行列なら null） */
+  opmOf(ni) {
+    const g = this.dagGraph.get(ni);
+    const src = g && g.inputs ? g.inputs.opm : null;
+    let v = src ? this.source(src) : null;
+    if (!src) {
+      const rest = this.rest(ni);
+      v = rest ? rest.opm : this.sceneNodes[ni].opm;
+    }
+    if (v && v.isMatrix4) return v;
+    return Array.isArray(v) && v.length === 16 ? new Matrix4().fromArray(v) : null;
+  }
+
+  /**
+   * 親の空間（Maya の .parentMatrix）: 親のワールド行列 · offsetParentMatrix（Maya の資料: offsetParentMatrix は親と
+   * ローカルの間の暗黙の親）。チャンネルの値（移動・回転）を解釈する空間。ワールド行列 = 親の空間 · ローカル（opm を除く）
+   */
+  parentSpace(ni) {
+    const P = this.parentWorld(ni);
+    const o = this.opmOf(ni);
+    return o ? P.clone().multiply(o) : P;
+  }
+
+  /** ローカル行列（Maya の .matrix。offsetParentMatrix を含まない） */
+  localMatrix(ni) {
+    const o = this.opmOf(ni);
+    const L = this.localFile(ni);
+    return o ? o.clone().invert().multiply(L) : L;
+  }
+
   /**
    * チャンネルの値 { t, r（度）, s }。mode: 'full'（すべて）・'fk'（IK を除く）・'t'（移動だけ。回転の計算を避ける）
    */
@@ -646,7 +676,7 @@ export class RigEvaluator {
   /** 回転に依存しない位置（親のワールド行列 · 移動の値）。IK の開始ジョイントなど、循環を避けたい所で使う */
   pivotPosition(ni, target = new Vector3()) {
     const t = (this.chan(ni, 't') || { t: [0, 0, 0] }).t;
-    return target.set(t[0], t[1], t[2]).applyMatrix4(this.parentWorld(ni));
+    return target.set(t[0], t[1], t[2]).applyMatrix4(this.parentSpace(ni));
   }
 
   /** DAG ノードのプラグ */
@@ -664,11 +694,12 @@ export class RigEvaluator {
       return comp(c.s, axis);
     }
     switch (base) {
-      case 'pm': case 'parentMatrix': return this.parentWorld(ni);
-      case 'pim': case 'parentInverseMatrix': return this.parentWorld(ni).clone().invert();
+      case 'pm': case 'parentMatrix': return this.parentSpace(ni);
+      case 'pim': case 'parentInverseMatrix': return this.parentSpace(ni).clone().invert();
       case 'wm': case 'worldMatrix': return this.world(ni);
       case 'wim': case 'worldInverseMatrix': return this.world(ni).clone().invert();
-      case 'm': case 'matrix': return this.localFile(ni);
+      case 'm': case 'matrix': case 'xm': case 'xformMatrix': return this.localMatrix(ni);
+      case 'im': case 'inverseMatrix': return this.localMatrix(ni).clone().invert();
       default: break;
     }
     if (CHANNEL_ATTR_RE.test(base)) {                         // ピボット・rotateAxis・jointOrient・せん断・回転順（接続があれば評価した値）
@@ -1013,10 +1044,10 @@ export class RigEvaluator {
         break;
       }
       case 'decomposeMatrix': {
-        // Maya と同じ分け方（せん断を分けてから回転にする。鏡に映した行列は Z のスケールを負にする）
+        // Maya と同じ分け方（せん断を分けてから回転にする。鏡に映した行列は 3 軸のスケールを負にする。角度は 0 に近い方）
         const { t, q, s, sh } = decomposeMaya(this.mat(id, 'imat'));
-        const e = new Euler().setFromQuaternion(q, THREE_ORDER[Math.round(this.num(id, 'ro', 0))] || 'ZYX');
-        o = { ...expand('ot', t.toArray(), XYZ), ...expand('or', [e.x, e.y, e.z], XYZ), ...expand('os', s.toArray(), XYZ),
+        const e = mayaEuler(q, Math.round(this.num(id, 'ro', 0)));
+        o = { ...expand('ot', t.toArray(), XYZ), ...expand('or', e, XYZ), ...expand('os', s.toArray(), XYZ),
           ...expand('osh', sh.toArray(), XYZ), ...expand('oq', [q.x, q.y, q.z, q.w], ['x', 'y', 'z', 'w']) };
         break;
       }
@@ -1049,8 +1080,7 @@ export class RigEvaluator {
         break;
       }
       case 'quatToEuler': {
-        const e = new Euler().setFromQuaternion(this.quat(id, 'iq').normalize(), this.order(id, 'iro'));
-        o = expand('ort', [e.x, e.y, e.z], XYZ);
+        o = expand('ort', mayaEuler(this.quat(id, 'iq').normalize(), this.order(id, 'iro')), XYZ);
         break;
       }
       case 'eulerToQuat': {
@@ -1651,16 +1681,12 @@ export class RigEvaluator {
       if (w > 0) targets.push({ ni: tg.dag, index: t.index, w });
     }
     const total = targets.reduce((s, t) => s + t.w, 0);
-    if (total <= EPS) return null;
+    if (total <= EPS) return this.constraintRest(g);
     const driven = g.driven;
-    const pw = driven >= 0 ? this.parentWorld(driven) : IDENTITY;
+    // 動かされるノードの親の空間（Maya の constraintParentInverseMatrix ← .parentInverseMatrix。offsetParentMatrix を含む）
+    const pw = driven >= 0 ? this.parentSpace(driven) : IDENTITY;
     const pwInv = pw.clone().invert();
-    const pivot = (t) => {                                     // ターゲットの回転ピボットのワールド位置
-      if (t.ni < 0) return this.targetPosition(id, t.index);
-      const r = this.rest(t.ni);
-      const rp = r && r.rp ? r.rp : [0, 0, 0];
-      return new Vector3(rp[0], rp[1], rp[2]).applyMatrix4(this.world(t.ni));
-    };
+    const pivot = (t) => (t.ni < 0 ? this.targetPosition(id, t.index) : this.pivotWorld(t.ni));
     const weighted = (fn) => {
       const acc = new Vector3();
       for (const t of targets) acc.addScaledVector(fn(t), t.w / total);
@@ -1672,9 +1698,17 @@ export class RigEvaluator {
       const crp = this.vec(id, 'crp'), crt = this.vec(id, 'crt');
       return [p.x + o[0] - crp[0] - crt[0], p.y + o[1] - crp[1] - crt[1], p.z + o[2] - crp[2] - crt[2]];
     };
-    const toRotate = (qWorld) => {
-      const local = rotationOf(pw).invert().multiply(qWorld);
-      return this.localEuler(driven, local).map((v) => v * D2R);
+    // ワールドの回転 → 動かされるノードの回転の値（ラジアン）。Maya のコンストレイントは rotateAxis を使わない。
+    // compensate: orient・aim の scaleCompensate（動かされるジョイントの親のスケールの打ち消し .is を親の空間に入れる）。
+    // ref: 角度の選び方の基準（度。parentConstraint は前回の値 .lr に近い角度を選ぶ）
+    const toRotate = (qWorld, opts = {}) => {
+      let P = pw;
+      if (opts.compensate && this.num(id, 'ssc', 1) >= 0.5) {
+        const is = this.isScaleOf(driven);
+        if (is) P = pw.clone().multiply(new Matrix4().makeScale(is[0] ? 1 / is[0] : 1, is[1] ? 1 / is[1] : 1, is[2] ? 1 / is[2] : 1));
+      }
+      const local = rotationOf(P).invert().multiply(qWorld);
+      return this.localEuler(driven, local, { noRA: true, ref: opts.ref }).map((v) => v * D2R);
     };
     switch (g.type) {
       case 'pointConstraint':
@@ -1687,16 +1721,19 @@ export class RigEvaluator {
         return expand('ct', v.applyMatrix3(new Matrix3().setFromMatrix4(pwInv)).toArray(), XYZ);
       }
       case 'orientConstraint': {
+        // ターゲットの向き = targetParentMatrix · 親のスケールの打ち消し · jointOrient · rotate（rotateAxis は入力にない）
         const o = this.vec(id, 'o');
-        const q = averageQuat(targets.map((t) => ({ q: rotationOf(this.world(t.ni)), w: t.w })));
-        return expand('cr', toRotate(q.multiply(radQuat(o))), XYZ);
+        const q = averageQuat(targets.map((t) => ({ q: rotationOf(this.targetMatrix(t.ni, false, true)), w: t.w })));
+        return expand('cr', toRotate(q.multiply(radQuat(o)), { compensate: true }), XYZ);
       }
       case 'parentConstraint': {
         // ターゲットの空間は、ターゲットの回転ピボット（原点ではない）を原点にする（Maya と同じ。cluster のハンドルのように
-        // ピボットが原点から離れたターゲットで、動かされるノードのピボットがターゲットのピボットに付く）
+        // ピボットが原点から離れたターゲットで、動かされるノードのピボットがターゲットのピボットに付く）。
+        // 向きは targetParentMatrix · 親のスケールの打ち消し（targetInverseScale）· jointOrient · rotate、オフセットの移動は
+        // ターゲットのスケール（targetScale）込み
         const list = targets.map((t) => {
           const tot = this.vec(id, `tg[${t.index}].tot`), tor = this.vec(id, `tg[${t.index}].tor`);
-          const m = this.world(t.ni).clone().setPosition(pivot(t))
+          const m = this.targetMatrix(t.ni, true, this.num(id, `tg[${t.index}].tsc`, 1) >= 0.5)
             .multiply(_m.makeTranslation(tot[0], tot[1], tot[2]))
             .multiply(_m.makeRotationFromQuaternion(radQuat(tor, _q)));
           return { m, w: t.w };
@@ -1704,7 +1741,8 @@ export class RigEvaluator {
         const pos = new Vector3();
         for (const { m, w } of list) pos.addScaledVector(positionOf(m, _v.clone()), w / total);
         const q = averageQuat(list.map(({ m, w }) => ({ q: rotationOf(m), w })));
-        return { ...expand('ct', toTranslate(pos), XYZ), ...expand('cr', toRotate(q), XYZ) };
+        const lr = g.attrs && Array.isArray(g.attrs.lr) ? g.attrs.lr : null;
+        return { ...expand('ct', toTranslate(pos), XYZ), ...expand('cr', toRotate(q, { ref: lr }), XYZ) };
       }
       case 'aimConstraint': case 'lookAt': {
         // lookAt（カメラとエイム）も同じ。twist で視線のまわりに回す（world up がシーンの上・ベクトルのとき）
@@ -1737,9 +1775,9 @@ export class RigEvaluator {
           else {
             const pr = rotationOf(pw);
             const dl = dir.clone().applyQuaternion(pr.clone().invert());          // 親の空間のターゲットの向き
-            // 'parent': 回転 0 の向き（jointOrient・rotateAxis を含む）から、'rest': コンストレイントのレスト回転（.rsrr。度）から
+            // 'parent': 回転 0 の向き（jointOrient を含む）から、'rest': コンストレイントのレスト回転（.rsrr。度）から
             const rr = mode === 'rest' ? this.vec(id, 'rsrr', [0, 0, 0]) : [0, 0, 0];
-            const base = rotationOf(composeLocalMatrix({ ...rest, t: [0, 0, 0], s: [1, 1, 1], r: rr, opm: undefined }, null, new Matrix4()));
+            const base = rotationOf(composeLocalMatrix({ ...rest, t: [0, 0, 0], s: [1, 1, 1], r: rr, ra: undefined, opm: undefined }, null, new Matrix4()));
             const qa = new Quaternion().setFromUnitVectors(a.clone().applyQuaternion(base), dl);
             q = pr.multiply(qa.multiply(base));
           }
@@ -1753,16 +1791,67 @@ export class RigEvaluator {
           const tw = this.num(id, this.attrName(g, ['tws', 'twist']), 0);
           if (Math.abs(tw) > 1e-12) q = new Quaternion().setFromAxisAngle(dir, -tw).multiply(q);
         }
-        return expand('cr', toRotate(q.multiply(radQuat(this.vec(id, 'o')))), XYZ);
+        return expand('cr', toRotate(q.multiply(radQuat(this.vec(id, 'o'))), { compensate: g.type === 'aimConstraint' }), XYZ);
       }
       case 'scaleConstraint': {
-        const s = weighted((t) => { this.world(t.ni).decompose(_v, _q, _s); return _s.clone(); });
-        pw.decompose(_v, _q, _s);
+        // Maya の資料: ワールド空間のターゲットのスケールの加重幾何平均。それを親の空間のスケールで割る
+        const logs = [0, 0, 0], sign = [0, 0, 0];
+        for (const t of targets) {
+          decomposeMaya(this.world(t.ni)).s.toArray().forEach((v, k) => {
+            logs[k] += (t.w / total) * Math.log(Math.max(Math.abs(v), 1e-12));
+            sign[k] += t.w * Math.sign(v);
+          });
+        }
+        const ps = decomposeMaya(pw).s.toArray();
         const o = this.vec(id, 'o', [1, 1, 1]);
-        return expand('cs', [s.x / (_s.x || 1) * o[0], s.y / (_s.y || 1) * o[1], s.z / (_s.z || 1) * o[2]], XYZ);
+        return expand('cs', logs.map((l, k) => (sign[k] < 0 ? -1 : 1) * Math.exp(l) / (ps[k] || 1) * o[k]), XYZ);
       }
       default: return null;
     }
+  }
+
+  /** ターゲットのウェイトがすべて 0 のとき: enableRestPosition（.erp）が有効ならレストの値（.rst・.rsrr（度）・.rs）、無効なら出力しない */
+  constraintRest(g) {
+    const id = g.id;
+    if (this.num(id, 'erp', 0) < 0.5) return null;
+    const rt = this.vec(id, 'rst', [0, 0, 0]), rr = this.vec(id, 'rsrr', [0, 0, 0]).map((v) => v * D2R);
+    switch (g.type) {
+      case 'pointConstraint': return expand('ct', rt, XYZ);
+      case 'orientConstraint': case 'aimConstraint': return expand('cr', rr, XYZ);
+      case 'parentConstraint': return { ...expand('ct', rt, XYZ), ...expand('cr', rr, XYZ) };
+      case 'scaleConstraint': return expand('cs', this.vec(id, 'rs', [1, 1, 1]), XYZ);
+      default: return null;
+    }
+  }
+
+  /**
+   * コンストレイントのターゲットの回転ピボットのワールド位置（Maya の式: (translate + rotatePivot + rotatePivotTranslate) ·
+   * targetParentMatrix。ターゲットの回転・スケールによらない）。値の材料がないノードはワールド行列の位置
+   */
+  pivotWorld(ni) {
+    if (!this.rest(ni)) return positionOf(this.world(ni));
+    const t = this.chan(ni, 't').t;
+    const rp = this.dagPlug(ni, 'rp'), rpt = this.dagPlug(ni, 'rpt');
+    return new Vector3(t[0] + rp[0] + rpt[0], t[1] + rp[1] + rpt[1], t[2] + rp[2] + rpt[2]).applyMatrix4(this.parentSpace(ni));
+  }
+
+  /**
+   * コンストレイントのターゲットの行列（Maya のコンストレイントの入力から組み立てる。rotateAxis・せん断は入力にない）:
+   * 親の空間 · 回転ピボットの位置 · [親のスケールの打ち消し] · jointOrient · rotate · [scale]（three.js の順）
+   */
+  targetMatrix(ni, withScale, withInverseScale) {
+    const rest = this.rest(ni);
+    if (!rest) return this.world(ni).clone();
+    const c = this.chan(ni, 'full');
+    const m = this.parentSpace(ni).clone().setPosition(this.pivotWorld(ni));
+    if (withInverseScale) {
+      const is = this.isScaleOf(ni);
+      if (is) m.multiply(_m.makeScale(is[0] ? 1 / is[0] : 1, is[1] ? 1 / is[1] : 1, is[2] ? 1 / is[2] : 1));
+    }
+    if (rest.joint && c.jo) m.multiply(_m.makeRotationFromQuaternion(eulerQuat(c.jo, 0, _q)));
+    m.multiply(_m.makeRotationFromQuaternion(eulerQuat(c.r, c.ro || 0, _q)));
+    if (withScale) m.multiply(_m.makeScale(c.s[0], c.s[1], c.s[2]));
+    return m;
   }
 
   /**
@@ -1778,15 +1867,17 @@ export class RigEvaluator {
 
   /**
    * 親の空間での回転（四元数）を、ノードの回転の値（度）にする。
-   * joint: 回転部分 = JO · R · RA（three.js の順）、transform: R · RA
+   * joint: 回転部分 = JO · R · RA（three.js の順）、transform: R · RA。
+   * opts.noRA: rotateAxis を使わない（Maya のコンストレイントは rotateAxis の入力を持たない）。
+   * opts.ref: 角度の選び方の基準（度。Maya のコンストレイントは前回の値（.lr）に近い角度を選ぶ）。なければ 0 に近い方
    */
-  localEuler(ni, localQuat) {
+  localEuler(ni, localQuat, opts = {}) {
     const rest = this.rest(ni) || { joint: false, ro: 0 };
     let q = localQuat.clone();
     if (rest.joint && rest.jo) q = eulerQuat(rest.jo, 0).invert().multiply(q);
-    if (rest.ra) q.multiply(eulerQuat(rest.ra, 0).invert());
-    const e = new Euler().setFromQuaternion(q, THREE_ORDER[rest.ro || 0] || 'ZYX');
-    return [e.x * R2D, e.y * R2D, e.z * R2D];
+    if (rest.ra && !opts.noRA) q.multiply(eulerQuat(rest.ra, 0).invert());
+    const e = mayaEuler(q, rest.ro || 0, opts.ref ? opts.ref.map((v) => v * D2R) : null);
+    return [e[0] * R2D, e[1] * R2D, e[2] * R2D];
   }
 
   // ------------------------------------------------------------------ IK（回転プレーン・2 ボーン）
@@ -1882,7 +1973,7 @@ export class RigEvaluator {
       }
     }
     // ワールドの回転 → ジョイントの回転の値
-    const pq = rotationOf(P);
+    const pq = rotationOf(this.parentSpace(s));
     let rs = this.localEuler(s, pq.clone().invert().multiply(qs1));
     let rm = this.localEuler(mid, qs1.clone().invert().multiply(qm1));
     const blend = this.num(id, 'ikb', 1);
@@ -1914,7 +2005,7 @@ export class RigEvaluator {
     const from = C.sub(A), to = H.sub(A);
     if (from.lengthSq() < EPS || to.lengthSq() < EPS) return null;
     const R = new Quaternion().setFromUnitVectors(from.normalize(), to.normalize());
-    let rs = this.localEuler(s, rotationOf(P).invert().multiply(R.multiply(rotationOf(Ws))));
+    let rs = this.localEuler(s, rotationOf(this.parentSpace(s)).invert().multiply(R.multiply(rotationOf(Ws))));
     const blend = this.num(id, 'ikb', 1);
     if (blend < 1 - EPS) {
       const ro = (this.rest(s) || {}).ro || 0;
@@ -1941,7 +2032,7 @@ export class RigEvaluator {
   ikLocals(id, chain, P, Qnew) {
     const blend = this.num(id, 'ikb', 1);
     const out = new Map();
-    let parentQ = rotationOf(P);
+    let parentQ = rotationOf(this.parentSpace(chain[0]));     // offsetParentMatrix も親の空間に入れる
     Qnew.forEach((q, i) => {
       const ni = chain[i];
       let r = this.localEuler(ni, parentQ.clone().invert().multiply(q));
@@ -2104,7 +2195,7 @@ export class RigEvaluator {
     }
     const out = this.ikLocals(id, chain, fk.P, Qnew);
     if (roc) {
-      const t = start.clone().applyMatrix4(fk.P.clone().invert());
+      const t = start.clone().applyMatrix4(this.parentSpace(chain[0]).clone().invert());
       out.set(chain[0], { r: out.get(chain[0]), t: t.toArray() });
     }
     return out;
@@ -2226,8 +2317,8 @@ export class RigEvaluator {
   pvSpace(handleNi, startNi) {
     const sp = this.ikVariant ? this.ikVariant.pvSpace : null;
     if (sp === 'world') return IDENTITY;
-    if (sp === 'start') return this.parentWorld(startNi);
-    return this.parentWorld(handleNi);
+    if (sp === 'start') return this.parentSpace(startNi);
+    return this.parentSpace(handleNi);
   }
 
   /**

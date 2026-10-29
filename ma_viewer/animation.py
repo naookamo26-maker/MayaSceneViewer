@@ -362,6 +362,9 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         from .rig import analyze_fallback
         kept_list = [kept_nodes[i] for i in sorted(kept_nodes)]
         fallback, tainted = analyze_fallback(info, kept_list, ms.bind_ids, out_index)
+        for g in graph_nodes:                             # 値を求められない接続は使わない（ファイルの値にする）
+            for k in info.tainted_keys.get(g["dag"], ()) if g["dag"] >= 0 else ():
+                g.get("inputs", {}).pop(k, None)
         if fallback or tainted:
             warnings.append("アニメーション: 値を求められないノードのうち %d 個はバインドポーズの形で推定して表示し、"
                             "%d 個は推定できないためファイルの値（既定値）のまま表示します。" % (len(fallback), len(tainted)))

@@ -133,6 +133,28 @@ class TestSmallRigs(unittest.TestCase):
         _scene, load_animation = load_ma_staged(path)
         self.assertIsNotNone(load_animation())
 
+    def test_computed_shapes_are_unsupported(self):
+        # blendShape は型名が Shape で終わるが、DG ノード（シェイプではない）
+        ms = parse_ma_text(HEADER + 'createNode blendShape -n "bs";\n', "t.ma")
+        self.assertFalse(next(n for n in ms.nodes if n.name == "bs").is_shape)
+        # follicle の出力（outTranslate）は計算で決まる: 未対応として警告し、その接続は使わない（ファイルの値にする）。
+        # コンストレイントのウェイト（w0）を読むだけの接続は、ターゲットの先の未対応のノードとは無関係
+        body = ('createNode transform -n "fol";\ncreateNode follicle -n "folShape" -p "fol";\n'
+                'createNode joint -n "j" -p "fol";\n\tsetAttr ".t" -type "double3" 1 0 0 ;\n'
+                'createNode joint -n "k";\n'
+                'createNode pointConstraint -n "k_pc" -p "k";\n'
+                '\taddAttr -ci true -k true -sn "w0" -ln "folW0" -dv 1 -at "double";\n'
+                'connectAttr "folShape.ot" "fol.t";\n'
+                'connectAttr "fol.t" "k_pc.tg[0].tt";\nconnectAttr "fol.pm" "k_pc.tg[0].tpm";\n'
+                'connectAttr "k_pc.w0" "k_pc.tg[0].tw";\nconnectAttr "k.pim" "k_pc.cpim";\n'
+                'connectAttr "k_pc.ctx" "k.tx";\n')
+        _sc, anim = from_text(body)
+        warnings = "\n".join(anim["warnings"])
+        self.assertIn("follicle（folShape など）は未対応", warnings)
+        self.assertNotIn("tg[0].tw", warnings)
+        fol = next(g for g in anim["graph"] if g["name"] == "fol")
+        self.assertNotIn("t", fol.get("inputs", {}))     # 値を求められない接続は使わない
+
     def test_unsupported_ik(self):
         body = ('createNode joint -n "a";\ncreateNode joint -n "b" -p "a";\n\tsetAttr ".t" -type "double3" 1 0 0 ;\n'
                 'createNode joint -n "c" -p "b";\n\tsetAttr ".t" -type "double3" 1 0 0 ;\n'
@@ -146,11 +168,12 @@ class TestSmallRigs(unittest.TestCase):
         ms = parse_ma_text(HEADER + body % "ikSpringSolver", "t.ma")
         scene_to_dict(ms)
         self.assertIn("ikSpringSolver は未対応", ms.graph_info.ik[0]["problem"])
-        # ジョイント 2 つの回転プレーン IK は解けない（極ベクトルの面が決まらない）
+        # ジョイント 2 つの回転プレーン IK も解く（まぶたなどで多い。Maya が保存した回転で確かめた）
         body2 = body.replace('connectAttr "d.tx" "eff.tx";', 'connectAttr "b.tx" "eff.tx";')
         ms = parse_ma_text(HEADER + body2 % "ikRPsolver", "t.ma")
         scene_to_dict(ms)
-        self.assertIn("2 個しかありません", ms.graph_info.ik[0]["problem"])
+        self.assertIsNone(ms.graph_info.ik[0]["problem"])
+        self.assertEqual(len(ms.graph_info.ik[0]["chain"]), 2)
         # ジョイント 4 つの回転プレーン・シングルチェーンは解ける
         for solver in ("ikRPsolver", "ikSCsolver"):
             _sc, anim = from_text(body % solver)

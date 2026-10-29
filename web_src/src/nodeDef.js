@@ -6,7 +6,7 @@
 //   * 角度はラジアン（ファイルの値・定義の既定値は度。読むときにラジアンにする）
 //   * 行列の積・点の変換は Maya と同じ行ベクトルの規約（m1 * m2 は m1 を先に掛ける）
 import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
-import { decomposeMaya } from './animation.js';
+import { decomposeMaya, mayaEuler } from './animation.js';
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -133,12 +133,12 @@ const FUNCS = {
   compose: (t, r, s, o) => new Matrix4().compose(v3(vec(t, 'compose の移動')),
     new Quaternion().setFromEuler(new Euler(...vec(r, 'compose の回転').slice(0, 3), order(o))), v3(vec(s, 'compose のスケール'))),
   translation: (m) => decompose(m).t.toArray(),
-  rotation: (m, o) => { const e = new Euler().setFromQuaternion(decompose(m).q, order(o)); return [e.x, e.y, e.z]; },
+  rotation: (m, o) => mayaEuler(decompose(m).q, order(o)),
   scale: (m) => decompose(m).s.toArray(),
   xform_point: (p, m) => v3(vec(p, 'xform_point')).applyMatrix4(mat(m, 'xform_point')).toArray(),
   xform_vector: (v, m) => v3(vec(v, 'xform_vector')).applyMatrix3(new Matrix3().setFromMatrix4(mat(m, 'xform_vector'))).toArray(),
   quat_from_euler: (r, o) => qarr(new Quaternion().setFromEuler(new Euler(...vec(r, 'quat_from_euler').slice(0, 3), order(o)))),
-  euler_from_quat: (q, o) => { const e = new Euler().setFromQuaternion(q4(vec(q, 'euler_from_quat')).normalize(), order(o)); return [e.x, e.y, e.z]; },
+  euler_from_quat: (q, o) => mayaEuler(q4(vec(q, 'euler_from_quat')).normalize(), order(o)),
   quat_from_matrix: (m) => qarr(decompose(m).q),
   matrix_from_quat: (q) => new Matrix4().makeRotationFromQuaternion(q4(vec(q, 'matrix_from_quat')).normalize()),
   // Maya の a * b（a を先に回す）は、three.js では b · a

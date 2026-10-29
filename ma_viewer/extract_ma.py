@@ -1335,6 +1335,9 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         piv = loc.vec3("lp") if loc is not None and any(abs(v) > 1e-9 for v in loc.vec3("lp")) else x.vec3("rp")
         if any(abs(v) > 1e-9 for v in piv):
             entry["pivot"] = schema.round_list(list(piv))
+        opm = x.xattrs.get("opm")
+        if opm is not None and len(opm) == 16 and any(abs(a - b) > 1e-12 for a, b in zip(opm, M.identity())):
+            entry["opm"] = [float(v) for v in opm]   # offsetParentMatrix（matrix に掛け込み済み。親の空間 .parentMatrix を求めるため）
         if x.type == "joint":
             entry["segmentScaleCompensate"] = x.flag("ssc", True)
         if x.ssc_parent:

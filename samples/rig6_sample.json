@@ -6649,12 +6649,7 @@
     "name":"mm_jnt2",
     "type":"joint",
     "dag":43,
-    "inputs":{
-     "t":{
-      "node":70,
-      "attr":"ot"
-     }
-    }
+    "inputs":{}
    },
    {
     "id":72,
@@ -6879,7 +6874,7 @@
    "channels":8,
    "nodes":32,
    "graphNodes":86,
-   "seconds":0.0054
+   "seconds":0.0065
   }
  }
 }

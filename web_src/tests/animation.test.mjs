@@ -158,14 +158,17 @@ test('ワールド回転（xform -q -ws -ro と同じ）: 回転順ごとに、�
   worldRotationDegrees(j, 0).forEach((v, k) => assert.ok(Math.abs(v - [0, 0, 45][k]) < 1e-9, `ジョイント: ${v}`));
 });
 
-test('行列の分解（Maya と同じ）: 鏡に映した行列は Z のスケールを負にし、元の行列に戻る', () => {
+test('行列の分解（Maya と同じ）: 鏡に映した行列は 3 軸のスケールを負にし、元の行列に戻る', () => {
   const m = composeLocalMatrix({ t: [1, 2, 3], r: [10, 20, 30], s: [2, 3, -4], ro: 0, joint: false }, null);
   const { t, q, s } = decomposeMaya(m);
   assert.deepEqual(t.toArray().map((v) => Math.round(v * 1e9) / 1e9), [1, 2, 3]);
-  [2, 3, -4].forEach((v, k) => assert.ok(Math.abs(s.toArray()[k] - v) < 1e-9, `s ${s.toArray()}`));
+  [-2, -3, -4].forEach((v, k) => assert.ok(Math.abs(s.toArray()[k] - v) < 1e-9, `s ${s.toArray()}`));
   const back = new Matrix4().compose(t, q, s);
   back.elements.forEach((v, k) => assert.ok(Math.abs(v - m.elements[k]) < 1e-9));
-  worldRotationDegrees(m, 0).forEach((v, k) => assert.ok(Math.abs(v - [10, 20, 30][k]) < 1e-9, `r ${v}`));
+  // diag(1, 1, −1) は Z まわりに 180° の回転・スケール (−1, −1, −1)
+  const z = decomposeMaya(new Matrix4().makeScale(1, 1, -1));
+  assert.deepEqual(z.s.toArray(), [-1, -1, -1]);
+  assert.ok(Math.abs(Math.abs(z.q.z) - 1) < 1e-12, `q ${z.q.toArray()}`);
   // 反転のない行列は three.js の decompose と同じ
   const p = composeLocalMatrix({ t: [0, 0, 0], r: [5, 6, 7], s: [1, 2, 3], ro: 0, joint: false }, null);
   decomposeMaya(p).s.toArray().forEach((v, k) => assert.ok(Math.abs(v - [1, 2, 3][k]) < 1e-9));

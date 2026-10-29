@@ -3,7 +3,7 @@
 // holdMatrix、時間の変換（unitToTimeConversion・timeToUnitConversion）、Maya 2026 から名前の変わった addDL・multDL。
 // 属性の名前・既定値は Maya 2027 の技術資料（ノードの属性表）に合わせる。
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
-import { composeMaya, decomposeMaya } from './animation.js';
+import { composeMaya, decomposeMaya, mayaEuler } from './animation.js';
 
 const XYZ = ['x', 'y', 'z'];
 const XYZW = ['x', 'y', 'z', 'w'];
@@ -157,8 +157,7 @@ export function evaluateMath(ev, g, kind) {
     case 'translationFromMatrix': return vec3out(new Vector3().setFromMatrixPosition(ev.mat(id, 'i')));
     case 'scaleFromMatrix': return vec3out(decomposeMaya(ev.mat(id, 'i')).s);
     case 'rotationFromMatrix': {
-      const e = new Euler().setFromQuaternion(decomposeMaya(ev.mat(id, 'i')).q, THREE_ORDER[0]);
-      return vec3out(new Vector3(e.x, e.y, e.z));
+      return vec3out(new Vector3(...mayaEuler(decomposeMaya(ev.mat(id, 'i')).q, 0)));
     }
     case 'angleBetween': {
       const a = v3(vec('v1', [0, 1, 0])), b = v3(vec('v2', [0, 0, 1]));
@@ -168,8 +167,7 @@ export function evaluateMath(ev, g, kind) {
       const angle = Math.acos(Math.min(1, Math.max(-1, a.dot(b))));
       const axis = new Vector3().crossVectors(a, b);
       if (axis.lengthSq() < 1e-24) axis.set(0, 0, 1); else axis.normalize();
-      const e = new Euler().setFromQuaternion(q, THREE_ORDER[0]);
-      return { a: angle, angle, ...expand('ax', axis.toArray(), XYZ), ...expand('eu', [e.x, e.y, e.z], XYZ) };
+      return { a: angle, angle, ...expand('ax', axis.toArray(), XYZ), ...expand('eu', mayaEuler(q, 0), XYZ) };
     }
     // 時間の変換: ビューアの時間はフレーム（シーンのフレームレートの単位）として扱う
     case 'unitToTimeConversion': case 'timeToUnitConversion': return { o: num('i') * num('cf', 1) };
