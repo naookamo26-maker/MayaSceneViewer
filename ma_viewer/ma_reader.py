@@ -71,7 +71,9 @@ ATTR_ALIASES = {
     "poleVector": "pv", "poleVectorX": "pvx", "poleVectorY": "pvy", "poleVectorZ": "pvz",
     "twist": "twi", "roll": "rol", "ikBlend": "ikb", "rootOnCurve": "roc",
     "handleStartJoint": "hsj", "handleEndEffector": "hee", "ikSolver": "hsv", "inCurve": "ic",
-    "dTwistControlEnable": "dtce", "dWorldUpType": "dwut", "dWorldUpAxis": "dwua", "dForwardAxis": "dfa",
+    "dTwistControlEnable": "dtce", "dWorldUpType": "dwut", "dWorldUpAxis": "dwua", "dForwardAxis": "dpa",
+    "twistType": "twt", "rootTwistMode": "rtm", "dTwistValueType": "dtvt", "dTwistStartEnd": "dtse", "dTwistStart": "dtst",
+    "dTwistEnd": "dten", "dTwistRampMult": "dtrm",
     "dWorldUpMatrix": "dwum", "dWorldUpMatrixEnd": "dwue", "dWorldUpVector": "dwuv", "dWorldUpVectorEnd": "dwve",
     "preferredAngle": "pa", "parentMatrix": "pm", "parentInverseMatrix": "pim", "worldInverseMatrix": "wim",
     # コンストレイント

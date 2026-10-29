@@ -67,8 +67,9 @@ const DEFAULTS = {
   pointOnCurveInfo: { pr: 0, top: 0 },
 };
 // ikHandle の属性の既定値（スプライン IK を含む）
+// （前向きの軸は .dpa。古いサンプルの .dfa も読むので、dpa は既定値を持たせない）
 DEFAULTS.ikHandle = { ...DEFAULTS.ikHandle, roc: 0, off: 0, rol: 0, dtce: 0, dwut: 0, dwua: 0, dfa: 0,
-  dwuv: [0, 1, 0], dwve: [0, 1, 0] };
+  dwuv: [0, 1, 0], dwve: [0, 1, 0], twt: 0, rtm: 0, dtvt: 0, dtst: 0, dten: 0 };
 
 // 型ごとの出力の属性（これ以外の名前で計算結果を探さない。入力を読むときに自分の計算へ戻らないため）
 const OUTPUTS = {
@@ -124,7 +125,7 @@ function isAngleAttr(type, attr) {
     case 'composeMatrix': return /^ir[xyz]?$/.test(attr);
     case 'eulerToQuat': return /^irt[xyz]?$/.test(attr);
     case 'parentConstraint': return /^tg\[\d+\]\.tor[xyz]?$/.test(attr);
-    case 'ikHandle': return attr === 'twi';
+    case 'ikHandle': return attr === 'twi' || attr === 'rol';         // ツイスト・ロール（.ma は度）
     case 'animBlendNodeAdditiveDA': case 'animBlendNodeAdditiveFA': return /^i[ab]$/.test(attr);
     case 'animBlendNodeAdditiveRotation': return /^i[ab][xyz]?$/.test(attr);
     default: return false;
@@ -1946,12 +1947,22 @@ export class RigEvaluator {
     }
     if (shift) for (const p of q) p.add(shift);
     const bones = n - 1;
+    const roll = this.num(id, 'rol', 0);
+    const advanced = this.num(id, 'dtce', 0) >= 0.5;
+    const tw = this.splineTwists(id, bones, advanced);
     let Qnew;
-    if (this.num(id, 'dtce', 0) >= 0.5 && Math.round(this.num(id, 'dwut', 0)) !== 7) {
-      Qnew = this.splineAdvancedTwist(id, fk, q, bones);
+    if (advanced && Math.round(this.num(id, 'dwut', 0)) !== 7) {
+      // 上級ツイスト: up ベクトルに合わせた向きに、ロールとひねりの値を足す（Maya の資料: ひねりの値は Roll・Root Twist Mode と
+      // 一緒に働き、置き換えない）。ひねりは骨の軸まわり
+      Qnew = this.splineAdvancedTwist(id, fk, q, bones).map((qi, i) => {
+        const a = roll + tw[i];
+        if (Math.abs(a) <= EPS) return qi;
+        const dir = new Vector3().subVectors(q[i + 1], q[i]).normalize();
+        return new Quaternion().setFromAxisAngle(dir, a).multiply(qi);
+      });
     } else {
-      const twist = this.num(id, 'twi', 0), roll = this.num(id, 'rol', 0);
-      Qnew = this.rotateAlong(fk, q, new Quaternion(), (i) => (i === 0 ? roll : 0) + (bones > 1 ? (i === 0 ? 0 : twist / (bones - 1)) : twist));
+      // 古い方式（上級ツイストなし・Relative）: 各ジョイントは 1 つ前のジョイントに対してひねる（増分を渡す）
+      Qnew = this.rotateAlong(fk, q, new Quaternion(), (i) => (i === 0 ? roll : 0) + tw[i] - (i > 0 ? tw[i - 1] : 0));
     }
     const out = this.ikLocals(id, chain, fk.P, Qnew);
     if (roc) {
@@ -1962,7 +1973,36 @@ export class RigEvaluator {
   }
 
   /**
-   * 上級ツイスト: 骨の向きに forward 軸（.dfa）を、world up に up 軸（.dwua）を向ける。
+   * スプライン IK のジョイントごとのひねり（ラジアン。開始から終端の手前まで bones 個。ロールは含めない）。
+   * - ひねりの値: ふだんは Twist（終端で合計）。上級ツイストの Start/End（.dtvt 1）は始点・終点の値（.dtse。度）の間。
+   *   Ramp（.dtvt 2）はテクスチャを評価できないので 0
+   * - 配り方（.twt）: リニア・イーズイン（終端側で多く）・イーズアウト（開始側で多く）・イーズインアウト（中ほどで多く）。
+   *   Maya の資料には形の式がないので、2 次・smoothstep で近似する
+   * - Root Twist Mode（.rtm）: オフなら開始ジョイントはひねらず（0）、残りに配る。オンなら開始ジョイントも少しひねる
+   */
+  splineTwists(id, bones, advanced) {
+    const EASE = [(u) => u, (u) => u * u, (u) => 1 - (1 - u) * (1 - u), (u) => u * u * (3 - 2 * u)];
+    const ease = EASE[Math.round(this.num(id, 'twt', 0))] || EASE[0];
+    const rootTwist = this.num(id, 'rtm', 0) >= 0.5;
+    const type = advanced ? Math.round(this.num(id, 'dtvt', 0)) : 0;
+    const out = [];
+    for (let i = 0; i < bones; i++) {
+      if (type === 1) {
+        const se = this.vec(id, 'dtse', [this.num(id, 'dtst', 0), this.num(id, 'dten', 0)]);
+        const u = bones > 1 ? i / (bones - 1) : 1;
+        out.push((se[0] + (se[1] - se[0]) * ease(u)) * D2R);
+      } else if (type === 2) {
+        out.push(0);
+      } else {
+        const u = rootTwist ? (i + 1) / bones : (bones > 1 ? i / (bones - 1) : 1);
+        out.push(this.num(id, 'twi', 0) * ease(u));
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 上級ツイスト: 骨の向きに forward 軸（.dpa。古いサンプルは .dfa）を、world up に up 軸（.dwua）を向ける。
    * 始点・終点の 2 つを使う種類（.dwut 2・4・6）は、始点と終点の up のなす角（ひねり）をチェーンに沿って均等に配る
    * （up のベクトルを直線で補間すると、向きの差が大きいときに途中で潰れて反転するため）。
    * up 軸の Closest は、＋と−のうち world up に近い方を使う（最小の回転で並べたときの向きで決める）
@@ -1972,7 +2012,7 @@ export class RigEvaluator {
     const UP = [[0, 1, 0], [0, -1, 0], [0, 1, 0], [0, 0, 1], [0, 0, -1], [0, 0, 1], [1, 0, 0], [-1, 0, 0], [1, 0, 0]];
     const upAxis = Math.round(this.num(id, 'dwua', 0));
     const closest = upAxis === 2 || upAxis === 5 || upAxis === 8;
-    const fa = new Vector3(...(AXES[Math.round(this.num(id, 'dfa', 0))] || AXES[0]));
+    const fa = new Vector3(...(AXES[Math.round(this.num(id, 'dpa', this.num(id, 'dfa', 0)))] || AXES[0]));
     const ua = new Vector3(...(UP[upAxis] || UP[0]));
     const type = Math.round(this.num(id, 'dwut', 0));
     const vecIn = (attr, mat) => {

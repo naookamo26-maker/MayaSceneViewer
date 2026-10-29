@@ -65,8 +65,10 @@ _GEOMETRY_INPUTS = {
     "wire": re.compile(r"^(ip\[\d+\]\.ig|dw\[\d+\]|bw\[\d+\]|dds\[\d+\]|sc\[\d+\]|rot|en)$"),
     "locator": None,
 }
-# スプライン IK のハンドルで使う属性（カーブ・ひねり・上級ツイスト）
-_SPLINE_HANDLE_KEYS = {"ic", "twi", "rol", "off", "dtce", "dwut", "dwua", "dfa", "dwum", "dwue", "dwuv", "dwve"}
+# スプライン IK のハンドルで使う属性（カーブ・ひねり・上級ツイスト）。前向きの軸の短い名前は dpa
+# （Maya の技術資料。古いサンプルの dfa も読む）。ひねりの配り方（twt・rtm）と、上級ツイストのひねりの値の種類（dtvt・dtse）も
+_SPLINE_HANDLE_KEYS = {"ic", "twi", "rol", "off", "roc", "ikb", "dtce", "dwut", "dwua", "dpa", "dfa", "dwum", "dwue", "dwuv",
+                       "dwve", "twt", "rtm", "dtvt", "dtse", "dtst", "dten"}
 SUPPORTED_DG = CONSTRAINT_TYPES | UTILITY_TYPES
 
 # DAG ノードの行列の属性（上流は、そのノードと祖先の移動・回転・スケールのすべて）
