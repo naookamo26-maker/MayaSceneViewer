@@ -897,7 +897,7 @@ class ViewerApp {
     this.animTouched = [...touched].sort((a, b) => a - b);
     // 保存時の値は、保存したときのフレーム（time1）の値（カーブで決まる値は .ma に残っていないため）。
     // バインドポーズの表示で、バインドポーズの情報がないノードに使う
-    for (const [ni, m] of this.rig.evaluate(clip.current, () => null, new Map())) {
+    for (const [ni, m] of this.rig.evaluate(clip.current, undefined, new Map())) {
       this.built.nodeObjects[ni].userData.savedMatrix.copy(m);
     }
     const warnings = clip.warnings.concat([...this.rig.problems].map((p) => `アニメーション: リグの評価を打ち切りました（${p}）。`));
@@ -944,7 +944,7 @@ class ViewerApp {
    */
   verifyRig() {
     if (!this.rig || !this.clip) return null;
-    this.rig.evaluate(this.clip.current, () => null, new Map());
+    this.rig.evaluate(this.clip.current, undefined, new Map());
     // ファイルに書かれた回転（Maya の答え）と比べる。表示用の行列（nodes の matrix）は、移動などが接続で決まる
     // ノードではバインドポーズ・既定値に置き換えてあるので使わない
     const list = this.rig.verifySaved((ni) => this.rig.fileRestLocal(ni));
@@ -960,8 +960,10 @@ class ViewerApp {
     if (!this.clip || !this.built) return;
     if (this.camEdit && f !== this.camEdit.frame) this.endCameraEdit();   // 動かしたカメラの視点は、フレームが変わると戻す
     this.frame = f;
-    const poseOf = (ni) => (this.pose && this.pose.has(ni) ? poseMatrix(this.pose.get(ni), new Matrix4()) : null);
-    const mats = this.rig.evaluate(f, poseOf);
+    // ポーズ確認の追加分（なければ渡さない。追加分の版が同じあいだは、リグの評価のキャッシュを使い続ける）
+    const posed = this.pose && this.pose.size > 0;
+    const poseOf = posed ? (ni) => (this.pose.has(ni) ? poseMatrix(this.pose.get(ni), new Matrix4()) : null) : undefined;
+    const mats = this.rig.evaluate(f, poseOf, undefined, posed ? this.pose.version : undefined);
     const mode = this.settings.poseSource;
     const sceneHasBind = hasBindPose(this.built);
     for (const [ni, m] of mats) {
@@ -972,7 +974,7 @@ class ViewerApp {
     for (const ni of this.animTouched) this.pose.apply(ni);
     // カーブの形（バインドポーズの表示では変形前の形）
     const bindView = mode === 'bind' && sceneHasBind;
-    for (const [ci, gid] of this.rigCurves || []) this.curves.setShape(ci, bindView ? null : this.rig.plug(gid, 'local'));
+    for (const [ci, gid] of this.rigCurves || []) this.curves.setShape(ci, bindView ? null : this.rig.curveShape(gid));
     // 表示（.v など）・カメラの焦点距離などの、接続で決まる値（姿勢の基準によらず、いまのフレームの値）
     if (this.rig.props.length) {
       const props = this.rig.evaluateProps();
@@ -982,6 +984,31 @@ class ViewerApp {
     this.timeline.setFrame(f);
     this.rigBusy = true;
     try { this.afterPoseChange(light); } finally { this.rigBusy = false; }
+    this.scheduleBake();
+  }
+
+  /**
+   * 再生キャッシュ（RigEvaluator.bake）を空き時間に少しずつ作る。2 周目を待たずに、再生が実時間で進むようにする。
+   * ポーズ確認で追加分を変えるとキャッシュは捨てられるので、そのあとの applyFrame からまた作り始める
+   */
+  scheduleBake() {
+    clearTimeout(this.bakeTimer);
+    if (this.bakeHandle) { (window.cancelIdleCallback || clearTimeout)(this.bakeHandle); this.bakeHandle = null; }
+    if (!this.rig || !this.hasTimeline || this.rig.playbackFull) return;
+    const rig = this.rig;
+    const idle = window.requestIdleCallback || ((fn) => setTimeout(() => fn({ timeRemaining: () => 8 }), 50));
+    const step = (deadline) => {
+      this.bakeHandle = null;
+      if (rig !== this.rig || !this.clip || rig.playbackFull) return;
+      const todo = [];
+      for (let f = Math.ceil(this.clip.start); f <= this.clip.end; f++) if (!rig.hasSnapshot(f)) todo.push(f);
+      if (!todo.length) return;
+      // 空き時間が残っているあいだ続ける（作り終えたら、いまのフレームの状態に戻す）
+      const made = rig.bake(todo, () => deadline.timeRemaining() > 4);
+      if (made && made < todo.length) this.bakeHandle = idle(step, { timeout: 2000 });
+    };
+    // 再生中・ポーズ確認の操作中は作らない（フレームごとに待ち直す。止まってから作り始める）
+    this.bakeTimer = setTimeout(() => { this.bakeHandle = idle(step, { timeout: 2000 }); }, 300);
   }
 
   /** 姿勢の基準（バインドポーズ／ファイルの値）を切り替える（ツールバーのボタン・B キー） */
