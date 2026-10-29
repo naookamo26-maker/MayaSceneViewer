@@ -49,7 +49,7 @@ const DEFAULTS = {
   quatSlerp: { iq1: [0, 0, 0, 1], iq2: [0, 0, 0, 1], it: 0 },
   displayLayer: { v: 1, dt: 0, e: 1 },
   addDoubleLinear: { i1: 0, i2: 0 },
-  multDoubleLinear: { i1: 1, i2: 1 },
+  multDoubleLinear: { i1: 0, i2: 0 },                                    // Maya の既定値は 0（書かれていなければ 0）
   clamp: { ip: [0, 0, 0], mn: [0, 0, 0], mx: [0, 0, 0] },
   setRange: { v: [0, 0, 0], n: [0, 0, 0], m: [0, 0, 0], on: [0, 0, 0], om: [0, 0, 0] },
   remapValue: { i: 0, imn: 0, imx: 1, omn: 0, omx: 1 },
@@ -61,14 +61,16 @@ const DEFAULTS = {
   animBlendNodeAdditiveDL: { ia: 0, ib: 0, wa: 1, wb: 1 },
   animBlendNodeAdditiveDA: { ia: 0, ib: 0, wa: 1, wb: 1 },
   animBlendNodeAdditiveRotation: { ia: [0, 0, 0], ib: [0, 0, 0], wa: 1, wb: 1 },
-  animBlendNodeAdditiveScale: { ia: 1, ib: 1, wa: 1, wb: 1, acm: 1 },     // acm 1: かけ算で重ねる（Maya の既定）
-  animLayer: { w: 1, m: 0 },
+  // Maya の既定値は ia・ib 0、acm 0（足し算）。かけ算で重ねるレイヤーは、Maya が acm 1 をファイルに書く
+  animBlendNodeAdditiveScale: { ia: 0, ib: 0, wa: 1, wb: 1, acm: 0 },
+  // ウェイト .wgth・ミュート .mt・Override .ovrd（古いサンプルの .w・.m も読むので、それらは既定値を持たせない）
+  animLayer: { wgth: 1, mt: 0, ovrd: 0 },
   cluster: { en: 1 },
   pointOnCurveInfo: { pr: 0, top: 0 },
 };
 // ikHandle の属性の既定値（スプライン IK を含む）
 // （前向きの軸は .dpa。古いサンプルの .dfa も読むので、dpa は既定値を持たせない）
-DEFAULTS.ikHandle = { ...DEFAULTS.ikHandle, roc: 0, off: 0, rol: 0, dtce: 0, dwut: 0, dwua: 0, dfa: 0,
+DEFAULTS.ikHandle = { ...DEFAULTS.ikHandle, roc: 0, off: 0, rol: 0, dtce: 0, dwut: 0, dwua: 3, dfa: 0,
   dwuv: [0, 1, 0], dwve: [0, 1, 0], twt: 0, rtm: 0, dtvt: 0, dtst: 0, dten: 0 };
 
 // 型ごとの出力の属性（これ以外の名前で計算結果を探さない。入力を読むときに自分の計算へ戻らないため）
@@ -84,7 +86,7 @@ const OUTPUTS = {
   groupParts: /^og$/, transformGeometry: /^og$/, wire: /^og(\[\d+\])?$/, locator: /^(wp|worldPosition)(\[\d+\])?$/, expression: /^(out|output)\[\d+\]$/,
   addDoubleLinear: /^o$/, multDoubleLinear: /^o$/, clamp: /^op[rgb]?$/, setRange: /^o[xyz]?$/, remapValue: /^(ov|outValue)$/,
   distanceBetween: /^d$/, vectorProduct: /^o[xyz]?$/, blendTwoAttr: /^o$/, blendWeighted: /^o$/, choice: /^o$/,
-  animBlendNodeAdditiveDL: /^o$/, animBlendNodeAdditiveDA: /^o$/, animBlendNodeAdditiveRotation: /^o[xyz]?$/, animLayer: /^fo$/,
+  animBlendNodeAdditiveDL: /^o$/, animBlendNodeAdditiveDA: /^o$/, animBlendNodeAdditiveRotation: /^o[xyz]?$/, animLayer: /^(fgwt|fo|bgwt)$/,
   animBlendNodeAdditive: /^o$/, animBlendNodeAdditiveF: /^o$/, animBlendNodeAdditiveFL: /^o$/, animBlendNodeAdditiveFA: /^o$/,
   animBlendNodeAdditiveI16: /^o$/, animBlendNodeAdditiveI32: /^o$/, animBlendNodeAdditiveScale: /^o$/,
   animBlendNodeBoolean: /^o$/, animBlendNodeEnum: /^o$/, animBlendNodeTime: /^o$/,
@@ -961,7 +963,9 @@ export class RigEvaluator {
         const t = this.vec(id, 'it'), r = this.vec(id, 'ir'), s = this.vec(id, 'is', [1, 1, 1]);
         let q;
         if (this.num(id, 'uer', 1) >= 0.5) {
-          q = new Quaternion().setFromEuler(new Euler(r[0], r[1], r[2], THREE_ORDER[Math.round(this.num(id, 'iro', 0))] || 'ZYX'));
+          // 回転順は .ro（Maya の技術資料。古いサンプルの .iro も読む）
+          const ro = this.num(id, this.attrName(this.byId.get(id), ['ro', 'iro']), 0);
+          q = new Quaternion().setFromEuler(new Euler(r[0], r[1], r[2], THREE_ORDER[Math.round(ro)] || 'ZYX'));
         } else {
           const v = this.vec(id, 'iq', [0, 0, 0, 1]);
           q = new Quaternion(v[0], v[1], v[2], v[3] ?? 1).normalize();
@@ -1027,7 +1031,7 @@ export class RigEvaluator {
       case 'wire': o = this.wireCurves(g); break;
       case 'cluster': o = this.clusterCurves(g); break;
       case 'addDoubleLinear': o = { o: this.num(id, 'i1', 0) + this.num(id, 'i2', 0) }; break;
-      case 'multDoubleLinear': o = { o: this.num(id, 'i1', 1) * this.num(id, 'i2', 1) }; break;
+      case 'multDoubleLinear': o = { o: this.num(id, 'i1', 0) * this.num(id, 'i2', 0) }; break;
       case 'clamp': {
         const v = this.vec(id, 'ip'), lo = this.vec(id, 'mn'), hi = this.vec(id, 'mx');
         o = expand('op', v.map((x, i) => Math.min(Math.max(x, lo[i]), hi[i])), RGB);
@@ -1076,7 +1080,8 @@ export class RigEvaluator {
         // キャラクターセット: カーブが直接つながる属性はそのまま（plugUncached で先に返る）。
         // Trax のクリップがあれば、いまのフレームで有効なクリップの値。なければファイルの値
         o = {};
-        for (const [k, v] of Object.entries(g.attrs || {})) if (OUTPUTS.character.test(k)) o[k] = v;
+        // （角度の値 av[i] のファイルの値は度。ほかの角度の出力と同じくラジアンにする）
+        for (const [k, v] of Object.entries(g.attrs || {})) if (OUTPUTS.character.test(k)) o[k] = /^av\[/.test(k) ? v * D2R : v;
         if (g.trax) this.varying = true;
         if (g.trax) Object.assign(o, evaluateTrax(g.trax, this.frame, this.clip.curves, (c, v) => (c.type === 'TA' ? v * D2R : v)));
         break;
@@ -1092,8 +1097,8 @@ export class RigEvaluator {
         break;
       case 'animBlendNodeAdditiveScale': {
         // かけ算で重ねる（acm 1）: ia · (1 + (ib − 1) · wb)。足し算（acm 0）: ia · wa + ib · wb
-        const ia = this.num(id, 'ia', 1), ib = this.num(id, 'ib', 1), wb = this.num(id, 'wb', 1);
-        o = { o: this.num(id, 'acm', 1) >= 0.5 ? ia * (1 + (ib - 1) * wb) : ia * this.num(id, 'wa', 1) + ib * wb };
+        const ia = this.num(id, 'ia', 0), ib = this.num(id, 'ib', 0), wb = this.num(id, 'wb', 1);
+        o = { o: this.num(id, 'acm', 0) >= 0.5 ? ia * (1 + (ib - 1) * wb) : ia * this.num(id, 'wa', 1) + ib * wb };
         break;
       }
       case 'animBlendNodeBoolean': case 'animBlendNodeEnum':
@@ -1114,7 +1119,15 @@ export class RigEvaluator {
         o.output = o.o;
         break;
       }
-      case 'animLayer': o = { fo: this.num(id, 'm', 0) >= 0.5 ? 0 : this.num(id, 'w', 1) }; break;
+      case 'animLayer': {
+        // 前面のウェイト .fgwt（古いサンプルの .fo も）: ミュートなら 0、それ以外はウェイト。
+        // 背面のウェイト .bgwt: Override のレイヤーは下のレイヤーを (1 − ウェイト) に弱める（足し算のレイヤーは 1。推定）
+        const muted = this.num(id, this.attrName(g, ['mt', 'm']), 0) >= 0.5;
+        const fg = muted ? 0 : this.num(id, this.attrName(g, ['wgth', 'w']), 1);
+        const bg = this.num(id, 'ovrd', 0) >= 0.5 ? 1 - fg : 1;
+        o = { fgwt: fg, fo: fg, bgwt: bg };
+        break;
+      }
       case 'expression': o = this.expression(g); break;
       case 'tweak': {                                       // 頂点の調整は反映しない（形はそのまま通す）
         const c = this.plug(id, 'ip[0].ig');
@@ -1165,7 +1178,8 @@ export class RigEvaluator {
       const pb = polyline(B, 32).pts, pw = polyline(W, 32).pts;
       return { pb, pw, dds: this.num(id, `dds[${i}]`, 1), sc: this.num(id, `sc[${i}]`, 1) };
     }).filter(Boolean);
-    const en = this.num(id, 'en', 1), rot = this.num(id, 'rot', 1);
+    // 回転の効きは .ro（Maya の技術資料。古いサンプルの .rot も読む）
+    const en = this.num(id, 'en', 1), rot = this.num(id, this.attrName(g, ['ro', 'rot']), 1);
     const out = {};
     for (const k of this.indices(g, /^ip\[(\d+)\]\.ig$/)) {
       const c = this.plug(id, `ip[${k}].ig`);
@@ -1281,12 +1295,15 @@ export class RigEvaluator {
     const attrs = g.attrs || {};
     const pts = this.indices(g, /^vl\[(\d+)\]/).map((i) => {
       const whole = attrs[`vl[${i}]`];
-      const get = (name, k, def) => {
-        if ((g.inputs || {})[`vl[${i}].${name}`]) return this.num(id, `vl[${i}].${name}`, def);
-        if (typeof attrs[`vl[${i}].${name}`] === 'number') return attrs[`vl[${i}].${name}`];
+      // 項目の名前は .vlp・.vlfv・.vli（Maya の技術資料）。古いサンプルの .vp・.fv・.vi も読む
+      const get = (names, k, def) => {
+        for (const name of names) {
+          if ((g.inputs || {})[`vl[${i}].${name}`]) return this.num(id, `vl[${i}].${name}`, def);
+          if (typeof attrs[`vl[${i}].${name}`] === 'number') return attrs[`vl[${i}].${name}`];
+        }
         return Array.isArray(whole) && Number.isFinite(whole[k]) ? whole[k] : def;
       };
-      return { p: get('vp', 0, 0), v: get('fv', 1, 0), interp: Math.round(get('vi', 2, 1)) };
+      return { p: get(['vlp', 'vp'], 0, 0), v: get(['vlfv', 'fv'], 1, 0), interp: Math.round(get(['vli', 'vi'], 2, 1)) };
     }).sort((a, b) => a.p - b.p);
     let r;
     if (!pts.length) r = Math.min(1, Math.max(0, t));                        // 既定: (0, 0)〜(1, 1) の直線
@@ -1487,12 +1504,20 @@ export class RigEvaluator {
     const pick = (a, b, m) => (m === 1 ? a : m === 2 ? b : a * (1 - w) + b * w);
     const ot = XYZ.map((ax, i) => pick(t1[i], t2[i], mode(`t${ax}m`)));
     let or;
-    if (Math.round(this.num(id, 'ri', 0)) === 1) {        // 四元数で補間
+    const rotMode = Math.round(this.num(id, 'rm', 0));
+    if (rotMode === 1 || rotMode === 2) {                  // 回転は入力 1（または 2）だけ
+      or = (rotMode === 1 ? r1 : r2).slice();
+    } else if (Math.round(this.num(id, 'ri', 0)) === 1) {        // 四元数で補間
       const q = radQuat(r1).slerp(radQuat(r2, new Quaternion()), w);
       const e = new Euler().setFromQuaternion(q, 'ZYX');
       or = [e.x, e.y, e.z];
     } else {
-      or = XYZ.map((ax, i) => pick(r1[i], r2[i], mode(`r${ax}m`)));
+      // 回転のモードは .rm（3 軸に共通。Maya の技術資料）で、ここでは混ぜる（0）。
+      // 古いサンプルの軸ごとの名前（.rxm など）があればそれを使う
+      or = XYZ.map((ax, i) => {
+        const own = `r${ax}m`;
+        return pick(r1[i], r2[i], (g.inputs && g.inputs[own]) || (g.attrs && own in g.attrs) ? mode(own) : 0);
+      });
     }
     return { ...expand('ot', ot, XYZ), ...expand('or', or, XYZ) };
   }
@@ -2010,7 +2035,7 @@ export class RigEvaluator {
   splineAdvancedTwist(id, fk, q, bones) {
     const AXES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
     const UP = [[0, 1, 0], [0, -1, 0], [0, 1, 0], [0, 0, 1], [0, 0, -1], [0, 0, 1], [1, 0, 0], [-1, 0, 0], [1, 0, 0]];
-    const upAxis = Math.round(this.num(id, 'dwua', 0));
+    const upAxis = Math.round(this.num(id, 'dwua', 3));          // Maya の既定値は 3（+Z）
     const closest = upAxis === 2 || upAxis === 5 || upAxis === 8;
     const fa = new Vector3(...(AXES[Math.round(this.num(id, 'dpa', this.num(id, 'dfa', 0)))] || AXES[0]));
     const ua = new Vector3(...(UP[upAxis] || UP[0]));

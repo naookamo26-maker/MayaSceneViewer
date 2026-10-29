@@ -191,7 +191,7 @@ def main():
     uid("BaseAnimation")
     A('createNode animLayer -n "layer1";')
     uid("layer1")
-    A('\tsetAttr ".w" 0.5;')
+    A('\tsetAttr ".wgth" 0.5;')                       # ウェイト（Maya の短い名前は .wgth）
     A('createNode animBlendNodeAdditiveRotation -n "lay_jnt_rotate_layer1";')
     uid("lay_jnt_rotate_layer1")
     anim("TA", "lay_jnt_rotateX_base", [(1, 0), (48, 30)])
@@ -202,6 +202,7 @@ def main():
     uid("lay_jnt_rotateY_blend1")
     A('createNode animBlendNodeAdditiveScale -n "lay_jnt_scaleY_blend1";')
     uid("lay_jnt_scaleY_blend1")
+    A('\tsetAttr ".acm" 1;')                          # かけ算で重ねる（ノードの既定値は 0 なので Maya はファイルに書く）
     anim("TL", "lay_jnt_translateZ_base", [(1, 10), (48, 14)])
     anim("TL", "lay_jnt_translateZ_layer1", [(1, 0), (48, 2)])
     anim("TA", "lay_jnt_rotateY_base", [(1, 0), (48, 20)])
@@ -367,12 +368,12 @@ def main():
     C("roll_jnt_translateY.o", "roll_jnt.ty")
     C("lay_jnt_rotateX_base.o", "lay_jnt_rotate_layer1.iax")
     C("lay_jnt_rotateX_layer1.o", "lay_jnt_rotate_layer1.ibx")
-    C("layer1.fo", "lay_jnt_rotate_layer1.wb")
+    C("layer1.fgwt", "lay_jnt_rotate_layer1.wb")       # 前面のウェイト（Maya の短い名前は .fgwt）
     C("lay_jnt_rotate_layer1.ox", "lay_jnt.rx")
     for attr, short in (("translateZ", "tz"), ("rotateY", "ry"), ("scaleY", "sy")):
         C("lay_jnt_%s_base.o" % attr, "lay_jnt_%s_blend1.ia" % attr)
         C("lay_jnt_%s_layer1.o" % attr, "lay_jnt_%s_blend1.ib" % attr)
-        C("layer1.fo", "lay_jnt_%s_blend1.wb" % attr)
+        C("layer1.fgwt", "lay_jnt_%s_blend1.wb" % attr)
         C("lay_jnt_%s_blend1.o" % attr, "lay_jnt.%s" % short)
 
     C("leg_hip.msg", "leg_ik.hsj")
