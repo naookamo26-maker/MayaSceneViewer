@@ -26,6 +26,7 @@ import { Timeline } from './timeline.js';
 import { CurveOverlay } from './curveOverlay.js';
 import { CameraIcons, cameraFrustum, cameraParams } from './cameraView.js';
 import { SequencerPanel, activeShot, shotStarts, shotTime } from './sequencer.js';
+import { CurveEditor } from './curveEditor.js';
 
 const VERSION = '1.0.0';
 const D2R = Math.PI / 180;
@@ -98,6 +99,7 @@ class ViewerApp {
     this.ui = new UI(this);
     this.timeline = new Timeline(this);
     this.seqPanel = new SequencerPanel(this);
+    this.curveEditor = new CurveEditor(this);   // 画面の下のカーブエディタ（初期状態では最小化）
     this.ui.setHost(isQtHost() ? 'qt' : 'browser');
     this.ui.syncSettings(this.settings);     // ツールバーの表示を初期設定（DEFAULTS）に合わせる
     try {
@@ -254,6 +256,7 @@ class ViewerApp {
       const t = e.target;
       // 入力欄では文字入力の取り消し（ブラウザ標準）を優先する
       if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
+      if (this.curveEditor.handleKey(e)) return;          // カーブエディタの上では A・F をそちらで使う
       const k = e.key.toLowerCase();
       if ((e.ctrlKey || e.metaKey) && !e.altKey) {
         if (k === 'h' && !e.shiftKey) this.setNodeVisible(this.selected, false);   // Maya と同じ: Ctrl+H = 隠す
@@ -501,6 +504,8 @@ class ViewerApp {
     this.rig = null;
     this.rigCurves = null;
     this.timeline.setClip(null);
+    this.curveEditor.setClip(null, null);
+    this.curveEditor.setNode(-1);
     this.updateCacheView();
   }
 
@@ -963,6 +968,7 @@ class ViewerApp {
     // キーがなくリグだけのときは、タイムラインは出さずに評価だけする（ポーズ確認でコントローラーを動かせる）
     if (!this.hasTimeline) this.timeline.setStatus('');
     this.timeline.setClip(this.hasTimeline ? clip : null);
+    this.curveEditor.setClip(clip.curves.length ? clip : null, this.rig);
     this.updateTimelineKeys();
     // キーのあるアニメーションは「ファイルの値」で見る（バインドポーズのままではアニメーションが見えないため）。
     // 読み込みのあとで自分でバインドポーズを選んでいたら、そのままにする
@@ -1031,6 +1037,7 @@ class ViewerApp {
       if (this.applyRigVisibility(props)) this.updateVisibility();
     }
     this.timeline.setFrame(f);
+    this.curveEditor.setFrame(f);
     this.rigBusy = true;
     try { this.afterPoseChange(light); } finally { this.rigBusy = false; }
     this.updateCacheView();
@@ -1138,6 +1145,7 @@ class ViewerApp {
     this.clip.start = start;
     this.clip.end = end;
     this.timeline.setRange(start, end);
+    this.curveEditor.render();
     if (this.frame < start || this.frame > end) this.scrubTo(Math.min(Math.max(this.frame, start), end));
     this.updateCacheView();
     this.scheduleBake();                                  // 広げた範囲のフレームを作る
@@ -1216,6 +1224,7 @@ class ViewerApp {
     this.updateGizmo();
     if (this.settings.weightMode === 'selected') this.applyWeights();
     this.updateTimelineKeys();
+    this.curveEditor.setNode(ni);
     if (opts.notify && this.bridge && this.bridge.nodeSelected) this.bridge.nodeSelected(this.data.nodes[ni].path);
     this.requestRender();
   }
@@ -1248,6 +1257,7 @@ class ViewerApp {
     this.marker.visible = false;
     this.overlay.setSelected(-1);
     this.curves.setSelected(-1);
+    this.curveEditor.setNode(-1);
     this.updateCameraIcons();
     this.applyShading();
     this.ui.highlightNode(-1, this.data.nodes);

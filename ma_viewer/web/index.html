@@ -220,6 +220,23 @@
     </div>
   </section>
 
+  <!-- カーブエディタ（アニメーションがあるときだけ表示する、ビューポートの下のパネル。初期状態では最小化。見るだけ） -->
+  <section id="curve-editor" aria-label="カーブエディタ" hidden>
+    <div id="ce-resizer" role="separator" aria-orientation="horizontal" title="ドラッグで高さを変える"></div>
+    <div class="ce-head">
+      <button class="collapse-btn" id="ce-collapse" aria-expanded="false" aria-controls="curve-editor" title="カーブエディタを開く">▴</button>
+      <span class="ce-title">カーブエディタ</span>
+      <span id="ce-node" class="ce-node"></span>
+      <button class="icon-btn" id="ce-frame-all" aria-label="全体を表示" title="全体を表示（A）"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 4.5v-3h3M9.5 1.5h3v3M12.5 9.5v3h-3M4.5 12.5h-3v-3"/></svg></button>
+      <button class="icon-btn" id="ce-normalize" aria-pressed="false" aria-label="正規化" title="正規化（カーブごとに値の範囲を -1〜1 にそろえて表示）"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1 3h12M1 11h12"/><path d="M2 10c2-6 4-6 5-3s3 3 5-3" /></svg></button>
+      <span id="ce-info" class="ce-info"></span>
+    </div>
+    <div class="ce-body">
+      <div id="ce-list" class="ce-list" aria-label="カーブの一覧"></div>
+      <canvas id="ce-graph" class="ce-graph" aria-label="カーブのグラフ"></canvas>
+    </div>
+  </section>
+
   <aside id="right" class="panel" aria-label="プロパティ">
     <button class="panel-strip" id="right-expand" title="右パネルを開く" aria-label="右パネルを開く" aria-controls="right" aria-expanded="false"><span class="strip-icon" aria-hidden="true">‹</span><span class="strip-label">プロパティ</span></button>
     <div class="panel-content">
