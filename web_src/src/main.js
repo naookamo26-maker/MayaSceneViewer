@@ -8,12 +8,13 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { PoseState, identityPose, poseFromTransform, poseMatrix, poseQuaternion } from './pose.js';
 import {
-  applyPoseSource, hasBindPose, poseBaseMatrix, BASE_COLOR, buildScene, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
+  applyPoseSource, hasBindPose, poseBaseMatrix, BASE_COLOR, buildScene, characterRadius, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
   vertexWorldPosition, writeVertexColors,
 } from './sceneBuilder.js';
 import { base64ToArrayBuffer } from './textures.js';
 import { MapManager, usageFor } from './mapManager.js';
 import { JointOverlay } from './jointOverlay.js';
+import { classifyControls } from './controlRoles.js';
 import { fillHeatmap, fillInfluenceBlend, fillSolid, vertexWeights } from './weights.js';
 import { UI, referenceOf } from './ui.js';
 import { connectBridge, isQtHost } from './bridge.js';
@@ -32,6 +33,10 @@ const DEFAULTS = {
   shading: 'smooth', wire: false, skin: true, joints: false, xray: true, grid: true,   // 骨は初期状態で非表示（J で切り替え）
   curves: true,                  // NURBS カーブ（コントローラーの形など）
   controls: true,                // カーブの形のないコントローラーの目印（八面体。L で切り替え。Maya のロケーターの表示と同じく既定で表示）
+  controlColor: 'role',          // コントローラーの色: 'role'（役割）・'side'（左右）。Maya の描画のオーバーライドの色が優先
+  controlSizeMode: 'bone',       // コントローラーの大きさの基準: 'bone'（近くの骨）・'screen'（画面上で一定）
+  controlSize: 1,                // コントローラーの大きさの倍率（ジョイントの大きさとは別）
+  controlHidden: [],             // 隠すコントローラーの種別（controlRoles.js の CONTROL_ROLES）
   axes: 'selected', jointSize: 1, weightMode: 'off',
   textures: true, alpha: 'material', alphaStyle: 'cutout',
   poseSource: 'bind',
@@ -179,6 +184,7 @@ class ViewerApp {
     this.scene.add(this.gizmo);
 
     this.overlay = new JointOverlay();
+    this.overlay.setPixelSize((p) => this.pixelSizeAt(p));
     this.curves = new CurveOverlay();
     this.scene.add(this.overlay.group);
 
@@ -217,6 +223,8 @@ class ViewerApp {
   render() {
     if (!this.renderer) return;
     if (this.viewCamera >= 0) this.syncViewCamera();
+    // 画面上で一定の大きさのコントローラーは、視点に合わせて大きさを決め直す
+    if (this.built && this.settings.controls && this.settings.controlSizeMode === 'screen') this.overlay.updateControls();
     this.renderer.render(this.scene, this.activeCamera());
   }
 
@@ -478,6 +486,7 @@ class ViewerApp {
     this.built = null;
     this.data = null;
     this.overlay.clear();
+    this.ui.setControlCounts(null);
     this.curves.clear();
     if (this.gizmo) this.gizmo.detach();
     this.pose = null;
@@ -567,6 +576,12 @@ class ViewerApp {
         break;
       case 'joints': this.overlay.setVisible(value); break;
       case 'controls': this.overlay.setControlsVisible(value); break;
+      case 'controlColor':
+      case 'controlSizeMode':
+      case 'controlSize':
+      case 'controlHidden':
+        this.applyControlOptions();
+        break;
       case 'cameraIcons': this.updateCameraIcons(); break;
       case 'hud': this.updateHud(); this.updateCacheView(); break;
       case 'pickMode':
@@ -599,10 +614,17 @@ class ViewerApp {
     this.requestRender();
   }
 
+  /** コントローラーの目印の色・大きさ・種別ごとの表示 */
+  applyControlOptions() {
+    const st = this.settings;
+    this.overlay.setControlOptions({ color: st.controlColor, sizeMode: st.controlSizeMode, scale: st.controlSize, hiddenRoles: st.controlHidden });
+  }
+
   applyAll() {
     const st = this.settings;
     this.overlay.setVisible(st.joints);
     this.overlay.setControlsVisible(st.controls);
+    this.applyControlOptions();
     this.curves.setVisible(st.curves);
     this.overlay.setXray(st.xray);
     this.overlay.setAxesMode(st.axes);
@@ -926,11 +948,16 @@ class ViewerApp {
     if (warnings.length) this.ui.setWarnings((this.ui.warnings || []).concat(warnings));
     // 推定・不明のノードをジョイントの表示で色分けする
     this.overlay.setStatus(this.rig.fallback.size || this.rig.tainted.size ? (ni) => this.rig.statusOf(ni) : null);
-    // コントローラー（ジョイント・メッシュ以外でリグを動かすノード）の目印
+    // コントローラー（ジョイント・メッシュ以外でリグを動かすノード）の目印。役割（IK・ポールベクターなど）で形を変える
     const meshNodes = new Set(this.built.meshes.map((e) => e.transform));
     // （カーブの形を持つコントローラーは、カーブそのものが見えるので目印を出さない）
-    this.overlay.setControllers([...this.rig.directDrivers].filter((ni) => this.data.nodes[ni].type !== 'joint'
-      && !meshNodes.has(ni) && !this.curves.hasCurve(ni)).sort((a, b) => a - b));
+    const controls = [...this.rig.directDrivers].filter((ni) => this.data.nodes[ni].type !== 'joint'
+      && !meshNodes.has(ni) && !this.curves.hasCurve(ni)).sort((a, b) => a - b);
+    const roles = classifyControls(anim.graph || [], this.data.nodes, controls);
+    // 骨のない部分の大きさの基準: スキンのあるメッシュ（なければメッシュ全体）の大きさ
+    this.overlay.setControllers(controls, roles, characterRadius(this.built) || this.sceneRadius);
+    this.applyControlOptions();
+    this.ui.setControlCounts(this.overlay.ctrl.counts());
     // リグで形が変わるカーブ（skinCluster・制御点の接続）: 共通 JSON の curves の番号 → グラフの id
     this.rigCurves = (anim.graph || []).filter((g) => g.type === 'nurbsCurve' && g.shape >= 0).map((g) => [g.shape, g.id]);
     // キーがなくリグだけのときは、タイムラインは出さずに評価だけする（ポーズ確認でコントローラーを動かせる）
@@ -1817,6 +1844,15 @@ class ViewerApp {
   }
 
   /** ビューポートの 1 ピクセルが、注視点のあたりでワールドの何単位か（カーブのピックの許容範囲） */
+  /** ワールドの位置 p での、1 ピクセルのワールドでの長さ（画面上で一定の大きさのコントローラーに使う） */
+  pixelSizeAt(p) {
+    const cam = this.activeCamera();
+    const h = Math.max(this.canvas ? this.canvas.clientHeight : 1, 1);
+    if (cam.isOrthographicCamera) return (cam.top - cam.bottom) / cam.zoom / h;
+    const depth = Math.max(_v2.subVectors(p, cam.position).dot(cam.getWorldDirection(_v)), cam.near);
+    return (2 / cam.projectionMatrix.elements[5]) * depth / h;      // 透視投影: 視野の縦の広がり 2 / e[5]
+  }
+
   pixelSize(heightPx) {
     const cam = this.activeCamera();
     const h = Math.max(heightPx, 1);

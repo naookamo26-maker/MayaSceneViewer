@@ -8,7 +8,8 @@
   "mayaVersion":"2024",
   "linearUnit":"cm",
   "angularUnit":"deg",
-  "upAxis":"y"
+  "upAxis":"y",
+  "references":[]
  },
  "nodes":[
   {
@@ -1696,6 +1697,14 @@
  ],
  "meshes":[],
  "curves":[],
+ "cameras":[],
+ "viewCamera":-1,
+ "sequencer":null,
+ "render":{
+  "width":640,
+  "height":480,
+  "deviceAspectRatio":1.3333333333333333
+ },
  "materials":[],
  "textures":[],
  "warnings":[],
@@ -1704,6 +1713,7 @@
   "joints":15,
   "meshes":0,
   "curves":0,
+  "cameras":0,
   "vertices":0,
   "polygons":0,
   "skinnedMeshes":0,
@@ -3050,8 +3060,10 @@
     }
    }
   ],
+  "nodeDefs":{},
   "fallback":[],
   "tainted":[],
+  "props":[],
   "times":{
    "dtype":"float32",
    "count":19,
@@ -3079,7 +3091,7 @@
    "channels":9,
    "nodes":17,
    "graphNodes":31,
-   "seconds":0.0014
+   "seconds":0.0016
   }
  }
 }

@@ -340,6 +340,22 @@ table.kv td.l { text-align: left; }
 .choices.list.scroll { max-height: min(46vh, 340px); overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
 .choices.list.scroll button { flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-panel .muted { margin: 6px 0 0; }
+/* コントローラーのボタン: 本体（すべての表示）と ▾（種別ごとの表示・色・大きさのパネル） */
+.split-btn { display: flex; }
+#toolbar .split-btn .icon-btn { border-radius: var(--radius) 0 0 var(--radius); }
+.split-btn .split-dd { width: 16px; padding: 0; justify-content: center; margin-left: -1px; border-color: var(--line); border-radius: 0 var(--radius) var(--radius) 0; background: var(--panel); color: var(--text-dim); }
+.split-btn .menu-panel { width: 320px; }
+.role-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.role-all { display: flex; gap: 4px; }
+.role-all button { font-size: 11px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 3px; background: var(--chrome); color: var(--text-dim); cursor: pointer; }
+.role-all button:hover { color: var(--text); background: var(--panel-2); }
+.role-list { display: flex; flex-direction: column; }
+.role-row { display: grid; grid-template-columns: 14px 18px minmax(0, 1fr) auto; gap: 6px; align-items: center; min-height: 24px; padding: 0 2px; border-radius: var(--radius); cursor: pointer; }
+.role-row:hover { background: var(--panel-2); }
+.role-row input { margin: 0; accent-color: var(--joint); }
+.role-row svg { display: block; }
+.role-row .rc { color: var(--text-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+.role-row.none .rn, .role-row.none svg { opacity: 0.4; }
 .seg { display: inline-flex; }
 .seg .icon-btn { border-radius: 0; margin-left: -1px; }
 .seg .icon-btn:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }

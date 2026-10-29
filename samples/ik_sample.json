@@ -8,7 +8,8 @@
   "mayaVersion":"2024",
   "linearUnit":"cm",
   "angularUnit":"deg",
-  "upAxis":"y"
+  "upAxis":"y",
+  "references":[]
  },
  "nodes":[
   {
@@ -2483,7 +2484,8 @@
      1.0
     ],
     "ro":"xyz"
-   }
+   },
+   "shape":"locator"
   },
   {
    "name":"spB_loc1",
@@ -2545,7 +2547,8 @@
      1.0
     ],
     "ro":"xyz"
-   }
+   },
+   "shape":"locator"
   },
   {
    "name":"spB_loc2",
@@ -2607,7 +2610,8 @@
      1.0
     ],
     "ro":"xyz"
-   }
+   },
+   "shape":"locator"
   },
   {
    "name":"spB_loc3",
@@ -2670,6 +2674,7 @@
     ],
     "ro":"xyz"
    },
+   "shape":"locator",
    "drivenBy":[
     "ty ← spB_loc3_translateY（animCurveTL）"
    ]
@@ -2976,6 +2981,14 @@
    "display":0
   }
  ],
+ "cameras":[],
+ "viewCamera":-1,
+ "sequencer":null,
+ "render":{
+  "width":640,
+  "height":480,
+  "deviceAspectRatio":1.3333333333333333
+ },
  "materials":[],
  "textures":[],
  "warnings":[],
@@ -2984,6 +2997,7 @@
   "joints":25,
   "meshes":1,
   "curves":2,
+  "cameras":0,
   "vertices":8,
   "polygons":6,
   "skinnedMeshes":0,
@@ -5134,8 +5148,10 @@
     }
    }
   ],
+  "nodeDefs":{},
   "fallback":[],
   "tainted":[],
+  "props":[],
   "times":{
    "dtype":"float32",
    "count":18,
@@ -5163,7 +5179,7 @@
    "channels":9,
    "nodes":25,
    "graphNodes":62,
-   "seconds":0.0015
+   "seconds":0.004
   }
  }
 }

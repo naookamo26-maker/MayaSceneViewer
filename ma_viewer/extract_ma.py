@@ -1315,6 +1315,19 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         why = selectability(x)
         if why:
             entry["unselectable"] = why     # Maya のビューポートでは選択できない（テンプレート・リファレンス）
+        # コントローラーの目印に使う: ロケーターのシェイプと、描画のオーバーライド・ディスプレイレイヤーの色
+        # （ロケーターならシェイプから、なければ transform から祖先へ。カーブと同じ探し方）
+        loc = next((c for c in x.children if c.type == "locator"), None)
+        if loc is not None:
+            entry["shape"] = "locator"
+        color, _display = curve_display(loc if loc is not None else x, (loc if loc is not None else x).xattrs)
+        if color:
+            entry["color"] = schema.round_list(color)
+        # 目印を置く位置（オブジェクト空間）: ロケーターは localPosition、それ以外は回転のピボット。
+        # フリーズしたコントローラーや cluster のハンドルは、移動が 0 のままピボットだけが形の位置にある
+        piv = loc.vec3("lp") if loc is not None and any(abs(v) > 1e-9 for v in loc.vec3("lp")) else x.vec3("rp")
+        if any(abs(v) > 1e-9 for v in piv):
+            entry["pivot"] = schema.round_list(list(piv))
         if x.type == "joint":
             entry["segmentScaleCompensate"] = x.flag("ssc", True)
         if x.ssc_parent:

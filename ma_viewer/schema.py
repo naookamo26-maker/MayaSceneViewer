@@ -21,6 +21,9 @@
      "inheritsTransform": bool,
      "segmentScaleCompensate": bool,  # joint のみ（省略時は true）
      "visible": bool,             # 自身の表示状態
+     "shape": "locator",          # ロケーターのシェイプを持つ（省略可。.ma のみ）
+     "color": [r, g, b],          # 描画のオーバーライド・ディスプレイレイヤーの色（省略可。.ma のみ）
+     "pivot": [3],                # 回転のピボット（ロケーターは localPosition）。オブジェクト空間（省略可。.ma のみ）
      "attrs": {"t": [3], "r": [3](度), "s": [3], "jo": [3](度), "ro": "xyz"}}
   ],
   "meshes": [
