@@ -1036,6 +1036,7 @@
     ],
     "ro":"xyz"
    },
+   "shape":"locator",
    "drivenBy":[
     "tx ← rgLoc_translateX（animCurveTL）"
    ]
@@ -1714,8 +1715,8 @@
  "textures":[],
  "warnings":[
   "ヒストリのあるカーブ 3 本の形を、形を作るノード（circle など）から計算しました。",
-  "形を計算できないカーブがあります（形を作るノードの型: makeTextCurves 1 本、rebuildCurve 1 本）。Maya でヒストリを削除して保存すると表示できます。",
-  "rbDShape: 形を作るノード rbD_rebuild（rebuildCurve。カーブの作り直し。Maya の近似の計算を再現できない）を計算できません。表示しません（スプライン IK などにも使えません。ヒストリを削除して保存してください）",
+  "形を計算できないカーブがあります（形を作るノードの型: makeTextCurves 1 本、offsetCurve 1 本）。Maya でヒストリを削除して保存すると表示できます。",
+  "rbDShape: 形を作るノード rbD_offset（offsetCurve。カーブのオフセット。ビューアでは計算できない）を計算できません。表示しません（スプライン IK などにも使えません。ヒストリを削除して保存してください）",
   "txFShape: 形を作るノード txF_freeze の入力: txF_text（makeTextCurves。文字のカーブ。形はフォントから作られるため、ビューアでは作れない）を計算できません。表示しません（スプライン IK などにも使えません。ヒストリを削除して保存してください）"
  ],
  "stats":{
@@ -2699,7 +2700,7 @@
    "channels":2,
    "nodes":10,
    "graphNodes":29,
-   "seconds":0.0009
+   "seconds":0.0013
   }
  }
 }

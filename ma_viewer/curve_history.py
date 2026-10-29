@@ -9,7 +9,11 @@ Maya は、ヒストリのあるカーブの形を .ma に保存しない（開�
 計算できる形を作るノード:
   * makeNurbCircle（circle）: 法線・中心・半径・次数（1・3）・分割数。sweep 360 度・useTolerance なしのとき
   * transformGeometry（フリーズトランスフォームなど）: 入力の形に行列を掛ける（invertTransform も）
-計算できないもの（rebuildCurve など）は、カーブの名前と形を作るノードを覚えておき、警告とリグの診断に出す。
+  * rebuildCurve: 作り直しの種類 uniform（一様なノット。元の形に最小二乗であてはめる近似）と keepControlPoints
+  * reverseCurve（向きの反転）・detachCurve（分割。出力 oc[i]）・subCurve（パラメータの範囲を切り出す）
+計算は nurbs.py（ビューアがリグとして評価するときは web_src/src/curve.js の同じ手順）。
+入力の形が動く（変形・ワールド空間の形）か、属性が接続されているものは焼き付けず、ビューアがリグとして毎フレーム評価する。
+計算できないもの（makeTextCurves など）は、カーブの名前と形を作るノードを覚えておき、警告とリグの診断に出す。
 """
 from __future__ import annotations
 
@@ -101,7 +105,12 @@ class Unsupported(Exception):
 # 計算できない形を作るノードの、理由の説明
 _WHY = {
     "makeTextCurves": "文字のカーブ。形はフォントから作られるため、ビューアでは作れない",
-    "rebuildCurve": "カーブの作り直し。Maya の近似の計算を再現できない",
+    "offsetCurve": "カーブのオフセット。ビューアでは計算できない",
+    "extendCurve": "カーブの延長。ビューアでは計算できない",
+    "attachCurve": "カーブのつなぎ合わせ。ビューアでは計算できない",
+    "smoothCurve": "カーブのなめらか化。ビューアでは計算できない",
+    "fitBspline": "点を通るカーブのあてはめ。ビューアでは計算できない",
+    "closeCurve": "カーブを閉じる・開く。ビューアでは計算できない",
 }
 
 
@@ -161,10 +170,102 @@ def _transform_geometry(ms, node, _attr, world=None) -> List[float]:
     return out
 
 
+def _input_curve(ms, node, world, key="ic"):
+    from . import nurbs
+    src = node.inputs.get(key)
+    if src is None:
+        raise Unsupported("%s に入力のカーブ（inputCurve）がない" % node.name, node)
+    c = nurbs.from_cc(output_cc(ms, src[0], src[1], world=world))
+    if c is None:
+        raise Unsupported("入力の形が読めない", node)
+    return c
+
+
+def _rebuild_curve(ms, node, _attr, world=None) -> List[float]:
+    from . import nurbs
+    a = _attrs(ms, node)
+    c = _input_curve(ms, node, world)
+    keep_cvs = _num(a.get("kcp")) >= 0.5
+    rt = int(round(_num(a.get("rt"), 0.0)))
+    if rt != 0 and not keep_cvs:
+        names = {1: "reduce spans", 2: "match knots", 3: "remove multiple knots", 4: "curvature", 5: "rebuild ends", 6: "clean"}
+        raise Unsupported("作り直しの種類 %s（uniform だけ計算できる）" % names.get(rt, rt), node)
+    out = nurbs.rebuild(c, spans=int(round(_num(a.get("s"), 4.0))), degree=int(round(_num(a.get("d"), 3.0))),
+                        keep_range=int(round(_num(a.get("kr"), 1.0))), multiple_ends=_num(a.get("end"), 0.0) >= 0.5,
+                        keep_end_points=_num(a.get("kep"), 1.0) >= 0.5, keep_tangents=_num(a.get("kt"), 1.0) >= 0.5,
+                        keep_cvs=keep_cvs)
+    return nurbs.to_cc(out)
+
+
+def _reverse_curve(ms, node, _attr, world=None) -> List[float]:
+    from . import nurbs
+    return nurbs.to_cc(nurbs.reverse(_input_curve(ms, node, world)))
+
+
+def _sub_range(a: dict, c) -> Tuple[float, float]:
+    """subCurve の範囲（relative なら 0〜1 をパラメータの範囲に当てる。maxValue が既定の −1 なら終わりまで）"""
+    lo, hi = c.domain
+    mn, mx = _num(a.get("min"), 0.0), _num(a.get("max"), -1.0)
+    if _num(a.get("r")) >= 0.5:
+        return lo + (hi - lo) * mn, lo + (hi - lo) * mx
+    return mn, (hi if mx < mn else mx)
+
+
+def _sub_curve(ms, node, _attr, world=None) -> List[float]:
+    from . import nurbs
+    c = _input_curve(ms, node, world)
+    if c.form == 2:
+        raise Unsupported("周期的なカーブの切り出し", node)
+    lo, hi = _sub_range(_attrs(ms, node), c)
+    seg = nurbs.segment(c, lo, hi)
+    if seg is None:
+        raise Unsupported("切り出す範囲がない", node)
+    return nurbs.to_cc(seg)
+
+
+def _multi(a: dict, base: str) -> Dict[int, float]:
+    """配列の属性（p[0]・p[1] …）の値"""
+    import re
+    out = {}
+    for k, v in a.items():
+        m = re.match(r"^%s\[(\d+)\]$" % re.escape(base), k)
+        if m and isinstance(v, (int, float, bool)):
+            out[int(m.group(1))] = _num(v)
+    return out
+
+
+def _detach_curve(ms, node, attr, world=None) -> List[float]:
+    from . import nurbs
+    import re
+    m = re.match(r"^oc\[(\d+)\]$", attr or "")
+    index = int(m.group(1)) if m else 0
+    c = _input_curve(ms, node, world)
+    if c.form == 2:
+        raise Unsupported("周期的なカーブの分割", node)
+    a = _attrs(ms, node)
+    params = [v for _k, v in sorted(_multi(a, "p").items())]
+    lo, hi = c.domain
+    cuts = [lo] + params + [hi]
+    if index + 1 >= len(cuts):
+        raise Unsupported("分割の出力 %d がない" % index, node)
+    if _multi(a, "k").get(index, 1.0) < 0.5:
+        raise Unsupported("分割の出力 %d は残さない設定（keep）" % index, node)
+    seg = nurbs.segment(c, cuts[index], cuts[index + 1])
+    if seg is None:
+        raise Unsupported("分割の出力 %d の範囲がない" % index, node)
+    return nurbs.to_cc(seg)
+
+
 PRODUCERS = {
     "makeNurbCircle": _circle,
     "transformGeometry": _transform_geometry,
+    "rebuildCurve": _rebuild_curve,
+    "reverseCurve": _reverse_curve,
+    "detachCurve": _detach_curve,
+    "subCurve": _sub_curve,
 }
+# 入力のカーブの属性（動くときはビューアがリグとして評価する形を作るノード）
+CURVE_INPUT = {"transformGeometry": "ig", "rebuildCurve": "ic", "reverseCurve": "ic", "detachCurve": "ic", "subCurve": "ic"}
 
 
 def output_cc(ms, node, attr: str, depth: int = 0, world=None) -> List[float]:
@@ -224,8 +325,9 @@ def bake_curve_history(ms, world=None) -> Dict[str, List[Tuple[str, str]]]:
         cc = _attrs(ms, n).get("cc")
         if isinstance(cc, list) and len(cc) > 6:
             continue
-        if x.type == "transformGeometry" and not is_static(x, sattr):
-            # 動く transformGeometry（行列が接続されている・入力が変形やワールド空間の形）: 接続を残し、
+        if x.type in CURVE_INPUT and not is_static(x, sattr):
+            # 動く形を作るノード（transformGeometry の行列・rebuildCurve の属性などが接続されている、入力が変形や
+            # ワールド空間の形）: 接続を残し、
             # ビューアがリグとして評価する。上流に形の元（保存された形・計算できる形を作るノード）がなければ報告する
             exc = _base_problem(ms, x, sattr, world)
             if exc is not None:
@@ -272,10 +374,11 @@ def is_static(node, attr: str = "", depth: int = 0) -> bool:
         return src is None or is_static(src[0], src[1], depth + 1)
     if node.type == "makeNurbCircle":
         return True                                       # 円は、ビューアでは保存された値で作る
-    if node.type == "transformGeometry":
-        if set(node.inputs) - {"ig"}:
-            return False                                  # 行列（txf）などが接続されている
-        src = node.inputs.get("ig")
+    if node.type in CURVE_INPUT:
+        key = CURVE_INPUT[node.type]
+        if set(node.inputs) - {key}:
+            return False                                  # 行列（txf）・作り直しの属性などが接続されている
+        src = node.inputs.get(key)
         return src is not None and is_static(src[0], src[1], depth + 1)
     return False
 
@@ -328,8 +431,10 @@ def shape_blocker(ms, shape) -> Optional[object]:
         last = x
         if x.type == "nurbsCurve":
             nxt = x.inputs.get("cr")
-        elif x.type in ("groupParts", "transformGeometry"):
+        elif x.type == "groupParts":
             nxt = x.inputs.get("ig")
+        elif x.type in CURVE_INPUT:
+            nxt = x.inputs.get(CURVE_INPUT[x.type])
         else:
             keys = sorted(k for k in x.inputs if k.startswith(_DEFORM_INPUT_PREFIX) and k.endswith(".ig"))
             if not keys:
