@@ -208,7 +208,8 @@ export class UI {
     $('opt-pick-all').setAttribute('aria-pressed', String(!!st.pickAll));
     // メニュー名の横に、既定と違う設定を表示する
     const VIEW = { baseColor: 'ベースカラー', normal: '法線', roughness: 'ラフネス', metalness: 'メタリック', ao: 'AO', emissive: 'エミッシブ', opacity: '不透明度' };
-    const viewState = [st.lighting === 'flat' ? 'フラットライト' : '', st.shading === 'none' ? 'ワイヤーのみ' : st.shading === 'flat' ? 'フラット' : '']
+    const viewState = [st.lighting === 'flat' ? 'フラットライト' : '', st.shading === 'none' ? 'ワイヤーのみ' : st.shading === 'flat' ? 'フラット' : '',
+      st.playbackCacheMB === 0 ? 'キャッシュなし' : '']
       .filter(Boolean).join('・');
     $('menu-view-state').textContent = viewState;
     $('menu-maps-state').textContent = st.mapView !== 'combined' ? VIEW[st.mapView] || '' : '';
@@ -839,6 +840,14 @@ export class UI {
   /** ヘッドアップディスプレイ（text が null なら隠す。cls: '' / 'slow'（処理落ち）/ 'idle'（停止中）） */
   setHud(text, cls) {
     const el = $('vp-hud');
+    el.hidden = text === null;
+    if (text === null) return;
+    el.textContent = text;
+    el.className = cls || '';
+  }
+  /** 再生キャッシュの行（text が null なら隠す。cls: '' / 'full'（上限に達した）） */
+  setCacheHud(text, cls) {
+    const el = $('vp-cache');
     el.hidden = text === null;
     if (text === null) return;
     el.textContent = text;

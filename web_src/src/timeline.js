@@ -11,6 +11,7 @@ export class Timeline {
     this.clip = null;
     this.status = '';
     this.keys = [];
+    this.cached = null;      // (f) => boolean  再生キャッシュにあるフレーム（なければ帯を描かない）
     this.root = $('timeline');
     if (!this.root) return;
     this.slider = $('tl-slider');
@@ -101,6 +102,12 @@ export class Timeline {
     this.drawKeys();
   }
 
+  /** 再生キャッシュにあるフレームを、スライダーの上端に緑の帯で描く。has: (f) => boolean（null で消す） */
+  setCached(has) {
+    this.cached = has;
+    this.drawKeys();
+  }
+
   drawKeys() {
     const c = this.canvas;
     if (!c || !this.clip || this.root.hidden) return;
@@ -121,6 +128,21 @@ export class Timeline {
     const step = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].find((k) => (w - 2 * THUMB) / (span / k) >= 6) || 1000;
     g.fillStyle = 'rgba(142, 151, 161, 0.35)';
     for (let t = Math.ceil(s / step) * step; t <= e; t += step) g.fillRect(Math.round(x(t)), h - 4, 1, 4);
+    // 再生キャッシュにあるフレーム（続いているフレームは 1 本の帯にする）
+    if (this.cached) {
+      g.fillStyle = '#5fb37a';
+      const f0 = Math.ceil(s), f1 = Math.floor(e);
+      const left = (f) => Math.max(THUMB, x(f - 0.5)), right = (f) => Math.min(w - THUMB, x(f + 0.5));
+      let run = null;
+      for (let f = f0; f <= f1 + 1; f++) {
+        if (f <= f1 && this.cached(f)) { if (run === null) run = f; continue; }
+        if (run !== null) {
+          const a = Math.floor(left(run)), b = Math.ceil(right(f - 1));
+          g.fillRect(a, 0, Math.max(b - a, 1), 2);
+          run = null;
+        }
+      }
+    }
     // キー
     g.fillStyle = '#e5675b';
     for (const t of this.keys) {

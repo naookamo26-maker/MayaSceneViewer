@@ -67,6 +67,26 @@ class Bridge(QtCore.QObject):
     def showWarnings(self):
         self.showWarningsSignal.emit()
 
+    # JS から保存・読み戻しできる設定（キー → QSettings のキー）
+    SAVED_SETTINGS = {"playbackCacheMB": "viewer/playbackCacheMB"}
+
+    @Slot(str, str)
+    def saveSetting(self, key, value):
+        """JS の設定を保存する（次回の起動で loadSetting から読み戻す）。決まったキーだけ受け付ける。"""
+        if key in self.SAVED_SETTINGS:
+            _settings_set(self.SAVED_SETTINGS[key], str(value))
+
+    @Slot(str, result=str)
+    def loadSetting(self, key):
+        """保存した JS の設定（なければ空文字）。"""
+        if key not in self.SAVED_SETTINGS:
+            return ""
+        try:
+            v = _settings().value(self.SAVED_SETTINGS[key], "")
+        except Exception:  # noqa: BLE001
+            return ""
+        return "" if v is None else str(v)
+
     @Slot(str, result=str)
     def readFileBase64(self, path):
         """テクスチャを JS に渡す（file:// で直接読めなかったときの代替経路）。"""

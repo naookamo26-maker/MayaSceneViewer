@@ -325,6 +325,8 @@ table.kv td.l { text-align: left; }
 .choices.row button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
 .choices.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; }
 .choices.grid button { border-radius: var(--radius); }
+.choices.grid.cols3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.choices.grid.cols3 button { text-align: center; }
 .choices.list { flex-direction: column; gap: 2px; }
 .choices.list button { border-color: transparent; background: none; border-radius: var(--radius); padding-left: 24px; position: relative; }
 .choices.list button::before {
@@ -405,6 +407,16 @@ table.kv td.l { text-align: left; }
 #vp-hud.slow { color: #ff9a8c; }
 #vp-hud.idle { color: rgba(255, 255, 255, 0.55); }
 #viewport.has-timeline #vp-hud { bottom: 48px; }
+/* リグの再生キャッシュ（ヘッドアップディスプレイの 1 段上） */
+#vp-cache {
+  position: absolute; right: 10px; bottom: 22px;
+  color: rgba(255, 255, 255, 0.55); font-size: 11px; font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  pointer-events: none; white-space: nowrap;
+}
+#vp-cache[hidden] { display: none; }
+#vp-cache.full { color: #f0c36b; }
+#viewport.has-timeline #vp-cache { bottom: 62px; }
 #vp-hint {
   position: absolute; left: 10px; bottom: 8px;
   color: rgba(255, 255, 255, 0.55);
