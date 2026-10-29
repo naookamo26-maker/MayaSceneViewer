@@ -18,7 +18,7 @@ from typing import List, Optional, Set
 
 from .custom_nodes import FILE_NAME, template_for
 
-from .ma_scene import MaNode, MaScene
+from .ma_scene import MaNode, MaScene, xform_group
 from .rig import (CONSTRAINT_TYPES, CURVE_TYPES, GEOMETRY_TYPES, SUPPORTED_DG, _CHANNEL_KEYS, _DISPLAY_KEYS, _MATRIX_PLUGS,
                   _base, _dag_like, _evaluable)
 
@@ -112,7 +112,7 @@ class _Tracer:
                 x = x.parent if x.flag("it", True) else None
         elif b in _CHANNEL_KEYS:
             for k in sorted(n.inputs):
-                if _base(k) in _CHANNEL_KEYS and k[0] == b[0]:
+                if _base(k) in _CHANNEL_KEYS and xform_group(k) == xform_group(b):
                     self.plug(n, k, depth)
         elif attr in n.inputs:
             self.plug(n, attr, depth)

@@ -72,11 +72,62 @@ for _base in ("t", "r", "s", "jo", "ra", "rp", "sp", "rpt", "spt"):
     for _i, _ax in enumerate("xyz"):
         _COMPONENT_ATTRS[_base + _ax] = (_base, _i)
 _COMPONENT_ATTRS.update({"shxy": ("sh", 0), "shxz": ("sh", 1), "shyz": ("sh", 2)})
+# 移動・回転・スケールの制限（transform の属性）: 種類 → (最小, 最大, 最小を有効にする, 最大を有効にする) の短い名前。
+# 値の成分は mtxl（最小の X）・xtxl（最大の X）など、有効にするフラグの成分は mtxe・xtxe など
+LIMIT_ATTRS = {"t": ("mntl", "mxtl", "mtle", "xtle"), "r": ("mnrl", "mxrl", "mrle", "xrle"),
+               "s": ("mnsl", "mxsl", "msle", "xsle")}
+_LIMIT_ENABLES = {}
+for _k, (_mn, _mx, _mne, _mxe) in LIMIT_ATTRS.items():
+    _c = {"t": "t", "r": "r", "s": "s"}[_k]
+    _VEC3_ATTRS |= {_mn, _mx}
+    for _i, _ax in enumerate("xyz"):
+        _COMPONENT_ATTRS["m%s%sl" % (_c, _ax)] = (_mn, _i)
+        _COMPONENT_ATTRS["x%s%sl" % (_c, _ax)] = (_mx, _i)
+        _LIMIT_ENABLES["m%s%se" % (_c, _ax)] = (_mne, _i)
+        _LIMIT_ENABLES["x%s%se" % (_c, _ax)] = (_mxe, _i)
+    _LIMIT_ENABLES[_mne] = (_mne, -1)
+    _LIMIT_ENABLES[_mxe] = (_mxe, -1)
+_VEC3_DEFAULTS.update({"mntl": (-1.0, -1.0, -1.0), "mxtl": (1.0, 1.0, 1.0), "mnsl": (-1.0, -1.0, -1.0),
+                       "mxsl": (1.0, 1.0, 1.0)})   # 回転の既定値（±45 度）はファイルの角度の単位による（MaNode.limits）
+
+def clamp_limits(v, lim) -> Tuple[float, float, float]:
+    """3 つの値を制限（MaNode.limits の 1 種類分 [[最小 × 3], [最大 × 3]]。None は制限なし）の範囲に収める"""
+    if not lim:
+        return tuple(v)
+    out = []
+    for i in range(3):
+        x = v[i]
+        if lim[0][i] is not None and x < lim[0][i]:
+            x = lim[0][i]
+        if lim[1][i] is not None and x > lim[1][i]:
+            x = lim[1][i]
+        out.append(x)
+    return tuple(out)
+
+
+# ノードのローカル行列を決める属性（短い名前）。ここに接続があればビューアが毎フレーム評価する
+XFORM_BASES = ("t", "r", "s", "jo", "ra", "rp", "sp", "rpt", "spt")
+XFORM_KEYS = (set(XFORM_BASES) | {b + ax for b in XFORM_BASES for ax in "xyz"}
+              | {"sh", "shxy", "shxz", "shyz", "ro", "opm"})
+_XFORM_GROUP_RE = re.compile(r"^(t|r|s|jo|ra|rp|sp|rpt|spt)[xyz]?$")
+
+
+def xform_group(key: str) -> Optional[str]:
+    """ローカル行列の属性の種類（tx → t・rpx → rp・shxy → sh・ro → ro）。ほかの属性は None"""
+    b = key.split("[")[0].split(".")[0]
+    if b in ("ro", "opm"):
+        return b
+    if b in ("sh", "shxy", "shxz", "shyz"):
+        return "sh"
+    m = _XFORM_GROUP_RE.match(b)
+    return m.group(1) if m else None
+
+
 _BOOL_ATTRS = {"v", "io", "it", "ssc", "ove", "ovv", "lodv", "ovrgbf", "tmp"}   # tmp: テンプレート
 _INT_ATTRS = {"ro", "ovc", "ovdt"}    # ovc・ovdt: 描画のオーバーライドの色番号・表示の種類
 _FLOAT_ATTRS = {"radi"}
 # ノードの種類ごとに使う属性（これ以外の setAttr は値を解析せずに読み飛ばす）
-_XFORM_NAMES = _VEC3_ATTRS | set(_COMPONENT_ATTRS) | _BOOL_ATTRS | _INT_ATTRS | _FLOAT_ATTRS | {"bps", "opm", "ovrgb"}
+_XFORM_NAMES = _VEC3_ATTRS | set(_COMPONENT_ATTRS) | set(_LIMIT_ENABLES) | _BOOL_ATTRS | _INT_ATTRS | _FLOAT_ATTRS | {"bps", "opm", "ovrgb"}
 _MESH_NAMES = _XFORM_NAMES | {"vt", "pt", "ed", "fc", "cuvs", "uvst", "iog"}
 _SKIN_NAMES = _XFORM_NAMES | {"wl", "pm", "gm", "skm", "mi", "nw", "wd"}
 _PLUG_RE = re.compile(r'"([^"]*)"')
@@ -236,6 +287,23 @@ class MaNode:
     def flag(self, name: str, default: bool) -> bool:
         v = self.xattrs.get(name)
         return default if v is None else bool(v)
+
+    def limits(self, deg: float = 1.0) -> Optional[dict]:
+        """移動・回転・スケールの制限（有効なものだけ）。{"t" | "r" | "s": [[最小 × 3], [最大 × 3]]}（無効な成分は None）。
+        値はファイルの単位のまま。deg はファイルの単位での 1 度（回転の既定値 ±45 度に使う）。制限がなければ None"""
+        out = {}
+        for k, (mn, mx, mne, mxe) in LIMIT_ATTRS.items():
+            en_lo = self.xattrs.get(mne) or (False, False, False)
+            en_hi = self.xattrs.get(mxe) or (False, False, False)
+            if not any(en_lo) and not any(en_hi):
+                continue
+            d = 45.0 * deg
+            lo = self.xattrs.get(mn) or ((-d, -d, -d) if k == "r" else _VEC3_DEFAULTS[mn])
+            hi = self.xattrs.get(mx) or ((d, d, d) if k == "r" else _VEC3_DEFAULTS[mx])
+            lo = [-d if v != v else float(v) for v in lo]       # NaN（成分だけ書かれた残り）は既定値
+            hi = [d if v != v else float(v) for v in hi]
+            out[k] = [[lo[i] if en_lo[i] else None for i in range(3)], [hi[i] if en_hi[i] else None for i in range(3)]]
+        return out or None
 
     def inverse_scale_source(self) -> Optional["MaNode"]:
         """親のスケールの打ち消し（ローカル行列の移動の直前に掛けるスケールの逆数）に使うスケールを持つノード。
@@ -859,9 +927,19 @@ class MaScene:
             if vals:
                 vec = node.xattrs.get(base)
                 if vec is None:
-                    vec = list(_VEC3_DEFAULTS.get(base, (0.0, 0.0, 0.0)))
+                    # 回転の制限の既定値は角度の単位によるので、未定（NaN）にしておく（MaNode.limits）
+                    vec = [float("nan")] * 3 if base in ("mnrl", "mxrl") else list(_VEC3_DEFAULTS.get(base, (0.0, 0.0, 0.0)))
                     node.xattrs[base] = vec
                 vec[i] = R.to_float(vals[0])
+        elif name in _LIMIT_ENABLES:
+            base, i = _LIMIT_ENABLES[name]
+            vals = sa.values()
+            vec = node.xattrs.setdefault(base, [False, False, False])
+            if i >= 0 and vals:
+                vec[i] = R.to_bool(vals[0])
+            elif i < 0:
+                for j, v in enumerate(vals[:3]):
+                    vec[j] = R.to_bool(v)
         elif name in _BOOL_ATTRS:
             vals = sa.values()
             if vals:

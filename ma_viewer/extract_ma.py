@@ -16,8 +16,8 @@ from typing import Dict, List, Optional, Tuple
 
 from . import mathutil as M
 from . import schema
-from .ma_scene import (FAST, FlatFaces, MaNode, MaScene, ProgressFn, RawNumbers, _ranges, fast_numbers, np,
-                       numpy_enabled, parse_component_list, parse_ma_file)
+from .ma_scene import (FAST, XFORM_KEYS, FlatFaces, MaNode, MaScene, ProgressFn, RawNumbers, _ranges, clamp_limits,
+                       fast_numbers, np, numpy_enabled, parse_component_list, parse_ma_file)
 from . import ma_reader as R
 from .materials import (ALPHA_OUTPUTS, OPACITY_ATTRS, OUTPUT_CHANNEL, SCALAR_ATTRS, TextureResolver, albedo_attrs,
                         default_color, map_attrs, texture_entry, texture_warnings, to_udim_pattern)
@@ -50,12 +50,14 @@ class _Ctx:
         ro = M.ROTATE_ORDERS[ro_i] if 0 <= ro_i < 6 else "xyz"
         src = n.inverse_scale_source()                  # 親のスケールの打ち消し（ジョイントの segmentScaleCompensate など）
         ips = src.vec3("s") if src is not None else None
+        lim = n.limits(math.pi / 180.0 / self.ang) if self.ang else n.limits()
+        t, r, s = (clamp_limits(n.vec3(k), lim.get(k)) if lim else n.vec3(k) for k in ("t", "r", "s"))
         if n.type == "joint":
-            m = M.joint_matrix(t=n.vec3("t"), r=self.rad(n.vec3("r")), s=n.vec3("s"), ro=ro,
+            m = M.joint_matrix(t=t, r=self.rad(r), s=s, ro=ro,
                                ra=self.rad(n.vec3("ra")), jo=self.rad(n.vec3("jo")),
                                inverse_parent_scale=ips)
         else:
-            m = M.transform_matrix(t=n.vec3("t"), r=self.rad(n.vec3("r")), s=n.vec3("s"), ro=ro,
+            m = M.transform_matrix(t=t, r=self.rad(r), s=s, ro=ro,
                                    ra=self.rad(n.vec3("ra")), rp=n.vec3("rp"), sp=n.vec3("sp"),
                                    rpt=n.vec3("rpt"), spt=n.vec3("spt"), sh=n.vec3("sh"),
                                    inverse_parent_scale=ips)
@@ -734,8 +736,7 @@ def uv_set_name(md, k: Optional[int]) -> str:
 
 _MEMBER_RE = re.compile(r"^m\[(\d+)\]$")
 # 移動・回転・スケールなど、ノードの行列を決める属性（ここに接続があると .ma に値が残らない）
-_CHANNEL_ATTRS = {"t", "tx", "ty", "tz", "r", "rx", "ry", "rz", "s", "sx", "sy", "sz", "jo", "jox", "joy", "joz",
-                  "ra", "rax", "ray", "raz", "sh", "rp", "sp", "rpt", "spt", "ro", "opm"}
+_CHANNEL_ATTRS = XFORM_KEYS
 # アニメーションカーブで再生できる属性（animation.CHANNELS と同じ）
 _CURVE_CHANNELS = {"tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz"}
 BIND_SOURCE_LABELS = {"pm": "skinCluster の .pm", "dagPose": "dagPose", "bps": "ジョイントの .bps"}
