@@ -95,6 +95,17 @@ const OUTPUTS = {
 };
 // DAG ノードの、値が決まると行列が変わる属性
 const CHANNEL_RE = /^([trs][xyz]?|opm)$/;
+const CHANNEL_ATTR_RE = /^[trs][xyz]?$/;
+const CHAN_MODES = { full: 0, fk: 1, t: 2 };
+const NO_INPUTS = [];
+const NO_POSE = () => null;                // ポーズ確認の追加分なし
+const BUSY = Symbol('busy');               // キャッシュの計算中の印（循環の検出）
+const PLAN = { def: 0, input: 1, component: 2, output: 3, triple: 4, static: 5 };   // plugPlan の種類
+const NOTHING = () => undefined;
+const NULL = () => null;
+const TIME_RE = /\b(frame|time)\b/;       // expression が時間を読むか
+// 値のキャッシュ（chan のキーは ni · 3 + モード、plug は id → 属性 → 値）
+const emptyCache = () => ({ chan: new Map(), local: new Map(), world: new Map(), plug: new Map(), out: new Map(), ik: new Map() });
 
 /** ファイルの値が度で書かれている角度の属性（内部ではラジアンで扱う） */
 /** aim と up が平行な aimConstraint の解き方の候補（最短の回転をどこから測るか） */
@@ -272,7 +283,7 @@ export class RigEvaluator {
     this.splineRoots = new Set(this.graph.filter((g) => g.ik && g.ik.solver === 'ikSplineSolver'
       && ((g.attrs || {}).roc ?? 0) >= 0.5).map((g) => g.ik.chain[0]));
     // 時間で変わる expression（frame・time を使う式）があるか（キーがなくてもタイムラインを出す）
-    this.usesTime = this.graph.some((g) => g.type === 'expression' && /\b(frame|time)\b/.test(g.expr || ''));
+    this.usesTime = this.graph.some((g) => g.type === 'expression' && TIME_RE.test(g.expr || ''));
     this.hasTrax = this.graph.some((g) => g.trax);          // キャラクターセットの Trax のクリップ（時間で変わる）
     this.props = clip.raw.props || [];       // 表示・カメラの属性の接続（evaluateProps）
     // 自作ノードの定義（animation.nodeDefs）: 型 → 評価できる形。定義が壊れていれば、そのノードは評価しない
@@ -284,37 +295,149 @@ export class RigEvaluator {
     this.ikVariant = null;                   // 再現チェックで試す IK の解き方の候補（ふだんは null）
     this.aimMode = null;                     // aim と up が平行な aimConstraint の解き方（再現チェックで試す。null = parent）
     this.frame = 0;
-    this.poseOf = () => null;
+    this.poseOf = NO_POSE;
+    this.poseKey = null;
+    // 時間で変わらない値（キー・frame・time・Trax のどれも読まずに求めた値）は、フレームをまたいで keep に残す。
+    // ポーズ確認の追加分・再現チェックの候補（ikVariant・aimMode）が変わったら捨てる（keepFor と比べる）
+    this.keep = emptyCache();
+    this.keepFor = { pose: null, ikVariant: null, aimMode: null };
+    this.keepStatic = true;                  // false なら keep を使わない（毎フレームすべて計算する）
+    this.plans = new Map();                  // グラフの id → 属性 → 値の求め方（plugPlan）
+    this.chanInputList = new Map();          // ノード番号 → チャンネルの接続（chanInputs）
+    this.varying = false;                    // いま計算中の値が、時間で変わる値を読んだか
+    // 再生キャッシュ: 整数のフレーム → { mats（動くノードのローカル行列を並べた Float64Array）, props, curves }。
+    // 2 周目以降の再生はコピーだけにする。上限（バイト）を超えたら覚えない。0 なら使わない
+    this.snapshots = new Map();
+    this.snapshotBytes = 0;
+    this.playbackLimit = 256 * 1024 * 1024;
+    this.current = null;                     // いまのフレームの再生キャッシュ（覚えないフレームは null）
     this.reset();
   }
 
   get hasGraph() { return this.graph.length > 0; }
 
   reset() {
-    this.cache = { chan: new Map(), local: new Map(), world: new Map(), plug: new Map(), out: new Map(), ik: new Map() };
+    const k = this.keepFor;
+    if (k.pose !== this.poseKey || k.ikVariant !== this.ikVariant || k.aimMode !== this.aimMode) {
+      this.keep = emptyCache();
+      this.clearPlayback();
+      this.keepFor = { pose: this.poseKey, ikVariant: this.ikVariant, aimMode: this.aimMode };
+    }
+    this.cache = emptyCache();
     this.busy = new Set();
+    this.varying = false;
+    this.current = null;
+  }
+
+  /** 再生キャッシュを捨てる */
+  clearPlayback() {
+    this.snapshots.clear();
+    this.snapshotBytes = 0;
+    this.current = null;
   }
 
   /**
    * フレーム f の、動くノードのローカル行列（ポーズ確認の追加分を含まない）を計算する。
    * @param poseOf (ni) => Matrix4 | null  ポーズ確認の追加分（ワールド行列の計算にだけ使う）
+   * @param poseKey poseOf の中身が同じあいだは同じ値（PoseState.version）。ないときは、フレームをまたぐキャッシュを使わない
    */
-  evaluate(f, poseOf = () => null, target = this.matrices) {
+  evaluate(f, poseOf = NO_POSE, target = this.matrices, poseKey = undefined) {
     this.frame = f;
     this.poseOf = poseOf;
+    this.poseKey = poseOf === NO_POSE ? null : (poseKey ?? {});
     this.reset();
+    const playable = Number.isInteger(f) && this.ikVariant === null && this.aimMode === null && this.playbackLimit > 0;
+    const hit = playable ? this.snapshots.get(f) : null;
+    if (hit) {
+      let o = 0;
+      for (const ni of this.moving) {
+        const m = target.get(ni) || new Matrix4();
+        m.fromArray(hit.mats, o);
+        target.set(ni, m);
+        o += 16;
+      }
+      this.current = hit;
+      return target;
+    }
     for (const ni of this.moving) {
       const m = target.get(ni) || new Matrix4();
       m.copy(this.localFile(ni));
       target.set(ni, m);
     }
+    const bytes = this.moving.size * 128 + 256;
+    if (playable && this.snapshotBytes + bytes <= this.playbackLimit) {
+      const mats = new Float64Array(this.moving.size * 16);
+      let o = 0;
+      for (const ni of this.moving) { target.get(ni).toArray(mats, o); o += 16; }
+      this.current = { mats, props: null, curves: new Map() };
+      this.snapshots.set(f, this.current);
+      this.snapshotBytes += bytes;
+    }
     return target;
   }
 
-  /** 循環の防止。key の計算中にもう一度 key を求めたら fallback を返す */
+  /** フレーム f が再生キャッシュにあるか */
+  hasSnapshot(f) { return this.snapshots.has(f); }
+
+  /** 再生キャッシュが上限に達したか */
+  get playbackFull() { return this.snapshotBytes + this.moving.size * 128 + 256 > this.playbackLimit; }
+
+  /**
+   * 再生キャッシュを先に作る（空き時間に少しずつ呼ぶ）。いまのフレームの評価の結果（matrices と、あとから求める値）は変えない。
+   * @param frames 作るフレーム  @param more () => boolean  続けてよいか（1 フレーム目は必ず作る）
+   * @returns 作ったフレームの数
+   */
+  bake(frames, more = () => true) {
+    const todo = frames.filter((f) => Number.isInteger(f) && !this.snapshots.has(f));
+    if (!todo.length || this.playbackLimit <= 0) return 0;
+    const back = { f: this.frame, poseOf: this.poseOf, key: this.poseKey };
+    const scratch = new Map();
+    let n = 0;
+    for (const f of todo) {
+      if (n > 0 && !more()) break;
+      this.evaluate(f, back.poseOf, scratch, back.key);
+      if (!this.current) break;                          // 上限に達した
+      if (this.props.length) this.evaluateProps();
+      for (const gid of this.curveIds()) this.curveShape(gid);
+      n++;
+    }
+    this.evaluate(back.f, back.poseOf, this.matrices, back.key);
+    return n;
+  }
+
+  /** 値のキャッシュ。fm: このフレームだけ・km: 時間で変わらない値。fallback があれば循環を防ぐ（label は問題の表示） */
+  memo(fm, km, key, compute, fallback, label) {
+    if (fm.has(key)) {
+      const v = fm.get(key);
+      this.varying = true;                    // fm に残るのは時間で変わる値（と計算中の印）
+      if (v !== BUSY) return v;
+      // 循環の防止。key の計算中にもう一度 key を求めたら fallback を返す
+      this.problems.add(`循環: ${label()}`);
+      return fallback();
+    }
+    if (km.has(key)) return km.get(key);
+    const outer = this.varying;
+    this.varying = false;
+    if (fallback) fm.set(key, BUSY);
+    let done = false, v;
+    try {
+      v = compute();
+      done = true;
+    } finally {
+      const varying = this.varying;
+      this.varying = outer || varying;
+      if (!done) fm.delete(key);
+      else if (varying || !this.keepStatic) fm.set(key, v);
+      else { fm.delete(key); km.set(key, v); }
+    }
+    return v;
+  }
+
+  /** 循環の防止（キャッシュしない値に使う）。key の計算中にもう一度 key を求めたら fallback を返す */
   guard(key, fn, fallback) {
     if (this.busy.has(key)) {
       this.problems.add(`循環: ${key}`);
+      this.varying = true;
       return fallback();
     }
     this.busy.add(key);
@@ -336,38 +459,35 @@ export class RigEvaluator {
    * チャンネルの値 { t, r（度）, s }。mode: 'full'（すべて）・'fk'（IK を除く）・'t'（移動だけ。回転の計算を避ける）
    */
   chan(ni, mode = 'full') {
-    const key = `${mode}:${ni}`;
-    const hit = this.cache.chan.get(key);
-    if (hit) return hit;
     const rest = this.rest(ni);
-    const out = rest ? { ...rest, t: rest.t.slice(), r: rest.r.slice(), s: rest.s.slice() } : null;
-    if (!out) return null;
-    const res = this.guard(`chan ${key}`, () => {
+    if (!rest) return null;
+    const restCopy = () => ({ ...rest, t: rest.t.slice(), r: rest.r.slice(), s: rest.s.slice() });
+    return this.memo(this.cache.chan, this.keep.chan, ni * 3 + CHAN_MODES[mode], () => {
+      const out = restCopy();
       const entry = this.clip.byNode.get(ni);
       const fromCurve = new Set();
       for (const ch of entry.channels) {
         if (mode === 't' && ch.base !== 't') continue;
         out[ch.base][ch.axis] = evaluateCurve(ch.curve, this.frame);
+        this.varying = true;
         fromCurve.add(ch.attr);
       }
-      const g = this.dagGraph.get(ni);
-      if (g && g.inputs) {
-        for (const [key2, src] of Object.entries(g.inputs)) {
-          if (key2 === 'opm' && mode !== 't') {                 // offsetParentMatrix の接続（行列ベースの親子付け）
-            const m = this.source(src);
-            if (m && m.isMatrix4) out.opm = m.toArray();
-            else if (Array.isArray(m) && m.length === 16) out.opm = m.slice();
-            continue;
-          }
-          const base = key2[0];
-          if (!/^[trs][xyz]?$/.test(key2) || (mode === 't' && base !== 't') || fromCurve.has(key2)) continue;
-          const v = this.source(src);
-          if (v === undefined) continue;
-          const k = base === 'r' ? R2D : 1;
-          if (key2.length === 1) {
-            if (Array.isArray(v)) for (let a = 0; a < 3; a++) if (!fromCurve.has(base + XYZ[a])) out[base][a] = v[a] * k;
-          } else if (typeof v === 'number') out[base][XYZ.indexOf(key2[1])] = v * k;
+      for (const [key2, src] of this.chanInputs(ni)) {
+        if (key2 === 'opm') {                                   // offsetParentMatrix の接続（行列ベースの親子付け）
+          if (mode === 't') continue;
+          const m = this.source(src);
+          if (m && m.isMatrix4) out.opm = m.toArray();
+          else if (Array.isArray(m) && m.length === 16) out.opm = m.slice();
+          continue;
         }
+        const base = key2[0];
+        if ((mode === 't' && base !== 't') || fromCurve.has(key2)) continue;
+        const v = this.source(src);
+        if (v === undefined) continue;
+        const k = base === 'r' ? R2D : 1;
+        if (key2.length === 1) {
+          if (Array.isArray(v)) for (let a = 0; a < 3; a++) if (!fromCurve.has(base + XYZ[a])) out[base][a] = v[a] * k;
+        } else if (typeof v === 'number') out[base][XYZ.indexOf(key2[1])] = v * k;
       }
       if (this.ikJoint.has(ni) && (mode === 'full' || (mode === 't' && this.splineRoots.has(ni)))) {
         const sol = this.solveIK(this.ikJoint.get(ni));
@@ -380,15 +500,28 @@ export class RigEvaluator {
         }
       }
       return out;
-    }, () => out);
-    this.cache.chan.set(key, res);
-    return res;
+    }, restCopy, () => `chan ${mode}:${ni}`);
+  }
+
+  /** チャンネル（移動・回転・スケール）と offsetParentMatrix の接続 [属性, 接続元]（接続の順。最初に 1 回だけ調べる） */
+  chanInputs(ni) {
+    let list = this.chanInputList.get(ni);
+    if (!list) {
+      const g = this.dagGraph.get(ni);
+      list = g && g.inputs ? Object.entries(g.inputs).filter(([k]) => k === 'opm' || CHANNEL_ATTR_RE.test(k)) : NO_INPUTS;
+      this.chanInputList.set(ni, list);
+    }
+    return list;
   }
 
   /** ローカル行列（ファイルの値。ポーズ確認の追加分なし） */
   localFile(ni) {
-    const hit = this.cache.local.get(ni);
-    if (hit) return hit;
+    const rest = this.rest(ni);
+    if (!this.fallback.has(ni) && (!rest || !this.moving.has(ni))) return this.staticLocal(ni);
+    return this.memo(this.cache.local, this.keep.local, ni, () => this.localFileUncached(ni, rest), null, null);
+  }
+
+  localFileUncached(ni, rest) {
     const fb = this.fallback.get(ni);
     if (fb) {
       // 推定: 確かな一番近い祖先（anchor）からの相対を、バインドポーズのとおりに保つ
@@ -396,27 +529,19 @@ export class RigEvaluator {
       const W = fb.anchor >= 0
         ? this.world(fb.anchor).clone().multiply(this.bindWorld(fb.anchor).clone().invert()).multiply(this.bindWorld(ni))
         : this.bindWorld(ni).clone();
-      const m = this.parentWorld(ni).clone().invert().multiply(W);
-      this.cache.local.set(ni, m);
-      return m;
+      return this.parentWorld(ni).clone().invert().multiply(W);
     }
-    const rest = this.rest(ni);
-    if (!rest || !this.moving.has(ni)) return this.staticLocal(ni);
     const c = this.chan(ni, 'full');
     let isScale = null;
     if (rest.isScale || (rest.isNode ?? -1) >= 0) {
       isScale = rest.isNode >= 0 && this.rest(rest.isNode) ? this.chan(rest.isNode, 'full').s : rest.isScale;
     }
-    const m = composeLocalMatrix(c, isScale, new Matrix4());
-    this.cache.local.set(ni, m);
-    return m;
+    return composeLocalMatrix(c, isScale, new Matrix4());
   }
 
   /** ワールド行列（ファイルの値 · ポーズ確認の追加分） */
   world(ni) {
-    const hit = this.cache.world.get(ni);
-    if (hit) return hit;
-    const m = this.guard(`world ${ni}`, () => {
+    return this.memo(this.cache.world, this.keep.world, ni, () => {
       const local = this.localFile(ni).clone();
       const d = this.poseOf(ni);
       if (d) local.multiply(d);
@@ -424,9 +549,7 @@ export class RigEvaluator {
     }, () => {
       const local = this.staticLocal(ni);
       return new Matrix4().multiplyMatrices(this.parentWorld(ni), local);
-    });
-    this.cache.world.set(ni, m);
-    return m;
+    }, () => `world ${ni}`);
   }
 
   /** バインドポーズのワールド行列（バインドポーズの情報がないノードはファイルの値。フレームによらない） */
@@ -500,6 +623,7 @@ export class RigEvaluator {
    * 現在のフレームの値。evaluate() のあとに呼ぶ。[{ kind, index, values: { 属性: 数値 }, static }]
    */
   evaluateProps() {
+    if (this.current && this.current.props) return this.current.props;
     const out = [];
     for (const p of this.props) {
       const values = {};
@@ -510,7 +634,23 @@ export class RigEvaluator {
       }
       out.push({ kind: p.kind, index: p.index, values, static: p.static || null });
     }
+    if (this.current) this.current.props = out;
     return out;
+  }
+
+  /** リグで形が変わるカーブ（nurbsCurve のシェイプ）のグラフの id */
+  curveIds() {
+    if (!this.curveIdList) this.curveIdList = this.graph.filter((g) => g.type === 'nurbsCurve' && g.shape >= 0).map((g) => g.id);
+    return this.curveIdList;
+  }
+
+  /** いまのフレームのカーブの形（plug(gid, 'local')。再生キャッシュにあればそれを使う） */
+  curveShape(gid) {
+    const c = this.current;
+    if (c && c.curves.has(gid)) return c.curves.get(gid);
+    const v = this.plug(gid, 'local');
+    if (c) c.curves.set(gid, v);
+    return v;
   }
 
   /** 接続元の値 */
@@ -519,6 +659,7 @@ export class RigEvaluator {
       const c = this.clip.curves[src.curve];
       if (!c) return undefined;
       const v = evaluateCurve(c, this.frame);
+      this.varying = true;
       return c.type === 'TA' ? v * D2R : v;
     }
     const g = this.byId.get(src.node);
@@ -528,40 +669,60 @@ export class RigEvaluator {
 
   /** グラフのノードの属性の値（接続 → 計算結果 → ファイルの値 → 既定値） */
   plug(id, attr) {
-    const key = `${id}.${attr}`;
-    if (this.cache.plug.has(key)) return this.cache.plug.get(key);
-    const v = this.guard(`plug ${key}`, () => this.plugUncached(id, attr), () => undefined);
-    this.cache.plug.set(key, v);
-    return v;
+    let fm = this.cache.plug.get(id);
+    if (!fm) this.cache.plug.set(id, fm = new Map());
+    let km = this.keep.plug.get(id);
+    if (!km) this.keep.plug.set(id, km = new Map());
+    return this.memo(fm, km, attr, () => this.plugUncached(id, attr), NOTHING, () => `plug ${id}.${attr}`);
   }
 
   plugUncached(id, attr) {
     const g = this.byId.get(id);
-    if (g.def) return this.defPlug(g, attr);
+    const plan = this.plugPlan(g, attr);
+    switch (plan.kind) {
+      case PLAN.def: return this.defPlug(g, attr);
+      case PLAN.input: return this.source(plan.src);
+      case PLAN.component: {                               // 成分（ox）: 3 つ組（o）が接続されている
+        const v = this.source(plan.src);
+        return Array.isArray(v) ? v[plan.index] : undefined;
+      }
+      case PLAN.output: {                                  // 計算結果
+        const outs = this.outputs(id);
+        if (!outs) return undefined;
+        return attr in outs ? outs[attr] : outs[plan.base];                           // ws[0] → ws
+      }
+      case PLAN.triple: {                                  // 3 つ組: 成分ごとに接続・値がある
+        const def = plan.def;
+        return plan.sfx.map((s, k) => {
+          const v = this.plug(id, attr + s);
+          return v !== undefined ? v : (Array.isArray(def) ? def[k] : 0);
+        });
+      }
+      default: return this.staticValue(g, attr);
+    }
+  }
+
+  /**
+   * 属性の値の求め方（接続 → 成分の接続 → 計算結果 → 成分ごとの接続 → ファイルの値）。グラフの形だけで決まるので、
+   * 属性ごとに最初の 1 回だけ調べて覚えておく
+   */
+  plugPlan(g, attr) {
+    let plans = this.plans.get(g.id);
+    if (!plans) this.plans.set(g.id, plans = new Map());
+    let plan = plans.get(attr);
+    if (plan) return plan;
     const inputs = g.inputs || {};
-    if (inputs[attr]) return this.source(inputs[attr]);
-    // 成分（ox）: 3 つ組（o）が接続されている
     const m = /^(.*?)([xyzrgb])$/.exec(attr);
-    if (m && inputs[m[1]] && suffixesOf(g.type, m[1]).includes(m[2])) {
-      const v = this.source(inputs[m[1]]);
-      return Array.isArray(v) ? v[suffixesOf(g.type, m[1]).indexOf(m[2])] : undefined;
-    }
-    // 計算結果
-    if (OUTPUTS[g.type] && OUTPUTS[g.type].test(attr)) {
-      const outs = this.outputs(id);
-      if (!outs) return undefined;
-      return attr in outs ? outs[attr] : outs[attr.replace(/\[\d+\]$/, '')];       // ws[0] → ws
-    }
-    // 3 つ組: 成分ごとに接続・値がある
     const sfx = suffixesOf(g.type, attr);
-    if (sfx.some((s) => inputs[attr + s])) {
-      const def = this.staticValue(g, attr);
-      return sfx.map((s, k) => {
-        const v = this.plug(id, attr + s);
-        return v !== undefined ? v : (Array.isArray(def) ? def[k] : 0);
-      });
-    }
-    return this.staticValue(g, attr);
+    if (g.def) plan = { kind: PLAN.def };
+    else if (inputs[attr]) plan = { kind: PLAN.input, src: inputs[attr] };
+    else if (m && inputs[m[1]] && suffixesOf(g.type, m[1]).includes(m[2])) {
+      plan = { kind: PLAN.component, src: inputs[m[1]], index: suffixesOf(g.type, m[1]).indexOf(m[2]) };
+    } else if (OUTPUTS[g.type] && OUTPUTS[g.type].test(attr)) plan = { kind: PLAN.output, base: attr.replace(/\[\d+\]$/, '') };
+    else if (sfx.some((x) => inputs[attr + x])) plan = { kind: PLAN.triple, sfx, def: this.staticValue(g, attr) };
+    else plan = { kind: PLAN.static };
+    plans.set(attr, plan);
+    return plan;
   }
 
   /** ファイルの値（なければ型ごとの既定値）。角度はラジアンにする */
@@ -640,6 +801,7 @@ export class RigEvaluator {
       this.problems.add(`${g.name}: 自作ノードの定義 ${g.def} を読めません`);
       return null;
     }
+    this.varying = true;                           // 定義の計算はいまのフレームを読める
     const io = {
       frame: this.frame,
       fps: this.clip.fps || 24,
@@ -703,7 +865,7 @@ export class RigEvaluator {
       if (Array.isArray(v) && typeof v[0] === 'number') return v[0];
       return 0;
     }
-    if (info.type === 'time') return this.frame;   // 時間（time1 への接続は .ma の読み込みで消えるため、いまのフレーム）
+    if (info.type === 'time') { this.varying = true; return this.frame; }   // 時間（time1 への接続は .ma の読み込みで消えるため、いまのフレーム）
     if (typeof attrs[plug] === 'number') return attrs[plug] * k;
     if (Array.isArray(attrs[plug]) && typeof attrs[plug][0] === 'number') return attrs[plug][0] * k;
     return (typeof info.default === 'number' ? info.default : 0) * k;
@@ -717,10 +879,7 @@ export class RigEvaluator {
 
   // ------------------------------------------------------------------ 計算ノード
   outputs(id) {
-    if (this.cache.out.has(id)) return this.cache.out.get(id);
-    const o = this.guard(`out ${id}`, () => this.outputsUncached(id), () => null);
-    this.cache.out.set(id, o);
-    return o;
+    return this.memo(this.cache.out, this.keep.out, id, () => this.outputsUncached(id), NULL, () => `out ${id}`);
   }
 
   outputsUncached(id) {
@@ -881,6 +1040,7 @@ export class RigEvaluator {
         // Trax のクリップがあれば、いまのフレームで有効なクリップの値。なければファイルの値
         o = {};
         for (const [k, v] of Object.entries(g.attrs || {})) if (OUTPUTS.character.test(k)) o[k] = v;
+        if (g.trax) this.varying = true;
         if (g.trax) Object.assign(o, evaluateTrax(g.trax, this.frame, this.clip.curves, (c, v) => (c.type === 'TA' ? v * D2R : v)));
         break;
       }
@@ -1123,6 +1283,7 @@ export class RigEvaluator {
       this.problems.add(`expression ${g.name} を解釈できません: ${g.problem}`);
       return null;
     }
+    if (TIME_RE.test(g.expr || '')) this.varying = true;
     let res;
     try {
       res = g.program.run({
@@ -1456,10 +1617,7 @@ export class RigEvaluator {
   // ------------------------------------------------------------------ IK（回転プレーン・2 ボーン）
   /** IK ハンドル（グラフの id）を解き、開始ジョイントと中間ジョイントの回転（度）を返す */
   solveIK(id) {
-    if (this.cache.ik.has(id)) return this.cache.ik.get(id);
-    const res = this.guard(`ik ${id}`, () => this.solveIKUncached(id), () => null);
-    this.cache.ik.set(id, res);
-    return res;
+    return this.memo(this.cache.ik, this.keep.ik, id, () => this.solveIKUncached(id), NULL, () => `ik ${id}`);
   }
 
   solveIKUncached(id) {

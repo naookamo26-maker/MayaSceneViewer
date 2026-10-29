@@ -45,34 +45,46 @@ export function domain(curve) {
   return [curve.knots[curve.degree], curve.knots[n]];
 }
 
+let _d = new Float64Array(16);            // pointAt の作業用（制御点 (x·w, y·w, z·w, w) を次数 + 1 個）
+
 /** パラメータ u の点（de Boor のアルゴリズム） */
 export function pointAt(curve, u, target = new Vector3()) {
   const { degree: p, knots: U, cvs, weights } = curve;
   const n = cvs.length;
-  const [u0, u1] = domain(curve);
-  u = Math.min(Math.max(u, u0), u1);
+  u = Math.min(Math.max(u, U[p]), U[n]);
   let k = p;
   while (k < n - 1 && U[k + 1] <= u) k++;
-  const d = [];
+  if (_d.length < (p + 1) * 4) _d = new Float64Array((p + 1) * 4);
+  const d = _d;
   for (let j = 0; j <= p; j++) {
     const c = cvs[k - p + j];
     const w = weights ? weights[k - p + j] : 1;
-    d.push([c.x * w, c.y * w, c.z * w, w]);
+    d[j * 4] = c.x * w; d[j * 4 + 1] = c.y * w; d[j * 4 + 2] = c.z * w; d[j * 4 + 3] = w;
   }
   for (let r = 1; r <= p; r++) {
     for (let j = p; j >= r; j--) {
       const i = k - p + j;
       const den = U[i + p - r + 1] - U[i];
       const a = den > 1e-12 ? (u - U[i]) / den : 0;
-      for (let c = 0; c < 4; c++) d[j][c] = (1 - a) * d[j - 1][c] + a * d[j][c];
+      for (let c = 0; c < 4; c++) d[j * 4 + c] = (1 - a) * d[(j - 1) * 4 + c] + a * d[j * 4 + c];
     }
   }
-  const h = d[p];
-  return target.set(h[0] / h[3], h[1] / h[3], h[2] / h[3]);
+  const h = p * 4;
+  return target.set(d[h] / d[h + 3], d[h + 1] / d[h + 3], d[h + 2] / d[h + 3]);
 }
 
-/** 折れ線で近似した点の列と、始点からの長さ（弧長） */
+const polylines = new WeakMap();            // カーブ → { 分割数 → 折れ線 }（カーブの値は作ったあと変えないので使い回す）
+
+/** 折れ線で近似した点の列と、始点からの長さ（弧長）。結果は読むだけにすること（同じカーブでは同じものを返す） */
 export function polyline(curve, perSpan = 32) {
+  let byCount = polylines.get(curve);
+  if (!byCount) polylines.set(curve, byCount = new Map());
+  let poly = byCount.get(perSpan);
+  if (!poly) byCount.set(perSpan, poly = buildPolyline(curve, perSpan));
+  return poly;
+}
+
+function buildPolyline(curve, perSpan) {
   const [u0, u1] = domain(curve);
   const spans = Math.max(1, curve.cvs.length - curve.degree);
   const count = Math.max(16, spans * perSpan);

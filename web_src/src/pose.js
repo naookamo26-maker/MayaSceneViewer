@@ -60,12 +60,15 @@ export function poseFromTransform(position, quaternion, scale) {
   });
 }
 
+let poseVersion = 0;                       // 追加分を変えるたびに増やす（ほかの PoseState とも重ならない）
+
 export class PoseState {
   /** @param built buildScene() の結果  @param data 共通 JSON */
   constructor(built, data) {
     this.built = built;
     this.data = data;
     this.poses = new Map();
+    this.version = ++poseVersion;           // 追加分の版（リグの評価のキャッシュを捨てる目安）
   }
 
   has(ni) { return this.poses.has(ni); }
@@ -115,6 +118,7 @@ export class PoseState {
     const p = normalizePose(pose);
     if (isIdentityPose(p)) this.poses.delete(ni);
     else this.poses.set(ni, p);
+    this.version = ++poseVersion;
     this.apply(ni);
     for (const c of this.built.childrenOf[ni]) this.apply(c);
   }
@@ -128,6 +132,7 @@ export class PoseState {
 
   resetAll() {
     this.poses.clear();
+    this.version = ++poseVersion;
     this.built.nodeObjects.forEach((o) => o.matrix.copy(o.userData.baseMatrix));
   }
 
