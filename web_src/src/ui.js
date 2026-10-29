@@ -1,6 +1,22 @@
 // 画面のパネル類（DOM）。描画やシーン操作は app（main.js）に任せる。
 
+import { CONTROL_ROLES, ROLE_LABELS } from './controlRoles.js';
+import { ROLE_COLORS } from './controlOverlay.js';
+
 const $ = (id) => document.getElementById(id);
+// コントローラーの種別のアイコン（ビューポートの目印と同じ形）
+const ROLE_ICON = {
+  ik: 'M3 5.5 8 3l5 2.5v5.5L8 13.5 3 11ZM3 5.5 8 8l5-2.5M8 8v5.5',
+  pole: 'M2.5 10.5 8 2.5l5.5 8L8 13.5ZM8 2.5v11M2.5 10.5l11 0',
+  spline: 'M8 2.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11ZM2.5 8c0 1.2 2.5 2 5.5 2s5.5-.8 5.5-2-2.5-2-5.5-2-5.5.8-5.5 2ZM8 2.5c-1.2 0-2 2.5-2 5.5s.8 5.5 2 5.5',
+  constraint: 'M8 1.5v13M1.5 8h13M8 1.5 6.3 3.2M8 1.5l1.7 1.7M8 14.5l-1.7-1.7M8 14.5l1.7-1.7M1.5 8l1.7-1.7M1.5 8l1.7 1.7M14.5 8l-1.7-1.7M14.5 8l-1.7 1.7',
+  aim: 'M8 2.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11ZM8 6a2 2 0 1 0 0 4a2 2 0 1 0 0-4ZM8 1v4M8 11v4M1 8h4M11 8h4',
+  switch: 'M4 14.5V1.5h8.5v6H4M4 1.5l8.5 6M12.5 1.5 4 7.5',
+  driven: 'M8 2 14 13H2ZM8 2l1 7 5 4M9 9l-7 4',
+  locator: 'M8 1.5v13M1.5 8h13M3.5 12.5l9-9',
+  other: 'M8 2 13 8 8 14 3 8ZM3 8h10M8 2 6.5 8 8 14',
+};
+const hex = (c) => '#' + c.toString(16).padStart(6, '0');
 
 const ICON = {
   joint: '<svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="3.2" fill="none" stroke="#5ec8e5" stroke-width="1.6"/></svg>',
@@ -150,7 +166,22 @@ export class UI {
       el.addEventListener('change', () => this.app.setMapToggle(el.dataset.map, el.checked));
     });
     $('opt-jsize').addEventListener('input', (e) => s('jointSize', parseFloat(e.target.value)));
-    const toggles = { 'opt-wire': 'wire', 'opt-skin': 'skin', 'opt-joints': 'joints', 'opt-curves': 'curves', 'opt-xray': 'xray', 'opt-tex': 'textures', 'opt-grid': 'grid' };
+    $('opt-csize').addEventListener('input', (e) => s('controlSize', parseFloat(e.target.value)));
+    // コントローラーの種別ごとの表示（チェックを外した種別を隠す）
+    const roles = $('control-roles');
+    for (const r of CONTROL_ROLES) {
+      const row = document.createElement('label');
+      row.className = 'role-row';
+      row.dataset.role = r;
+      row.innerHTML = `<input type="checkbox" data-role="${r}" checked><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="${ROLE_ICON[r]}"/></svg>`
+        + `<span class="rn">${ROLE_LABELS[r]}</span><span class="rc"></span>`;
+      roles.appendChild(row);
+    }
+    const hiddenRoles = () => [...roles.querySelectorAll('input[data-role]')].filter((x) => !x.checked).map((x) => x.dataset.role);
+    roles.addEventListener('change', () => s('controlHidden', hiddenRoles()));
+    $('btn-roles-all').addEventListener('click', () => s('controlHidden', []));
+    $('btn-roles-none').addEventListener('click', () => s('controlHidden', CONTROL_ROLES.slice()));
+    const toggles = { 'opt-wire': 'wire', 'opt-skin': 'skin', 'opt-joints': 'joints', 'opt-controls': 'controls', 'opt-curves': 'curves', 'opt-xray': 'xray', 'opt-tex': 'textures', 'opt-grid': 'grid' };
     for (const [id, key] of Object.entries(toggles)) {
       $(id).addEventListener('click', (e) => {
         const on = e.currentTarget.getAttribute('aria-pressed') !== 'true';
@@ -189,9 +220,17 @@ export class UI {
       if (group.dataset.setting !== 'camera') this.checkChoice(group, st[group.dataset.setting]);
     });
     $('opt-jsize').value = st.jointSize;
+    $('opt-csize').value = st.controlSize;
+    const hidden = new Set(st.controlHidden || []);
+    document.querySelectorAll('#control-roles .role-row').forEach((row) => {
+      const r = row.dataset.role;
+      row.querySelector('input').checked = !hidden.has(r);
+      row.querySelector('svg').style.color = st.controlColor === 'side' ? '' : hex(ROLE_COLORS[r]);   // 左右の色のときは形だけ
+    });
     $('opt-wire').setAttribute('aria-pressed', String(st.wire));
     $('opt-skin').setAttribute('aria-pressed', String(st.skin));
     $('opt-joints').setAttribute('aria-pressed', String(st.joints));
+    $('opt-controls').setAttribute('aria-pressed', String(st.controls !== false));
     $('opt-curves').setAttribute('aria-pressed', String(st.curves !== false));
     $('opt-xray').setAttribute('aria-pressed', String(st.xray));
     $('opt-grid').setAttribute('aria-pressed', String(!!st.grid));
@@ -219,12 +258,23 @@ export class UI {
     });
   }
 
+  /** コントローラーの種別ごとの数（null はリグを読み込む前）。シーンにない種別は薄くする */
+  setControlCounts(counts) {
+    document.querySelectorAll('#control-roles .role-row').forEach((row) => {
+      const n = counts ? counts[row.dataset.role] || 0 : 0;
+      row.querySelector('.rc').textContent = counts ? String(n) : '';
+      row.classList.toggle('none', !n);
+    });
+    $('control-roles-note').textContent = counts ? 'カーブの形のコントローラーは、カーブの表示で切り替えます。'
+      : 'コントローラーは、アニメーション（リグ）を読み込むと表示します。';
+  }
+
   /**
    * 今の表示設定では効果のない切り替えボタンを薄く表示し、理由をツールチップに足す（押すこと自体はできる）。
    * @param hints {ボタンの id: 理由}（載っていないボタンは通常の表示）
    */
   setToolbarHints(hints) {
-    for (const id of ['opt-wire', 'opt-tex', 'opt-skin', 'opt-joints', 'opt-curves', 'opt-xray', 'opt-bind', 'opt-grid']) {
+    for (const id of ['opt-wire', 'opt-tex', 'opt-skin', 'opt-joints', 'opt-controls', 'opt-curves', 'opt-xray', 'opt-bind', 'opt-grid']) {
       const b = $(id);
       if (b.dataset.baseTitle === undefined) b.dataset.baseTitle = b.title;
       const why = hints[id];

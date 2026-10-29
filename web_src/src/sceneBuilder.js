@@ -530,6 +530,23 @@ export function computeBounds(built, useSkin, includeHidden = false) {
   return box;
 }
 
+/**
+ * キャラクターの大きさ（半径）: スキンのあるメッシュの範囲。なければメッシュ全体、メッシュもなければ 0。
+ * 大きな背景やカメラに引きずられないよう、コントローラーの目印の大きさの基準（骨のないとき）に使う
+ */
+export function characterRadius(built) {
+  const box = new Box3();
+  for (const skinOnly of [true, false]) {
+    for (const e of built.meshes) {
+      if (skinOnly && !e.skin) continue;
+      const step = Math.max(1, Math.floor(e.vertexCount / 5000));
+      for (let v = 0; v < e.vertexCount; v += step) box.expandByPoint(vertexWorldPosition(e, v, true, _v));
+    }
+    if (!box.isEmpty()) break;
+  }
+  return box.isEmpty() ? 0 : box.getSize(new Vector3()).length() / 2;
+}
+
 export function disposeScene(built) {
   if (!built) return;
   const seen = new Set();

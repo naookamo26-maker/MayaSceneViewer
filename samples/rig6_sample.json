@@ -929,7 +929,12 @@
      1.0
     ],
     "ro":"xyz"
-   }
+   },
+   "pivot":[
+    8.0,
+    0.0,
+    -10.0
+   ]
   },
   {
    "name":"cl_midHandle",
@@ -6829,6 +6834,7 @@
     }
    }
   ],
+  "nodeDefs":{},
   "fallback":[],
   "tainted":[
    26,
@@ -6870,7 +6876,7 @@
    "channels":8,
    "nodes":32,
    "graphNodes":86,
-   "seconds":0.0049
+   "seconds":0.0044
   }
  }
 }
