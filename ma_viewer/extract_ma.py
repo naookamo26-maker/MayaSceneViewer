@@ -213,6 +213,11 @@ def selectability(n: MaNode, attrs: Optional[dict] = None) -> Optional[str]:
     return DISPLAY_TYPE_LABELS.get(display)
 
 
+def _curve_inputs():
+    from .curve_history import CURVE_INPUT
+    return CURVE_INPUT
+
+
 def curve_shape_source(ms: MaScene, shape: MaNode, attrs: dict):
     """カーブの形（.cc の値）。保存されていなければ、変形の入力（create ← skinCluster など）をたどって元の形を使う"""
     cc = attrs.get("cc")
@@ -230,13 +235,14 @@ def curve_shape_source(ms: MaScene, shape: MaNode, attrs: dict):
             nxt = x.inputs.get("cr")
         elif x.type == "groupParts":
             nxt = x.inputs.get("ig")
-        elif x.type == "transformGeometry":
-            # リグとして評価する transformGeometry: 読み込んだときの値で計算した形（アニメーションを読み込むと評価した形）
+        elif x.type in _curve_inputs():
+            # リグとして評価する形を作るノード（transformGeometry・rebuildCurve など）: 読み込んだときの値で計算した形
+            # （アニメーションを読み込むと評価した形）
             from .curve_history import Unsupported, output_cc
             try:
                 return output_cc(ms, x, xattr, world=getattr(ms, "curve_world", None)), True
             except Unsupported:
-                nxt = x.inputs.get("ig")
+                nxt = x.inputs.get(_curve_inputs()[x.type])
         else:
             keys = sorted(k for k in x.inputs if _CURVE_DEFORM_INPUT.match(k))
             nxt = x.inputs.get(keys[0]) if keys else None

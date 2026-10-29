@@ -18,10 +18,16 @@
     Enum・Time、animLayer（ウェイトとミュート）
   * 行列ノード: multMatrix・decomposeMatrix・composeMatrix・inverseMatrix・fourByFourMatrix、DAG ノードの offsetParentMatrix
   * 四元数ノード: quatToEuler・eulerToQuat・quatProd・quatInvert・quatNormalize・quatSlerp
-  * そのほか: curveInfo（カーブの長さ）、pointOnCurveInfo（カーブ上の点・接線・法線）、distanceDimShape（2 点の距離）、
+  * Maya 2024 以降の計算ノード（sum・multiply・clampRange・lerp・smoothStep・三角関数・比較・論理・丸め・ベクトル・
+    行列から移動・回転・スケール・軸・行・列を取り出すノードなど）と DL 版、addDL・multDL（Maya 2026 からの名前）
+  * 行列ノード: blendMatrix・aimMatrix・pickMatrix・parentMatrix・wtAddMatrix・addMatrix・holdMatrix、
+    pointMatrixMult、時間の変換（unitToTimeConversion・timeToUnitConversion）
+  * そのほか: curveInfo（カーブの長さ）、pointOnCurveInfo（カーブ上の点・接線・法線）、nearestPointOnCurve（カーブ上の
+    いちばん近い点）、distanceDimShape（2 点の距離）、
     displayLayer（値を読むだけ）
   * キャラクターセット（character）: 入力をそのまま通す。Trax のクリップ（clipLibrary・clipScheduler・animClip）は trax.py
-  * カーブ: nurbsCurve と、それを動かす skinCluster・wire・cluster・制御点（controlPoints）の接続・ロケーター（worldPosition）
+  * カーブ: nurbsCurve と、それを動かす skinCluster・wire・cluster・制御点（controlPoints）の接続・ロケーター（worldPosition）、
+    動くヒストリ（transformGeometry・rebuildCurve・reverseCurve・detachCurve・subCurve。動かないものは curve_history.py が焼き付ける）
   * アニメーションカーブ（animCurveTL / TA / TU）
 これ以外のノード（エクスプレッション・ドリブンキー・行列ノードなど）に当たったら、そこから先は評価せず警告する。
 """
@@ -37,6 +43,24 @@ CURVE_TYPES = {"animCurveTL", "animCurveTA", "animCurveTU"}
 # lookAt: Maya の「カメラとエイム」のグループ。aimConstraint と同じ働きに、視線のまわりの回転（twist）を足したもの
 CONSTRAINT_TYPES = {"pointConstraint", "orientConstraint", "parentConstraint", "scaleConstraint", "poleVectorConstraint",
                     "aimConstraint", "lookAt"}
+# Maya 2024 以降の計算ノード・Maya 2020 以降の行列ノード・時間の変換・Maya 2026 からの単位つきの版（DL）と、
+# 名前の変わった addDL・multDL（評価は web_src/src/mathNodes.js。JS の MATH_TYPES と同じ一覧にする）
+MATH_TYPES = {
+    "absolute", "absoluteDL", "acos", "acosDL", "addDL", "addMatrix", "aimMatrix", "and", "angleBetween",
+    "angleBetweenDL", "asin", "asinDL", "atan", "atan2", "atan2DL", "atanDL", "average", "averageDL",
+    "axisFromMatrix", "axisFromMatrixDL", "blendMatrix", "ceil", "ceilDL", "clampRange", "clampRangeDL",
+    "columnFromMatrix", "columnFromMatrixDL", "cos", "cosDL", "crossProduct", "crossProductDL", "determinant",
+    "determinantDL", "divide", "divideDL", "dotProduct", "dotProductDL", "equal", "equalDL", "floor", "floorDL",
+    "greaterThan", "greaterThanDL", "holdMatrix", "inverseLerp", "inverseLerpDL", "length", "lengthDL", "lerp",
+    "lerpDL", "lessThan", "lessThanDL", "log", "logDL", "max", "maxDL", "min", "minDL", "modulo", "moduloDL",
+    "multDL", "multiply", "multiplyDL", "multiplyPointByMatrix", "multiplyPointByMatrixDL", "multiplyVectorByMatrix",
+    "multiplyVectorByMatrixDL", "negate", "negateDL", "normalize", "normalizeDL", "not", "or", "parentMatrix", "pi",
+    "pickMatrix", "pointMatrixMult", "pointMatrixMultDL", "power", "powerDL", "rotateVector", "rotateVectorDL",
+    "rotationFromMatrix", "round", "roundDL", "rowFromMatrix", "rowFromMatrixDL", "scaleFromMatrix",
+    "scaleFromMatrixDL", "sin", "sinDL", "smoothStep", "smoothStepDL", "subtract", "subtractDL", "sum", "sumDL",
+    "tan", "tanDL", "timeToUnitConversion", "translationFromMatrix", "translationFromMatrixDL", "truncate",
+    "truncateDL", "unitToTimeConversion", "wtAddMatrix",
+}
 UTILITY_TYPES = {"unitConversion", "pairBlend", "blendColors", "multiplyDivide", "plusMinusAverage", "reverse",
                  "condition", "multMatrix", "decomposeMatrix", "composeMatrix", "inverseMatrix", "fourByFourMatrix",
                  "quatToEuler", "eulerToQuat", "quatProd", "quatInvert", "quatNormalize", "quatSlerp", "curveInfo",
@@ -48,11 +72,14 @@ UTILITY_TYPES = {"unitConversion", "pairBlend", "blendColors", "multiplyDivide",
                  "animBlendNodeAdditiveI16", "animBlendNodeAdditiveI32", "animBlendNodeAdditiveScale",
                  "animBlendNodeBoolean", "animBlendNodeEnum", "animBlendNodeTime",
                  "animCurveUA", "animCurveUL", "animCurveUU", "pointOnCurveInfo", "character",
-                 "distanceDimShape"}                  # 距離の寸法（2 点の距離。伸びる IK などに使う）
+                 "distanceDimShape",                  # 距離の寸法（2 点の距離。伸びる IK などに使う）
+                 "distanceBetweenDL",
+                 "nearestPointOnCurve"} | MATH_TYPES  # カーブ上のいちばん近い点（位置とパラメータ）    # distanceBetweenDL は distanceBetween と同じ（Maya 2026 からの単位つきの版）
 # 入力をたどらない（値を読むだけの）ノード
 _NO_INPUT_TYPES = {"displayLayer", "animLayer"}       # animLayer はウェイトとミュートを読むだけ
 # カーブと、それを動かすノード（必要な入力だけをたどる）
-GEOMETRY_TYPES = {"nurbsCurve", "skinCluster", "tweak", "groupParts", "locator", "wire", "cluster", "transformGeometry"}
+GEOMETRY_TYPES = {"nurbsCurve", "skinCluster", "tweak", "groupParts", "locator", "wire", "cluster", "transformGeometry",
+                  "rebuildCurve", "reverseCurve", "detachCurve", "subCurve"}
 _GEOMETRY_INPUTS = {
     "nurbsCurve": re.compile(r"^(cr|cp\[\d+\].*)$"),            # create・controlPoints
     "skinCluster": re.compile(r"^(ma\[\d+\]|pm\[\d+\]|ip\[\d+\]\.ig)$"),
@@ -60,6 +87,11 @@ _GEOMETRY_INPUTS = {
     "groupParts": re.compile(r"^ig$"),
     # transformGeometry: 入力のカーブ（ig）に行列（txf。transform の逆行列などを接続することもある）を掛ける
     "transformGeometry": re.compile(r"^(ig|txf|itf)$"),
+    # カーブのヒストリ（curve_history.py で焼き付けられない、動くもの）: 入力のカーブと、接続された属性
+    "rebuildCurve": re.compile(r"^(ic|s|d|kr|end|kep|kt|kcp|rt)$"),
+    "reverseCurve": re.compile(r"^ic$"),
+    "detachCurve": re.compile(r"^(ic|p\[\d+\]|k\[\d+\])$"),
+    "subCurve": re.compile(r"^(ic|min|max|r)$"),
     # wire: 変形するカーブ・ワイヤー（dw）・ベースワイヤー（bw）・影響範囲（dds）・スケール（sc）・回転・エンベロープ
     "cluster": re.compile(r"^(ip\[\d+\]\.ig|ma|pm|en)$"),         # ハンドルのワールド行列・bindPreMatrix
     "wire": re.compile(r"^(ip\[\d+\]\.ig|dw\[\d+\]|bw\[\d+\]|dds\[\d+\]|sc\[\d+\]|rot|en)$"),

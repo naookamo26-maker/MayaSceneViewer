@@ -12,7 +12,11 @@ import { composeLocalMatrix, composeMaya, decomposeMaya, evaluateCurve } from '.
 import { compileExpression } from './expression.js';
 import { evaluateTrax } from './trax.js';
 import { compileNodeDef, componentPlug } from './nodeDef.js';
-import { arcLength, domain, parseNurbsCurve, pointAt, pointAtDistance, pointAtLength, polyline, withCvs } from './curve.js';
+import {
+  arcLength, curveSegment, derivativeAt, domain, nearestParam, parseNurbsCurve, pointAt, pointAtDistance, pointAtLength, polyline,
+  rebuildCurve, reverseCurve, withCvs,
+} from './curve.js';
+import { MATH_DEFAULTS, evaluateMath, mathAngleInput, mathKind, mathOutputs } from './mathNodes.js';
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -83,7 +87,9 @@ const OUTPUTS = {
   quatToEuler: /^ort[xyz]?$/, eulerToQuat: /^oq[xyzw]?$/, quatProd: /^oq[xyzw]?$/, quatInvert: /^oq[xyzw]?$/,
   quatNormalize: /^oq[xyzw]?$/, quatSlerp: /^oq[xyzw]?$/, curveInfo: /^(al|arcLength)$/,
   nurbsCurve: /^(ws|worldSpace|l|local)(\[\d+\])?$/, skinCluster: /^og(\[\d+\])?$/, tweak: /^og(\[\d+\])?$/,
-  groupParts: /^og$/, transformGeometry: /^og$/, wire: /^og(\[\d+\])?$/, locator: /^(wp|worldPosition)(\[\d+\])?$/, expression: /^(out|output)\[\d+\]$/,
+  groupParts: /^og$/, transformGeometry: /^og$/,
+  rebuildCurve: /^oc$/, reverseCurve: /^oc$/, subCurve: /^oc$/, detachCurve: /^oc\[\d+\]$/,
+  nearestPointOnCurve: /^(p[xyz]?|pr|position[XYZ]?|parameter)$/, wire: /^og(\[\d+\])?$/, locator: /^(wp|worldPosition)(\[\d+\])?$/, expression: /^(out|output)\[\d+\]$/,
   addDoubleLinear: /^o$/, multDoubleLinear: /^o$/, clamp: /^op[rgb]?$/, setRange: /^o[xyz]?$/, remapValue: /^(ov|outValue)$/,
   distanceBetween: /^d$/, vectorProduct: /^o[xyz]?$/, blendTwoAttr: /^o$/, blendWeighted: /^o$/, choice: /^o$/,
   animBlendNodeAdditiveDL: /^o$/, animBlendNodeAdditiveDA: /^o$/, animBlendNodeAdditiveRotation: /^o[xyz]?$/, animLayer: /^(fgwt|fo|bgwt)$/,
@@ -105,6 +111,20 @@ const NO_POSE = () => null;                // ポーズ確認の追加分なし
 const BUSY = Symbol('busy');               // キャッシュの計算中の印（循環の検出）
 const PLAN = { def: 0, input: 1, component: 2, output: 3, triple: 4, static: 5 };   // plugPlan の種類
 const SNAPSHOT_BASE = 512;                 // 再生キャッシュの 1 フレームの入れ物の大きさ（バイト。目安）
+/** 型ごとの出力の属性（新しい計算ノードは mathNodes.js。distanceBetweenDL は distanceBetween と同じ） */
+function outputsOf(type) {
+  if (OUTPUTS[type]) return OUTPUTS[type];
+  if (type === 'distanceBetweenDL') return OUTPUTS.distanceBetween;
+  const mk = mathKind(type);
+  return mk ? mathOutputs(mk) : null;
+}
+function defaultsOf(type) {
+  if (DEFAULTS[type]) return DEFAULTS[type];
+  if (type === 'distanceBetweenDL') return DEFAULTS.distanceBetween;
+  const mk = mathKind(type);
+  return mk ? (MATH_DEFAULTS[mk] || DEFAULTS[mk] || {}) : null;
+}
+
 const NOTHING = () => undefined;
 const NULL = () => null;
 const TIME_RE = /\b(frame|time)\b/;       // expression が時間を読むか
@@ -120,6 +140,8 @@ const AIM_MODES = [
 ];
 
 function isAngleAttr(type, attr) {
+  const mk = mathKind(type);
+  if (mk) return mathAngleInput(mk, attr);                       // 新しい計算ノード（mathNodes.js）
   switch (type) {
     case 'pairBlend': return /^ir[12][xyz]?$/.test(attr);
     case 'orientConstraint': case 'aimConstraint': return /^o[xyz]?$/.test(attr);
@@ -757,7 +779,7 @@ export class RigEvaluator {
     else if (inputs[attr]) plan = { kind: PLAN.input, src: inputs[attr] };
     else if (m && inputs[m[1]] && suffixesOf(g.type, m[1]).includes(m[2])) {
       plan = { kind: PLAN.component, src: inputs[m[1]], index: suffixesOf(g.type, m[1]).indexOf(m[2]) };
-    } else if (OUTPUTS[g.type] && OUTPUTS[g.type].test(attr)) plan = { kind: PLAN.output, base: attr.replace(/\[\d+\]$/, '') };
+    } else if (outputsOf(g.type) && outputsOf(g.type).test(attr)) plan = { kind: PLAN.output, base: attr.replace(/\[\d+\]$/, '') };
     else if (sfx.some((x) => inputs[attr + x])) plan = { kind: PLAN.triple, sfx, def: this.staticValue(g, attr) };
     else plan = { kind: PLAN.static };
     plans.set(attr, plan);
@@ -785,10 +807,11 @@ export class RigEvaluator {
 
   defaultValue(type, attr, k = 1) {
     if (/^w\d+$/.test(attr) || /\.tw$/.test(attr)) return 1;            // コンストレイントのウェイト
-    const d = DEFAULTS[type] && DEFAULTS[type][attr];
+    const table = defaultsOf(type);
+    const d = table ? table[attr] : undefined;
     if (d !== undefined) return Array.isArray(d) ? d.map((x) => x * k) : d * k;
     const m = /^(.*?)([xyzrgb])$/.exec(attr);
-    if (m && DEFAULTS[type] && Array.isArray(DEFAULTS[type][m[1]])) return DEFAULTS[type][m[1]][suffixesOf(type, m[1]).indexOf(m[2])] * k;
+    if (m && table && Array.isArray(table[m[1]])) return table[m[1]][suffixesOf(type, m[1]).indexOf(m[2])] * k;
     return undefined;
   }
 
@@ -925,7 +948,7 @@ export class RigEvaluator {
     const g = this.byId.get(id);
     if (g.def) return this.defOutputs(g);
     let o = null;
-    switch (g.type) {
+    switch (g.type === 'distanceBetweenDL' ? 'distanceBetween' : g.type) {
       case 'unitConversion': o = { o: this.num(id, 'i') * this.num(id, 'cf', 1) }; break;
       case 'multiplyDivide': o = this.multiplyDivide(id); break;
       case 'plusMinusAverage': o = this.plusMinusAverage(id); break;
@@ -1148,7 +1171,59 @@ export class RigEvaluator {
         o = { og: withCvs(c, c.cvs.map((p) => p.clone().applyMatrix4(m))) };
         break;
       }
-      default: break;
+      // カーブのヒストリ（入力の形が動く・属性が接続されているもの。動かないものは読み込みで焼き付ける）。
+      // 計算は curve.js（読み込みの ma_viewer/nurbs.py と同じ手順）
+      case 'rebuildCurve': {
+        const c = this.plug(id, 'ic');
+        const keepCvs = this.num(id, 'kcp', 0) >= 0.5;
+        if (!c || !c.isCurve || (Math.round(this.num(id, 'rt', 0)) !== 0 && !keepCvs)) { o = null; break; }   // uniform だけ
+        o = { oc: rebuildCurve(c, {
+          spans: this.num(id, 's', 4), degree: this.num(id, 'd', 3), keepRange: Math.round(this.num(id, 'kr', 1)),
+          multipleEnds: this.num(id, 'end', 0) >= 0.5, keepEndPoints: this.num(id, 'kep', 1) >= 0.5,
+          keepTangents: this.num(id, 'kt', 1) >= 0.5, keepCvs,
+        }) };
+        break;
+      }
+      case 'reverseCurve': {
+        const c = this.plug(id, 'ic');
+        o = c && c.isCurve ? { oc: reverseCurve(c) } : null;
+        break;
+      }
+      case 'subCurve': {
+        const c = this.plug(id, 'ic');
+        if (!c || !c.isCurve || c.form === 2) { o = null; break; }
+        const [lo, hi] = domain(c);
+        const mn = this.num(id, 'min', 0), mx = this.num(id, 'max', -1);
+        const [a, b] = this.num(id, 'r', 0) >= 0.5 ? [lo + (hi - lo) * mn, lo + (hi - lo) * mx] : [mn, mx < mn ? hi : mx];
+        o = { oc: curveSegment(c, a, b) };
+        break;
+      }
+      case 'detachCurve': {
+        const c = this.plug(id, 'ic');
+        if (!c || !c.isCurve || c.form === 2) { o = null; break; }
+        const [lo, hi] = domain(c);
+        const cuts = [lo, ...this.indices(g, /^p\[(\d+)\]$/).map((k) => this.num(id, `p[${k}]`, 0)), hi];
+        o = {};
+        for (let k = 0; k + 1 < cuts.length; k++) {
+          if (this.num(id, `k[${k}]`, 1) < 0.5) continue;              // 残さない部分（keep）
+          o[`oc[${k}]`] = curveSegment(c, cuts[k], cuts[k + 1]);
+        }
+        break;
+      }
+      case 'nearestPointOnCurve': {
+        // 入力の点（.ip）にいちばん近いカーブ（.ic）上の点（.p）とパラメータ（.pr）
+        const c = this.plug(id, 'ic');
+        if (!c || !c.isCurve) { o = null; break; }
+        const u = nearestParam(c, new Vector3(...this.vec(id, 'ip')));
+        const p = pointAt(c, u).toArray();
+        o = { ...expand('p', p, XYZ), pr: u, parameter: u, position: p, positionX: p[0], positionY: p[1], positionZ: p[2] };
+        break;
+      }
+      default: {
+        const mk = mathKind(g.type);                             // 新しい計算ノード・行列ノード（mathNodes.js）
+        if (mk) o = evaluateMath(this, g, mk);
+        break;
+      }
     }
     return o;
   }

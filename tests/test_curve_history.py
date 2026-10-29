@@ -80,12 +80,12 @@ class CurveHistoryTest(unittest.TestCase):
     def test_warnings_and_report(self):
         warnings = "\n".join(self.scene["warnings"])
         self.assertIn("ヒストリのあるカーブ 3 本の形を、形を作るノード（circle など）から計算しました", warnings)
-        self.assertIn("形を作るノードの型: makeTextCurves 1 本、rebuildCurve 1 本", warnings)
-        self.assertIn("rbDShape: 形を作るノード rbD_rebuild（rebuildCurve。カーブの作り直し", warnings)
+        self.assertIn("形を作るノードの型: makeTextCurves 1 本、offsetCurve 1 本", warnings)
+        self.assertIn("rbDShape: 形を作るノード rbD_offset（offsetCurve。カーブのオフセット", warnings)
         self.assertIn("txFShape: 形を作るノード txF_freeze の入力: txF_text（makeTextCurves。文字のカーブ", warnings)
         report = rig_report_file(SAMPLE)
         self.assertIn("✓ 形を計算したカーブ: 3 本", report)
-        self.assertIn("★ rebuildCurve で形を作るカーブ: 1 本", report)
+        self.assertIn("★ offsetCurve で形を作るカーブ: 1 本", report)
         # transformGeometry の入力が makeTextCurves → いちばん奥の makeTextCurves として数え、理由を出す
         self.assertIn("★ makeTextCurves で形を作るカーブ: 1 本", report)
         self.assertIn("txFShape（txF_freeze の入力: txF_text（makeTextCurves。文字のカーブ。形はフォントから作られるため", report)
@@ -114,7 +114,7 @@ class CurveHistoryTest(unittest.TestCase):
         """スプライン IK のカーブの形が分からなければ、IK の問題として理由を出す"""
         _scene, report = self.load_variant('connectAttr "spC_curveShape.ws" "spC_ik.ic";',
                                            'connectAttr "rbDShape.ws" "spC_ik.ic";')
-        self.assertIn("スプライン IK のカーブ rbDShape の形が分かりません（形を作るノード rbD_rebuild（rebuildCurve。", report)
+        self.assertIn("スプライン IK のカーブ rbDShape の形が分かりません（形を作るノード rbD_offset（offsetCurve。", report)
 
     def test_spline_verification_text(self):
         """再現チェックのスプライン IK の詳細の文章: カーブの上にあるか・離れているかで見立てを変える"""
@@ -202,7 +202,7 @@ class CurveHistoryTest(unittest.TestCase):
         # 計算できない形を作るノード
         _scene, report = self.load_variant('connectAttr "spC_curveShape.ws" "spC_ik.ic";',
                                            'connectAttr "rbDShape.ws" "spC_ik.ic";')
-        self.assertIn("★ rbD_rebuild（rebuildCurve）.oc: ビューアでは評価できない", report)
+        self.assertIn("★ rbD_offset（offsetCurve）.oc[0]: ビューアでは評価できない", report)
 
     def test_named_setattr_outside_block(self):
         """カーブの形が、ノードのブロックの外にノード名つきで書かれている（setAttr "spC_curveShapeOrig.cc" …）・長い名前 .cached"""

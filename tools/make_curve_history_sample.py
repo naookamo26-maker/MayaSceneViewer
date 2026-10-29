@@ -9,7 +9,7 @@
   * spC_curve: 元の形 spC_curveShapeOrig（+Y にまっすぐ、長さ 8）を transformGeometry（移動 (20, 0, 0)）に通した形
     → spC_curveShape.create。spC_curve.tx にキー（1: 0 → 24: 5）。
     spC_0〜spC_4（+Y 方向、骨の長さ 2、根元 (20, 0, 0)）のスプライン IK のカーブ（rootOnCurve）
-  * rbD: rebuildCurve（ビューアでは計算できない）→ rbDShape.create（警告とリグの診断に出る）
+  * rbD: offsetCurve（ビューアでは計算できない）→ rbDShape.create（警告とリグの診断に出る）
   * wsE（移動 (0, 0, 7)）: 元の形 wsEShapeOrig のワールド空間の形（.worldSpace）を transformGeometry（単位行列）に通した形
     → wsEShape.create（形の CV は z = 7。表示では wsE の移動が加わって z = 14）
   * txF: makeTextCurves（文字のカーブ。ビューアでは計算できない）→ transformGeometry → txFShape.create
@@ -74,8 +74,8 @@ def main():
     A('createNode nurbsCurve -n "rbDShapeOrig" -p "rbD";')
     A('\tsetAttr ".io" yes;')
     A('\tsetAttr ".cc" -type "nurbsCurve" %s;' % STRAIGHT)
-    A('createNode rebuildCurve -n "rbD_rebuild";')
-    A('\tsetAttr ".s" 8;')
+    A('createNode offsetCurve -n "rbD_offset";')
+    A('\tsetAttr ".d" 2;')
     A('createNode transform -n "wsE";')
     A('\tsetAttr ".t" -type "double3" 0 0 7 ;')
     A('createNode nurbsCurve -n "wsEShape" -p "wsE";')
@@ -127,8 +127,8 @@ def main():
     for ax in "xyz":
         C("spC_4.t%s" % ax, "spC_eff.t%s" % ax)
     C("spC_curveShape.ws", "spC_ik.ic")
-    C("rbDShapeOrig.ws", "rbD_rebuild.ic")
-    C("rbD_rebuild.oc", "rbDShape.cr")
+    C("rbDShapeOrig.ws", "rbD_offset.ic")
+    C("rbD_offset.oc[0]", "rbDShape.cr")
     C("wsEShapeOrig.ws", "wsE_freeze.ig")
     C("wsE_freeze.og", "wsEShape.cr")
     C("txF_text.oc[0]", "txF_freeze.ig")
