@@ -36,7 +36,7 @@ from __future__ import annotations
 import re
 from typing import Dict, List, Optional, Set, Tuple
 
-from .ma_scene import MaNode, MaScene
+from .ma_scene import _LIMIT_ENABLES, LIMIT_ATTRS, XFORM_KEYS, MaNode, MaScene, xform_group
 from . import ma_reader as R
 
 CURVE_TYPES = {"animCurveTL", "animCurveTA", "animCurveTU"}
@@ -106,12 +106,16 @@ SUPPORTED_DG = CONSTRAINT_TYPES | UTILITY_TYPES
 # DAG ノードの行列の属性（上流は、そのノードと祖先の移動・回転・スケールのすべて）
 _MATRIX_PLUGS = {"pm", "pim", "wm", "wim", "m", "im", "xm", "worldMatrix", "parentMatrix", "worldInverseMatrix",
                  "parentInverseMatrix", "matrix", "inverseMatrix"}
-_CHANNEL_KEYS = {"t", "tx", "ty", "tz", "r", "rx", "ry", "rz", "s", "sx", "sy", "sz", "opm"}
+# ローカル行列を決める属性（移動・回転・スケール・ピボット・rotateAxis・jointOrient・せん断・回転順・offsetParentMatrix）
+_CHANNEL_KEYS = XFORM_KEYS
 # DAG ノードの属性のうち、ファイルの値を rest_entry で渡すもの（graph の attrs には入れない）
 _STANDARD_ATTRS = _CHANNEL_KEYS | {"jo", "jox", "joy", "joz", "ra", "rax", "ray", "raz", "rp", "rpx", "rpy", "rpz",
                                    "sp", "spx", "spy", "spz", "rpt", "spt", "sh", "ro", "v", "it", "ssc", "radi",
                                    "bps", "io", "ove", "ovv", "lodv", "hio", "dla", "dsc", "uoc", "oc", "otx", "rlio",
-                                   "mnrl", "mxrl", "mnsl", "mxsl", "mntl", "mxtl", "xm", "is", "liw", "fbx"}
+                                   "xm", "is", "liw", "fbx"} | {
+                                       a for v in LIMIT_ATTRS.values() for a in v[:2]} | {
+                                       ("m" if i == 0 else "x") + k + ax + "l" for k in "trs" for ax in "xyz" for i in (0, 1)
+                                   } | set(_LIMIT_ENABLES)   # 移動・回転・スケールの制限（rest_entry の lim）
 # _CHANNEL_KEYS のうち、値は rest_entry で渡すもの（offsetParentMatrix も含む）
 
 _SETATTR_RE = re.compile(r"setAttr\b([^;]*);")
@@ -240,7 +244,7 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
     def need_channels(n: MaNode, base: Optional[str] = None):
         for key in list(n.inputs):
             kb = _base(key)
-            if kb in _CHANNEL_KEYS and (base is None or kb[0] == base[0]):
+            if kb in _CHANNEL_KEYS and (base is None or xform_group(kb) == xform_group(base)):
                 add_edge(n, key)
 
     def need_world(n: Optional[MaNode]):
@@ -756,7 +760,7 @@ def analyze_fallback(info: GraphInfo, kept: List[MaNode], bind_ids: Set[int], ou
             if b in _MATRIX_PLUGS:
                 return tainted(src)
             if b in _CHANNEL_KEYS:
-                return any(k[0] == b[0] for k in unresolved(src))
+                return any(xform_group(k.split("（")[0]) == xform_group(b) for k in unresolved(src))   # "r（IK: …）" も
             e = info.edges.get(id(src), {}).get(sattr)
             return bad_source(*e) if e else False
         if _value_shape(src):                            # シェイプの属性: 接続があればその先、なければファイルの値

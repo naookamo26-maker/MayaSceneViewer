@@ -22,7 +22,7 @@ import re
 from array import array
 from typing import Callable, Dict, List, Optional, Tuple
 
-from .ma_scene import TRANSFORM_TYPES, MaNode, MaScene, np, numpy_enabled
+from .ma_scene import TRANSFORM_TYPES, MaNode, MaScene, clamp_limits, np, numpy_enabled, xform_group
 from . import ma_reader as R
 from . import mathutil as M
 
@@ -375,7 +375,7 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
     in_graph = {g["dag"] for g in graph_nodes if g["dag"] >= 0}
     # スケールが動くノード（子ジョイントのスケール補正が変わる）
     scaled = {c["node"] for c in channels_out if c["attr"][0] == "s"} | {
-        g["dag"] for g in graph_nodes if g["dag"] >= 0 and any(k[0] == "s" for k in g.get("inputs", {}))}
+        g["dag"] for g in graph_nodes if g["dag"] >= 0 and any(xform_group(k) == "s" for k in g.get("inputs", {}))}
     rest_nodes = []
     for ni in sorted(kept_nodes):
         n = kept_nodes[ni]
@@ -501,6 +501,12 @@ def rest_entry(n: MaNode, ni: int, ang_k: float, is_src: Optional[MaNode], is_id
             v = n.vec3(k)
             if any(v):
                 e[k] = list(v)
+    # 移動・回転（度）・スケールの制限。ビューアは接続・カーブ・IK で決まった値をこの範囲に収める
+    lim = n.limits(1.0 / ang_k if ang_k else 1.0)
+    if lim:
+        if "r" in lim:
+            lim["r"] = [[None if v is None else v * ang_k for v in side] for side in lim["r"]]
+        e["lim"] = lim
     return e
 
 
@@ -509,6 +515,8 @@ def rest_matrix(e: dict) -> List[float]:
     rad = lambda v: [x * math.pi / 180.0 for x in v]  # noqa: E731
     ro = M.ROTATE_ORDERS[e.get("ro", 0)]
     ips = e.get("isScale") if "isScale" in e else None
+    lim = e.get("lim") or {}
+    e = dict(e, **{k: list(clamp_limits(e[k], lim[k])) for k in lim})
     if e["joint"]:
         m = M.joint_matrix(t=e["t"], r=rad(e["r"]), s=e["s"], ro=ro, ra=rad(e["ra"]), jo=rad(e.get("jo", [0, 0, 0])),
                            inverse_parent_scale=ips)

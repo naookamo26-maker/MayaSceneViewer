@@ -361,6 +361,24 @@ export function composeLocalMatrix(x, isScale, target = new Matrix4()) {
   return withOffsetParent(x, target);
 }
 
+/**
+ * 移動・回転・スケールの制限（x.lim = { t | r | s: [[最小 × 3], [最大 × 3]]。null は制限なし。回転は度）の範囲に、
+ * x.t・x.r・x.s を収める（Maya の transform の minTransLimit など。有効なものだけが入っている）
+ */
+export function clampLimits(x) {
+  const lim = x.lim;
+  if (!lim) return x;
+  for (const k in lim) {
+    const v = x[k], [lo, hi] = lim[k];
+    if (!v) continue;
+    for (let i = 0; i < 3; i++) {
+      if (lo[i] != null && v[i] < lo[i]) v[i] = lo[i];
+      if (hi[i] != null && v[i] > hi[i]) v[i] = hi[i];
+    }
+  }
+  return x;
+}
+
 /** offsetParentMatrix（Maya 2020 以降）: ワールド行列 = ローカル · opm · 親（Maya の順）。opm は 16 要素か Matrix4 */
 function withOffsetParent(x, target) {
   if (!x.opm) return target;
@@ -430,6 +448,7 @@ export class AnimationClip {
     for (const e of this.entries) {
       const cur = e.cur;
       for (const ch of e.channels) cur[ch.base][ch.axis] = evaluateCurve(ch.curve, x);
+      clampLimits(cur);
     }
     for (const e of this.entries) {
       let isScale = null;

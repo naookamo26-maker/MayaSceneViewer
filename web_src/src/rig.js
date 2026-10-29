@@ -8,7 +8,7 @@
 //   * 循環（自分の結果を自分で使う）に当たったら、そこはファイルの値で打ち切る
 // 完全な再現は目指さず、Maya と同じ考え方の近似にする（docs/data_format.md「animation.graph」）。
 import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
-import { composeLocalMatrix, composeMaya, decomposeMaya, evaluateCurve } from './animation.js';
+import { clampLimits, composeLocalMatrix, composeMaya, decomposeMaya, evaluateCurve } from './animation.js';
 import { compileExpression } from './expression.js';
 import { evaluateTrax } from './trax.js';
 import { compileNodeDef, componentPlug } from './nodeDef.js';
@@ -103,8 +103,19 @@ const OUTPUTS = {
   fourByFourMatrix: /^(o|output)$/,
 };
 // DAG ノードの、値が決まると行列が変わる属性
-const CHANNEL_RE = /^([trs][xyz]?|opm)$/;
-const CHANNEL_ATTR_RE = /^[trs][xyz]?$/;
+// ローカル行列を決める属性（移動・回転・スケール・ピボット・rotateAxis・jointOrient・せん断・回転順）。CHANNEL_RE は opm も
+const CHANNEL_ATTR_RE = /^((t|r|s|jo|ra|rp|sp|rpt|spt)[xyz]?|sh|shxy|shxz|shyz|ro)$/;
+const CHANNEL_RE = /^((t|r|s|jo|ra|rp|sp|rpt|spt)[xyz]?|sh|shxy|shxz|shyz|ro|opm)$/;
+const VEC_KEYS = ['t', 'r', 's', 'jo', 'ra', 'rp', 'sp', 'rpt', 'spt', 'sh'];   // ローカル行列の 3 つ組の属性
+const ANGLE_KEYS = new Set(['r', 'jo', 'ra']);                                 // 接続の値はラジアン、チャンネルは度
+const SHEAR_AXIS = { shxy: 0, shxz: 1, shyz: 2 };
+/** ローカル行列の属性の種類と成分（tx → ['t', 0]・rp → ['rp', -1]・shxz → ['sh', 1]・ro → ['ro', -1]） */
+function xformKey(key) {
+  if (key in SHEAR_AXIS) return ['sh', SHEAR_AXIS[key]];
+  const m = /^(t|r|s|jo|ra|rp|sp|rpt|spt)([xyz])?$/.exec(key);
+  if (m) return [m[1], m[2] ? XYZ.indexOf(m[2]) : -1];
+  return [key, -1];
+}
 const CHAN_MODES = { full: 0, fk: 1, t: 2 };
 const NO_INPUTS = [];
 const NO_POSE = () => null;                // ポーズ確認の追加分なし
@@ -289,7 +300,7 @@ export class RigEvaluator {
       const g = this.dagGraph.get(e.node);
       const keys = g && g.inputs ? Object.keys(g.inputs).filter((k) => CHANNEL_RE.test(k)) : [];
       if (e.channels.length || this.ikJoint.has(e.node) || keys.length) this.moving.add(e.node);
-      if (e.channels.some((c) => c.base === 's') || keys.some((k) => k[0] === 's')) scaled.add(e.node);
+      if (e.channels.some((c) => c.base === 's') || keys.some((k) => xformKey(k)[0] === 's')) scaled.add(e.node);
     }
     for (const e of clip.entries) {
       if ((e.rest.isNode ?? -1) >= 0 && scaled.has(e.rest.isNode)) this.moving.add(e.node);
@@ -513,7 +524,11 @@ export class RigEvaluator {
   chan(ni, mode = 'full') {
     const rest = this.rest(ni);
     if (!rest) return null;
-    const restCopy = () => ({ ...rest, t: rest.t.slice(), r: rest.r.slice(), s: rest.s.slice() });
+    const restCopy = () => {
+      const c = { ...rest };
+      for (const k of VEC_KEYS) if (rest[k]) c[k] = rest[k].slice();
+      return c;
+    };
     return this.memo(this.cache.chan, this.keep.chan, ni * 3 + CHAN_MODES[mode], () => {
       const out = restCopy();
       const entry = this.clip.byNode.get(ni);
@@ -532,14 +547,20 @@ export class RigEvaluator {
           else if (Array.isArray(m) && m.length === 16) out.opm = m.slice();
           continue;
         }
-        const base = key2[0];
+        const [base, axis] = xformKey(key2);
         if ((mode === 't' && base !== 't') || fromCurve.has(key2)) continue;
         const v = this.source(src);
         if (v === undefined) continue;
-        const k = base === 'r' ? R2D : 1;
-        if (key2.length === 1) {
+        if (base === 'ro') {                                    // 回転順（スペースの切り替えなど）
+          const x = Array.isArray(v) ? v[0] : v;
+          if (typeof x === 'number' && Number.isFinite(x)) out.ro = Math.min(5, Math.max(0, Math.round(x)));
+          continue;
+        }
+        const k = ANGLE_KEYS.has(base) ? R2D : 1;
+        if (!out[base]) out[base] = [0, 0, 0];                  // ファイルに値がない（既定値 0）ピボットなど
+        if (axis < 0) {
           if (Array.isArray(v)) for (let a = 0; a < 3; a++) if (!fromCurve.has(base + XYZ[a])) out[base][a] = v[a] * k;
-        } else if (typeof v === 'number') out[base][XYZ.indexOf(key2[1])] = v * k;
+        } else if (typeof v === 'number') out[base][axis] = v * k;
       }
       if (this.ikJoint.has(ni) && (mode === 'full' || (mode === 't' && this.splineRoots.has(ni)))) {
         const sol = this.solveIK(this.ikJoint.get(ni));
@@ -551,7 +572,7 @@ export class RigEvaluator {
           if (v.r && mode === 'full') out.r = v.r;
         }
       }
-      return out;
+      return clampLimits(out);                                 // 移動・回転・スケールの制限（Maya の transform の limit）
     }, restCopy, () => `chan ${mode}:${ni}`);
   }
 
@@ -648,9 +669,26 @@ export class RigEvaluator {
       case 'wm': case 'worldMatrix': return this.world(ni);
       case 'wim': case 'worldInverseMatrix': return this.world(ni).clone().invert();
       case 'm': case 'matrix': return this.localFile(ni);
-      case 'rp': case 'rpt': case 'sp': case 'spt': return rest && rest[base] ? rest[base] : [0, 0, 0];
-      case 'jo': case 'ra': return rest && rest[base] ? rest[base].map((v) => v * D2R) : [0, 0, 0];
-      case 'ro': return rest ? rest.ro || 0 : 0;
+      default: break;
+    }
+    if (CHANNEL_ATTR_RE.test(base)) {                         // ピボット・rotateAxis・jointOrient・せん断・回転順（接続があれば評価した値）
+      // その属性の接続だけを評価する（コンストレイントは動かすノードの rp・jo を読むので、チャンネル全体を求めると循環する）
+      const [key, axis] = xformKey(base);
+      const k = ANGLE_KEYS.has(key) ? D2R : 1;
+      let ro = rest ? rest.ro || 0 : 0;
+      const v = rest && rest[key] ? rest[key].map((x) => x * k) : [0, 0, 0];
+      for (const [key2, src] of this.chanInputs(ni)) {
+        const [b, a] = xformKey(key2);
+        if (b !== key) continue;
+        const x = this.source(src);
+        if (key === 'ro') { const y = Array.isArray(x) ? x[0] : x; if (typeof y === 'number') ro = Math.min(5, Math.max(0, Math.round(y))); }
+        else if (a < 0 && Array.isArray(x)) for (let i = 0; i < 3; i++) v[i] = x[i];
+        else if (a >= 0 && typeof x === 'number') v[a] = x;
+      }
+      if (key === 'ro') return ro;
+      return comp(v, axis);
+    }
+    switch (base) {
       case 'v': case 'lodv': case 'ove': case 'ovv': {
         // 表示の属性: 接続があれば評価し、なければファイルの値（Python は既定と違う値だけを attrs に入れる）
         const v = g ? this.plug(g.id, base) : undefined;

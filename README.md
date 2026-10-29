@@ -250,6 +250,8 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 - **開いたときのカメラ**: 画面構成のスクリプト（uiConfigurationScriptNode）の「Current Layout」で最初のビューのカメラを使います。複数画面のレイアウトでは、どのビューで作業していたかは分からないため、最初のビューになります。
 - **Trax・カメラシーケンサの .ma の書式**: 実際の Maya のファイルでの確認ができていないため、Autodesk のドキュメントから推定した書式で作ったサンプルで確認しています（属性は短い名前・長い名前のどちらでも読みます）。
 - **offsetParentMatrix**（Maya 2020 以降）は、ファイルの値をローカル行列のあとに掛けます（ワールド行列 = ローカル · offsetParentMatrix · 親）。接続で決まる場合は、アニメーションを読み込むと評価した値を使います。
+- **ローカル行列のそのほかの属性**: 回転・スケールのピボット（rotatePivot・scalePivot とその補正 rpt・spt）、rotateAxis、jointOrient、せん断（shear）、回転順（rotateOrder）も、接続やカーブで決まる場合は毎フレーム評価します（足のピボットの切り替え・スペースの切り替えなど。ジョイントは Maya と同じくピボット・せん断を使いません）。
+- **移動・回転・スケールの制限**（transform・joint の minTransLimit / maxRotLimit などと、その有効化のフラグ）は、有効なものだけ、ファイルの値・カーブ・接続・IK で決まった値をその範囲に収めます。IK のソルバーは制限を考えずに解き、結果を制限で止めます。
 
 **アニメーション（.ma から読み込む場合）**
 
