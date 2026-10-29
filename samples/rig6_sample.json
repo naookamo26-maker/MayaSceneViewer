@@ -6243,7 +6243,7 @@
     "type":"animLayer",
     "dag":-1,
     "attrs":{
-     "w":0.5
+     "wgth":0.5
     }
    },
    {
@@ -6260,7 +6260,7 @@
      },
      "wb":{
       "node":44,
-      "attr":"fo"
+      "attr":"fgwt"
      }
     }
    },
@@ -6278,7 +6278,7 @@
      },
      "wb":{
       "node":44,
-      "attr":"fo"
+      "attr":"fgwt"
      }
     }
    },
@@ -6296,7 +6296,7 @@
      },
      "wb":{
       "node":44,
-      "attr":"fo"
+      "attr":"fgwt"
      }
     }
    },
@@ -6305,6 +6305,9 @@
     "name":"lay_jnt_scaleY_blend1",
     "type":"animBlendNodeAdditiveScale",
     "dag":-1,
+    "attrs":{
+     "acm":1.0
+    },
     "inputs":{
      "ia":{
       "curve":14
@@ -6314,7 +6317,7 @@
      },
      "wb":{
       "node":44,
-      "attr":"fo"
+      "attr":"fgwt"
      }
     }
    },
@@ -6876,7 +6879,7 @@
    "channels":8,
    "nodes":32,
    "graphNodes":86,
-   "seconds":0.0044
+   "seconds":0.0054
   }
  }
 }
