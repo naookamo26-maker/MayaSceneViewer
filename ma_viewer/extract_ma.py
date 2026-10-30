@@ -827,6 +827,10 @@ class _MaterialBuilder:
         entry = texture_entry(f.name, raw, self.resolver)
         for w in texture_warnings(entry, used_by):
             self.ms.warn(w)
+        from .place2d import uv_entry
+        uv = uv_entry(self.ms, f, entry, used_by)          # place2dTexture の繰り返し・オフセット
+        if uv is not None:
+            entry["uv"] = uv
         self._tex_of[id(f)] = len(self.textures)
         self.textures.append(entry)
         return self._tex_of[id(f)]
@@ -1198,6 +1202,8 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     from .rig import discover
     props = [("node", n) for n in ms.nodes if id(n) in keep and not n.is_shape and n.is_dag]
     props += [("mesh", n) for n, *_ in mesh_entries] + [("camera", n) for n in camera_shapes]
+    from .place2d import collect as collect_place2d       # テクスチャの UV の繰り返し・オフセット
+    props += [("place2d", p) for p in collect_place2d(ms)]
     graph_info = discover(ms, keep, [n for n, _a in curve_shapes], props)
     for n in list(graph_info.dag.values()):
         keep_chain(n)

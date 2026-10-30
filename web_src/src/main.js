@@ -1040,7 +1040,10 @@ class ViewerApp {
     // 表示（.v など）・カメラの焦点距離などの、接続で決まる値（姿勢の基準によらず、いまのフレームの値）
     if (this.rig.props.length) {
       const props = this.rig.evaluateProps();
-      for (const p of props) if (p.kind === 'camera') this.cameraProps.set(p.index, p.values);
+      for (const p of props) {
+        if (p.kind === 'camera') this.cameraProps.set(p.index, p.values);
+        else if (p.kind === 'place2d') this.maps.setPlace2d(p.index, p.values);   // テクスチャの UV の繰り返し・オフセット
+      }
       if (this.applyRigVisibility(props)) this.updateVisibility();
     }
     this.timeline.setFrame(f);

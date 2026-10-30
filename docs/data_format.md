@@ -175,6 +175,7 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 | `tried` | 探したパスの一覧（順番どおり） |
 | `udim` / `tiles` | UDIM のとき true と、見つかったタイル `[{"tile": 1001, "resolved": ..., "url": ...}]` |
 | `note` | 補足（同じ名前のファイルが複数見つかったときなど） |
+| `uv` | place2dTexture の UV の配置（繰り返し・オフセットが既定値でないか、接続で動くとき）。`{"place2d": 番号, "repeat": [u, v], "offset": [u, v]}`。テクスチャを UV × repeat + offset の位置で引く。`place2d` は animation.props の `place2d` の番号。rotateUV などほかの属性と UDIM は反映しない（警告） |
 
 ## animation
 
@@ -263,8 +264,8 @@ graph で使っている自作ノードの定義（型 → `{"type", "attributes
 
 | キー | 内容 |
 |---|---|
-| `kind` / `index` | 対象。`node`（nodes の番号）・`mesh`（meshes の番号）・`camera`（cameras の番号） |
-| `inputs` | 属性への接続（graph の `inputs` と同じ形）。node・mesh は表示の属性（`v`・`lodv`・`ove`・`ovv`）、camera は `fl`・`hfa`・`vfa`・`ncp`・`fcp`・`ow`・`hfo`・`vfo`・`lsr`・`cs` |
+| `kind` / `index` | 対象。`node`（nodes の番号）・`mesh`（meshes の番号）・`camera`（cameras の番号）・`place2d`（textures の `uv.place2d` の番号。その place2dTexture を使うテクスチャすべて） |
+| `inputs` | 属性への接続（graph の `inputs` と同じ形）。node・mesh は表示の属性（`v`・`lodv`・`ove`・`ovv`）、camera は `fl`・`hfa`・`vfa`・`ncp`・`fcp`・`ow`・`hfo`・`vfo`・`lsr`・`cs`、place2d は `ofu`・`ofv`・`reu`・`rev` と 2 つ組の `of`・`re`（長い名前 offsetU などの接続もこの名前） |
 | `static` | node・mesh のみ。接続されていない表示の属性のファイルの値と、ディスプレイレイヤーで隠れているか（`layerHidden`） |
 
 表示されるのは `v` と `lodv` が 0.5 以上で、`ove` が有効なら `ovv` も 0.5 以上のとき（ディスプレイレイヤーで隠れていないこと）。接続元が評価できない（未対応のノード）属性は入れず、ファイルの値のまま表示します。graph の DAG ノードは、表示の属性が既定と違う値（`v` = 0 など）なら `attrs` に持ちます（別のノードの表示の入力になるとき用）。
