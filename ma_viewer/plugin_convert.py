@@ -1791,6 +1791,15 @@ class Translator:
             if m == "reorder" and args:
                 new = self.num(args[0]).code
                 return Value("eul", "euler_from_quat(quat_from_euler(%s, %s), %s)" % (base.code, order, new), order=new)
+            if m == "setValue" and args:
+                # API 2.0 の setValue は自分を書き換えて、自分を返す（MEulerRotation().setValue(q) のように式でも使う）
+                if base.code.isidentifier():
+                    self.euler_setter(base, m, e)
+                    return Value("eul", base.code, order=base.extra.get("order", "0"))
+                tmp = Value("eul", self.fresh("r"), order=order)
+                self.emit("%s = %s" % (tmp.code, base.code))
+                self.euler_setter(tmp, m, e)
+                return tmp
             _fail("MEulerRotation の %s は変換できません" % m, e)
         if k == "quat":
             if m == "asEulerRotation":

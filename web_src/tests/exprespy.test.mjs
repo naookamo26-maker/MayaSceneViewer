@@ -44,7 +44,7 @@ const parentWorld = (rig, name) => {
 test('exprespy のノードを定義で評価し、解析できないノードは警告する', () => {
   const graph = data.animation.graph.filter((g) => g.type === 'exprespy');
   const defined = graph.filter((g) => g.def).map((g) => g.name).sort();
-  assert.deepEqual(defined, ['aimCnsEx', 'aimUpCnsEx', 'chainA', 'chainB', 'limitEx', 'oriCnsEx', 'posCnsEx', 'pyEx', 'pyEx2', 'pyEx3', 'quatEx', 'timeEx']);
+  assert.deepEqual(defined, ['aimCnsEx', 'aimUpCnsEx', 'chainA', 'chainB', 'limitEx', 'oriCnsEx', 'posCnsEx', 'pyEx', 'pyEx2', 'pyEx3', 'quatEx', 'timeEx'].concat(['aliasEx']).sort());
   for (const g of graph.filter((x) => x.def)) {
     assert.match(g.def, /^exprespy:[0-9a-f]{12}$/);
     assert.ok(data.animation.nodeDefs[g.def], g.def);
@@ -53,7 +53,7 @@ test('exprespy のノードを定義で評価し、解析できないノード�
   assert.match(warnings, /exprespy badCmds のコードを解析できません（1 行目: maya\.cmds/);
   assert.match(warnings, /exprespy badMesh のコードを解析できません（形状（boxShape\.o）/);
   const rig = at(12);
-  for (const n of ['posCnst', 'oriCnst', 'aimCnst', 'aimUpCnst', 'jT', 'jC', 'jQ', 'jL', 'jP', 'jP2', 'jR', 'jR2', 'jS', 'jS2']) rig.chan(idx(n));
+  for (const n of ['posCnst', 'oriCnst', 'aimCnst', 'aimUpCnst', 'jT', 'jC', 'jQ', 'jL', 'jP', 'jP2', 'jR', 'jR2', 'jS', 'jS2', 'jF']) rig.chan(idx(n));
   assert.deepEqual([...rig.problems], []);
 });
 
@@ -154,6 +154,21 @@ test('pyEx3: クラス・リストの append・except（ZeroDivisionError・Valu
     assert.ok(near(t[2], tx < 0 ? -1 : Math.sqrt(tx)), `フレーム ${f}: ValueError ${t[2]}`);
     assert.ok(near(t2[0], 30), `フレーム ${f}: 再帰 ${t2[0]}`);
     assert.ok(near(t2[1], 2 * tx + 5), `フレーム ${f}: append ${t2[1]}`);
+  }
+});
+
+test('aliasEx: クラスの別名（V = api.MVector）・min / max と同じ名前の引数・式の中の setValue と四元数の exp', () => {
+  for (const f of FRAMES) {
+    const rig = at(f);
+    const tx = rig.chan(idx('src')).t[0];
+    const k = Math.min(Math.max(tx / 2, 0), 1);
+    const c = rig.chan(idx('jF'));
+    assert.ok(nearVec(v3(c.t), new Vector3(k, 0.5 + 0.5 * k, 1)), `フレーム ${f}: ${c.t} / k ${k}`);
+    // exp((v, 0)) = (v / |v| · sin |v|, cos |v|): 軸 v / |v| まわりに 2|v| 回す
+    const v = new Vector3(0.2 * k, 0.2, 0.1);
+    const expect = new Quaternion().setFromAxisAngle(v.clone().normalize(), 2 * v.length());
+    const got = new Quaternion().setFromEuler(new Euler(...c.r.map((x) => x * D2R), ORDERS[c.ro || 0]));
+    assert.ok(near(Math.abs(got.dot(expect)), 1, 1e-9), `フレーム ${f}: 回転 ${c.r}`);
   }
 });
 

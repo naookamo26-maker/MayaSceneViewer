@@ -28,6 +28,8 @@ examples/constraints.ma（MIT License, Copyright (c) 2016 Ryusuke Sasaki）の�
   * pyEx3: クラス（属性のリスト・メソッドの中の実行時の if）・リストの append・except（ZeroDivisionError・
       ValueError）・実行時の深さの再帰 → jS.t = (2 · max(tx, 0) + 8, -5, tx < 0 なら -1、でなければ √tx)、
       jS2.t = (30, 2 · tx + 5, 0)
+  * aliasEx: クラスの別名（V = api.MVector）・min / max と同じ名前の引数と既定値・式の中の setValue と四元数の exp
+      → jF.t = (k, 0.5 + 0.5 · k, 1)（k は tx / 2 を 0〜1 に収めた値）、jF.r = exp((0.2 · k, 0.2, 0.1, 0)) の回転
   * badCmds（maya.cmds の呼び出し）・badMesh（メッシュの形状の入力）: 解析できない（警告を出し、評価しない）
 
 samples/exprespy_bendroll_sample.ma・.json: exprespy の同梱サンプル examples/bend_roll.ma（MIT License,
@@ -203,6 +205,16 @@ PY3 = ("class Acc(object):\n    SCALE = 2.0\n    def __init__(self):\n        se
        "def fact(n):\n    if n <= 1:\n        return 1\n    return n * fact(n - 1)\n"
        "OUT[3] = fact(int(IN[1]) + 1) + fact(4)\n"
        "vals = []\nfor i in range(3):\n    vals.append(IN[i] * 2)\nOUT[4] = sum(vals)")
+# クラスの別名・組み込みと同じ名前の引数・式の中の setValue を使うコード（よくある書き方を組み合わせた例）
+# （IN[0] ← src.tx、IN[1] = 0.5・IN[2] = 0.2）
+ALIAS = ("if not COUNT:\n    V = api.MVector\n    E = api.MEulerRotation\n    Q = api.MQuaternion\n"
+         "def remap01(v, min, max, clamp_low=False, clamp_high=False):\n"
+         "    t = (v - min) / (max - min)\n    if clamp_low and t < 0:\n        return 0\n"
+         "    if clamp_high and t > 1:\n        return 1\n    return t\n"
+         "k = remap01(IN[0], 0.0, 2.0, True, True)\n"
+         "OUT[0] = V(k, IN[1] + 0.5 * k, 1.0)\n"
+         "ax = 0.2 * k\nay = IN[2]\naz = 0.1\n"
+         "OUT[1] = E().setValue(Q(ax, ay, az, 0).exp())")
 BAD_CMDS = 'OUT[0] = cmds.getAttr("src.tx")'
 BAD_MESH = "OUT[0] = IN[0]"
 
@@ -333,7 +345,7 @@ def main():
              '\tsetAttr ".ro" 1;',
              'createNode joint -n "aimUpCnst" -p "dstParent";',
              '\tsetAttr ".t" -type "double3" 1.0109907869246533 0.5560976078619172 3.4206445512302697 ;']
-    for name in ("jT", "jC", "jQ", "jX", "jM", "jL", "jP", "jP2", "jR", "jR2", "jS", "jS2"):
+    for name in ("jT", "jC", "jQ", "jX", "jM", "jL", "jP", "jP2", "jR", "jR2", "jS", "jS2", "jF"):
         lines.append('createNode joint -n "%s";' % name)
     lines += ['createNode transform -n "box";', 'createNode mesh -n "boxShape" -p "box";']
     lines += exprespy("posCnsEx", POS, 8)
@@ -348,6 +360,7 @@ def main():
     lines += exprespy("pyEx", PY, 3, ['\tsetAttr ".i[1]" 2;', '\tsetAttr ".i[2]" 3;'])
     lines += exprespy("pyEx2", PY2, 6, ['\tsetAttr ".i[1]" 2;', '\tsetAttr ".i[2]" 3;', '\tsetAttr ".i[5]" 2;'])
     lines += exprespy("pyEx3", PY3, 3, ['\tsetAttr ".i[1]" 2;', '\tsetAttr ".i[2]" 0.5;'])
+    lines += exprespy("aliasEx", ALIAS, 3, ['\tsetAttr ".i[1]" 0.5;', '\tsetAttr ".i[2]" 0.2;'])
     lines += exprespy("badCmds", BAD_CMDS)
     lines += exprespy("badMesh", BAD_MESH, 1)
     lines += ['createNode animCurveTL -n "src_translateX";', '\tsetAttr ".tan" 2;',
@@ -407,6 +420,9 @@ def main():
               'connectAttr "pyEx3.o[2]" "jS.tz";',
               'connectAttr "pyEx3.o[3]" "jS2.tx";',
               'connectAttr "pyEx3.o[4]" "jS2.ty";',
+              'connectAttr "src.tx" "aliasEx.i[0]";',
+              'connectAttr "aliasEx.o[0]" "jF.t";',
+              'connectAttr "aliasEx.o[1]" "jF.r";',
               'connectAttr "badCmds.o[0]" "jX.tx";',
               'connectAttr "boxShape.o" "badMesh.i[0]";',
               'connectAttr "badMesh.o[0]" "jM.tx";',

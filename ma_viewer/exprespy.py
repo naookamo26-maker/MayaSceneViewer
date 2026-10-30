@@ -363,6 +363,7 @@ class ExprespyTranslator(PC.Translator):
         self.frames: list = []
         self.inlining: List[str] = []
         self.classes: Dict[str, dict] = {}   # コードの中のクラス（名前 → メソッド・クラスの属性・親）
+        self.aliases: Dict[str, ast.expr] = {}   # API・math のクラスや関数の別名（_vec = api.MVector）
         self.method_ctx: list = []           # 展開中のメソッドの (クラス, self)（super() のため）
         # 一度だけ整数を入れる名前（IN[AT_ROLL] の番号に使える）
         stores = _scope_stores(tree.body)
@@ -427,7 +428,14 @@ class ExprespyTranslator(PC.Translator):
         v = self.const_expr(e)
         if v is not None:
             return v
+        if isinstance(e, ast.Name):
+            alias = self.alias_target(e)
+            if alias is not None:                         # 別名をそのまま読む（V → api.MVector）
+                return self.expr(alias)
         if isinstance(e, ast.Attribute):
+            alias = self.alias_target(e)
+            if alias is not None:                         # V.kXaxisVector → api.MVector.kXaxisVector
+                return self.expr(alias)
             obj = self.obj_of(e.value)
             if obj is not None:
                 return self.obj_attr(obj, e.attr, e)
@@ -1166,10 +1174,42 @@ class ExprespyTranslator(PC.Translator):
                      "再現できません）" % "・".join(self.carried), s)
         self.block(s.body)
 
+    def alias_target(self, node) -> Optional[ast.expr]:
+        """別名（_vec・_vec.kXaxisVector）を使う式なら、元の名前に戻した式"""
+        parts = PC._dotted(node)
+        if not parts or parts[0] not in self.aliases or parts[0] in self.env:
+            return None
+        return ast.copy_location(PC._dotted_expr(PC._dotted(self.aliases[parts[0]]) + parts[1:]), node)
+
+    def api_alias(self, node) -> Optional[ast.expr]:
+        """Maya の API・math のクラスや関数そのもの（api.MVector・math.sin・MVector・別名）なら、その元の式"""
+        parts = PC._dotted(node)
+        if not parts:
+            return None
+        root = parts[0]
+        if root in self.aliases:
+            return PC._dotted_expr(PC._dotted(self.aliases[root]) + parts[1:])
+        if root in self.env or root in self.funcs or root in self.classes:
+            return None
+        last = parts[-1]
+        # クラス（api.MVector・MVector）と math の関数（math.sin）だけ。定数（api.MVector.kYaxisVector・math.pi）は値
+        if last in PC._KNOWN_CLASSES and len(parts) <= 2:
+            return node                                   # MVector・api.MVector・om.MVector（import … as om）
+        if root == "math" and len(parts) == 2 and (last in PC._MATH or last in PC._MATH_RENAME
+                                                    or last in ("copysign", "isclose")):
+            return node
+        return None
+
     def assign(self, target, value_node, s):
         if isinstance(value_node, ast.Lambda) and isinstance(target, ast.Name):
             self.define(target.id, value_node.args, value_node.body, True, s)
             return
+        if isinstance(target, ast.Name) and not isinstance(value_node, _Pre):
+            alias = self.api_alias(value_node)
+            if alias is not None:
+                self.aliases[target.id] = alias           # _vec = api.MVector: 別名（計算の文にはしない）
+                self.env.pop(target.id, None)
+                return
         if isinstance(target, ast.Name) and not isinstance(value_node, _Pre):
             v = self.expr(value_node)
             if isinstance(value_node, (ast.List, ast.ListComp)) or (
@@ -1951,6 +1991,10 @@ class ExprespyTranslator(PC.Translator):
 
     def call(self, e):
         f = e.func
+        if isinstance(f, (ast.Name, ast.Attribute)):
+            alias = self.alias_target(f)
+            if alias is not None:                         # _vec(x, y, z) → api.MVector(x, y, z)
+                return self.call(ast.copy_location(ast.Call(func=alias, args=e.args, keywords=e.keywords), e))
         if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "IN" and f.attr == "get":
             if not e.args or len(e.args) > 2 or e.keywords:
                 PC._fail("IN.get(番号[, 既定値]) の形で書いてください", e)
