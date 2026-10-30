@@ -41,6 +41,8 @@ _UNSUPPORTED = [
     (("nu", "noiseU"), 0.0, "noiseUV"),
     (("nv", "noiseV"), 0.0, "noiseUV"),
 ]
+_UNSUPPORTED_NAMES = frozenset(k for names, _d, _l in _UNSUPPORTED for k in names)
+_PROP_NAMES = frozenset(k for names in PROP_ALIASES.values() for k in names)
 _TRUE = {"yes", "on", "true", "1"}
 _FALSE = {"no", "off", "false", "0"}
 
@@ -104,6 +106,8 @@ def static_uv(p) -> Tuple[List[float], List[float]]:
 def unsupported(p) -> List[str]:
     """反映しない属性のうち、既定値でないもの・接続のあるもの（名前の一覧）"""
     out: List[str] = []
+    if _UNSUPPORTED_NAMES.isdisjoint(p.inputs) and _UNSUPPORTED_NAMES.isdisjoint(p.raw or ()):
+        return out                                   # 値も接続もない（ほとんどの place2dTexture）
     for names, default, label in _UNSUPPORTED:
         if label in out:
             continue
@@ -128,7 +132,7 @@ def unsupported(p) -> List[str]:
 
 def connected(p) -> bool:
     """繰り返し・オフセットに接続があるか（ビューアがフレームごとに評価する）"""
-    return any(name in p.inputs for names in PROP_ALIASES.values() for name in names)
+    return not _PROP_NAMES.isdisjoint(p.inputs)
 
 
 def uv_entry(ms, f, entry: dict, used_by: str) -> Optional[dict]:

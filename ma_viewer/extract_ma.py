@@ -1077,8 +1077,10 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         if t.endswith(".json") or any(n.type == t for n in ms.nodes):
             ms.warn("自作ノードの定義 %s を使えません: %s" % (t, why), key="#自作ノードの定義の誤り " + t)
     # exprespy（Python で式を書くノード）: コードをノードごとの定義に変換して評価する
-    from .exprespy import apply_exprespy
-    ms.exprespy_defs, ms.exprespy_nodes, ms.exprespy_problems = apply_exprespy(ms)
+    ms.exprespy_defs, ms.exprespy_nodes, ms.exprespy_problems = {}, [], {}
+    if any(n.type == "exprespy" for n in ms.nodes):     # 変換器の読み込み（約 10 ms）は使うシーンだけ
+        from .exprespy import apply_exprespy
+        ms.exprespy_defs, ms.exprespy_nodes, ms.exprespy_problems = apply_exprespy(ms)
     if ms.exprespy_nodes:
         ms.warn("exprespy %d 個（%s）のコードを解析して評価します。" % (
             len(ms.exprespy_nodes), "、".join(ms.exprespy_nodes[:5]) + (" ほか" if len(ms.exprespy_nodes) > 5 else "")))
