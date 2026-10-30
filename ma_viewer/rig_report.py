@@ -314,6 +314,8 @@ def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
                 out.append("    …ほか %d か所" % (len(items) - 8))
         for name, problem in sorted(info.expression_problems.items()):
             out.append("  expression %s: %s" % (name, problem))
+        for name, problem in sorted((getattr(ms, "exprespy_problems", None) or {}).items()):
+            out.append("  exprespy %s: %s" % (name, problem))
     defined = getattr(ms, "defined_nodes", {}) or {}
     defs = getattr(ms, "node_defs", None)
     if defined:
@@ -326,11 +328,15 @@ def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
             out.append("■ 使えない自作ノードの定義（同梱の定義を直してください）")
             for t, why in bad:
                 out.append("  %s: %s" % (t, why))
+    ep = getattr(ms, "exprespy_nodes", None) or []
+    if ep:
+        out.append("■ コードを解析して評価する exprespy: %s" % "、".join(ep[:8]) + (" ほか %d 個" % (len(ep) - 8) if len(ep) > 8 else ""))
     mapped = getattr(ms, "mapped_nodes", {}) or {}
     if mapped:
         out.append("■ 設定ファイルで割り当てた自作ノード: %s" % "、".join(
             "%s → %s（%s）" % (t, ms.node_map[t]["as"], "、".join(names[:5])) for t, names in sorted(mapped.items())))
-    templates = {t: template_for(ms, t) for t in sorted(info.unsupported) if t != "expression"} if info else {}
+    templates = {t: template_for(ms, t) for t in sorted(info.unsupported)
+                 if t not in ("expression", "exprespy")} if info else {}
     if templates:
         out.append("")
         out.append("■ 自作ノードの割り当て（設定ファイルの雛形）")

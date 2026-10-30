@@ -1150,7 +1150,45 @@ class Translator:
         if base.kind == "tm":
             self.tm_setter(base, name, c)
             return
+        if base.kind == "eul" and name in ("reorderIt", "setValue"):
+            self.euler_setter(base, name, c)
+            return
         _fail("%s の %s は変換できません" % (base.kind, name), c)
+
+    def euler_setter(self, r: Value, m: str, c: ast.Call):
+        """MEulerRotation の変数を書き換える（reorderIt: 回転は変えず回転順を変える。setValue: 回転順は変えずに値を入れる）"""
+        if not r.code.isidentifier():
+            _fail("%s は、MEulerRotation の変数に対してだけ変換できます" % m, c)
+        order = r.extra.get("order", "0")
+        if m == "reorderIt":
+            if not c.args:
+                _fail("reorderIt に回転順がありません", c)
+            new = self.num(c.args[0]).code
+            self.emit("%s = euler_from_quat(quat_from_euler(%s, %s), %s)" % (r.code, r.code, order, new))
+            r.extra["order"] = new
+            return
+        if not c.args:
+            _fail("setValue に値がありません", c)
+        if len(c.args) >= 3:
+            self.emit("%s = [%s]" % (r.code, ", ".join(self.num(a).code for a in c.args[:3])))
+            r.extra["order"] = self.num(c.args[3]).code if len(c.args) > 3 else "0"
+            return
+        v = self.expr(c.args[0])
+        if v.kind == "tm":
+            v = self.tm_matrix(v)
+        if v.kind == "quat":
+            self.emit("%s = euler_from_quat(%s, %s)" % (r.code, v.code, order))
+        elif v.kind == "mat":
+            self.emit("%s = rotation(%s, %s)" % (r.code, v.code, order))
+        elif v.kind == "eul":
+            self.emit("%s = %s" % (r.code, v.code))
+            r.extra["order"] = v.extra.get("order", "0")
+        elif v.kind in ("vec", "pt"):
+            # 3 つの数（ラジアン）と回転順（省略時は xyz）
+            self.emit("%s = %s" % (r.code, v.code))
+            r.extra["order"] = self.num(c.args[1]).code if len(c.args) > 1 else "0"
+        else:
+            _fail("setValue に回転以外（%s）を渡しています" % v.kind, c)
 
     def matrix_from_list(self, c: ast.Call):
         """MScriptUtil.createMatrixFromList(16 個の数のリスト, 行列) → 行列 = matrix(リスト)"""
@@ -1481,7 +1519,17 @@ class Translator:
                 return Value("quat", "[0.0, 0.0, 0.0, 1.0]")
             if len(e.args) == 4:
                 return Value("quat", "[%s]" % ", ".join(self.num(a).code for a in e.args))
-            _fail("この MQuaternion の作り方は変換できません（x, y, z, w で作ってください）", e)
+            first = self.expr(e.args[0])
+            if len(e.args) == 1 and first.kind in ("quat", "vec"):
+                return Value("quat", first.code)     # MQuaternion(q)・MQuaternion([x, y, z, w])
+            if len(e.args) in (2, 3):
+                second = self.expr(e.args[1])
+                factor = self.num(e.args[2]).code if len(e.args) == 3 else None
+                if first.kind in ("vec", "pt") and second.kind in ("vec", "pt"):
+                    return Value("quat", self.quat_between(first.code, second.code, factor))
+                if first.kind in ("num", "unit") and second.kind in ("vec", "pt") and factor is None:
+                    return Value("quat", self.quat_axis_angle(second.code, first.code))
+            _fail("この MQuaternion の作り方は変換できません", e)
         if name in ("MAngle", "MDistance", "MTime"):
             v = self.num(e.args[0]).code if e.args else "0.0"
             unit = _tail(e.args[1]) if len(e.args) > 1 else None
@@ -1498,6 +1546,31 @@ class Translator:
         if not isinstance(f, ast.Attribute):
             _fail("関数 %s は変換できません" % (name or "?"), e)
         return self.method(self.expr(f.value), f.attr, e, kw)
+
+    def quat_between(self, a: str, b: str, factor: Optional[str] = None) -> str:
+        """MQuaternion(a, b[, factor]): 向き a を b へ回す最短の回転（factor 倍の角度）。値を入れた変数の名前を返す。
+        a と b が逆向き（外積が 0）なら、a に垂直な軸で 180 度"""
+        va, vb, c, ln, h, n, q = (self.fresh(x) for x in ("qa", "qb", "qc", "ql", "qh", "qn", "q"))
+        self.emit("%s = %s" % (va, a))
+        self.emit("%s = %s" % (vb, b))
+        self.emit("%s = cross(%s, %s)" % (c, va, vb))
+        self.emit("%s = length(%s)" % (ln, c))
+        self.emit("if %s < 1e-10:" % ln)
+        self.emit("    %s = cross(%s, [1.0, 0.0, 0.0])" % (c, va))
+        self.emit("    if length(%s) < 1e-10:" % c)
+        self.emit("        %s = cross(%s, [0.0, 1.0, 0.0])" % (c, va))
+        self.emit("%s = atan2(%s, dot(%s, %s)) %s/ 2" % (h, ln, va, vb, "* %s " % factor if factor else ""))
+        self.emit("%s = normalize(%s)" % (n, c))
+        self.emit("%s = [%s[0] * sin(%s), %s[1] * sin(%s), %s[2] * sin(%s), cos(%s)]" % (q, n, h, n, h, n, h, h))
+        return q
+
+    def quat_axis_angle(self, axis: str, angle: str) -> str:
+        """MQuaternion(角度, 軸): 軸のまわりに角度（ラジアン）回す回転。値を入れた変数の名前を返す"""
+        n, h, q = (self.fresh(x) for x in ("qn", "qh", "q"))
+        self.emit("%s = normalize(%s)" % (n, axis))
+        self.emit("%s = %s / 2" % (h, angle))
+        self.emit("%s = [%s[0] * sin(%s), %s[1] * sin(%s), %s[2] * sin(%s), cos(%s)]" % (q, n, h, n, h, n, h, h))
+        return q
 
     def make_vector(self, cls: str, e: ast.Call) -> Value:
         kind = "pt" if cls in _PT_CLASSES else "vec"
@@ -1566,6 +1639,12 @@ class Translator:
                 return Value("num", "degrees(%s)" % base.code)
             _fail("%s は変換できません" % m, e)
         if k in ("vec", "pt"):
+            if m == "normalize" and not args:
+                # API 2.0 の MVector.normalize() は自分を正規化して、自分を返す
+                if base.code.isidentifier():
+                    self.emit("%s = normalize(%s)" % (base.code, base.code))
+                    return Value("vec", base.code)
+                return Value("vec", "normalize(%s)" % base.code)
             if m in ("length",):
                 return Value("num", "length(%s)" % base.code)
             if m in ("normal",):
@@ -1647,6 +1726,11 @@ class Translator:
                 return Value("quat", "quat_from_euler(%s, %s)" % (base.code, order))
             if m == "asMatrix":
                 return Value("mat", "compose([0.0, 0.0, 0.0], %s, [1.0, 1.0, 1.0], %s)" % (base.code, order))
+            if m == "asVector":
+                return Value("vec", base.code)
+            if m == "reorder" and args:
+                new = self.num(args[0]).code
+                return Value("eul", "euler_from_quat(quat_from_euler(%s, %s), %s)" % (base.code, order, new), order=new)
             _fail("MEulerRotation の %s は変換できません" % m, e)
         if k == "quat":
             if m == "asEulerRotation":
@@ -1816,7 +1900,8 @@ _KNOWN_METHODS = (_GETTERS_NUM | _GETTERS_VEC | _GETTERS_MAT | _GETTERS_UNIT | _
                       "data", "isNull", "parent", "array", "attribute", "slerp", "thisMObject", "findPlug",
                       "isConnected", "elementByLogicalIndex", "numElements", "evaluateNumElements", "asMObject",
                       "asMAngle", "asMDistance", "asMTime", "getElement", "det4x4", "det3x3", "isEquivalent",
-                      "isSingular", "setElement", "setToIdentity", "setToProduct"})
+                      "isSingular", "setElement", "setToIdentity", "setToProduct", "reorderIt", "reorder", "setValue",
+                      "asVector"})
 _KNOWN_CLASSES = _VEC_CLASSES | _PT_CLASSES | _MAT_CLASSES | {
     "MTransformationMatrix", "MEulerRotation", "MQuaternion", "MAngle", "MDistance", "MTime", "MFnMatrixData",
     "MPlug", "MFnDependencyNode"}

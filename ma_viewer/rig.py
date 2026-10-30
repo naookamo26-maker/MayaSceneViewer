@@ -824,9 +824,10 @@ def graph_warnings(info: GraphInfo) -> List[str]:
     out = []
     for t, items in sorted(info.unsupported.items(), key=lambda kv: -len(kv[1])):
         names = sorted({c for _n, c, _a in items})
-        if t == "expression":
-            out.append("アニメーション: 解釈できない expression（%s など）につながる %s の値は再生されません。"
-                       % (items[0][0], "、".join(names[:4]) + (" ほか" if len(names) > 4 else "")))
+        if t in ("expression", "exprespy"):
+            out.append("アニメーション: %s %s（%s など）につながる %s の値は再生されません。"
+                       % ("解釈できない" if t == "expression" else "コードを解析できない", t, items[0][0],
+                          "、".join(names[:4]) + (" ほか" if len(names) > 4 else "")))
             continue
         out.append("アニメーション: %s（%s など）は未対応のため、これにつながる %s の値は再生されません。"
                    % (t, items[0][0], "、".join(names[:4]) + (" ほか" if len(names) > 4 else "")))

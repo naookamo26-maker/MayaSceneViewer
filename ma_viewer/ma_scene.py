@@ -356,6 +356,8 @@ class MaScene:
         self.up_axis = "y"
         self.time_unit = "film"
         self.current_time: Optional[float] = None    # time1 の .o（保存時の現在フレーム）
+        # time1（ノード一覧にない）からの接続: [(先のノード, 先の属性)]。exprespy の入力の時間（秒）を見分けるため
+        self.time_inputs: List[Tuple[MaNode, str]] = []
         # defaultResolution（レンダーの解像度。select -ne :defaultResolution のあとの setAttr を受け取る）
         self.resolution = MaNode("defaultResolution", "resolution", None, -1)
         self.resolution.raw = {}
@@ -632,6 +634,8 @@ class MaScene:
         dn, dattr = R.split_node_attr(plugs[1])
         src = self.resolve(self.qualify(sn))
         dst = self.resolve(self.qualify(dn))
+        if src is None and dst is not None and connect and self.qualify(sn).lstrip(":") == "time1":
+            self.time_inputs.append((dst, R.normalize_attr(dattr)))
         if src is None or dst is None:
             return
         key = R.normalize_attr(dattr)

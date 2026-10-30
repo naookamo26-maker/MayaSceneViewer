@@ -1072,6 +1072,18 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     for t, why in sorted(ms.node_defs.errors.items()):
         if t.endswith(".json") or any(n.type == t for n in ms.nodes):
             ms.warn("自作ノードの定義 %s を使えません: %s" % (t, why), key="#自作ノードの定義の誤り " + t)
+    # exprespy（Python で式を書くノード）: コードをノードごとの定義に変換して評価する
+    from .exprespy import apply_exprespy
+    ms.exprespy_defs, ms.exprespy_nodes, ms.exprespy_problems = apply_exprespy(ms)
+    if ms.exprespy_nodes:
+        ms.warn("exprespy %d 個（%s）のコードを解析して評価します。" % (
+            len(ms.exprespy_nodes), "、".join(ms.exprespy_nodes[:5]) + (" ほか" if len(ms.exprespy_nodes) > 5 else "")))
+        if ms.linear_unit != "cm":
+            ms.warn("exprespy は長さを cm で計算しますが、シーンの長さの単位は %s です。ビューアはファイルの単位のまま"
+                    "計算するため、長さの定数を使うコードは Maya と違う値になることがあります。" % ms.linear_unit)
+    for name, why in sorted(ms.exprespy_problems.items()):
+        ms.warn("exprespy %s のコードを解析できません（%s）。このノードにつながる値は再生されません。" % (name, why),
+                key="#exprespy " + name)
     # カーブのヒストリ（circle などの形を作るノード）: 計算できるものは、カーブの形（.cc）にする
     from .curve_history import bake_curve_history
     ms.curve_world = ctx.world_matrix                   # ワールド空間の形を入力にするヒストリの計算に使う

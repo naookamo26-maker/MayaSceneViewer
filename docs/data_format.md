@@ -249,7 +249,7 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 
 ### animation.nodeDefs
 
-graph で使っている自作ノードの定義（型 → `{"type", "attributes", "ir"}`）。`attributes` は定義の属性（`name`・`short`・`type`・`array`・`output`・`default`・`children`・ベクトルの成分の `components`）、`ir` は計算を Python の構文解析で検証して木の形にしたもの（`ma_viewer/node_defs.py` の Compiler の説明を参照）。ビューアが IR を関数に組み立てて評価する。
+graph で使っている自作ノードの定義（型 → `{"type", "attributes", "ir"}`）。exprespy のノードはコードからノードごとに作った定義で、キーは `exprespy:` と 12 桁のハッシュ（コードと入出力の型から。同じものは共有する）、属性は入力 `i0`・`i1` …、出力 `o0` …（.ma の `.i[n]`・`.o[n]`）。`attributes` は定義の属性（`name`・`short`・`type`・`array`・`output`・`default`・`children`・ベクトルの成分の `components`）、`ir` は計算を Python の構文解析で検証して木の形にしたもの（`ma_viewer/node_defs.py` の Compiler の説明を参照）。ビューアが IR を関数に組み立てて評価する。
 
 ### animation.props
 
