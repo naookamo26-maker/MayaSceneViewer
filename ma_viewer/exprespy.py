@@ -575,8 +575,14 @@ class ExprespyTranslator(PC.Translator):
             if d is not None:
                 return self.dict_get(d, e.slice, None, e, strict=True)
             lst = self.list_of(e.value)
-            if lst is not None and not isinstance(e.slice, ast.Slice):
+            if lst is not None and isinstance(e.slice, ast.Slice):
+                return self.make_list(self.sliced(lst.extra["items"], e.slice, e), e)   # 切り出し（新しいリスト）
+            if isinstance(e.slice, ast.Slice) and self.is_text(e.value):
+                return self.str_value(self.sliced(self.str_of(e.value), e.slice, e))
+            if lst is not None:
                 return self.list_get(lst, e.slice, e)
+            if isinstance(e.slice, ast.Slice):
+                PC._fail("切り出し（[a:b]）は、変数に入れたリストと文字列だけ変換できます", e)
             st = self.str_of(e.value) if self.is_text(e.value) else None
             if st is not None:
                 try:
@@ -774,6 +780,16 @@ class ExprespyTranslator(PC.Translator):
         if not 0 <= k < n:
             PC._fail("リストの添字 %d が範囲外です（長さ %d）" % (k, n), where)
         return k
+
+    def sliced(self, seq, sl: ast.Slice, node):
+        """seq[a:b:c]（a・b・c は変換の時点で決まる数か省略）"""
+        try:
+            bounds = [None if x is None else self.index_of(x, "切り出しの位置") for x in (sl.lower, sl.upper, sl.step)]
+        except _Dynamic:
+            PC._fail("切り出しの位置が実行時に決まります（変換の時点で決まる数にしてください）", node)
+        if bounds[2] == 0:
+            PC._fail("切り出しの刻みが 0 です（ValueError）", node)
+        return seq[slice(*bounds)]
 
     def list_get(self, lst, idx_node, node):
         items = lst.extra["items"]
@@ -1255,6 +1271,8 @@ class ExprespyTranslator(PC.Translator):
         lst = self.list_of(node)
         if lst is not None:
             return list(lst.extra["items"])
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Slice) and self.list_of(node.value) is not None:
+            return list(self.expr(node).extra["items"])       # 切り出したリスト（len(xs[1:]) など）
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and not node.args:
             d = self.dict_of(node.func.value)
             if d is not None and node.func.attr in ("keys", "values", "items"):
@@ -1432,6 +1450,10 @@ class ExprespyTranslator(PC.Translator):
                 idx = node.args[0]
             if idx is not None and any(isinstance(n, ast.Name) and n.id in names for n in ast.walk(idx)):
                 return True
+            # リスト・文字列の添字・切り出しの位置（l[i]・l[i:i + 2]）: 位置を定数にするため展開する
+            if isinstance(node, ast.Subscript) and not (isinstance(node.value, ast.Name) and node.value.id in ("IN", "OUT")) \
+                    and any(isinstance(n, ast.Name) and n.id in names for n in ast.walk(node.slice)):
+                return True
         return False
 
     def unroll(self, s: ast.For, items: list):
@@ -1526,15 +1548,18 @@ class ExprespyTranslator(PC.Translator):
 
     def block(self, stmts, tail: bool = False):
         """文の並び。break・continue・return のあとの文（実行されない）は変換しない"""
-        out = []
+        out, ret = [], None
         for st in stmts:
             if isinstance(st, ast.Return) and not tail and self.ret_frame() is not None:
-                self.loop_return(st)
+                ret = st                                  # ループの中の return（前の文を変換してから）
                 break
             out.append(st)
             if isinstance(st, (ast.Break, ast.Continue)):
                 break
-        return super().block(out, tail)
+        res = super().block(out, tail)
+        if ret is not None:
+            self.loop_return(ret)
+        return res
 
     def ret_frame(self):
         """ループの中の return を受ける関数の目印（関数の境目より内側）"""
@@ -2199,7 +2224,7 @@ class ExprespyTranslator(PC.Translator):
                 if p not in defaults:
                     PC._fail("関数 %s の引数 %s がありません" % (name, p), e)
                 nodes[p] = defaults[p]                   # 既定値（数・None など）
-        args = list(bound) + [self.expr(nodes[p]) for p in params[len(bound):]]
+        args = list(bound) + [self.tracked(nodes[p]) for p in params[len(bound):]]   # [..] はリストとして渡す
         saved_env, saved_names = self.env, self.names
         stored = set() if is_lambda else set(_scope_stores(body))     # 関数の中で値を入れる名前
         local_names = set(params) | stored
@@ -2214,7 +2239,7 @@ class ExprespyTranslator(PC.Translator):
                 var = self.names[p]
                 if v.kind == "tm":
                     v = self.tm_matrix(v)
-                if v.kind in ("none", "str", "dict", "obj", "list"):
+                if v.kind in ("none", "str", "dict", "obj", "list") or self.is_list(v):
                     self.env[p] = v                      # 変換の時点で追う値（辞書・リスト・オブジェクトは Python と同じく共有）
                     continue
                 if v.kind not in ("num", "unit", "vec", "pt", "mat", "quat", "eul"):

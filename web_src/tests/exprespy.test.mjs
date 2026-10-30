@@ -44,7 +44,7 @@ const parentWorld = (rig, name) => {
 test('exprespy のノードを定義で評価し、解析できないノードは警告する', () => {
   const graph = data.animation.graph.filter((g) => g.type === 'exprespy');
   const defined = graph.filter((g) => g.def).map((g) => g.name).sort();
-  assert.deepEqual(defined, ['aimCnsEx', 'aimUpCnsEx', 'chainA', 'chainB', 'limitEx', 'oriCnsEx', 'posCnsEx', 'pyEx', 'pyEx2', 'pyEx3', 'quatEx', 'timeEx'].concat(['aliasEx']).sort());
+  assert.deepEqual(defined, ['aimCnsEx', 'aimUpCnsEx', 'chainA', 'chainB', 'limitEx', 'oriCnsEx', 'posCnsEx', 'pyEx', 'pyEx2', 'pyEx3', 'quatEx', 'timeEx'].concat(['aliasEx', 'lookupEx']).sort());
   for (const g of graph.filter((x) => x.def)) {
     assert.match(g.def, /^exprespy:[0-9a-f]{12}$/);
     assert.ok(data.animation.nodeDefs[g.def], g.def);
@@ -53,7 +53,7 @@ test('exprespy のノードを定義で評価し、解析できないノード�
   assert.match(warnings, /exprespy badCmds のコードを解析できません（1 行目: maya\.cmds/);
   assert.match(warnings, /exprespy badMesh のコードを解析できません（形状（boxShape\.o）/);
   const rig = at(12);
-  for (const n of ['posCnst', 'oriCnst', 'aimCnst', 'aimUpCnst', 'jT', 'jC', 'jQ', 'jL', 'jP', 'jP2', 'jR', 'jR2', 'jS', 'jS2', 'jF']) rig.chan(idx(n));
+  for (const n of ['posCnst', 'oriCnst', 'aimCnst', 'aimUpCnst', 'jT', 'jC', 'jQ', 'jL', 'jP', 'jP2', 'jR', 'jR2', 'jS', 'jS2', 'jF', 'jK']) rig.chan(idx(n));
   assert.deepEqual([...rig.problems], []);
 });
 
@@ -169,6 +169,25 @@ test('aliasEx: クラスの別名（V = api.MVector）・min / max と同じ名�
     const expect = new Quaternion().setFromAxisAngle(v.clone().normalize(), 2 * v.length());
     const got = new Quaternion().setFromEuler(new Euler(...c.r.map((x) => x * D2R), ORDERS[c.ro || 0]));
     assert.ok(near(Math.abs(got.dot(expect)), 1, 1e-9), `フレーム ${f}: 回転 ${c.r}`);
+  }
+});
+
+test('lookupEx: リストを関数に渡し、ループの変数で切り出す折れ線の表引き・文字列の切り出し', () => {
+  const xs = [-20, 0, 20], ys = [-2, 0, 1];
+  const table = (t) => {                                // コードと同じ手順（Python の動き）
+    for (let n = 0; n < xs.length; n++) {
+      const pk = xs.slice(n, n + 2), pv = ys.slice(n, n + 2);
+      if (pk.length === 1) return pv[0];
+      if (t < pk[0]) return pv[0];
+      if (pk[0] <= t && t < pk[1]) return pv[0] + ((t - pk[0]) / (pk[1] - pk[0])) * (pv[1] - pv[0]);
+    }
+    return 0;
+  };
+  for (const f of [1, 4, 7, 12, 16, 20, 24]) {
+    const rig = at(f);
+    const tx = rig.chan(idx('src')).t[0];
+    const t = rig.chan(idx('jK')).t;
+    assert.ok(near(t[0], table(tx * 10)) && near(t[1], 2), `フレーム ${f}: ${t} / 期待 ${table(tx * 10)}`);
   }
 });
 
