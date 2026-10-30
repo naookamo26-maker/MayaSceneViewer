@@ -71,13 +71,15 @@ class TranslateTest(unittest.TestCase):
     def test_unsupported(self):
         cases = {
             "OUT[0] = COUNT": "if not COUNT:（最初の 1 回だけの初期化）の形でだけ",
-            "s = 0\nfor i in range(int(IN[1])):\n    s += IN[i]\nOUT[0] = s": "回数が変換の時点で決まる並び",
-            "for i in range(3):\n    if IN[1] > i:\n        break\n    OUT[i] = IN[1]": "実行時に決まる条件の break",
+            "s = 0\nfor i in range(int(IN[1])):\n    s += IN[i]\nOUT[0] = s": "IN[…] で選ぶ値の種類がそろっていません",
+            "OUT[int(IN[1])] = 1": "接続されている出力がありません",
+            "d = {'a': 1}\nOUT[0] = d['b']": "辞書にキー 'b' がありません",
+            "n = 'a' + str(IN[1])\nOUT[0] = 1 if n == 'a1' else 0": "文字列の中身が変換の時点で決まりません",
             "try:\n    x = IN[0]\nexcept ValueError:\n    x = 0\nOUT[0] = x": "except KeyError",
             "OUT[0] = sum(IN[1] for i in range(int(IN[1])))": "要素の数が決まる並び",
             'OUT[0] = cmds.getAttr("a.tx")': "maya.cmds",
             "def f(x):\n    return f(x)\nOUT[0] = f(1)": "再帰呼び出し",
-            "def f(x):\n    for i in range(3):\n        return x\n    return 0\nOUT[0] = f(1)": "ループの中の return",
+            "OUT[0] = 'text'": "文字列は OUT に出せません",
             "def f(x):\n    if x:\n        return 1\nOUT[0] = f(1)": "すべての道で return",
             "def f(*xs):\n    return 1\nOUT[0] = f()": "*args",
             "def f(x, k=1):\n    return x\nOUT[0] = f(k=2)": "引数 x がありません",
@@ -133,11 +135,11 @@ class TranslateTest(unittest.TestCase):
 
     def test_python_constructs(self):
         """実際のコードで使われそうな Python の書き方（tests/exprespy_constructs.py の一覧）がすべて変換できる"""
-        from exprespy_constructs import CASES, KINDS
-        for name, code in CASES:
+        from exprespy_constructs import CASES, KINDS, OUT_CONNECTED
+        for name, code, *kinds in CASES:
             with self.subTest(name=name):
                 try:
-                    translate(code, KINDS)
+                    translate(code, kinds[0] if kinds else KINDS, out_connected=OUT_CONNECTED)
                 except ExprespyError as exc:
                     self.fail("%s: %s" % (name, exc.text()))
 
@@ -152,6 +154,23 @@ class TranslateTest(unittest.TestCase):
         self.assertIn("o1 = i1", nd.code)
         self.assertIn("x = -1\no2 = x", nd.code)              # IN[7] はないので except の側
         self.assertIn("o3 = (0 + (i0 * 2) + (i2 * 2))", nd.code)
+
+    def test_dynamic_index_and_flags(self):
+        nd, _, notes = translate("s = 0\nfor i in range(int(IN[5])):\n    s += IN[i]\nOUT[0] = s\nOUT[int(IN[5])] = 1.0",
+                                 {0: "num", 1: "num", 5: "num"}, out_connected={0, 1})
+        self.assertIn("(i0 if _k1 == 0 else (i1 if _k1 == 1 else (i5 if _k1 == 5 else 0)))", nd.code)
+        self.assertRegex(nd.code, r"elif _k\d+ == 1:\n    o1 = _v\d+")
+        self.assertTrue(any("KeyError" in n for n in notes))  # ない番号は 0 にすることを注意に出す
+        nd, _, _ = translate("def f():\n    for i in range(3):\n        if IN[i] > 1:\n            return i\n    return -1\n"
+                             "OUT[0] = f()", {0: "num", 1: "num", 2: "num"})
+        self.assertIn("if not _brk", nd.code)                  # 展開したループの実行時の return（目印で抜ける）
+        self.assertIn("if not _done", nd.code)
+
+    def test_dict_and_strings(self):
+        nd, _, _ = translate("d = {'a': IN[0]}\nif IN[0] > 0:\n    d['a'] = 1\nside = 'L'\n"
+                             "OUT[0] = d['a'] if side.upper() == 'L' else 0", {0: "num"})
+        self.assertIn("if (i0 > 0):\n    _d1 = 1", nd.code)     # 実行時の if の中でも、キーの変数に入れる
+        self.assertIn("o0 = _d1", nd.code)
 
     def test_and_or_values(self):
         nd, _, _ = translate("OUT[0] = IN[0] or 1.0\nOUT[1] = IN[0] and 0\nOUT[2] = 0 or IN[0]\n"
@@ -181,12 +200,12 @@ class SceneTest(unittest.TestCase):
         anim = self.scene["animation"]
         graph = {g["name"]: g for g in anim["graph"] if g["type"] == "exprespy"}
         for name in ("posCnsEx", "oriCnsEx", "aimCnsEx", "aimUpCnsEx", "timeEx", "chainA", "chainB", "quatEx",
-                     "limitEx", "pyEx"):
+                     "limitEx", "pyEx", "pyEx2"):
             self.assertRegex(graph[name].get("def", ""), r"^exprespy:[0-9a-f]{12}$", name)
             self.assertIn(graph[name]["def"], anim["nodeDefs"])
         self.assertNotIn("def", graph.get("badCmds", {}))
         warnings = "\n".join(self.scene["warnings"])
-        self.assertIn("exprespy 10 個", warnings)
+        self.assertIn("exprespy 11 個", warnings)
         self.assertIn("exprespy badCmds のコードを解析できません（1 行目: maya.cmds", warnings)
         self.assertIn("exprespy badMesh のコードを解析できません（形状（boxShape.o）", warnings)
         anim_warnings = "\n".join(anim["warnings"])

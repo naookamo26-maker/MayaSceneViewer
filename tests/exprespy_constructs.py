@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """exprespy のコードで使われそうな Python の書き方の一覧（tests/test_exprespy.py の test_python_constructs が使う）。
-KINDS は入力の種類（IN[0]〜IN[2]・IN[5] は数、IN[3] はベクトル、IN[4] は行列）。"""
+KINDS は入力の種類（IN[0]〜IN[2]・IN[5] は数、IN[3] はベクトル、IN[4] は行列）。OUT_CONNECTED は接続されている出力。
+3 つ目の要素がある例は、その入力の種類で変換する。"""
 
+OUT_CONNECTED = {0, 1, 2}
+NUM_KINDS = {0: "num", 1: "num", 2: "num", 5: "num"}   # 入力がすべて数
 KINDS = {0: "num", 1: "num", 2: "num", 3: "vec3", 4: "mat", 5: "num"}
 CASES = [
  ("for で IN[i]（range）", "s = 0\nfor i in range(3):\n    s += IN[i]\nOUT[0] = s"),
@@ -59,4 +62,25 @@ CASES = [
  ("for と enumerate", "s = 0\nfor i, v in enumerate([IN[0], IN[1]]):\n    s += i * v\nOUT[0] = s"),
  ("for とタプル", "s = 0\nfor v in (IN[0], IN[1], IN[2]):\n    s += v\nOUT[0] = s"),
  ("zip", "s = 0\nfor a, b in zip([1, 2], [IN[0], IN[1]]):\n    s += a * b\nOUT[0] = s"),
+    # 実行時に決まる IN[i]・OUT[i]・展開したループの break / continue・ループの中の return・辞書・定数の文字列
+ ("実行時の IN[i]", "s = 0\nfor i in range(int(IN[5])):\n    s += IN[i]\nOUT[0] = s", NUM_KINDS),
+ ("実行時の IN.get(i, d)", "k = int(IN[5])\nOUT[0] = IN.get(k, -1)", NUM_KINDS),
+ ("実行時の OUT[i]", "OUT[int(IN[5])] = IN[0]", NUM_KINDS),
+ ("実行時の i in IN", "OUT[0] = 1 if int(IN[5]) in IN else 0", NUM_KINDS),
+ ("展開ループの実行時 break", "s = 0\nfor i in range(3):\n    if IN[i] > 1:\n        break\n    s += IN[i]\nOUT[0] = s", NUM_KINDS),
+ ("展開ループの実行時 continue", "s = 0\nfor i in range(3):\n    if IN[i] < 0:\n        continue\n    s += IN[i]\nOUT[0] = s", NUM_KINDS),
+ ("ループの中の return", "def first_pos(n):\n    for i in range(3):\n        if IN[i] > n:\n            return IN[i]\n    return -1\nOUT[0] = first_pos(0.5)", NUM_KINDS),
+ ("計算の for の中の return", "def f(n):\n    x = 0\n    for i in range(int(n)):\n        x += 1\n        if x > 2:\n            return x\n    return x\nOUT[0] = f(IN[0])", NUM_KINDS),
+ ("入れ子のループの return", "def f():\n    for i in range(2):\n        for j in range(int(IN[5])):\n            if j > 1:\n                return i * 10 + j\n    return 0\nOUT[0] = f()", NUM_KINDS),
+ ("辞書", "d = {'a': IN[0], 'b': 2}\nd['c'] = d['a'] + d['b']\nOUT[0] = d['c'] + len(d)", NUM_KINDS),
+ ("辞書の実行時の if の中", "d = {'x': 0}\nif IN[0] > 0:\n    d['x'] = IN[0]\nelse:\n    d['x'] = -IN[0]\nOUT[0] = d['x']", NUM_KINDS),
+ ("辞書の get・in・items", "d = dict(a=1, b=IN[0])\ns = 0\nfor k, v in d.items():\n    s += v\nOUT[0] = s + d.get('z', 5) + (1 if 'a' in d else 0)", NUM_KINDS),
+ ("数のキーの辞書を実行時のキーで", "m = {0: IN[0], 1: IN[1], 2: IN[2]}\nOUT[0] = m[int(IN[5])]", NUM_KINDS),
+ ("辞書の +=", "d = {'n': 1}\nd['n'] += IN[0]\nOUT[0] = d['n']", NUM_KINDS),
+ ("文字列の比較", "side = 'L'\nOUT[0] = IN[0] if side == 'L' else -IN[0]", NUM_KINDS),
+ ("文字列のメソッドと f 文字列", "name = 'arm_L'\nOUT[0] = 1 if name.endswith('_L') and f'{name}_ctrl' == 'arm_L_ctrl' else 0", NUM_KINDS),
+ ("文字列のキーの辞書を関数に渡す", "def pick(d, key):\n    return d[key]\nOUT[0] = pick({'up': IN[0], 'down': IN[1]}, 'down')", NUM_KINDS),
+ ("print（f 文字列・実行時の値）", "print(f'value={IN[0]}')\nOUT[0] = IN[0]", NUM_KINDS),
+ ("文字列を返す関数", "def side(x):\n    return 'L'\nOUT[0] = 1 if side(1) == 'L' else 0", NUM_KINDS),
+ ("文字列の in", "mode = 'ik'\nOUT[0] = 1 if mode in ('ik', 'fk') else 0", NUM_KINDS),
 ]
