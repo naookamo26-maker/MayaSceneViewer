@@ -902,9 +902,32 @@ class Translator:
                 k = "xyzw".index(target.attr)
                 self.emit("%s[%d] = %s" % (base.code, k, self.num(value_node).code))
                 return
+        comp = self.component_target(target)
+        if comp is not None:
+            self.emit("%s = %s" % (comp, self.num(value_node).code))
+            return
         _fail("この代入先は変換できません", s)
 
+    def component_target(self, target) -> Optional[str]:
+        """ベクトル・四元数・オイラー角の変数の成分（v.x・v[1]）の代入先の式。成分でなければ None"""
+        if isinstance(target, (ast.Attribute, ast.Subscript)) and isinstance(target.value, ast.Name) \
+                and target.value.id in self.env:
+            base = self.env[target.value.id]
+            if base.kind not in ("vec", "pt", "quat", "eul") or not base.code.isidentifier():
+                return None
+            if isinstance(target, ast.Attribute):
+                if target.attr not in ("x", "y", "z", "w"):
+                    return None
+                return "%s[%d]" % (base.code, "xyzw".index(target.attr))
+            return "%s[%s]" % (base.code, self.num(target.slice).code)
+        return None
+
     def aug(self, s: ast.AugAssign):
+        comp = self.component_target(s.target)
+        if comp is not None:                             # v.x += 1・v[0] *= 2
+            res = self.binop(s.op, Value("num", comp), self.num(s.value), s)
+            self.emit("%s = %s" % (comp, res.code))
+            return
         if not isinstance(s.target, ast.Name) or s.target.id not in self.env:
             _fail("この代入先（+= など）は変換できません", s)
         left = self.env[s.target.id]
@@ -1354,6 +1377,10 @@ class Translator:
                 return Value("num", "pi")
             if a == "e":
                 return Value("num", "e")
+            if a == "tau":
+                return Value("num", "(2 * pi)")
+            if a == "inf":
+                return Value("num", "1e308")            # 計算の数は有限なので、十分に大きい数で代える
         if a in _AXES:
             return Value("vec", _AXES[a])
         owner = _tail(e.value)
@@ -1460,6 +1487,14 @@ class Translator:
             if f.attr in _MATH or f.attr in _MATH_RENAME:
                 fn = _MATH_RENAME.get(f.attr, f.attr)
                 return Value("num", "%s(%s)" % (fn, ", ".join(self.num(a).code for a in e.args)))
+            if f.attr == "copysign" and len(e.args) == 2:
+                a, b = (self.num(x).code for x in e.args)
+                return Value("num", "(abs(%s) * (1 if %s >= 0 else -1))" % (a, b))
+            if f.attr == "isclose" and len(e.args) == 2:
+                a, b = (self.num(x).code for x in e.args)
+                rel = self.num(kw["rel_tol"]).code if "rel_tol" in kw else "1e-09"
+                tol = self.num(kw["abs_tol"]).code if "abs_tol" in kw else "0.0"
+                return Value("num", "(abs(%s - %s) <= max(%s * max(abs(%s), abs(%s)), %s))" % (a, b, rel, a, b, tol))
             _fail("math.%s は変換できません" % f.attr, e)
         if isinstance(f, ast.Name) and f.id in self.env and self.env[f.id].kind == "mat" and len(e.args) == 2:
             # API 1.0 の m(行, 列)
@@ -1540,6 +1575,15 @@ class Translator:
             if name == "MDistance" and unit not in (None, "kCentimeters"):
                 _fail("MDistance の単位 %s は変換できません（cm だけ）" % unit, e)
             return Value("unit", v)
+        if name == "decompose" and isinstance(f, ast.Attribute) and _tail(f.value) == "MEulerRotation" and e.args:
+            # MEulerRotation.decompose(行列, 回転順)
+            m = self.expr(e.args[0])
+            if m.kind == "tm":
+                m = self.tm_matrix(m)
+            if m.kind != "mat":
+                _fail("MEulerRotation.decompose に行列以外を渡しています", e)
+            order = self.num(e.args[1]).code if len(e.args) > 1 else "0"
+            return Value("eul", "rotation(%s, %s)" % (m.code, order), order=order)
         if name == "slerp" and isinstance(f, ast.Attribute) and _tail(f.value) == "MQuaternion":
             a, b, t = (self.expr(x) for x in e.args[:3])
             return Value("quat", "quat_slerp(%s, %s, %s)" % (a.code, b.code, t.code))
@@ -1670,6 +1714,9 @@ class Translator:
                 r = self.expr(args[0])
                 if r.kind == "quat":
                     return Value(k, "xform_vector(%s, matrix_from_quat(%s))" % (base.code, r.code))
+                if r.kind == "eul":
+                    return Value(k, "xform_vector(%s, compose([0.0, 0.0, 0.0], %s, [1.0, 1.0, 1.0], %s))"
+                                 % (base.code, r.code, r.extra.get("order", "0")))
             _fail("ベクトルの %s は変換できません" % m, e)
         if k == "mat":
             if m == "inverse":
@@ -1916,7 +1963,7 @@ _KNOWN_METHODS = (_GETTERS_NUM | _GETTERS_VEC | _GETTERS_MAT | _GETTERS_UNIT | _
                       "isConnected", "elementByLogicalIndex", "numElements", "evaluateNumElements", "asMObject",
                       "asMAngle", "asMDistance", "asMTime", "getElement", "det4x4", "det3x3", "isEquivalent",
                       "isSingular", "setElement", "setToIdentity", "setToProduct", "reorderIt", "reorder", "setValue",
-                      "asVector", "log", "exp"})
+                      "asVector", "log", "exp", "decompose"})
 _KNOWN_CLASSES = _VEC_CLASSES | _PT_CLASSES | _MAT_CLASSES | {
     "MTransformationMatrix", "MEulerRotation", "MQuaternion", "MAngle", "MDistance", "MTime", "MFnMatrixData",
     "MPlug", "MFnDependencyNode"}

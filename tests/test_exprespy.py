@@ -71,7 +71,10 @@ class TranslateTest(unittest.TestCase):
     def test_unsupported(self):
         cases = {
             "OUT[0] = COUNT": "if not COUNT:（最初の 1 回だけの初期化）の形でだけ",
-            "s = 0\nfor i in range(2):\n    s += IN[i]\nOUT[0] = s": "番号を変数で選ぶ",
+            "s = 0\nfor i in range(int(IN[1])):\n    s += IN[i]\nOUT[0] = s": "回数が変換の時点で決まる並び",
+            "for i in range(3):\n    if IN[1] > i:\n        break\n    OUT[i] = IN[1]": "実行時に決まる条件の break",
+            "try:\n    x = IN[0]\nexcept ValueError:\n    x = 0\nOUT[0] = x": "except KeyError",
+            "OUT[0] = sum(IN[1] for i in range(int(IN[1])))": "要素の数が決まる並び",
             'OUT[0] = cmds.getAttr("a.tx")': "maya.cmds",
             "def f(x):\n    return f(x)\nOUT[0] = f(1)": "再帰呼び出し",
             "def f(x):\n    for i in range(3):\n        return x\n    return 0\nOUT[0] = f(1)": "ループの中の return",
@@ -84,7 +87,7 @@ class TranslateTest(unittest.TestCase):
             "if not COUNT:\n    a = IN[1]\nOUT[0] = a": "初期化（if not COUNT:）の中で IN を使っています",
             "if not COUNT:\n    a = 1\nelse:\n    a = 2\nOUT[0] = a": "else",
             "f = lambda x: x\nOUT[0] = f": "関数 f を値として使っています",
-            "OUT[0] = IN.get(7)": "IN.get(7) の既定値がなく",
+            "OUT[0] = IN.get(7)": "出せない値（none）",
             "global g\nOUT[0] = 1": "global",
             "OUT[0] = 1\nOUT[1] = OUT[0]": "OUT[n]（出力）を読んで",
             "OUT[0] = IN[5]": "IN[5] に接続も値もありません",
@@ -110,7 +113,7 @@ class TranslateTest(unittest.TestCase):
         nd, outs, _ = translate(code, {0: "num", 1: "vec3"})
         self.assertEqual(outs, {0: "vec3", 1: "num", 2: "num"})
         self.assertIn("i1", nd.code)                          # IN.get(K, …) の K は 1
-        self.assertIn("o1 = (1 if 0 else 0)", nd.code)        # 3 in IN は 0（IN[3] はない）
+        self.assertIn("o1 = 0\n", nd.code)                    # 3 in IN は偽（IN[3] はない）
         self.assertNotIn("def ", nd.code)                     # 関数は展開する
         self.assertNotIn("lambda", nd.code)
         nd2, _, _ = translate("if COUNT == 0:\n    A = 2\nOUT[0] = IN.get(A, 5.)", {0: "num"})
@@ -126,7 +129,38 @@ class TranslateTest(unittest.TestCase):
         first = nd.code.split("o0 = ")[0]
         self.assertNotIn(">", first)                          # max を省略した呼び出しは上限の判定を消す
         self.assertIn("> _max", nd.code)                      # max を渡した呼び出しは上限を判定する
-        self.assertIn("o3 = (1 if 1 else 0)", nd.code)        # None の判定は変換の時点で決まる
+        self.assertIn("o3 = 1\n", nd.code + "\n")            # None の判定は変換の時点で決まる
+
+    def test_python_constructs(self):
+        """実際のコードで使われそうな Python の書き方（tests/exprespy_constructs.py の一覧）がすべて変換できる"""
+        from exprespy_constructs import CASES, KINDS
+        for name, code in CASES:
+            with self.subTest(name=name):
+                try:
+                    translate(code, KINDS)
+                except ExprespyError as exc:
+                    self.fail("%s: %s" % (name, exc.text()))
+
+    def test_unrolled_loop_and_try(self):
+        code = ("s = 0\nfor i in range(3):\n    s += IN[i]\nOUT[0] = s\n"
+                "for k, v in IN.items():\n    if k == 1:\n        OUT[1] = v\n"
+                "try:\n    x = IN[7]\nexcept KeyError:\n    x = -1\nOUT[2] = x\n"
+                "OUT[3] = sum(IN[i] * 2 for i in range(3) if i != 1)\n"
+                "a, b = IN[0], IN[1]\na, b = b, a\nOUT[4] = a - b")
+        nd, outs, _ = translate(code, {0: "num", 1: "num", 2: "num"})
+        self.assertIn("s = (s + i0)\ns = (s + i1)\ns = (s + i2)\no0 = s", nd.code)   # ループを展開する
+        self.assertIn("o1 = i1", nd.code)
+        self.assertIn("x = -1\no2 = x", nd.code)              # IN[7] はないので except の側
+        self.assertIn("o3 = (0 + (i0 * 2) + (i2 * 2))", nd.code)
+
+    def test_and_or_values(self):
+        nd, _, _ = translate("OUT[0] = IN[0] or 1.0\nOUT[1] = IN[0] and 0\nOUT[2] = 0 or IN[0]\n"
+                             "OUT[3] = 2 or IN[0]\nOUT[4] = None or IN[0] or 5", {0: "num"})
+        self.assertIn("o0 = (i0 or 1.0)", nd.code)           # Python と同じく、i0 が真なら i0
+        self.assertIn("o1 = (i0 and 0)", nd.code)
+        self.assertIn("o2 = i0", nd.code)
+        self.assertIn("o3 = 2", nd.code)
+        self.assertIn("o4 = (i0 or 5)", nd.code)
 
     def test_quaternion_log_exp(self):
         nd, outs, _ = translate("q = api.MQuaternion(IN[0], 0.5, 0.25, 0.).exp()\nOUT[0] = q.log()", {0: "num"})
@@ -147,12 +181,12 @@ class SceneTest(unittest.TestCase):
         anim = self.scene["animation"]
         graph = {g["name"]: g for g in anim["graph"] if g["type"] == "exprespy"}
         for name in ("posCnsEx", "oriCnsEx", "aimCnsEx", "aimUpCnsEx", "timeEx", "chainA", "chainB", "quatEx",
-                     "limitEx"):
+                     "limitEx", "pyEx"):
             self.assertRegex(graph[name].get("def", ""), r"^exprespy:[0-9a-f]{12}$", name)
             self.assertIn(graph[name]["def"], anim["nodeDefs"])
         self.assertNotIn("def", graph.get("badCmds", {}))
         warnings = "\n".join(self.scene["warnings"])
-        self.assertIn("exprespy 9 個", warnings)
+        self.assertIn("exprespy 10 個", warnings)
         self.assertIn("exprespy badCmds のコードを解析できません（1 行目: maya.cmds", warnings)
         self.assertIn("exprespy badMesh のコードを解析できません（形状（boxShape.o）", warnings)
         anim_warnings = "\n".join(anim["warnings"])
