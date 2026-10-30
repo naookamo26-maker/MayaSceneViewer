@@ -380,6 +380,20 @@ class ExprespyTranslator(PC.Translator):
             (init if isinstance(s, ast.If) and _is_first_run(s.test) else rest).append(s)
         init_names = _scope_stores([x for s in init for x in s.body])
         self.carried = sorted(set(init_names) & set(_scope_stores(rest)))
+        # コードのどこかで定義する名前（代入・引数・関数・クラス・import・for・except … as・内包表記の変数）
+        self.defined: set = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+                self.defined.add(node.id)
+            elif isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                self.defined.add(node.name)
+            elif isinstance(node, ast.arg):
+                self.defined.add(node.arg)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for a in node.names:                      # 別名と元の名前（別名は変換の前に元の名前に戻す）
+                    self.defined.update({(a.asname or a.name).split(".")[0], a.name.split(".")[0], a.name.split(".")[-1]})
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                self.defined.add(node.name)
 
     # ---- IN・OUT
     def index_of(self, node, what: str) -> int:
@@ -1087,8 +1101,25 @@ class ExprespyTranslator(PC.Translator):
             if e.id in _PRE_IMPORTED:
                 PC._fail("%s をそのまま値として使っています" % e.id, e)
             if e.id not in ("True", "False"):
+                if self.undefined(e.id):
+                    return self.name_error(e.id, e)
                 PC._fail("名前 %s が分かりません（値を入れていない変数・コードの外の名前）" % e.id, e)
         return super().name(e)
+
+    def undefined(self, name: str) -> bool:
+        """コードのどこにも定義のない名前か（打ち間違いなど。Python では、その行を実行したときだけ NameError）"""
+        import builtins
+        return (name not in self.defined and name not in self.aliases and name not in self.funcs
+                and name not in self.classes and name not in _PRE_IMPORTED and not hasattr(builtins, name)
+                and name not in PC._KNOWN_CLASSES and name not in PC._MATH
+                and name not in ("IN", "OUT", "COUNT"))
+
+    def name_error(self, name: str, node):
+        """定義のない名前: その道を通ったら計算の誤り（Maya では NameError でノードの計算が止まる）。
+        通らない道（使われない分岐）なら、ほかの出力はそのまま評価できる"""
+        self.notes.append("%d 行目: 名前 %s はコードのどこにも定義がありません。ここを通るとそのフレームは計算の誤りに"
+                          "なります（Maya では NameError）" % (getattr(node, "lineno", 0), name))
+        return PC.Value("num", "(1 / 0)")
 
     # ---- 文
     def stmt(self, s):
@@ -2046,6 +2077,8 @@ class ExprespyTranslator(PC.Translator):
                 chain.append(cls)
                 cls = self.classes[cls]["base"]
             return PC.Value("num", "1" if set(chain) & set(names) else "0")
+        if isinstance(f, ast.Name) and f.id not in self.env and self.undefined(f.id):
+            return self.name_error(f.id, e)                # 定義のない関数（打ち間違いなど）
         v = self.method_call(e)
         if v is not None:
             return v
@@ -2404,6 +2437,27 @@ def apply_exprespy(ms) -> Tuple[Dict[str, ExprespyDef], List[str], Dict[str, str
     defs: Dict[str, ExprespyDef] = {}
     ok: List[str] = []
     problems: Dict[str, str] = {}
+    ms.exprespy_unused = []
+    if not nodes:
+        return defs, ok, problems
+    # 出力（.o[n]）の先が使われていない exprespy（どこにもつながっていない・使われていない exprespy にだけ
+    # つながっている）は、変換も警告もしない（計算の結果を使うものがない）
+    dests: Dict[int, list] = {id(n): [] for n in nodes}
+    for src, sattr, dst, _dattr in ms.connections:
+        if src.type == TYPE and id(src) in dests:
+            io = io_plug(sattr)
+            if io is not None and io[0] == "o":
+                dests[id(src)].append(dst)
+    unused = {id(n) for n in nodes if not dests[id(n)]}
+    changed = True
+    while changed:
+        changed = False
+        for n in nodes:
+            if id(n) not in unused and all(d.type == TYPE and id(d) in unused for d in dests[id(n)]):
+                unused.add(id(n))
+                changed = True
+    ms.exprespy_unused = [n.name for n in nodes if id(n) in unused]
+    nodes = [n for n in nodes if id(n) not in unused]
     if not nodes:
         return defs, ok, problems
     from .rig import parse_attrs

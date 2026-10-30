@@ -202,6 +202,21 @@ class TranslateTest(unittest.TestCase):
                              "            return r + n\n    return -1\nOUT[0] = f(IN[0])", {0: "num"})
         self.assertRegex(nd.code, r"_r\d+ = \(_t\d+ \* 2\)\n\s+_ret\d+ = \(_r\d+ \+ _n\d+\)")
 
+    def test_undefined_name_only_where_reached(self):
+        # 定義のない名前（打ち間違い）は、その道を通ったときだけ計算の誤り（Maya の NameError と同じ）
+        code = ("def clip(v, top=None):\n    if v < 0: return 0\n    if top is not None:\n"
+                "        if v > top: return topp\n    return v\n"
+                "OUT[0] = clip(IN[0])\nOUT[1] = clip(IN[0], 1)\nOUT[2] = 0 if IN[0] > -5 else undefined_func(IN[0])")
+        nd, _, notes = translate(code, {0: "num"})
+        first = nd.code.split("o0 = ")[0]
+        self.assertNotIn("1 / 0", first)                       # top を省略した呼び出しには、打ち間違いの道がない
+        self.assertRegex(nd.code, r"if \(_v\d+ > 1\):\n\s+_ret\d+ = \(1 / 0\)")
+        self.assertIn("o2 = (0 if (i0 > -5) else (1 / 0))", nd.code)
+        self.assertEqual(sum("topp" in n for n in notes), 1)
+        self.assertTrue(any("undefined_func" in n for n in notes))
+        # コードのどこかで値を入れる名前を、入れる前に読むのは変換を止める（変換器の誤りを隠さない）
+        self.assertIn("名前 a が分かりません", problem("OUT[0] = a\na = 1", {}))
+
     def test_and_or_values(self):
         nd, _, _ = translate("OUT[0] = IN[0] or 1.0\nOUT[1] = IN[0] and 0\nOUT[2] = 0 or IN[0]\n"
                              "OUT[3] = 2 or IN[0]\nOUT[4] = None or IN[0] or 5", {0: "num"})
@@ -230,12 +245,12 @@ class SceneTest(unittest.TestCase):
         anim = self.scene["animation"]
         graph = {g["name"]: g for g in anim["graph"] if g["type"] == "exprespy"}
         for name in ("posCnsEx", "oriCnsEx", "aimCnsEx", "aimUpCnsEx", "timeEx", "chainA", "chainB", "quatEx",
-                     "limitEx", "pyEx", "pyEx2", "pyEx3", "aliasEx", "lookupEx"):
+                     "limitEx", "pyEx", "pyEx2", "pyEx3", "aliasEx", "lookupEx", "typoEx"):
             self.assertRegex(graph[name].get("def", ""), r"^exprespy:[0-9a-f]{12}$", name)
             self.assertIn(graph[name]["def"], anim["nodeDefs"])
         self.assertNotIn("def", graph.get("badCmds", {}))
         warnings = "\n".join(self.scene["warnings"])
-        self.assertIn("exprespy 14 個", warnings)
+        self.assertIn("exprespy 15 個", warnings)
         self.assertIn("exprespy badCmds のコードを解析できません（1 行目: maya.cmds", warnings)
         self.assertIn("exprespy badMesh のコードを解析できません（形状（boxShape.o）", warnings)
         anim_warnings = "\n".join(anim["warnings"])
@@ -294,6 +309,30 @@ class SceneTest(unittest.TestCase):
         # 自分の独自の属性（method・reverseOrder）を入力にする
         self.assertEqual(by_name["composeRotExpr"]["inputs"]["i11"], {"node": by_name["composeRotExpr"]["id"],
                                                                       "attr": "reverseOrder"})
+
+    def test_unused_nodes_are_skipped(self):
+        """出力の先が使われていない exprespy は、変換も警告もしない（リグの診断に件数と名前を出す）"""
+        with open(SAMPLE, encoding="utf-8") as f:
+            text = f.read()
+        extra = ('createNode exprespy -n "junkA";\n\tsetAttr ".cd" -type "string" "x = cmds.ls()";\n'
+                 'createNode exprespy -n "junkB";\n\tsetAttr ".cd" -type "string" "OUT[0] = IN[0] * 2";\n'
+                 'createNode exprespy -n "junkC";\n\tsetAttr ".cd" -type "string" "OUT[0] = IN[0] + undefined_x";\n')
+        text = text.replace('createNode exprespy -n "badCmds";', extra + 'createNode exprespy -n "badCmds";')
+        text = text.replace('// End of exprespy_sample.ma', 'connectAttr "src.tx" "junkB.i[0]";\n'
+                            'connectAttr "src.tx" "junkC.i[0]";\nconnectAttr "junkC.o[0]" "junkA.i[0]";\n'
+                            '// End of exprespy_sample.ma')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "unused.ma")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            scene = load_ma(path, animation=True)
+            report = rig_report_file(path)
+        warnings = "\n".join(scene["warnings"] + scene["animation"]["warnings"])
+        for name in ("junkA", "junkB", "junkC"):
+            self.assertNotIn(name, warnings)                  # 解析できないコードでも警告しない
+        self.assertIn("exprespy 15 個", warnings)               # 使われているノードの数は変わらない
+        self.assertIn("■ 出力が使われていない exprespy（評価しません。削除しても動きは変わりません）: 3 個（junkA、junkB、junkC）",
+                      report)
 
     def test_json_round_trip(self):
         text = json.dumps(self.scene, ensure_ascii=False)

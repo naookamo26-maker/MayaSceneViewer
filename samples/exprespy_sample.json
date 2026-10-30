@@ -1563,6 +1563,78 @@
     "tx ← lookupEx（exprespy）",
     "ty ← lookupEx（exprespy）"
    ]
+  },
+  {
+   "name":"jY",
+   "path":"|jY",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "tx ← typoEx（exprespy）",
+    "ty ← typoEx（exprespy）"
+   ]
   }
  ],
  "meshes":[],
@@ -1578,10 +1650,11 @@
  "materials":[],
  "textures":[],
  "warnings":[
-  "exprespy 14 個（posCnsEx、oriCnsEx、aimCnsEx、aimUpCnsEx、timeEx ほか）のコードを解析して評価します。",
+  "exprespy 15 個（posCnsEx、oriCnsEx、aimCnsEx、aimUpCnsEx、timeEx ほか）のコードを解析して評価します。",
   "exprespy pyEx: 15 行目: while は 10000 回までで打ち切ります。",
   "exprespy pyEx2: 6 行目: IN[…] の番号・キーがないときは 0 にします（Maya では KeyError）。",
   "exprespy pyEx3: 27 行目: 再帰 fact は 16 段まで展開します（それより深いと、そのフレームは計算の誤りになります）。",
+  "exprespy typoEx: 5 行目: 名前 topp はコードのどこにも定義がありません。ここを通るとそのフレームは計算の誤りになります（Maya では NameError）。",
   "exprespy badCmds のコードを解析できません（1 行目: maya.cmds の呼び出しは変換できません（ほかのノードを直接見る処理は再現できません））。このノードにつながる値は再生されません。",
   "exprespy badMesh のコードを解析できません（形状（boxShape.o）の入力は変換できません（メッシュ・カーブのデータは扱えません））。このノードにつながる値は再生されません。",
   "boxShape: 形状データ（頂点・辺・面）がないため除外しました",
@@ -1589,8 +1662,8 @@
   "jM: tx ← badMesh（exprespy） が接続で決まるため、ファイルに値がありません。バインドポーズの情報もないため、既定値（移動 0・回転 0）で表示しています。"
  ],
  "stats":{
-  "nodes":22,
-  "joints":18,
+  "nodes":23,
+  "joints":19,
   "meshes":0,
   "curves":0,
   "cameras":0,
@@ -1601,7 +1674,7 @@
   "textures":0,
   "texturesMissing":0,
   "bindPoseNodes":0,
-  "drivenNodes":20
+  "drivenNodes":21
  },
  "animation":{
   "fps":24.0,
@@ -2311,6 +2384,36 @@
      0.0,
      0.0
     ]
+   },
+   {
+    "node":22,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
    }
   ],
   "graph":[
@@ -2365,7 +2468,7 @@
     },
     "inputs":{
      "t":{
-      "node":22,
+      "node":23,
       "attr":"o0"
      }
     }
@@ -2377,7 +2480,7 @@
     "dag":5,
     "inputs":{
      "r":{
-      "node":23,
+      "node":24,
       "attr":"o0"
      }
     }
@@ -2389,7 +2492,7 @@
     "dag":6,
     "inputs":{
      "r":{
-      "node":24,
+      "node":25,
       "attr":"o0"
      }
     }
@@ -2401,7 +2504,7 @@
     "dag":7,
     "inputs":{
      "r":{
-      "node":25,
+      "node":26,
       "attr":"o0"
      }
     }
@@ -2413,7 +2516,7 @@
     "dag":8,
     "inputs":{
      "ty":{
-      "node":26,
+      "node":27,
       "attr":"o0"
      }
     }
@@ -2425,7 +2528,7 @@
     "dag":9,
     "inputs":{
      "tx":{
-      "node":28,
+      "node":29,
       "attr":"o0"
      }
     }
@@ -2437,7 +2540,7 @@
     "dag":10,
     "inputs":{
      "r":{
-      "node":29,
+      "node":30,
       "attr":"o0"
      }
     }
@@ -2461,15 +2564,15 @@
     "dag":13,
     "inputs":{
      "tx":{
-      "node":30,
+      "node":31,
       "attr":"o0"
      },
      "ty":{
-      "node":30,
+      "node":31,
       "attr":"o1"
      },
      "tz":{
-      "node":30,
+      "node":31,
       "attr":"o2"
      }
     }
@@ -2481,15 +2584,15 @@
     "dag":14,
     "inputs":{
      "tx":{
-      "node":31,
+      "node":32,
       "attr":"o0"
      },
      "ty":{
-      "node":31,
+      "node":32,
       "attr":"o1"
      },
      "tz":{
-      "node":31,
+      "node":32,
       "attr":"o2"
      }
     }
@@ -2501,7 +2604,7 @@
     "dag":15,
     "inputs":{
      "tx":{
-      "node":31,
+      "node":32,
       "attr":"o3"
      }
     }
@@ -2513,15 +2616,15 @@
     "dag":16,
     "inputs":{
      "tx":{
-      "node":32,
+      "node":33,
       "attr":"o0"
      },
      "ty":{
-      "node":32,
+      "node":33,
       "attr":"o1"
      },
      "tz":{
-      "node":32,
+      "node":33,
       "attr":"o2"
      }
     }
@@ -2533,11 +2636,11 @@
     "dag":17,
     "inputs":{
      "tx":{
-      "node":32,
+      "node":33,
       "attr":"o3"
      },
      "ty":{
-      "node":32,
+      "node":33,
       "attr":"o4"
      }
     }
@@ -2549,15 +2652,15 @@
     "dag":18,
     "inputs":{
      "tx":{
-      "node":33,
+      "node":34,
       "attr":"o0"
      },
      "ty":{
-      "node":33,
+      "node":34,
       "attr":"o1"
      },
      "tz":{
-      "node":33,
+      "node":34,
       "attr":"o2"
      }
     }
@@ -2569,11 +2672,11 @@
     "dag":19,
     "inputs":{
      "tx":{
-      "node":33,
+      "node":34,
       "attr":"o3"
      },
      "ty":{
-      "node":33,
+      "node":34,
       "attr":"o4"
      }
     }
@@ -2585,11 +2688,11 @@
     "dag":20,
     "inputs":{
      "t":{
-      "node":35,
+      "node":37,
       "attr":"o0"
      },
      "r":{
-      "node":35,
+      "node":37,
       "attr":"o1"
      }
     }
@@ -2601,17 +2704,33 @@
     "dag":21,
     "inputs":{
      "tx":{
-      "node":34,
+      "node":35,
       "attr":"o0"
      },
      "ty":{
-      "node":34,
+      "node":35,
       "attr":"o1"
      }
     }
    },
    {
     "id":22,
+    "name":"jY",
+    "type":"joint",
+    "dag":22,
+    "inputs":{
+     "tx":{
+      "node":36,
+      "attr":"o0"
+     },
+     "ty":{
+      "node":36,
+      "attr":"o1"
+     }
+    }
+   },
+   {
+    "id":23,
     "name":"posCnsEx",
     "type":"exprespy",
     "dag":-1,
@@ -2652,7 +2771,7 @@
     }
    },
    {
-    "id":23,
+    "id":24,
     "name":"oriCnsEx",
     "type":"exprespy",
     "dag":-1,
@@ -2681,7 +2800,7 @@
     }
    },
    {
-    "id":24,
+    "id":25,
     "name":"aimCnsEx",
     "type":"exprespy",
     "dag":-1,
@@ -2726,7 +2845,7 @@
     }
    },
    {
-    "id":25,
+    "id":26,
     "name":"aimUpCnsEx",
     "type":"exprespy",
     "dag":-1,
@@ -2787,7 +2906,7 @@
     }
    },
    {
-    "id":26,
+    "id":27,
     "name":"timeEx",
     "type":"exprespy",
     "dag":-1,
@@ -2797,7 +2916,7 @@
     }
    },
    {
-    "id":27,
+    "id":28,
     "name":"chainA",
     "type":"exprespy",
     "dag":-1,
@@ -2810,20 +2929,20 @@
     }
    },
    {
-    "id":28,
+    "id":29,
     "name":"chainB",
     "type":"exprespy",
     "dag":-1,
     "def":"exprespy:5cd71269318a",
     "inputs":{
      "i0":{
-      "node":27,
+      "node":28,
       "attr":"o0"
      }
     }
    },
    {
-    "id":29,
+    "id":30,
     "name":"quatEx",
     "type":"exprespy",
     "dag":-1,
@@ -2836,7 +2955,7 @@
     }
    },
    {
-    "id":30,
+    "id":31,
     "name":"limitEx",
     "type":"exprespy",
     "dag":-1,
@@ -2849,7 +2968,7 @@
     }
    },
    {
-    "id":31,
+    "id":32,
     "name":"pyEx",
     "type":"exprespy",
     "dag":-1,
@@ -2866,7 +2985,7 @@
     }
    },
    {
-    "id":32,
+    "id":33,
     "name":"pyEx2",
     "type":"exprespy",
     "dag":-1,
@@ -2884,7 +3003,7 @@
     }
    },
    {
-    "id":33,
+    "id":34,
     "name":"pyEx3",
     "type":"exprespy",
     "dag":-1,
@@ -2901,7 +3020,7 @@
     }
    },
    {
-    "id":34,
+    "id":35,
     "name":"lookupEx",
     "type":"exprespy",
     "dag":-1,
@@ -2914,7 +3033,20 @@
     }
    },
    {
-    "id":35,
+    "id":36,
+    "name":"typoEx",
+    "type":"exprespy",
+    "dag":-1,
+    "def":"exprespy:2d21e6303ed0",
+    "inputs":{
+     "i0":{
+      "node":1,
+      "attr":"tx"
+     }
+    }
+   },
+   {
+    "id":37,
     "name":"aliasEx",
     "type":"exprespy",
     "dag":-1,
@@ -4220,6 +4352,229 @@
         "n",
         2.0
        ]
+      ]
+     ]
+    ]
+   },
+   "exprespy:2d21e6303ed0":{
+    "type":"exprespy:2d21e6303ed0",
+    "attributes":[
+     {
+      "name":"i0",
+      "short":"i0",
+      "type":"double",
+      "default":0.0
+     },
+     {
+      "name":"o0",
+      "short":"o0",
+      "type":"double",
+      "output":true,
+      "default":0.0
+     },
+     {
+      "name":"o1",
+      "short":"o1",
+      "type":"double",
+      "output":true,
+      "default":0.0
+     }
+    ],
+    "ir":[
+     [
+      "set",
+      [
+       "l",
+       "_v2"
+      ],
+      [
+       "a",
+       [
+        [
+         "i0",
+         null
+        ]
+       ]
+      ]
+     ],
+     [
+      "if",
+      [
+       "b",
+       "<",
+       [
+        "l",
+        "_v2"
+       ],
+       [
+        "n",
+        0
+       ]
+      ],
+      [
+       [
+        "set",
+        [
+         "l",
+         "_ret3"
+        ],
+        [
+         "n",
+         0
+        ]
+       ]
+      ],
+      [
+       [
+        "set",
+        [
+         "l",
+         "_ret3"
+        ],
+        [
+         "l",
+         "_v2"
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "o",
+       [
+        [
+         "o0",
+         null
+        ]
+       ]
+      ],
+      [
+       "l",
+       "_ret3"
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "_v5"
+      ],
+      [
+       "b",
+       "*",
+       [
+        "a",
+        [
+         [
+          "i0",
+          null
+         ]
+        ]
+       ],
+       [
+        "u",
+        "-",
+        [
+         "n",
+         1
+        ]
+       ]
+      ]
+     ],
+     [
+      "if",
+      [
+       "b",
+       "<",
+       [
+        "l",
+        "_v5"
+       ],
+       [
+        "n",
+        0
+       ]
+      ],
+      [
+       [
+        "set",
+        [
+         "l",
+         "_ret6"
+        ],
+        [
+         "n",
+         0
+        ]
+       ]
+      ],
+      [
+       [
+        "if",
+        [
+         "b",
+         ">",
+         [
+          "l",
+          "_v5"
+         ],
+         [
+          "n",
+          100
+         ]
+        ],
+        [
+         [
+          "set",
+          [
+           "l",
+           "_ret6"
+          ],
+          [
+           "b",
+           "/",
+           [
+            "n",
+            1
+           ],
+           [
+            "n",
+            0
+           ]
+          ]
+         ]
+        ],
+        [
+         [
+          "set",
+          [
+           "l",
+           "_ret6"
+          ],
+          [
+           "l",
+           "_v5"
+          ]
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "o",
+       [
+        [
+         "o1",
+         null
+        ]
+       ]
+      ],
+      [
+       "l",
+       "_ret6"
       ]
      ]
     ]
@@ -10905,9 +11260,9 @@
    "curves":3,
    "keys":6,
    "channels":3,
-   "nodes":18,
-   "graphNodes":36,
-   "seconds":0.0019
+   "nodes":19,
+   "graphNodes":38,
+   "seconds":0.0027
   }
  }
 }

@@ -331,6 +331,10 @@ def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
     ep = getattr(ms, "exprespy_nodes", None) or []
     if ep:
         out.append("■ コードを解析して評価する exprespy: %s" % "、".join(ep[:8]) + (" ほか %d 個" % (len(ep) - 8) if len(ep) > 8 else ""))
+    unused = getattr(ms, "exprespy_unused", None) or []
+    if unused:
+        out.append("■ 出力が使われていない exprespy（評価しません。削除しても動きは変わりません）: %d 個（%s）"
+                   % (len(unused), "、".join(unused[:8]) + (" ほか" if len(unused) > 8 else "")))
     mapped = getattr(ms, "mapped_nodes", {}) or {}
     if mapped:
         out.append("■ 設定ファイルで割り当てた自作ノード: %s" % "、".join(

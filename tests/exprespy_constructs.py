@@ -111,4 +111,6 @@ CASES = [
     ("文字列の切り出し", "s = 'arm_R'\nOUT[0] = 1 if s[:3] == 'arm' and s[-1] == 'R' else 0"),
     ("リストを関数に渡す", "def first(xs):\n    return xs[0] + len(xs)\nOUT[0] = first([IN[0], 2])"),
     ("ループの変数で切り出す", "ks = [0, 10, 20]\ns = 0\nfor i in range(len(ks)):\n    pair = ks[i:i + 2]\n    s += len(pair)\nOUT[0] = s"),
+    # 使われない道の打ち間違い（定義のない名前）
+    ("使われない道の打ち間違い", "def f(v, m=None):\n    if m is not None and v > m:\n        return mm\n    return v\nOUT[0] = f(IN[0])"),
 ]

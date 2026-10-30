@@ -32,6 +32,8 @@ examples/constraints.ma（MIT License, Copyright (c) 2016 Ryusuke Sasaki）の�
       → jF.t = (k, 0.5 + 0.5 · k, 1)（k は tx / 2 を 0〜1 に収めた値）、jF.r = exp((0.2 · k, 0.2, 0.1, 0)) の回転
   * lookupEx: 折れ線の表引き（リストを関数に渡し、ループの変数で切り出す・ループの中の return）と文字列の切り出し
       → jK.tx = 表 (-20, -2)・(0, 0)・(20, 1) を 10 · tx で引いた値、jK.ty = 2
+  * typoEx: 使われない道に打ち間違い（定義のない名前）がある関数 → jY.t = (max(tx, 0), max(-tx, 0), 0)。
+      打ち間違いの行は通らないので、リグの問題は出ない（その行を通ると、そのフレームは計算の誤り）
   * badCmds（maya.cmds の呼び出し）・badMesh（メッシュの形状の入力）: 解析できない（警告を出し、評価しない）
 
 samples/exprespy_bendroll_sample.ma・.json: exprespy の同梱サンプル examples/bend_roll.ma（MIT License,
@@ -227,6 +229,11 @@ LOOKUP = ("if not COUNT:\n    xs = [-20, 0, 20]\n    ys = [-2.0, 0, 1.0]\n"
           "        return 0\n"
           "tag = 'abc_L'\nsign = 1 if tag[-2:] == '_L' else -1\n"
           "OUT[0] = table(IN[0] * 10, xs, ys) * sign\nOUT[1] = len(xs[1:])")
+# 使われない道に打ち間違い（定義のない名前 topp）がある関数。Maya では、その行を通らない限り動く
+# （IN[0] ← src.tx）
+TYPO = ("if not COUNT:\n    def clip(v, top=None):\n        if v < 0: return 0\n        if top is not None:\n"
+        "            if v > top: return topp\n        return v\n"
+        "OUT[0] = clip(IN[0])\nOUT[1] = clip(IN[0] * -1, 100)")
 BAD_CMDS = 'OUT[0] = cmds.getAttr("src.tx")'
 BAD_MESH = "OUT[0] = IN[0]"
 
@@ -357,7 +364,7 @@ def main():
              '\tsetAttr ".ro" 1;',
              'createNode joint -n "aimUpCnst" -p "dstParent";',
              '\tsetAttr ".t" -type "double3" 1.0109907869246533 0.5560976078619172 3.4206445512302697 ;']
-    for name in ("jT", "jC", "jQ", "jX", "jM", "jL", "jP", "jP2", "jR", "jR2", "jS", "jS2", "jF", "jK"):
+    for name in ("jT", "jC", "jQ", "jX", "jM", "jL", "jP", "jP2", "jR", "jR2", "jS", "jS2", "jF", "jK", "jY"):
         lines.append('createNode joint -n "%s";' % name)
     lines += ['createNode transform -n "box";', 'createNode mesh -n "boxShape" -p "box";']
     lines += exprespy("posCnsEx", POS, 8)
@@ -373,6 +380,7 @@ def main():
     lines += exprespy("pyEx2", PY2, 6, ['\tsetAttr ".i[1]" 2;', '\tsetAttr ".i[2]" 3;', '\tsetAttr ".i[5]" 2;'])
     lines += exprespy("pyEx3", PY3, 3, ['\tsetAttr ".i[1]" 2;', '\tsetAttr ".i[2]" 0.5;'])
     lines += exprespy("lookupEx", LOOKUP, 1)
+    lines += exprespy("typoEx", TYPO, 1)
     lines += exprespy("aliasEx", ALIAS, 3, ['\tsetAttr ".i[1]" 0.5;', '\tsetAttr ".i[2]" 0.2;'])
     lines += exprespy("badCmds", BAD_CMDS)
     lines += exprespy("badMesh", BAD_MESH, 1)
@@ -433,6 +441,9 @@ def main():
               'connectAttr "pyEx3.o[2]" "jS.tz";',
               'connectAttr "pyEx3.o[3]" "jS2.tx";',
               'connectAttr "pyEx3.o[4]" "jS2.ty";',
+              'connectAttr "src.tx" "typoEx.i[0]";',
+              'connectAttr "typoEx.o[0]" "jY.tx";',
+              'connectAttr "typoEx.o[1]" "jY.ty";',
               'connectAttr "src.tx" "lookupEx.i[0]";',
               'connectAttr "lookupEx.o[0]" "jK.tx";',
               'connectAttr "lookupEx.o[1]" "jK.ty";',
