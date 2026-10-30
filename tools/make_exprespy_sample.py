@@ -25,6 +25,9 @@ examples/constraints.ma（MIT License, Copyright (c) 2016 Ryusuke Sasaki）の�
   * pyEx2: 実行時に決まる IN[i]・OUT[i]・展開したループの実行時の break・ループの中の return・辞書・定数の
       文字列 → jR.t = (tx > 0 なら 10 · tx + 2、でなければ tx + 2, tx + 2, tx > 2.5 なら 0、でなければ 2)、
       jR2.t = (tx ≥ 3 なら 0、でなければ tx + 2, 7, 0)
+  * pyEx3: クラス（属性のリスト・メソッドの中の実行時の if）・リストの append・except（ZeroDivisionError・
+      ValueError）・実行時の深さの再帰 → jS.t = (2 · max(tx, 0) + 8, -5, tx < 0 なら -1、でなければ √tx)、
+      jS2.t = (30, 2 · tx + 5, 0)
   * badCmds（maya.cmds の呼び出し）・badMesh（メッシュの形状の入力）: 解析できない（警告を出し、評価しない）
 
 samples/exprespy_bendroll_sample.ma・.json: exprespy の同梱サンプル examples/bend_roll.ma（MIT License,
@@ -190,6 +193,16 @@ PY2 = ("d = {'a': IN[0], 'b': 2}\nif IN[0] > 0:\n    d['a'] = IN[0] * 10\n"
        "side = 'L'\nOUT[0] = d['a'] + d['b']\nOUT[1] = s\nOUT[2] = first_over(2.5) if side == 'L' else 0\n"
        "t = 0\nfor i in range(3):\n    if IN[i] >= 3:\n        break\n    t += IN[i]\nOUT[3] = t\n"
        "OUT[int(IN[5]) + 2] = 7.0")
+# クラス・リストの append・except（ZeroDivisionError・ValueError）・再帰
+# （IN[0] ← src.tx、IN[1] = 2・IN[2] = 0.5）
+PY3 = ("class Acc(object):\n    SCALE = 2.0\n    def __init__(self):\n        self.total = 0\n        self.items = []\n"
+       "    def add(self, x):\n        if x > 0:\n            self.total += x * self.SCALE\n        self.items.append(x)\n"
+       "acc = Acc()\nfor i in range(3):\n    acc.add(IN[i])\nOUT[0] = acc.total + len(acc.items)\n"
+       "try:\n    r = 1 / (IN[1] - 2)\nexcept ZeroDivisionError:\n    r = -5\nOUT[1] = r\n"
+       "try:\n    q = math.sqrt(IN[0])\nexcept ValueError:\n    q = -1\nOUT[2] = q\n"
+       "def fact(n):\n    if n <= 1:\n        return 1\n    return n * fact(n - 1)\n"
+       "OUT[3] = fact(int(IN[1]) + 1) + fact(4)\n"
+       "vals = []\nfor i in range(3):\n    vals.append(IN[i] * 2)\nOUT[4] = sum(vals)")
 BAD_CMDS = 'OUT[0] = cmds.getAttr("src.tx")'
 BAD_MESH = "OUT[0] = IN[0]"
 
@@ -320,7 +333,7 @@ def main():
              '\tsetAttr ".ro" 1;',
              'createNode joint -n "aimUpCnst" -p "dstParent";',
              '\tsetAttr ".t" -type "double3" 1.0109907869246533 0.5560976078619172 3.4206445512302697 ;']
-    for name in ("jT", "jC", "jQ", "jX", "jM", "jL", "jP", "jP2", "jR", "jR2"):
+    for name in ("jT", "jC", "jQ", "jX", "jM", "jL", "jP", "jP2", "jR", "jR2", "jS", "jS2"):
         lines.append('createNode joint -n "%s";' % name)
     lines += ['createNode transform -n "box";', 'createNode mesh -n "boxShape" -p "box";']
     lines += exprespy("posCnsEx", POS, 8)
@@ -334,6 +347,7 @@ def main():
     lines += exprespy("limitEx", LIMIT, 1)
     lines += exprespy("pyEx", PY, 3, ['\tsetAttr ".i[1]" 2;', '\tsetAttr ".i[2]" 3;'])
     lines += exprespy("pyEx2", PY2, 6, ['\tsetAttr ".i[1]" 2;', '\tsetAttr ".i[2]" 3;', '\tsetAttr ".i[5]" 2;'])
+    lines += exprespy("pyEx3", PY3, 3, ['\tsetAttr ".i[1]" 2;', '\tsetAttr ".i[2]" 0.5;'])
     lines += exprespy("badCmds", BAD_CMDS)
     lines += exprespy("badMesh", BAD_MESH, 1)
     lines += ['createNode animCurveTL -n "src_translateX";', '\tsetAttr ".tan" 2;',
@@ -387,6 +401,12 @@ def main():
               'connectAttr "pyEx2.o[2]" "jR.tz";',
               'connectAttr "pyEx2.o[3]" "jR2.tx";',
               'connectAttr "pyEx2.o[4]" "jR2.ty";',
+              'connectAttr "src.tx" "pyEx3.i[0]";',
+              'connectAttr "pyEx3.o[0]" "jS.tx";',
+              'connectAttr "pyEx3.o[1]" "jS.ty";',
+              'connectAttr "pyEx3.o[2]" "jS.tz";',
+              'connectAttr "pyEx3.o[3]" "jS2.tx";',
+              'connectAttr "pyEx3.o[4]" "jS2.ty";',
               'connectAttr "badCmds.o[0]" "jX.tx";',
               'connectAttr "boxShape.o" "badMesh.i[0]";',
               'connectAttr "badMesh.o[0]" "jM.tx";',

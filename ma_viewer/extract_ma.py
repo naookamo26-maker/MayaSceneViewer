@@ -1087,6 +1087,9 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         if ms.linear_unit != "cm":
             ms.warn("exprespy は長さを cm で計算しますが、シーンの長さの単位は %s です。ビューアはファイルの単位のまま"
                     "計算するため、長さの定数を使うコードは Maya と違う値になることがあります。" % ms.linear_unit)
+    for name, notes in sorted((getattr(ms, "exprespy_notes", None) or {}).items()):
+        for note in notes[:3]:
+            ms.warn("exprespy %s: %s。" % (name, note.rstrip("。")), key="#exprespy の注意 %s %s" % (name, note))
     for name, why in sorted(ms.exprespy_problems.items()):
         ms.warn("exprespy %s のコードを解析できません（%s）。このノードにつながる値は再生されません。" % (name, why),
                 key="#exprespy " + name)
