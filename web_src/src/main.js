@@ -6,7 +6,7 @@ import {
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
-import { PoseState, identityPose, poseFromTransform, poseMatrix, poseQuaternion } from './pose.js';
+import { PoseState, fixChannels, hasFixed, identityPose, poseFromTransform, poseMatrix, poseQuaternion } from './pose.js';
 import {
   applyPoseSource, hasBindPose, poseBaseMatrix, BASE_COLOR, buildScene, characterRadius, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
   vertexWorldPosition, writeVertexColors,
@@ -1014,6 +1014,7 @@ class ViewerApp {
   applyFrame(f, light = this.playing) {
     if (!this.clip || !this.built) return;
     if (this.camEdit && f !== this.camEdit.frame) this.endCameraEdit();   // 動かしたカメラの視点は、フレームが変わると戻す
+    const frameChanged = f !== this.frame;
     this.frame = f;
     // ポーズ確認の追加分（なければ渡さない。追加分の版が同じあいだは、リグの評価のキャッシュを使い続ける）
     const posed = this.pose && this.pose.size > 0;
@@ -1025,6 +1026,12 @@ class ViewerApp {
       const ud = this.built.nodeObjects[ni].userData;
       ud.fileMatrix.copy(m);
       ud.baseMatrix.copy(poseBaseMatrix(ud, mode, sceneHasBind));     // バインドポーズではフレームによらない
+    }
+    // フレームが変わった: キーのあるチャンネルを動かした分はカーブの値に戻し、その姿勢で評価し直す
+    if (frameChanged && !(mode === 'bind' && sceneHasBind) && this.revertKeyedPoses()) {   // バインドポーズの表示では戻さない
+      this.applyFrame(f, light);
+      if (this.selected >= 0) { this.ui.showPoseFor(this.selected, this.pose.get(this.selected)); this.syncGizmo(); }
+      return;
     }
     for (const ni of this.animTouched) this.pose.apply(ni);
     // カーブの形（バインドポーズの表示では変形前の形）
@@ -1221,6 +1228,7 @@ class ViewerApp {
     this.ui.highlightNode(ni, this.data.nodes, this.selectedMesh);
     this.ui.showNodeInfo(this.nodeInfo(ni));
     this.ui.showPoseFor(ni, this.pose.get(ni));
+    this.ui.setPoseLocks(this.lockedOf(ni));
     this.updateGizmo();
     if (this.settings.weightMode === 'selected') this.applyWeights();
     this.updateTimelineKeys();
@@ -1407,9 +1415,74 @@ class ViewerApp {
 
   setPose(ni, pose) {
     if (!this.pose) return;
+    pose = this.lockedPose(ni, pose);
     this.beforeDriverPose(ni);
     this.pose.set(ni, pose);
     this.afterPoseChange();
+    if (ni === this.selected) { this.ui.showPoseFor(ni, pose); this.syncGizmo(); }
+  }
+
+  /** ノードの回転の値の分け方（回転順・jointOrient・rotateAxis。度） */
+  channelFrame(ni) {
+    const rest = this.rig ? this.rig.rest(ni) : null;
+    const a = this.data.nodes[ni].attrs || {};
+    const roOf = (v) => (typeof v === 'string' ? Math.max(0, ['xyz', 'yzx', 'zxy', 'xzy', 'yxz', 'zyx'].indexOf(v)) : Math.round(v || 0));
+    const isJoint = this.data.nodes[ni].type === 'joint';
+    if (rest) return { ro: rest.ro || 0, jo: isJoint ? rest.jo || null : null, ra: rest.ra || null };
+    return { ro: roOf(a.ro), jo: isJoint ? a.jo || null : null, ra: a.ra || null };
+  }
+
+  /** Maya でロックした移動・回転・スケール（{ t | r | s: [X, Y, Z] } か null） */
+  lockedOf(ni) {
+    return this.data && this.data.nodes[ni] ? this.data.nodes[ni].locked || null : null;
+  }
+
+  /** ポーズ確認の追加分を、Maya でロックしたチャンネルが変わらないものにする（Maya ではロックした属性は動かせない） */
+  lockedPose(ni, pose) {
+    const locked = this.lockedOf(ni);
+    if (!hasFixed(locked) || !this.pose) return pose;
+    return fixChannels(this.pose.restLocal(ni), pose, locked, this.channelFrame(ni));
+  }
+
+  /** キーのあるチャンネル（カーブで決まる移動・回転・スケールの成分。{ t | r | s: [X, Y, Z] } か null） */
+  keyedOf(ni) {
+    if (!this.clip) return null;
+    const out = { t: [false, false, false], r: [false, false, false], s: [false, false, false] };
+    const mark = (attr) => {
+      const m = /^([trs])([xyz])?$/.exec(attr);
+      if (!m) return;
+      if (m[2]) out[m[1]]['xyz'.indexOf(m[2])] = true;
+      else out[m[1]] = [true, true, true];
+    };
+    const e = this.clip.byNode.get(ni);
+    for (const ch of e ? e.channels : []) mark(ch.attr);
+    const g = this.rig && this.rig.dagGraph ? this.rig.dagGraph.get(ni) : null;
+    for (const [attr, src] of Object.entries((g && g.inputs) || {})) if (src.curve !== undefined) mark(attr);
+    return hasFixed(out) ? out : null;
+  }
+
+  /**
+   * フレームが変わったとき: ポーズ確認でキーのあるチャンネルを動かしていたら、その成分をカーブの値に戻す
+   * （Maya と同じく、キーを打たずに動かした値はフレームを変えると戻る。キーのない成分はそのまま）。
+   * 元に戻す（Ctrl+Z）で取り消せるよう、1 つの操作として記録する。戻したら true
+   */
+  revertKeyedPoses() {
+    if (!this.pose || !this.pose.size || !this.clip) return false;
+    const list = [];
+    for (const ni of [...this.pose.poses.keys()]) {
+      const keyed = this.keyedOf(ni);
+      if (!keyed) continue;
+      const before = this.pose.get(ni);
+      const after = fixChannels(this.pose.restLocal(ni), before, keyed, this.channelFrame(ni));
+      const same = ['t', 'r', 's'].every((k) => before[k].every((v, i) => Math.abs(v - after[k][i]) < 1e-9));
+      if (!same) list.push([ni, after]);
+    }
+    if (!list.length) return false;
+    this.endPoseEdit();
+    this.beginPoseEdit(list.map(([ni]) => ni), 'キーのある値をカーブに戻す', list.length > 1);
+    for (const [ni, p] of list) this.pose.set(ni, p);
+    this.endPoseEdit();
+    return true;
   }
 
   resetPose(ni) {
@@ -1531,6 +1604,11 @@ class ViewerApp {
       this.syncGizmo(true);
       this.gizmo.setMode(tool);
       this.gizmo.setSpace(this.settings.space);
+      // Maya で 3 成分ともロックしたもの（移動・回転・スケール）は、ハンドルの軸を出さない（一部のロックは結果で固定する）
+      const locked = this.lockedOf(this.selected);
+      const l = locked && locked[{ translate: 't', rotate: 'r', scale: 's' }[tool]];
+      const all = !!l && l.every(Boolean);
+      this.gizmo.showX = this.gizmo.showY = this.gizmo.showZ = !all;
       if (this.gizmo.object !== this.poseProxy) this.gizmo.attach(this.poseProxy);
     }
     this.requestRender();
@@ -1553,9 +1631,11 @@ class ViewerApp {
   onGizmoChange() {
     if (this.selected < 0 || !this.pose) return;
     const pr = this.poseProxy;
-    const pose = poseFromTransform(pr.position, pr.quaternion, pr.scale);
+    let pose = poseFromTransform(pr.position, pr.quaternion, pr.scale);
     // スケールを 0 付近で止めたときは代理オブジェクトにも反映する
     pr.scale.fromArray(pose.s);
+    // Maya でロックしたチャンネルは変えない（ハンドルはドラッグを終えたときに結果の位置へ戻す）
+    pose = this.lockedPose(this.selected, pose);
     this.beforeDriverPose(this.selected);
     this.pose.set(this.selected, pose);
     this.afterPoseChange();

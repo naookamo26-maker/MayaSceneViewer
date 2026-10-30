@@ -813,8 +813,13 @@ export class UI {
       for (const a of AX) {
         const el = $('pose-' + k + a);
         el.addEventListener('input', onInput);
-        el.addEventListener('change', () => this.app.endPoseEdit());
-        el.addEventListener('blur', () => this.app.endPoseEdit());
+        // 確定したら、実際の値（Maya でロックしたチャンネルを固定し直した結果）で欄を表示し直す
+        const commit = () => {
+          this.app.endPoseEdit();
+          if (this.app.selected >= 0 && this.app.pose) this.showPoseFor(this.app.selected, this.app.pose.get(this.app.selected));
+        };
+        el.addEventListener('change', commit);
+        el.addEventListener('blur', commit);
         // Enter で確定（次の欄へは Tab）
         el.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.blur(); });
       }
@@ -824,6 +829,25 @@ export class UI {
   }
 
   /** @param pose {t, r, s}（省略時は変更なしの姿勢） */
+  /**
+   * Maya でロックしたチャンネル（{ t | r | s: [X, Y, Z] } か null）を示す。3 成分ともロックした行は入力できなくする
+   * （一部の成分だけのロックは、入力した結果をチャンネルの値で固定し直す。欄はローカル軸なので成分は対応しない）
+   */
+  setPoseLocks(locked) {
+    const names = { t: '移動', r: '回転', s: 'スケール' };
+    const parts = [];
+    for (const k of ['t', 'r', 's']) {
+      const l = (locked && locked[k]) || [false, false, false];
+      const all = l.every(Boolean);
+      ['x', 'y', 'z'].forEach((a) => { $(`pose-${k}${a}`).disabled = all; });
+      if (all) parts.push(names[k]);
+      else if (l.some(Boolean)) parts.push(names[k] + ' ' + ['X', 'Y', 'Z'].filter((_, i) => l[i]).join('・'));
+    }
+    const el = $('pose-lock');
+    el.hidden = !parts.length;
+    el.textContent = parts.length ? `Maya でロック: ${parts.join('、')}（動かしても、この値は変わりません）` : '';
+  }
+
   showPoseFor(nodeIndex, pose) {
     const on = nodeIndex >= 0;
     $('pose-ctrls').hidden = !on;

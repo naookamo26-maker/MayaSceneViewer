@@ -133,6 +133,15 @@ class TestSmallRigs(unittest.TestCase):
         _scene, load_animation = load_ma_staged(path)
         self.assertIsNotNone(load_animation())
 
+    def test_locked_channels(self):
+        # setAttr -l（ロック）: まとめ（.t）は成分すべて、あとに書かれたものが優先。ノードの情報に locked で出す
+        ms = parse_ma_text(HEADER + 'createNode joint -n "j";\n\tsetAttr -l on ".t";\n\tsetAttr -l off ".ty";\n'
+                           '\tsetAttr -l on -k off ".sx";\n\tsetAttr -k on ".rx";\ncreateNode joint -n "k";\n'
+                           '\tsetAttr -l on ".tz";\n\tsetAttr -l on ".t";\n\tsetAttr -l off ".t";\n', "t.ma")
+        nodes = {n["name"]: n for n in scene_to_dict(ms)["nodes"]}
+        self.assertEqual(nodes["j"]["locked"], {"t": [True, False, True], "s": [True, False, False]})
+        self.assertNotIn("locked", nodes["k"])
+
     def test_computed_shapes_are_unsupported(self):
         # blendShape は型名が Shape で終わるが、DG ノード（シェイプではない）
         ms = parse_ma_text(HEADER + 'createNode blendShape -n "bs";\n', "t.ma")

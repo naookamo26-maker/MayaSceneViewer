@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Tuple
 from . import mathutil as M
 from . import schema
 from .ma_scene import (FAST, XFORM_KEYS, FlatFaces, MaNode, MaScene, ProgressFn, RawNumbers, _ranges, clamp_limits,
-                       fast_numbers, np, numpy_enabled, parse_component_list, parse_ma_file)
+                       fast_numbers, locked_channels, np, numpy_enabled, parse_component_list, parse_ma_file)
 from . import ma_reader as R
 from .materials import (ALPHA_OUTPUTS, OPACITY_ATTRS, OUTPUT_CHANNEL, SCALAR_ATTRS, TextureResolver, albedo_attrs,
                         default_color, map_attrs, texture_entry, texture_warnings, to_udim_pattern)
@@ -1335,6 +1335,9 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         piv = loc.vec3("lp") if loc is not None and any(abs(v) > 1e-9 for v in loc.vec3("lp")) else x.vec3("rp")
         if any(abs(v) > 1e-9 for v in piv):
             entry["pivot"] = schema.round_list(list(piv))
+        locked = locked_channels(x.locks)
+        if locked:
+            entry["locked"] = locked              # Maya でロックした移動・回転・スケール（ポーズ確認でも動かさない）
         opm = x.xattrs.get("opm")
         if opm is not None and len(opm) == 16 and any(abs(a - b) > 1e-12 for a, b in zip(opm, M.identity())):
             entry["opm"] = [float(v) for v in opm]   # offsetParentMatrix（matrix に掛け込み済み。親の空間 .parentMatrix を求めるため）

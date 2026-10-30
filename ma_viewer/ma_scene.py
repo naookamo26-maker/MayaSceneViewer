@@ -105,6 +105,23 @@ def clamp_limits(v, lim) -> Tuple[float, float, float]:
     return tuple(out)
 
 
+# ロックを読む属性（移動・回転・スケールのまとめと成分）
+_LOCK_NAMES = {b + ax for b in "trs" for ax in ("", "x", "y", "z")}
+
+
+def locked_channels(locks: Dict[str, bool]) -> Optional[Dict[str, List[bool]]]:
+    """ロックの記録（setAttr -l の順）→ {"t" | "r" | "s": [X, Y, Z]}（ロックのないものは除く。なければ None）。
+    まとめ（.t）のロックは成分すべて。あとの setAttr が前のものを上書きする（dict の順は書かれた順）"""
+    out = {k: [False, False, False] for k in "trs"}
+    for name, on in locks.items():
+        if len(name) == 1:
+            out[name] = [on, on, on]
+        else:
+            out[name[0]]["xyz".index(name[1])] = on
+    out = {k: v for k, v in out.items() if any(v)}
+    return out or None
+
+
 # ノードのローカル行列を決める属性（短い名前）。ここに接続があればビューアが毎フレーム評価する
 XFORM_BASES = ("t", "r", "s", "jo", "ra", "rp", "sp", "rpt", "spt")
 XFORM_KEYS = (set(XFORM_BASES) | {b + ax for b in XFORM_BASES for ax in "xyz"}
@@ -241,7 +258,7 @@ def _sparse_into(weights: Dict[int, Dict[int, float]], a: int, b: int, vals) -> 
 class MaNode:
     __slots__ = ("name", "type", "parent", "children", "path", "order", "is_dag",
                  "xattrs", "mesh", "skin", "tweak", "inputs", "raw", "skip_attrs", "span", "attr_map", "ns", "espan",
-                 "node_def", "baked", "xspans", "ssc_parent")
+                 "node_def", "baked", "xspans", "ssc_parent", "locks")
 
     def __init__(self, name: str, node_type: str, parent: Optional["MaNode"], order: int, ns: str = ""):
         self.name = name
@@ -269,6 +286,7 @@ class MaNode:
         # 親のスケールを打ち消す（自作ノードの割り当てで指定。ジョイントの segmentScaleCompensate と同じ計算を、
         # inverseScale の接続がなくても親のスケールで行う）
         self.ssc_parent = False
+        self.locks: Dict[str, bool] = {}   # setAttr -l でロックした移動・回転・スケール（tx・t など → ロックするか）
 
     @property
     def is_shape(self) -> bool:
@@ -899,6 +917,9 @@ class MaScene:
         elems = R.parse_attr_path(attr)
         if not elems:
             return
+        if sa.lock is not None and len(elems) == 1 and elems[0].name in _LOCK_NAMES:
+            node.locks.pop(elems[0].name, None)          # あとに書かれたものを優先する（順番を書かれた順にする）
+            node.locks[elems[0].name] = sa.lock          # Maya でロックした属性（ビューアのポーズ確認でも動かさない）
         try:
             if node.mesh is not None and self._set_mesh_attr(node, elems, sa):
                 return
