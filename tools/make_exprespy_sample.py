@@ -20,6 +20,8 @@ examples/constraints.ma（MIT License, Copyright (c) 2016 Ryusuke Sasaki）の�
   * quatEx: MQuaternion(角度, 軸) と asEulerRotation → jQ.r = (0, 0, src.rz)
   * limitEx: 既定値つきの引数（def limit(val, max=None)）と None の判定 → jL.t = (max(tx, 0), max(-tx, 0),
       0〜1.5 に収めた tx)
+  * pyEx: ループの展開・try / except KeyError・内包表記・分解代入・while → jP.t = (tx + 5, 2 · tx + 16, 2 - tx)、
+      jP2.tx = 9（300 を 1 以下になるまで半分にする回数）
   * badCmds（maya.cmds の呼び出し）・badMesh（メッシュの形状の入力）: 解析できない（警告を出し、評価しない）
 
 samples/exprespy_bendroll_sample.ma・.json: exprespy の同梱サンプル examples/bend_roll.ma（MIT License,
@@ -171,6 +173,12 @@ QUAT = "q = api.MQuaternion(IN[0], api.MVector(0, 0, 1))\nOUT[0] = q.asEulerRota
 LIMIT = ("if not COUNT:\n    # 0 未満は 0、max があれば max まで\n    def limit(val, max=None):\n"
          "        if val < 0: return 0\n        if max is not None and val > max: return max\n        return val\n"
          "# 右目スケール\nOUT[0] = limit(IN[0])\nOUT[1] = limit(IN[0] * -1)\nOUT[2] = limit(IN[0], max=1.5)")
+# ループの展開・try / except KeyError・内包表記・分解代入・while（IN[0] ← src.tx、IN[1] = 2・IN[2] = 3）
+PY = ("s = 0\nfor i in range(3):\n    s += IN[i]\nOUT[0] = s\n"
+      "try:\n    extra = IN[9]\nexcept KeyError:\n    extra = 10\n"
+      "OUT[1] = extra + sum(IN[i] * 2 for i in range(3) if i != 1)\n"
+      "a, b = IN[0], IN[1]\na, b = b, a\nOUT[2] = a - b\n"
+      "n = 0\nx = IN[2] * 100\nwhile x > 1:\n    x /= 2\n    n += 1\nOUT[3] = n if 2 in (1, 2) else -1")
 BAD_CMDS = 'OUT[0] = cmds.getAttr("src.tx")'
 BAD_MESH = "OUT[0] = IN[0]"
 
@@ -301,7 +309,7 @@ def main():
              '\tsetAttr ".ro" 1;',
              'createNode joint -n "aimUpCnst" -p "dstParent";',
              '\tsetAttr ".t" -type "double3" 1.0109907869246533 0.5560976078619172 3.4206445512302697 ;']
-    for name in ("jT", "jC", "jQ", "jX", "jM", "jL"):
+    for name in ("jT", "jC", "jQ", "jX", "jM", "jL", "jP", "jP2"):
         lines.append('createNode joint -n "%s";' % name)
     lines += ['createNode transform -n "box";', 'createNode mesh -n "boxShape" -p "box";']
     lines += exprespy("posCnsEx", POS, 8)
@@ -313,6 +321,7 @@ def main():
     lines += exprespy("chainB", CHAIN_B, 1)
     lines += exprespy("quatEx", QUAT, 1)
     lines += exprespy("limitEx", LIMIT, 1)
+    lines += exprespy("pyEx", PY, 3, ['\tsetAttr ".i[1]" 2;', '\tsetAttr ".i[2]" 3;'])
     lines += exprespy("badCmds", BAD_CMDS)
     lines += exprespy("badMesh", BAD_MESH, 1)
     lines += ['createNode animCurveTL -n "src_translateX";', '\tsetAttr ".tan" 2;',
@@ -355,6 +364,11 @@ def main():
               'connectAttr "limitEx.o[0]" "jL.tx";',
               'connectAttr "limitEx.o[1]" "jL.ty";',
               'connectAttr "limitEx.o[2]" "jL.tz";',
+              'connectAttr "src.tx" "pyEx.i[0]";',
+              'connectAttr "pyEx.o[0]" "jP.tx";',
+              'connectAttr "pyEx.o[1]" "jP.ty";',
+              'connectAttr "pyEx.o[2]" "jP.tz";',
+              'connectAttr "pyEx.o[3]" "jP2.tx";',
               'connectAttr "badCmds.o[0]" "jX.tx";',
               'connectAttr "boxShape.o" "badMesh.i[0]";',
               'connectAttr "badMesh.o[0]" "jM.tx";',

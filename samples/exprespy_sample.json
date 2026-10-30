@@ -985,6 +985,150 @@
     "ty ← limitEx（exprespy）",
     "tz ← limitEx（exprespy）"
    ]
+  },
+  {
+   "name":"jP",
+   "path":"|jP",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "tx ← pyEx（exprespy）",
+    "ty ← pyEx（exprespy）",
+    "tz ← pyEx（exprespy）"
+   ]
+  },
+  {
+   "name":"jP2",
+   "path":"|jP2",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "tx ← pyEx（exprespy）"
+   ]
   }
  ],
  "meshes":[],
@@ -1000,7 +1144,7 @@
  "materials":[],
  "textures":[],
  "warnings":[
-  "exprespy 9 個（posCnsEx、oriCnsEx、aimCnsEx、aimUpCnsEx、timeEx ほか）のコードを解析して評価します。",
+  "exprespy 10 個（posCnsEx、oriCnsEx、aimCnsEx、aimUpCnsEx、timeEx ほか）のコードを解析して評価します。",
   "exprespy badCmds のコードを解析できません（1 行目: maya.cmds の呼び出しは変換できません（ほかのノードを直接見る処理は再現できません））。このノードにつながる値は再生されません。",
   "exprespy badMesh のコードを解析できません（形状（boxShape.o）の入力は変換できません（メッシュ・カーブのデータは扱えません））。このノードにつながる値は再生されません。",
   "boxShape: 形状データ（頂点・辺・面）がないため除外しました",
@@ -1008,8 +1152,8 @@
   "jM: tx ← badMesh（exprespy） が接続で決まるため、ファイルに値がありません。バインドポーズの情報もないため、既定値（移動 0・回転 0）で表示しています。"
  ],
  "stats":{
-  "nodes":14,
-  "joints":10,
+  "nodes":16,
+  "joints":12,
   "meshes":0,
   "curves":0,
   "cameras":0,
@@ -1020,7 +1164,7 @@
   "textures":0,
   "texturesMissing":0,
   "bindPoseNodes":0,
-  "drivenNodes":12
+  "drivenNodes":14
  },
  "animation":{
   "fps":24.0,
@@ -1490,6 +1634,66 @@
      0.0,
      0.0
     ]
+   },
+   {
+    "node":14,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":15,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
    }
   ],
   "graph":[
@@ -1544,7 +1748,7 @@
     },
     "inputs":{
      "t":{
-      "node":14,
+      "node":16,
       "attr":"o0"
      }
     }
@@ -1556,7 +1760,7 @@
     "dag":5,
     "inputs":{
      "r":{
-      "node":15,
+      "node":17,
       "attr":"o0"
      }
     }
@@ -1568,7 +1772,7 @@
     "dag":6,
     "inputs":{
      "r":{
-      "node":16,
+      "node":18,
       "attr":"o0"
      }
     }
@@ -1580,7 +1784,7 @@
     "dag":7,
     "inputs":{
      "r":{
-      "node":17,
+      "node":19,
       "attr":"o0"
      }
     }
@@ -1592,7 +1796,7 @@
     "dag":8,
     "inputs":{
      "ty":{
-      "node":18,
+      "node":20,
       "attr":"o0"
      }
     }
@@ -1604,7 +1808,7 @@
     "dag":9,
     "inputs":{
      "tx":{
-      "node":20,
+      "node":22,
       "attr":"o0"
      }
     }
@@ -1616,7 +1820,7 @@
     "dag":10,
     "inputs":{
      "r":{
-      "node":21,
+      "node":23,
       "attr":"o0"
      }
     }
@@ -1640,21 +1844,53 @@
     "dag":13,
     "inputs":{
      "tx":{
-      "node":22,
+      "node":24,
       "attr":"o0"
      },
      "ty":{
-      "node":22,
+      "node":24,
       "attr":"o1"
      },
      "tz":{
-      "node":22,
+      "node":24,
       "attr":"o2"
      }
     }
    },
    {
     "id":14,
+    "name":"jP",
+    "type":"joint",
+    "dag":14,
+    "inputs":{
+     "tx":{
+      "node":25,
+      "attr":"o0"
+     },
+     "ty":{
+      "node":25,
+      "attr":"o1"
+     },
+     "tz":{
+      "node":25,
+      "attr":"o2"
+     }
+    }
+   },
+   {
+    "id":15,
+    "name":"jP2",
+    "type":"joint",
+    "dag":15,
+    "inputs":{
+     "tx":{
+      "node":25,
+      "attr":"o3"
+     }
+    }
+   },
+   {
+    "id":16,
     "name":"posCnsEx",
     "type":"exprespy",
     "dag":-1,
@@ -1695,7 +1931,7 @@
     }
    },
    {
-    "id":15,
+    "id":17,
     "name":"oriCnsEx",
     "type":"exprespy",
     "dag":-1,
@@ -1724,7 +1960,7 @@
     }
    },
    {
-    "id":16,
+    "id":18,
     "name":"aimCnsEx",
     "type":"exprespy",
     "dag":-1,
@@ -1769,7 +2005,7 @@
     }
    },
    {
-    "id":17,
+    "id":19,
     "name":"aimUpCnsEx",
     "type":"exprespy",
     "dag":-1,
@@ -1830,7 +2066,7 @@
     }
    },
    {
-    "id":18,
+    "id":20,
     "name":"timeEx",
     "type":"exprespy",
     "dag":-1,
@@ -1840,7 +2076,7 @@
     }
    },
    {
-    "id":19,
+    "id":21,
     "name":"chainA",
     "type":"exprespy",
     "dag":-1,
@@ -1853,20 +2089,20 @@
     }
    },
    {
-    "id":20,
+    "id":22,
     "name":"chainB",
     "type":"exprespy",
     "dag":-1,
     "def":"exprespy:5cd71269318a",
     "inputs":{
      "i0":{
-      "node":19,
+      "node":21,
       "attr":"o0"
      }
     }
    },
    {
-    "id":21,
+    "id":23,
     "name":"quatEx",
     "type":"exprespy",
     "dag":-1,
@@ -1879,11 +2115,28 @@
     }
    },
    {
-    "id":22,
+    "id":24,
     "name":"limitEx",
     "type":"exprespy",
     "dag":-1,
     "def":"exprespy:ce6bd386183a",
+    "inputs":{
+     "i0":{
+      "node":1,
+      "attr":"tx"
+     }
+    }
+   },
+   {
+    "id":25,
+    "name":"pyEx",
+    "type":"exprespy",
+    "dag":-1,
+    "def":"exprespy:a55abc1606eb",
+    "attrs":{
+     "i1":2.0,
+     "i2":3.0
+    },
     "inputs":{
      "i0":{
       "node":1,
@@ -3315,6 +3568,487 @@
          "q"
         ]
        ]
+      ]
+     ]
+    ]
+   },
+   "exprespy:a55abc1606eb":{
+    "type":"exprespy:a55abc1606eb",
+    "attributes":[
+     {
+      "name":"i0",
+      "short":"i0",
+      "type":"double",
+      "default":0.0
+     },
+     {
+      "name":"i1",
+      "short":"i1",
+      "type":"double",
+      "default":0.0
+     },
+     {
+      "name":"i2",
+      "short":"i2",
+      "type":"double",
+      "default":0.0
+     },
+     {
+      "name":"o0",
+      "short":"o0",
+      "type":"double",
+      "output":true,
+      "default":0.0
+     },
+     {
+      "name":"o1",
+      "short":"o1",
+      "type":"double",
+      "output":true,
+      "default":0.0
+     },
+     {
+      "name":"o2",
+      "short":"o2",
+      "type":"double",
+      "output":true,
+      "default":0.0
+     },
+     {
+      "name":"o3",
+      "short":"o3",
+      "type":"double",
+      "output":true,
+      "default":0.0
+     }
+    ],
+    "ir":[
+     [
+      "set",
+      [
+       "l",
+       "s"
+      ],
+      [
+       "n",
+       0
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "s"
+      ],
+      [
+       "b",
+       "+",
+       [
+        "l",
+        "s"
+       ],
+       [
+        "a",
+        [
+         [
+          "i0",
+          null
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "s"
+      ],
+      [
+       "b",
+       "+",
+       [
+        "l",
+        "s"
+       ],
+       [
+        "a",
+        [
+         [
+          "i1",
+          null
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "s"
+      ],
+      [
+       "b",
+       "+",
+       [
+        "l",
+        "s"
+       ],
+       [
+        "a",
+        [
+         [
+          "i2",
+          null
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "o",
+       [
+        [
+         "o0",
+         null
+        ]
+       ]
+      ],
+      [
+       "l",
+       "s"
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "extra"
+      ],
+      [
+       "n",
+       10
+      ]
+     ],
+     [
+      "set",
+      [
+       "o",
+       [
+        [
+         "o1",
+         null
+        ]
+       ]
+      ],
+      [
+       "b",
+       "+",
+       [
+        "l",
+        "extra"
+       ],
+       [
+        "b",
+        "+",
+        [
+         "b",
+         "+",
+         [
+          "n",
+          0
+         ],
+         [
+          "b",
+          "*",
+          [
+           "a",
+           [
+            [
+             "i0",
+             null
+            ]
+           ]
+          ],
+          [
+           "n",
+           2
+          ]
+         ]
+        ],
+        [
+         "b",
+         "*",
+         [
+          "a",
+          [
+           [
+            "i2",
+            null
+           ]
+          ]
+         ],
+         [
+          "n",
+          2
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "__tmp1"
+      ],
+      [
+       "a",
+       [
+        [
+         "i0",
+         null
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "__tmp2"
+      ],
+      [
+       "a",
+       [
+        [
+         "i1",
+         null
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "a"
+      ],
+      [
+       "l",
+       "__tmp1"
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "b"
+      ],
+      [
+       "l",
+       "__tmp2"
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "__tmp3"
+      ],
+      [
+       "l",
+       "b"
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "__tmp4"
+      ],
+      [
+       "l",
+       "a"
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "a"
+      ],
+      [
+       "l",
+       "__tmp3"
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "b"
+      ],
+      [
+       "l",
+       "__tmp4"
+      ]
+     ],
+     [
+      "set",
+      [
+       "o",
+       [
+        [
+         "o2",
+         null
+        ]
+       ]
+      ],
+      [
+       "b",
+       "-",
+       [
+        "l",
+        "a"
+       ],
+       [
+        "l",
+        "b"
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "n"
+      ],
+      [
+       "n",
+       0
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "x"
+      ],
+      [
+       "b",
+       "*",
+       [
+        "a",
+        [
+         [
+          "i2",
+          null
+         ]
+        ]
+       ],
+       [
+        "n",
+        100
+       ]
+      ]
+     ],
+     [
+      "for",
+      "_w5",
+      [
+       "c",
+       "range",
+       [
+        [
+         "n",
+         10000
+        ]
+       ]
+      ],
+      [
+       [
+        "if",
+        [
+         "u",
+         "not",
+         [
+          "b",
+          ">",
+          [
+           "l",
+           "x"
+          ],
+          [
+           "n",
+           1
+          ]
+         ]
+        ],
+        [
+         [
+          "break"
+         ]
+        ],
+        []
+       ],
+       [
+        "set",
+        [
+         "l",
+         "x"
+        ],
+        [
+         "b",
+         "/",
+         [
+          "l",
+          "x"
+         ],
+         [
+          "n",
+          2
+         ]
+        ]
+       ],
+       [
+        "set",
+        [
+         "l",
+         "n"
+        ],
+        [
+         "b",
+         "+",
+         [
+          "l",
+          "n"
+         ],
+         [
+          "n",
+          1
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "o",
+       [
+        [
+         "o3",
+         null
+        ]
+       ]
+      ],
+      [
+       "l",
+       "n"
       ]
      ]
     ]
@@ -4898,9 +5632,9 @@
    "curves":3,
    "keys":6,
    "channels":3,
-   "nodes":10,
-   "graphNodes":23,
-   "seconds":0.0029
+   "nodes":12,
+   "graphNodes":26,
+   "seconds":0.0015
   }
  }
 }

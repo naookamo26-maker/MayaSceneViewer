@@ -44,7 +44,7 @@ const parentWorld = (rig, name) => {
 test('exprespy のノードを定義で評価し、解析できないノードは警告する', () => {
   const graph = data.animation.graph.filter((g) => g.type === 'exprespy');
   const defined = graph.filter((g) => g.def).map((g) => g.name).sort();
-  assert.deepEqual(defined, ['aimCnsEx', 'aimUpCnsEx', 'chainA', 'chainB', 'limitEx', 'oriCnsEx', 'posCnsEx', 'quatEx', 'timeEx']);
+  assert.deepEqual(defined, ['aimCnsEx', 'aimUpCnsEx', 'chainA', 'chainB', 'limitEx', 'oriCnsEx', 'posCnsEx', 'pyEx', 'quatEx', 'timeEx']);
   for (const g of graph.filter((x) => x.def)) {
     assert.match(g.def, /^exprespy:[0-9a-f]{12}$/);
     assert.ok(data.animation.nodeDefs[g.def], g.def);
@@ -53,7 +53,7 @@ test('exprespy のノードを定義で評価し、解析できないノード�
   assert.match(warnings, /exprespy badCmds のコードを解析できません（1 行目: maya\.cmds/);
   assert.match(warnings, /exprespy badMesh のコードを解析できません（形状（boxShape\.o）/);
   const rig = at(12);
-  for (const n of ['posCnst', 'oriCnst', 'aimCnst', 'aimUpCnst', 'jT', 'jC', 'jQ', 'jL']) rig.chan(idx(n));
+  for (const n of ['posCnst', 'oriCnst', 'aimCnst', 'aimUpCnst', 'jT', 'jC', 'jQ', 'jL', 'jP', 'jP2']) rig.chan(idx(n));
   assert.deepEqual([...rig.problems], []);
 });
 
@@ -118,6 +118,16 @@ test('limitEx: 既定値つきの引数（max=None）と None の判定', () => 
     const t = rig.chan(idx('jL')).t;
     assert.ok(near(t[0], Math.max(tx, 0)) && near(t[1], Math.max(-tx, 0)) && near(t[2], Math.min(Math.max(tx, 0), 1.5)),
       `フレーム ${f}: ${t} / tx ${tx}`);
+  }
+});
+
+test('pyEx: ループの展開・try / except KeyError・内包表記・分解代入・while', () => {
+  for (const f of FRAMES) {
+    const rig = at(f);
+    const tx = rig.chan(idx('src')).t[0];
+    const t = rig.chan(idx('jP')).t;
+    assert.ok(near(t[0], tx + 5) && near(t[1], 2 * tx + 16) && near(t[2], 2 - tx), `フレーム ${f}: ${t} / tx ${tx}`);
+    assert.ok(near(rig.chan(idx('jP2')).t[0], 9), `フレーム ${f}: while`);
   }
 });
 

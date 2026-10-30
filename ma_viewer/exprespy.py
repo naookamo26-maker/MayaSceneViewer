@@ -16,8 +16,12 @@ exprespy ノードはコード（.cd・code。Python）を持ち、コードの�
 MQuaternion・MTransformationMatrix）と math（plugin_convert.Translator が解釈するもの）。
 if not COUNT:（最初の 1 回だけの初期化）は、中身が定数・import・関数の定義だけなら毎回実行するものとして扱い、
 関数（def・lambda）は呼び出したところに展開する。IN[n]・IN.get(n, 既定値) の番号は、数か一度だけ整数を入れた名前。
+回数が変換の時点で決まるループ（range(定数)・IN・IN.items()・タプル・enumerate・zip）と内包表記は展開する
+（IN[i]・OUT[i] の番号にループの変数を使える）。try: … except KeyError: は、入力の有無で通る側を選ぶ。
+定数だけの式・None の判定は変換の時点で畳み込み、通らない道は書かない。
 対応しないもの（理由を警告に出し、そのノードは評価しない）: 前回の値を持ち越す変数（初期化で入れた値の書き換え・
-global）・maya.cmds・形状（メッシュ・カーブ）の入出力・文字列・IN[変数]・再帰呼び出し・ループの中の return。
+global）・maya.cmds・形状（メッシュ・カーブ）の入出力・文字列・辞書・リストの append・回数が実行時に決まる
+ループの中の IN[変数]・再帰呼び出し・ループの中の return。
 """
 from __future__ import annotations
 
@@ -260,12 +264,67 @@ def _is_first_run(test) -> bool:
     return False
 
 
+_FOLD_BIN = {ast.Add: lambda a, b: a + b, ast.Sub: lambda a, b: a - b, ast.Mult: lambda a, b: a * b,
+             ast.Div: lambda a, b: a / b, ast.FloorDiv: lambda a, b: a // b, ast.Mod: lambda a, b: a % b}
+_FOLD_CMP = {ast.Eq: lambda a, b: a == b, ast.NotEq: lambda a, b: a != b, ast.Lt: lambda a, b: a < b,
+             ast.LtE: lambda a, b: a <= b, ast.Gt: lambda a, b: a > b, ast.GtE: lambda a, b: a >= b}
+
+
+def _fold(node):
+    """数・四則演算・比較・and / or / not・条件式だけの式の値（ほかを含めば None）"""
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+        return node.value
+    if isinstance(node, ast.UnaryOp):
+        v = _fold(node.operand)
+        if v is None:
+            return None
+        return -v if isinstance(node.op, ast.USub) else +v if isinstance(node.op, ast.UAdd) else \
+            (int(not v) if isinstance(node.op, ast.Not) else None)
+    if isinstance(node, ast.BinOp) and type(node.op) in _FOLD_BIN:
+        a, b = _fold(node.left), _fold(node.right)
+        return None if a is None or b is None else _FOLD_BIN[type(node.op)](a, b)
+    if isinstance(node, ast.Compare) and all(type(o) in _FOLD_CMP for o in node.ops):
+        vals = [_fold(node.left)] + [_fold(c) for c in node.comparators]
+        if any(v is None for v in vals):
+            return None
+        return int(all(_FOLD_CMP[type(o)](vals[k], vals[k + 1]) for k, o in enumerate(node.ops)))
+    if isinstance(node, ast.BoolOp):
+        vals = [_fold(v) for v in node.values]
+        if any(v is None for v in vals):
+            return None
+        out = vals[0]
+        for v in vals[1:]:
+            out = (v if out else out) if isinstance(node.op, ast.And) else (out if out else v)
+        return out
+    if isinstance(node, ast.IfExp):
+        c = _fold(node.test)
+        return None if c is None else _fold(node.body if c else node.orelse)
+    return None
+
+
 def _has_return(node) -> bool:
     if isinstance(node, ast.Return):
         return True
     if isinstance(node, (ast.FunctionDef, ast.Lambda)):
         return False
     return any(_has_return(c) for c in ast.iter_child_nodes(node))
+
+
+class _Pre(ast.expr):
+    """変換済みの値を持つ式（右辺を 1 回だけ変換して、代入の処理に渡す）"""
+    _fields = ()
+
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+
+
+class _Break(Exception):
+    """展開したループの break（変換の時点で抜ける）"""
+
+
+class _Continue(Exception):
+    """展開したループの continue"""
 
 
 class ExprespyTranslator(PC.Translator):
@@ -283,7 +342,8 @@ class ExprespyTranslator(PC.Translator):
         self.in_kinds = in_kinds
         self.out_kinds: Dict[int, str] = {}
         self.taken |= {"i%d" % k for k in in_kinds} | {"o%d" % k for k in range(1000)}
-        self.funcs: Dict[str, Tuple[List[str], object, bool]] = {}   # 名前 → (引数, 本体, lambda か)
+        self.funcs: Dict[str, tuple] = {}   # 名前 → (引数, 本体, lambda か, 既定値)
+        self.frames: List[str] = []          # 入れ子の状態（"unroll" 展開したループ・"loop" 計算の for・"if" 実行時の if）
         self.inlining: List[str] = []
         # 一度だけ整数を入れる名前（IN[AT_ROLL] の番号に使える）
         stores = _scope_stores(tree.body)
@@ -306,6 +366,17 @@ class ExprespyTranslator(PC.Translator):
         k = PC._const(node)
         if isinstance(node, ast.Name) and node.id in self.int_consts:
             k = self.int_consts[node.id]
+        elif isinstance(node, ast.Name) and node.id in self.env:     # 展開したループの変数（定数）
+            c = self.const_of(self.env[node.id].code)
+            if c is not None and c == int(c):
+                k = int(c)
+        elif not isinstance(node, (ast.Constant, ast.Name)):
+            try:                                          # IN[i + 1] など、変換の時点で決まる式
+                c = self.const_of(self.num_code(self.expr(node), node))
+            except PC.ConvertError:
+                c = None
+            if c is not None and c == int(c):
+                k = int(c)
         if not isinstance(k, int) or isinstance(k, bool):
             PC._fail("%s の番号を変数で選ぶ書き方は変換できません。番号か、一度だけ整数を入れた名前を書いてください" % what,
                      node)
@@ -317,6 +388,8 @@ class ExprespyTranslator(PC.Translator):
         return None
 
     def expr(self, e):
+        if isinstance(e, _Pre):
+            return e.value
         k = self.io_index(e, "IN")
         if k is not None:
             return self.input_value(k, e)
@@ -331,6 +404,11 @@ class ExprespyTranslator(PC.Translator):
         v = self.none_expr(e)
         if v is not None:
             return v
+        if isinstance(e, ast.ListComp):
+            vals = self.flat(self.comprehension(e), e)
+            return PC.Value("vec", "[%s]" % ", ".join(self.num_code(x, e) for x in vals))
+        if isinstance(e, ast.GeneratorExp):
+            PC._fail("ジェネレータ式は sum・min・max・any・all・list・tuple の引数でだけ変換できます", e)
         return super().expr(e)
 
     def input_value(self, k: int, node):
@@ -380,7 +458,63 @@ class ExprespyTranslator(PC.Translator):
         if isinstance(s, ast.If) and _is_first_run(s.test):
             self.first_run(s)
             return
+        if isinstance(s, (ast.Break, ast.Continue)) and self.jump(s):
+            return
+        if isinstance(s, ast.Try):
+            self.try_stmt(s)
+            return
+        if isinstance(s, ast.Assert):
+            self.notes.append("%d 行目: assert は無視しました" % s.lineno)
+            return
+        if isinstance(s, ast.Delete):
+            for t in s.targets:
+                if isinstance(t, ast.Name):
+                    self.env.pop(t.id, None)
+            return
+        if isinstance(s, ast.Assign) and (len(s.targets) > 1 or self.needs_split(s.targets[0], s.value)):
+            self.multi_assign(s)
+            return
         return super().stmt(s)
+
+    def needs_split(self, target, value) -> bool:
+        """分けて代入するか（a, b = c, d・OUT[0], OUT[1] = …・v[0], v[1] = …）"""
+        if not isinstance(target, (ast.Tuple, ast.List)):
+            return False
+        if isinstance(value, (ast.Tuple, ast.List)):
+            return True
+        return not all(isinstance(t, ast.Name) for t in target.elts)
+
+    def temp_name(self, node) -> ast.Name:
+        n = ast.Name(id="__tmp%d" % (self.counter + 1), ctx=ast.Load())
+        self.counter += 1
+        return ast.copy_location(n, node)
+
+    def multi_assign(self, s: ast.Assign):
+        """a = b = 値・a, b = b, a（右辺を先にすべて求めてから入れる。Python と同じ）"""
+        if len(s.targets) > 1:
+            tmp = self.temp_name(s)
+            self.assign(tmp, s.value, s)
+            for t in s.targets:
+                self.stmt(ast.copy_location(ast.Assign(targets=[t], value=tmp), s))
+            return
+        target, value = s.targets[0], s.value
+        if any(isinstance(t, ast.Starred) for t in target.elts):
+            PC._fail("*a のような分け方は変換できません", s)
+        if isinstance(value, (ast.Tuple, ast.List)):
+            if len(value.elts) != len(target.elts):
+                PC._fail("分ける数が合いません（%d 個と %d 個）" % (len(target.elts), len(value.elts)), s)
+            tmps = []
+            for v in value.elts:
+                tmp = self.temp_name(s)
+                self.assign(tmp, v, s)
+                tmps.append(tmp)
+        else:
+            whole = self.temp_name(s)
+            self.assign(whole, value, s)
+            tmps = [ast.copy_location(ast.Subscript(value=whole, slice=ast.Constant(k), ctx=ast.Load()), s)
+                    for k in range(len(target.elts))]
+        for t, v in zip(target.elts, tmps):
+            self.stmt(ast.copy_location(ast.Assign(targets=[t], value=v), s))
 
     def first_run(self, s: ast.If):
         """if not COUNT: …（最初の 1 回だけ実行する初期化）。毎回同じ値になるなら、毎回実行しても結果は同じ"""
@@ -399,11 +533,12 @@ class ExprespyTranslator(PC.Translator):
         if isinstance(value_node, ast.Lambda) and isinstance(target, ast.Name):
             self.define(target.id, value_node.args, value_node.body, True, s)
             return
-        if isinstance(target, ast.Name) and (isinstance(value_node, ast.Constant) and value_node.value is None or
-                                             isinstance(value_node, ast.Name) and value_node.id in self.env
-                                             and self.env[value_node.id].kind == "none"):
-            self.env[target.id] = PC.Value("none", "None")   # None は変換の時点で分かるので、変数にしない
-            return
+        if isinstance(target, ast.Name) and not isinstance(value_node, _Pre):
+            v = self.expr(value_node)
+            if v.kind == "none":
+                self.env[target.id] = v                  # None は変換の時点で分かるので、変数にしない
+                return
+            value_node = ast.copy_location(_Pre(v), value_node)   # 変換した値（右辺は 1 回だけ変換する）
         k = self.io_index(target, "OUT")
         if k is None:
             if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name) and target.value.id == "IN":
@@ -423,13 +558,294 @@ class ExprespyTranslator(PC.Translator):
         self.out_kinds[k] = kind
         self.emit("o%d = %s" % (k, v.code))
 
+    # ---- 変換の時点で要素が決まる並び（ループの展開・内包表記・sum など）
+    UNROLL_LIMIT = 256          # 展開するループの回数の上限
+    WHILE_LIMIT = 10000         # while の繰り返しの上限（for … range に書き換える）
+
+    def static_items(self, node) -> Optional[list]:
+        """変換の時点で要素の数が決まる並び。要素は Value か、Value のタプル（items()・enumerate・zip）。
+        決まらなければ None"""
+        if isinstance(node, ast.Name) and node.id == "IN" and node.id not in self.env:
+            return [PC.Value("num", str(k)) for k in sorted(self.in_kinds)]
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            out = []
+            for x in node.elts:
+                if isinstance(x, ast.Starred):
+                    return None
+                out.append(tuple(self.expr(y) for y in x.elts) if isinstance(x, ast.Tuple) else self.expr(x))
+            return out
+        if isinstance(node, (ast.ListComp, ast.GeneratorExp)):
+            return self.comprehension(node)
+        if not isinstance(node, ast.Call) or node.keywords and not (
+                isinstance(node.func, ast.Name) and node.func.id == "enumerate"):
+            return None
+        f = node.func
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "IN" and not node.args:
+            keys = sorted(self.in_kinds)
+            if f.attr == "keys":
+                return [PC.Value("num", str(k)) for k in keys]
+            if f.attr == "values":
+                return [self.input_value(k, node) for k in keys]
+            if f.attr == "items":
+                return [(PC.Value("num", str(k)), self.input_value(k, node)) for k in keys]
+            return None
+        if not isinstance(f, ast.Name) or f.id in self.env or f.id in self.funcs:
+            return None
+        args = node.args
+        if f.id == "range" and 1 <= len(args) <= 3:
+            try:
+                r = range(*[self.index_of(a, "range") for a in args])
+            except PC.ConvertError:
+                return None
+            if len(r) > self.UNROLL_LIMIT:
+                return None
+            return [PC.Value("num", str(i)) for i in r]
+        if f.id == "enumerate" and args:
+            items = self.static_items(args[0])
+            kw = {k.arg: k.value for k in node.keywords}
+            start_node = args[1] if len(args) > 1 else kw.get("start")
+            start = self.index_of(start_node, "enumerate") if start_node is not None else 0
+            return None if items is None else [(PC.Value("num", str(start + k)), it) for k, it in enumerate(items)]
+        if f.id == "zip" and args:
+            lists = [self.static_items(a) for a in args]
+            return None if any(x is None for x in lists) else [tuple(t) for t in zip(*lists)]
+        if f.id in ("list", "tuple", "sorted", "reversed") and len(args) == 1:
+            items = self.static_items(args[0])
+            if items is None:
+                return None
+            if f.id == "reversed":
+                return list(reversed(items))
+            if f.id == "sorted":
+                consts = [self.const_of(x.code) if isinstance(x, PC.Value) else None for x in items]
+                if any(c is None for c in consts):
+                    return None                           # 値が実行時に決まるものは並べ替えられない
+                return [x for _c, x in sorted(zip(consts, items), key=lambda p: p[0])]
+            return items
+        return None
+
+    def flat(self, items, node) -> list:
+        """並びの要素（Value のタプルは不可）"""
+        for x in items:
+            if not isinstance(x, PC.Value):
+                PC._fail("ここではタプルの並びは使えません", node)
+        return list(items)
+
+    def bind(self, target, item, node):
+        """ループ・内包表記の変数に、並びの要素を入れる（変数にはせず、値の式のまま追う）"""
+        if isinstance(target, ast.Name):
+            if isinstance(item, tuple):
+                PC._fail("for の変数 %s にタプルを入れています（a, b のように分けてください）" % target.id, node)
+            self.env[target.id] = item
+            return
+        if isinstance(target, (ast.Tuple, ast.List)):
+            if isinstance(item, PC.Value):
+                if item.kind not in ("vec", "pt", "quat", "eul"):
+                    PC._fail("この値は分けられません（%s）" % item.kind, node)
+                item = tuple(PC.Value("num", "%s[%d]" % (item.code, k)) for k in range(len(target.elts)))
+            if len(item) != len(target.elts):
+                PC._fail("分ける数が合いません（%d 個と %d 個）" % (len(target.elts), len(item)), node)
+            for t, x in zip(target.elts, item):
+                self.bind(t, x, node)
+            return
+        PC._fail("この for の変数は変換できません", node)
+
+    def comprehension(self, node) -> list:
+        """[式 for x in 並び if 条件] の要素（並びと条件が変換の時点で決まるとき）"""
+        out = []
+        saved = dict(self.env)
+
+        def rec(k):
+            if k == len(node.generators):
+                out.append(self.expr(node.elt))
+                return
+            g = node.generators[k]
+            items = self.static_items(g.iter)
+            if items is None:
+                PC._fail("内包表記は、IN・タプル・リスト・range などの、要素の数が決まる並びだけ変換できます", g.iter)
+            for it in items:
+                self.bind(g.target, it, node)
+                keep = True
+                for c in g.ifs:
+                    known = self.known_cond(c)
+                    if known is None:
+                        PC._fail("内包表記の if は、変換の時点で決まる条件だけ変換できます", c)
+                    if not known:
+                        keep = False
+                        break
+                if keep:
+                    rec(k + 1)
+        try:
+            rec(0)
+        finally:
+            self.env = saved                              # 内包表記の変数は外に出さない（Python 3 と同じ）
+        if len(out) > self.UNROLL_LIMIT:
+            PC._fail("内包表記の要素が多すぎます（%d 個まで）" % self.UNROLL_LIMIT, node)
+        return out
+
+    # ---- ループ（展開する・そのまま for range にする・while）
+    def for_stmt(self, s: ast.For):
+        if s.orelse:
+            PC._fail("for … else は変換できません", s)
+        if self.needs_unroll(s):
+            items = self.static_items(s.iter)
+            if items is None and isinstance(s.target, ast.Name) and not self.uses_index(s):
+                items = False                             # 要素の数が分からない並び（ベクトルの変数など）は計算の for
+            if items is False:
+                pass
+            elif items is None:
+                PC._fail("この for は変換できません（IN[i] などで番号に使う変数は、range(定数)・IN・タプルなど、"
+                         "回数が変換の時点で決まる並びでたどってください。%d 回まで）" % self.UNROLL_LIMIT, s)
+            else:
+                self.unroll(s, items)
+                return
+        self.frames.append("loop")
+        try:
+            super().for_stmt(s)
+        finally:
+            self.frames.pop()
+
+    def needs_unroll(self, s: ast.For) -> bool:
+        """ループを展開するか（range 以外の並び・タプルの変数・IN / OUT の番号に変数を使うとき）"""
+        it = s.iter
+        if not (isinstance(it, ast.Call) and isinstance(it.func, ast.Name) and it.func.id == "range"
+                and it.func.id not in self.env) or not isinstance(s.target, ast.Name):
+            return True
+        return self.uses_index(s)
+
+    @staticmethod
+    def uses_index(s: ast.For) -> bool:
+        """ループの変数を IN[…]・OUT[…]・IN.get(…) の番号に使うか"""
+        names = {n.id for n in ast.walk(s.target) if isinstance(n, ast.Name)}
+        for node in ast.walk(ast.Module(body=s.body, type_ignores=[])):
+            idx = None
+            if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id in ("IN", "OUT"):
+                idx = node.slice
+            elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get"
+                  and isinstance(node.func.value, ast.Name) and node.func.value.id == "IN" and node.args):
+                idx = node.args[0]
+            if idx is not None and any(isinstance(n, ast.Name) and n.id in names for n in ast.walk(idx)):
+                return True
+        return False
+
+    def unroll(self, s: ast.For, items: list):
+        targets = {n.id for n in ast.walk(s.target) if isinstance(n, ast.Name)}
+        stored = set(_scope_stores(s.body))
+        if targets & stored:
+            PC._fail("ループの変数 %s に代入しています（展開するループでは変換できません）" % "・".join(sorted(targets & stored)), s)
+        self.frames.append("unroll")
+        try:
+            for it in items:
+                self.bind(s.target, it, s)
+                try:
+                    for st in s.body:
+                        self.stmt_strict(st)
+                except _Continue:
+                    continue
+                except _Break:
+                    break
+        finally:
+            self.frames.pop()
+
+    def stmt_strict(self, st):
+        """文を変換する（変換できなければ、その場で止める。展開したループの中は途中で続けない）"""
+        self.stmt(st)
+
+    def while_stmt(self, s: ast.While):
+        """while 条件: … → for _ in range(上限): if not 条件: break …（上限を超える繰り返しは打ち切る）"""
+        if s.orelse:
+            PC._fail("while … else は変換できません", s)
+        k = self.fresh("w")
+        self.emit("for %s in range(%d):" % (k, self.WHILE_LIMIT))
+        self.indent += 1
+        self.frames.append("loop")
+        try:
+            self.emit("if not %s:" % self.cond(s.test))
+            self.emit("    break")
+            n = len(self.lines)
+            self.block(s.body)
+            if len(self.lines) == n:
+                self.emit("pass")
+        finally:
+            self.frames.pop()
+            self.indent -= 1
+        self.notes.append("%d 行目: while は %d 回までで打ち切ります" % (s.lineno, self.WHILE_LIMIT))
+
+    def jump(self, s):
+        """break・continue: 展開したループの中なら変換の時点で抜ける。実行時の条件の中なら変換できない"""
+        in_if = False
+        for f in reversed(self.frames):
+            if f == "loop":
+                return False                              # 計算の for の中（そのまま書く）
+            if f == "if":
+                in_if = True
+                continue
+            if f == "unroll":
+                if in_if:
+                    PC._fail("展開するループ（IN[i] などを使う for）の中で、実行時に決まる条件の %s は変換できません"
+                             % ("break" if isinstance(s, ast.Break) else "continue"), s)
+                raise _Break() if isinstance(s, ast.Break) else _Continue()
+        return False
+
+    # ---- try（IN にない番号を読むと KeyError）
+    _CATCH = {"KeyError", "LookupError", "Exception", "BaseException"}
+
+    def missing_input(self, node) -> bool:
+        """IN にない番号を IN[k] で読むか（変換の時点で番号が決まらなければ変換できない）"""
+        for n in ast.walk(node):
+            if isinstance(n, (ast.FunctionDef, ast.Lambda)):
+                continue
+            if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == "IN" \
+                    and isinstance(n.ctx, ast.Load):
+                if self.index_of(n.slice, "IN[…]") not in self.in_kinds:
+                    return True
+        return False
+
+    def try_stmt(self, s: ast.Try):
+        """try: … except KeyError: …: IN にない番号を読む文まで実行して except へ（入力の有無は変換の時点で分かる）"""
+        handler = None
+        for h in s.handlers:
+            names = []
+            if h.type is None:
+                names = ["BaseException"]
+            elif isinstance(h.type, ast.Tuple):
+                names = [PC._tail(x) for x in h.type.elts]
+            else:
+                names = [PC._tail(h.type)]
+            if any(n in self._CATCH for n in names):
+                handler = h
+                break
+        if handler is None:
+            PC._fail("try は、except KeyError・except Exception・except: だけ変換できます（入力がないときの処理）", s)
+        if handler.name:
+            PC._fail("except … as %s は変換できません" % handler.name, handler)
+        raised = False
+        for st in s.body:
+            if self.missing_input(st):
+                if not isinstance(st, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Expr, ast.Return)):
+                    PC._fail("try の中の if・for などの中で、ない入力（IN[k]）を読んでいます（変換できません）", st)
+                raised = True
+                break
+            self.stmt(st)
+        if raised:
+            self.block(handler.body)
+        else:
+            self.block(s.orelse)
+            self.notes.append("%d 行目: try の except は、入力がないとき（KeyError）だけ再現します" % s.lineno)
+        self.block(s.finalbody)
+
     # ---- None と、変換の時点で決まる条件（def f(x, max=None): … if max is not None: … など）
     @staticmethod
     def const_of(code: str) -> Optional[float]:
+        """式が定数だけでできていれば、その値（(3 < 3)・(2 * 0.5) など）。そうでなければ None"""
         try:
             return float(code)
         except (TypeError, ValueError):
+            pass
+        try:
+            v = _fold(ast.parse(code, mode="eval").body)
+        except (SyntaxError, ValueError, TypeError, ZeroDivisionError, OverflowError):
             return None
+        return None if v is None or isinstance(v, complex) else float(v)
 
     def truth(self, v, node) -> str:
         """条件に使う値の式（None は偽）"""
@@ -461,7 +877,11 @@ class ExprespyTranslator(PC.Translator):
         if known is not None:
             self.block(body if known else orelse, tail=tail)
             return
-        return super().if_branches(s, body, orelse, tail)
+        self.frames.append("if")
+        try:
+            return super().if_branches(s, body, orelse, tail)
+        finally:
+            self.frames.pop()
 
     def none_expr(self, e):
         """None がかかわる式（None・is / is not / == / !=・not・and / or）。かかわらなければ None"""
@@ -476,6 +896,19 @@ class ExprespyTranslator(PC.Translator):
                 PC._fail("is・is not は None との比較だけ変換できます", e)
             return PC.Value("num", "(%s %s %s)" % (self.num_code(a, e), "==" if isinstance(e.ops[0], ast.Eq) else "!=",
                                                    self.num_code(b, e)))
+        if isinstance(e, ast.Compare) and len(e.ops) == 1 and isinstance(e.ops[0], (ast.In, ast.NotIn)):
+            items = self.static_items(e.comparators[0])
+            if items is None:
+                PC._fail("in・not in は、IN・タプル・リスト・range に対してだけ変換できます", e)
+            a = self.num_code(self.expr(e.left), e)
+            parts = ["(%s == %s)" % (a, self.num_code(v, e)) for v in self.flat(items, e)]
+            code = "(%s)" % " or ".join(parts) if parts else "0"
+            return PC.Value("num", code if isinstance(e.ops[0], ast.In) else "(not %s)" % code)
+        if isinstance(e, ast.IfExp):
+            known = self.known_cond(e.test)
+            if known is not None:
+                return self.expr(e.body if known else e.orelse)   # 通らない側は変換しない
+            return None
         if isinstance(e, ast.UnaryOp) and isinstance(e.op, ast.Not):
             v = self.expr(e.operand)
             c = self.const_of(self.truth(v, e))
@@ -490,7 +923,12 @@ class ExprespyTranslator(PC.Translator):
                 c = self.const_of(code)
                 if c is not None:
                     if bool(c) != is_and:
-                        return PC.Value("num", "0" if is_and else "1")
+                        if not parts:
+                            return PC.Value("num", code)     # 決まった値（a or b の a が真なら a）
+                        parts.append(code)                    # x or 1.0: x が偽なら 1.0（ここで終わる）
+                        break
+                    if x is e.values[-1]:
+                        parts.append(code)               # 最後の値は、そのまま結果
                     continue
                 parts.append(code)
             if not parts:
@@ -526,11 +964,45 @@ class ExprespyTranslator(PC.Translator):
             if k in self.in_kinds:
                 return self.input_value(k, e)
             if len(e.args) < 2:
-                PC._fail("IN.get(%d) の既定値がなく、IN[%d] に接続も値もありません" % (k, k), e)
+                return PC.Value("none", "None")          # 接続も値もない入力（Python と同じく None）
             return self.expr(e.args[1])
         if isinstance(f, ast.Name) and f.id in self.funcs and f.id not in self.env:
             return self.inline(f.id, e)
+        if isinstance(f, ast.Name) and f.id not in self.env:
+            v = self.builtin(f.id, e)
+            if v is not None:
+                return v
         return super().call(e)
+
+    def builtin(self, name: str, e: ast.Call):
+        """並びを受け取る組み込み関数（sum・len・min・max・any・all・list・tuple）。対象外なら None"""
+        if name not in ("sum", "len", "min", "max", "any", "all", "list", "tuple") or e.keywords:
+            return None
+        if name in ("min", "max") and len(e.args) != 1:
+            return None                                   # min(a, b) はそのまま
+        if not e.args:
+            return None
+        items = self.static_items(e.args[0])
+        if items is None:
+            if name in ("len", "sum", "any", "all"):
+                PC._fail("%s は、IN・タプル・リスト・range・内包表記に対してだけ変換できます" % name, e)
+            return None
+        if name == "len":
+            return PC.Value("num", str(len(items)))
+        vals = self.flat(items, e)
+        if name in ("list", "tuple"):
+            return PC.Value("vec", "[%s]" % ", ".join(self.num_code(v, e) for v in vals))
+        codes = [self.num_code(v, e) for v in vals]
+        if name == "sum":
+            start = self.num_code(self.expr(e.args[1]), e) if len(e.args) > 1 else "0"
+            return PC.Value("num", "(%s)" % " + ".join([start] + codes))
+        if name in ("min", "max"):
+            if not codes:
+                PC._fail("%s に空の並びを渡しています" % name, e)
+            return PC.Value("num", codes[0] if len(codes) == 1 else "%s(%s)" % (name, ", ".join(codes)))
+        if not codes:
+            return PC.Value("num", "1" if name == "all" else "0")
+        return PC.Value("num", "(%s)" % (" and " if name == "all" else " or ").join("bool(%s)" % c for c in codes))
 
     def call_stmt(self, c):
         if isinstance(c.func, ast.Name) and c.func.id in self.funcs and c.func.id not in self.env:
