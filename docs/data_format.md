@@ -50,6 +50,7 @@ transform・joint などの変換ノードです。**親は必ず子より前に
 | `type` | `"joint"`、`"transform"` など Maya のノード型 |
 | `parent` | 親の番号（ルートは -1） |
 | `matrix` | ローカル行列（16 要素） |
+| `locked` | Maya でロックした移動・回転・スケール（`{ "t" | "r" | "s": [X, Y, Z] }`。ロックのあるものだけ。まとめ（.t）のロックは 3 成分とも） |
 | `opm` | offsetParentMatrix（16 要素。単位行列でないときだけ。`matrix` には掛け込み済み。親の空間 `.parentMatrix` = 親のワールド行列 · opm を求めるのに使う） |
 | `worldMatrix` | ワールド行列（参照用。ビューアは階層から計算し直す） |
 | `inheritsTransform` | false の場合、ビューアはルート直下に置く |

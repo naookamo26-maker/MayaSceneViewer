@@ -9,6 +9,7 @@
 //   T · S⁻¹ · (平行移動を除いた残り)
 // として、子の位置だけが伸びて子自身は拡大されないようにする。
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
+import { composeMaya, decomposeMaya, mayaEuler } from './animation.js';
 
 const D2R = Math.PI / 180;
 const MIN_SCALE = 1e-3;
@@ -58,6 +59,52 @@ export function poseFromTransform(position, quaternion, scale) {
     r: [_e.x / D2R, _e.y / D2R, _e.z / D2R],
     s: scale.toArray(),
   });
+}
+
+const ROTATE_ORDERS = ['xyz', 'yzx', 'zxy', 'xzy', 'yxz', 'zyx'];
+const threeOrder = (ro) => (ROTATE_ORDERS[ro] || 'xyz').split('').reverse().join('').toUpperCase();
+const degQuat = (v, ro = 0) => new Quaternion().setFromEuler(new Euler(v[0] * D2R, v[1] * D2R, v[2] * D2R, threeOrder(ro)));
+
+/** 固定するチャンネル（{ t | r | s: [X, Y, Z] }）があるか */
+export function hasFixed(fixed) {
+  return !!fixed && ['t', 'r', 's'].some((k) => fixed[k] && fixed[k].some(Boolean));
+}
+
+/**
+ * 追加分 pose を、Maya のチャンネルの一部を基準のまま固定したものにする（ロックした属性・キーのある属性）。
+ * ローカル行列 L = base · D を Maya のチャンネルに分け（移動 = 親の空間の位置、回転 = jointOrient・rotateAxis を
+ * 除いた回転の値（回転順 ro）、スケール = base のスケール × 追加分のスケール）、fixed の成分を base の値に戻し、
+ * Maya と同じ T · R · S（せん断は base のもの）で組み直してから D を求め直す。すべて固定すれば D は単位
+ * （base の軸ごとに違うスケールと追加分の回転が生む、Maya のチャンネルにないせん断は残さない）。
+ * @param base 基準のローカル行列  @param fixed { t | r | s: [X, Y, Z] }（true の成分を固定）
+ * @param frame { ro: 0〜5, jo: [度] | null, ra: [度] | null }（ノードの回転の値の分け方）
+ */
+export function fixChannels(base, pose, fixed, frame = {}) {
+  if (!hasFixed(fixed)) return pose;
+  const p = normalizePose(pose);
+  const L = base.clone().multiply(poseMatrix(p, new Matrix4()));
+  const db = decomposeMaya(base), dl = decomposeMaya(L);
+  const on = (k, i) => !!(fixed[k] && fixed[k][i]);
+  const t = dl.t.toArray(), sc = db.s.toArray().map((v, i) => v * p.s[i]);
+  for (let i = 0; i < 3; i++) {
+    if (on('t', i)) t[i] = db.t.getComponent(i);
+    if (on('s', i)) sc[i] = db.s.getComponent(i);
+  }
+  let q = dl.q;
+  if (fixed.r && fixed.r.some(Boolean)) {
+    const ro = frame.ro || 0;
+    const jo = frame.jo ? degQuat(frame.jo) : new Quaternion(), ra = frame.ra ? degQuat(frame.ra) : new Quaternion();
+    const value = (qq) => jo.clone().invert().multiply(qq).multiply(ra.clone().invert());   // 回転の値の部分
+    const eb = mayaEuler(value(db.q), ro);
+    const el = mayaEuler(value(dl.q), ro, eb);
+    for (let i = 0; i < 3; i++) if (on('r', i)) el[i] = eb[i];
+    q = jo.clone().multiply(new Quaternion().setFromEuler(new Euler(el[0], el[1], el[2], threeOrder(ro)))).multiply(ra);
+  }
+  const L2 = composeMaya(t, q, sc, db.sh.toArray(), new Matrix4());
+  const D = base.clone().invert().multiply(L2);
+  const pos = new Vector3(), quat = new Quaternion(), scl = new Vector3();
+  D.decompose(pos, quat, scl);
+  return poseFromTransform(pos, quat, scl);
 }
 
 let poseVersion = 0;                       // 追加分を変えるたびに増やす（ほかの PoseState とも重ならない）

@@ -331,6 +331,7 @@ class SetAttr:
     type: Optional[str] = None    # -type の値
     size: Optional[int] = None    # -s の値
     values_text: str = ""         # 値部分の生テキスト
+    lock: Optional[bool] = None   # -l（-lock）の値（ロックする・外す。なければ None）
 
     _values: Optional[List[str]] = field(default=None, repr=False)
 
@@ -351,6 +352,7 @@ def parse_setattr(rest: str) -> Optional[SetAttr]:
     plug: Optional[str] = None
     typ: Optional[str] = None
     size: Optional[int] = None
+    lock: Optional[bool] = None
     n = len(rest)
     while pos < n:
         m = _NEXT_TOKEN_RE.match(rest, pos)
@@ -374,6 +376,8 @@ def parse_setattr(rest: str) -> Optional[SetAttr]:
                 pos = m2.end()
                 if tok in ("-type", "-typ"):
                     typ = unquote(arg)
+                elif tok in ("-l", "-lock"):
+                    lock = unquote(arg).lower() in ("on", "yes", "true", "1")
                 elif tok in ("-s", "-size"):
                     try:
                         size = int(arg)
@@ -384,7 +388,7 @@ def parse_setattr(rest: str) -> Optional[SetAttr]:
         break  # 数値などの値
     if plug is None:
         return None
-    return SetAttr(plug=plug, type=typ, size=size, values_text=rest[pos:])
+    return SetAttr(plug=plug, type=typ, size=size, values_text=rest[pos:], lock=lock)
 
 
 # ---------------------------------------------------------------------------

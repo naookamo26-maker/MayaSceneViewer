@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node --test tests/scene.test.mjs tests/animation.test.mjs tests/rig.test.mjs tests/rig3.test.mjs tests/fallback.test.mjs tests/ik.test.mjs tests/ctrl.test.mjs tests/expression.test.mjs tests/rig6.test.mjs tests/viscam.test.mjs tests/trax.test.mjs tests/sequencer.test.mjs tests/camaim.test.mjs tests/nodeDef.test.mjs tests/pluginConvert.test.mjs tests/fourByFour.test.mjs tests/curveHistory.test.mjs tests/componentTags.test.mjs tests/stretchSpline.test.mjs tests/cache.test.mjs tests/animx.test.mjs tests/controlRoles.test.mjs tests/splineTwist.test.mjs tests/mayaAttrNames.test.mjs tests/math.test.mjs tests/curveOps.test.mjs tests/dagAttrs.test.mjs tests/constraintSpace.test.mjs tests/curveEditor.test.mjs",
+    "test": "node --test tests/scene.test.mjs tests/animation.test.mjs tests/rig.test.mjs tests/rig3.test.mjs tests/fallback.test.mjs tests/ik.test.mjs tests/ctrl.test.mjs tests/expression.test.mjs tests/rig6.test.mjs tests/viscam.test.mjs tests/trax.test.mjs tests/sequencer.test.mjs tests/camaim.test.mjs tests/nodeDef.test.mjs tests/pluginConvert.test.mjs tests/fourByFour.test.mjs tests/curveHistory.test.mjs tests/componentTags.test.mjs tests/stretchSpline.test.mjs tests/cache.test.mjs tests/animx.test.mjs tests/controlRoles.test.mjs tests/splineTwist.test.mjs tests/mayaAttrNames.test.mjs tests/math.test.mjs tests/curveOps.test.mjs tests/dagAttrs.test.mjs tests/constraintSpace.test.mjs tests/curveEditor.test.mjs tests/poseLock.test.mjs",
     "bench": "node bench/rig.bench.mjs"
   },
   "dependencies": {
