@@ -742,6 +742,7 @@ export class RigEvaluator {
   /**
    * 移動・回転・スケール以外で接続で決まる属性（animation.props: 表示・カメラの焦点距離など）の、
    * 現在のフレームの値。evaluate() のあとに呼ぶ。[{ kind, index, values: { 属性: 数値 }, static }]
+   * （place2d の of・re は [u, v]）
    */
   evaluateProps() {
     if (this.current && this.current.props) return this.current.props;
@@ -750,6 +751,10 @@ export class RigEvaluator {
       const values = {};
       for (const [attr, src] of Object.entries(p.inputs || {})) {
         const v = this.guard(`prop ${p.kind}${p.index}.${attr}`, () => this.source(src), () => undefined);
+        if (p.kind === 'place2d' && (attr === 'of' || attr === 're') && Array.isArray(v)) {   // 2 つ組（u, v）
+          if (v.length >= 2 && Number.isFinite(v[0]) && Number.isFinite(v[1])) values[attr] = [v[0], v[1]];
+          continue;
+        }
         const x = Array.isArray(v) ? v[0] : v;
         if (typeof x === 'number' && Number.isFinite(x)) values[attr] = x;
       }

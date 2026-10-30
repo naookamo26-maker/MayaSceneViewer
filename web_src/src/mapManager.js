@@ -2,6 +2,7 @@
 //   * 表示設定から必要なマップだけを読み込む（ラフネスなどは有効にしたときに初めて読む）
 //   * 同じ画像は 1 回だけ読み、用途ごとのテクスチャ（sRGB・リニア・チャンネル抽出）を使い回す
 //   * UDIM はタイルごとに管理する
+//   * place2dTexture の繰り返し・オフセット（textures[i].uv。リグで動く値は setPlace2d）をテクスチャに入れる
 import { loadImage, makeTexture } from './textures.js';
 
 /** マップの種類と用途 → makeTexture の usage */
@@ -34,6 +35,48 @@ export class MapManager {
     this.state.clear();
     this.token++;
     this.data = data;
+    this.uv = new Map();        // テクスチャ番号 → { repeat: [u, v], offset: [u, v] }（いまの値）
+    (data && data.textures || []).forEach((t, ti) => {
+      if (t && t.uv) this.uv.set(ti, { repeat: t.uv.repeat.slice(0, 2), offset: t.uv.offset.slice(0, 2) });
+    });
+  }
+
+  /** テクスチャ（three.js）に UV の繰り返し・オフセットを入れる（uv' = uv · repeat + offset。Maya の place2dTexture と同じ） */
+  applyUv(t, ti) {
+    const uv = this.uv && this.uv.get(ti);
+    if (!uv) return;
+    t.repeat.set(uv.repeat[0], uv.repeat[1]);
+    t.offset.set(uv.offset[0], uv.offset[1]);
+  }
+
+  /**
+   * リグ・アニメーションで決まる place2dTexture の値（animation.props の place2d）を、それを使うテクスチャに入れる。
+   * values: { ofu, ofv, reu, rev, of: [u, v], re: [u, v] }（接続のある属性だけ。ないものはファイルの値）。変わったら true
+   */
+  setPlace2d(index, values) {
+    let changed = false;
+    (this.data && this.data.textures || []).forEach((info, ti) => {
+      if (!info || !info.uv || info.uv.place2d !== index) return;
+      const pick = (whole, u, v, base) => {
+        const out = Array.isArray(whole) ? whole.slice(0, 2) : base.slice(0, 2);
+        if (typeof u === 'number') out[0] = u;
+        if (typeof v === 'number') out[1] = v;
+        return out;
+      };
+      const next = {
+        repeat: pick(values.re, values.reu, values.rev, info.uv.repeat),
+        offset: pick(values.of, values.ofu, values.ofv, info.uv.offset),
+      };
+      const cur = this.uv.get(ti);
+      if (cur && cur.repeat.every((x, i) => x === next.repeat[i]) && cur.offset.every((x, i) => x === next.offset[i])) return;
+      this.uv.set(ti, next);
+      changed = true;
+      for (const [key, s] of this.state) {
+        if (+String(key).split(':')[0] !== ti) continue;
+        for (const t of s.textures.values()) this.applyUv(t, ti);
+      }
+    });
+    return changed;
   }
 
   /** キー → 読み込み元（UDIM ならそのタイルのファイル） */
@@ -108,6 +151,7 @@ export class MapManager {
     let t = s.textures.get(usage);
     if (!t) {
       t = makeTexture(s.decoded, usage);
+      this.applyUv(t, s.ti);
       s.textures.set(usage, t);
     }
     return t;

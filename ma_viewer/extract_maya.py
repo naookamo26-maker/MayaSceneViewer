@@ -493,9 +493,27 @@ class _Extractor:
         entry = texture_entry(file_node, raw, self.resolver, preferred)
         for w in texture_warnings(entry, used_by):
             self.warn(w)
+        uv = self._uv_transform(file_node, entry)
+        if uv is not None:
+            entry["uv"] = uv
         self._tex_of[file_node] = len(self.textures)
         self.textures.append(entry)
         return self._tex_of[file_node]
+
+    def _uv_transform(self, file_node: str, entry: dict) -> Optional[dict]:
+        """file ノードの repeatUV・offset（place2dTexture から受け取ったいまの値）。既定値・UDIM なら None"""
+        try:
+            rep = [float(x) for x in cmds.getAttr(file_node + ".repeatUV")[0]]
+            off = [float(x) for x in cmds.getAttr(file_node + ".offset")[0]]
+        except (RuntimeError, ValueError, TypeError, IndexError):
+            return None
+        if rep == [1.0, 1.0] and off == [0.0, 0.0]:
+            return None
+        if entry.get("udim"):
+            self.warn("%s: UDIM のテクスチャの繰り返し・オフセットは反映しません。" % file_node)
+            return None
+        self._uv_count = getattr(self, "_uv_count", 0) + 1
+        return {"place2d": self._uv_count - 1, "repeat": rep[:2], "offset": off[:2]}
 
     def _uv_set_for(self, face_mats: List[int], shape_path: str) -> Optional[str]:
         """テクスチャに紐づけられた UV セット（uvLink）。なければ None（現在の UV セット）"""

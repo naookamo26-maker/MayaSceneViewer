@@ -451,16 +451,19 @@ def _used_defs(ms: MaScene, graph_nodes: List[dict]) -> dict:
 def build_props(ms: MaScene, info, out_index: Dict[int, int], curve_index: Dict[int, int]) -> List[dict]:
     """移動・回転・スケール以外で、接続で決まる属性（表示・カメラの焦点距離など）。ビューアがフレームごとに評価する。
 
-    [{"kind": "node" | "mesh" | "camera", "index": 番号, "inputs": {属性: 接続元}, "static": {...}}]。
+    [{"kind": "node" | "mesh" | "camera" | "place2d", "index": 番号, "inputs": {属性: 接続元}, "static": {...}}]。
+    place2d の index は textures[i].uv.place2d の番号（テクスチャの UV の繰り返し・オフセット）。
     接続元は graph の inputs と同じ形。評価できない接続元（未対応のノード）の属性は入れない（ファイルの値のまま）。
     """
     from .extract_ma import _hidden_by_layer
     from .rig import CONSTRAINT_TYPES, VIS_DEFAULTS, _evaluable
-    index_of = {"node": out_index, "mesh": getattr(ms, "mesh_index", {}), "camera": getattr(ms, "camera_index", {})}
+    index_of = {"node": out_index, "mesh": getattr(ms, "mesh_index", {}), "camera": getattr(ms, "camera_index", {}),
+                "place2d": getattr(ms, "place2d_index", {})}
     by_target: Dict[Tuple[str, int], dict] = {}
+    place2d_used = getattr(ms, "place2d_used", set())
     for kind, consumer, key, src, sattr in info.props:
         idx = index_of[kind].get(id(consumer))
-        if idx is None:
+        if idx is None or kind == "place2d" and idx not in place2d_used:   # 表示するテクスチャが使う place2d だけ
             continue
         if src.type in CURVE_TYPES:
             if id(src) not in curve_index:

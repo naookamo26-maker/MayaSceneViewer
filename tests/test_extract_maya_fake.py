@@ -367,6 +367,9 @@ def install_fake_maya():
                 return ""          # Maya が解決できなかった場合を想定（自前の検索を使う）
             if attr == "uvTilingMode":
                 return 0
+            if attr in ("repeatUV", "offset"):          # place2dTexture から受け取る値（.ma の読み込みの uv と同じ）
+                uv = SCENE.files[node][1].get("uv") or {"repeat": [1.0, 1.0], "offset": [0.0, 0.0]}
+                return [tuple(uv["repeat" if attr == "repeatUV" else "offset"])]
         d = SCENE.dag[node]
         a = d.get("attrs", {})
         if attr in ("translate", "rotate", "scale", "jointOrient"):
@@ -557,7 +560,9 @@ class TestExtractMayaFakeTextured(unittest.TestCase):
                              m.get("roughness"), m.get("metalness"))
         self.assertEqual(sorted(key(self.out, m) for m in self.out["materials"]),
                          sorted(key(self.ref, m) for m in self.ref["materials"]))
-        res = lambda sc: sorted((t["node"], t["resolved"]) for t in sc["textures"])  # noqa: E731
+        res = lambda sc: sorted((t["node"], t["resolved"],  # noqa: E731
+                                 tuple(tuple((t.get("uv") or {}).get(k, ())) for k in ("repeat", "offset")))
+                                for t in sc["textures"])
         self.assertEqual(res(self.out), res(self.ref))
         self.assertTrue(any("missing_D.tga" in w for w in self.out["warnings"]))
 

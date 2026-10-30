@@ -153,7 +153,9 @@ def validate(scene: dict) -> List[str]:
     anim = scene.get("animation")
     if anim:
         validate_animation(anim, nn)
-        sizes = {"node": nn, "mesh": len(meshes), "camera": len(scene.get("cameras") or [])}
+        sizes = {"node": nn, "mesh": len(meshes), "camera": len(scene.get("cameras") or []),
+                 "place2d": 1 + max([t["uv"]["place2d"] for t in scene.get("textures") or []
+                                     if isinstance(t.get("uv"), dict)] or [-1])}
         for i, p in enumerate(anim.get("props") or []):
             if p.get("kind") not in sizes or not (0 <= p.get("index", -1) < sizes[p["kind"]]):
                 raise SchemaError("animation.props[%d] の対象が不正です" % i)

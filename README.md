@@ -259,7 +259,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 - 再生するのは、表示するノード（メッシュ・ジョイント・インフルエンスとその親）の移動・回転・スケールです。値は、アニメーションカーブ（animCurveTL・TA・TU）と、下の「リグ」で評価できるノードから求めます。
 - 移動・回転・スケールのほかに、表示（.v・.lodv・.ovv）と、カメラの属性（焦点距離・フィルムバック・クリップ面など）のカーブ・接続も評価します。
 - **キャラクターセット**（character）も再生します。カーブがキャラクターセットの属性に直接つながる場合はその値を、Trax のクリップ（clipLibrary・clipScheduler・animClip）の場合は、各クリップの開始・ソースの範囲・スケール・前後のサイクル・hold・ウェイト・有効・トラックを読んで、そのフレームで有効なクリップの値を使います。クリップが重なるときは、あとから始まるクリップ（同じならトラックの番号が大きい方）を使い、クリップのない区間は直前のクリップの最後の値を保ちます。クリップ間のブレンド・相対（relative）クリップのオフセット・タイムワープは反映しません。
-- 再生しないもの（警告を出します）: 下の「リグ」で評価できないノード（解釈できない expression・未対応のコンストレイントやノード・プラグインのノードなど）を経由する値。移動・回転・スケール・表示・カメラ以外の属性（マテリアルの色など）のカーブ。
+- 再生しないもの（警告を出します）: 下の「リグ」で評価できないノード（解釈できない expression・未対応のコンストレイントやノード・プラグインのノードなど）を経由する値。移動・回転・スケール・表示・カメラ・テクスチャの UV の繰り返しとオフセット以外の属性（マテリアルの色など）のカーブ。
 - 補間: 重みなしのカーブはエルミート補間、重み付きのカーブは 3 次ベジエで、Autodesk の animX（Maya と同じ評価をする公開ライブラリ）と同じ計算です（接線が区間より長いときの直し方・範囲外の扱いを含む）。接線の種類のうち、リニア・フラット・ステップ・ステップ（次）・固定（kix などの値）・オート・オートミックス・オートイーズも animX と同じです。オートカスタムはオートイーズとして扱います。スプライン・クランプ・プラトーは Maya の計算が公開されていないため近似です（プラトーは山・谷で平らにし、キーの値を行き過ぎないようにします）。スロー・ファストはスプラインとして扱います。回転の補間（rotationInterpolation の同期したオイラー・クォータニオン）には対応せず、X・Y・Z を別々に補間します。調査の詳細と、Maya で評価した値と比べる手順は [docs/animation_curves.md](docs/animation_curves.md)。
 - 範囲外（pre / post infinity）: 一定・リニア・繰り返し・オフセット付き繰り返し・往復に対応します。
 - 時間の単位（currentUnit -t。film・ntsc・pal・game・show・palf・ntscf と「○○fps」）と、再生範囲（sceneConfigurationScriptNode の playbackOptions）を読みます。再生範囲がなければ、キーのある範囲を使います。読み込み直後のフレームは、保存したときの現在のフレーム（time1）です。
@@ -337,7 +337,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
   2・3 では、まずファイル名だけで探し、見つからなければ元のパスの親フォルダ名を 1 つずつ足して探します（例: `a.tga` → `tex/a.tga` → `chr/tex/a.tga`）。4 で同じ名前のファイルが複数見つかった場合は、シーンのファイル名に名前が近いフォルダのものを選び（例: `chr_a.ma` なら `chr_a_textures/` を `chr_b/` より優先）、どれを選んだかを警告に出します。見つからなかった場合は、試したパスの一覧を警告に出します。環境変数（`$VAR`）は展開します。
 - UDIM: パスに `<UDIM>` を含む場合と、fileノードのタイル指定（UV タイリングモード = UDIM）でファイル名にタイル番号が入っている場合に対応します。上と同じ順にフォルダを探し、タイルの画像がそろっている最初のフォルダを使います。面ごとに UV の平均位置からタイルを判定して、そのタイルの画像を貼ります。`<UVTILE>` 形式は未対応です。
 - 透過: 既定では、Maya でアルベドと同じ file ノードのアルファ（outTransparency / outAlpha）が不透明度・透明度（transparency・opacity など）につながっているマテリアルだけ、アルファで透過します。ツールバーの［マップ］で「アルファのある画像すべて」「透過しない」に切り替えられます。方式は「切り抜き」（アルファ 0.5 未満を描かない）と「半透明」から選べます。
-- UV セット: テクスチャに紐づいた UV セット（.ma では uvChooser、Maya 内では uvLink）を使い、なければ現在の UV セットを使います。place2dTexture の繰り返しやオフセットは反映しません。
+- UV セット: テクスチャに紐づいた UV セット（.ma では uvChooser、Maya 内では uvLink）を使い、なければ現在の UV セットを使います。place2dTexture の繰り返し（repeatUV）とオフセット（offset）は反映します。キー・ジョイント・計算ノード・exprespy などの接続で動く値も、フレームごとに反映します（テクスチャを骨で動かすリグなど）。rotateUV・フレームの移動と回転・coverage・ミラー・stagger・wrap のオフ・noiseUV と、UDIM のテクスチャの繰り返し・オフセットは反映しません（警告を出します）。
 - UV の継ぎ目では表示用に頂点を分けますが、ウェイト表示・頂点のクリック・頂点番号は元の頂点のまま扱います。
 - 面ごとのマテリアルの割り当ては、メッシュの面リスト（`.iog[0].og[k].gcl`）から読みます。デフォーマ（skinCluster など）を持つメッシュでは、Maya が面リストをデフォーマ経路上の groupParts（`.ic`）に書くので、groupId をたどってそこから読みます。どちらにも見つからない場合は警告を出し、その面は既定のマテリアルで表示します。
 - 現在の UV セットに面との対応（UV の割り当て）がない場合は、対応のある UV セットを使います（警告を出します）。元形状に UV がなければ、変形後シェイプの UV を使います。
@@ -373,6 +373,7 @@ maya_ma_viewer/
 │  ├─ trax.py             キャラクターセットと Trax のクリップ（clipLibrary・clipScheduler・animClip）
 │  ├─ expression.py       expression の式が解釈できるかの判定
 │  ├─ exprespy.py         exprespy（Python で式を書くノード）のコード → ノードごとの自作ノードの定義
+│  ├─ place2d.py          place2dTexture（テクスチャの UV の繰り返し・オフセット）
 │  ├─ custom_nodes.py     自作ノードの割り当て（設定ファイル）
 │  ├─ curve_history.py    カーブのヒストリ（circle などの形を作るノード）から形を求める
 │  ├─ node_defs.py        自作ノードの定義の読み込み・計算の検証と IR への変換（node_defs/ に同梱した定義）
@@ -435,6 +436,7 @@ python tests/qt_playback_cache_test.py                  # リグの再生キャ�
 ヒストリのあるカーブのテストは `tests/test_curve_history.py`（形の計算・警告・リグの診断）と `web_src/tests/curveHistory.test.mjs`（表示とスプライン IK）です（サンプルは `python tools/make_curve_history_sample.py`）。骨ごとに伸び縮みするスプライン IK（カーブ上の点どうしの距離 → blendColors → multiplyDivide → ジョイントのスケール）と、その下の親のスケールを打ち消す自作ノード（割り当ての segmentScaleCompensate）のテストは `web_src/tests/stretchSpline.test.mjs` と `tests/test_scale_compensation.py` です（サンプルは `python tools/make_stretch_spline_sample.py`）。コンポーネントタグのテストは `tests/test_component_tags.py`（タグと式の読み取り・リグの診断）と `web_src/tests/componentTags.test.mjs`（cluster → wire → スプライン IK）です（サンプルは `python tools/make_component_tag_sample.py`）。
 fourByFourMatrix のテストは `web_src/tests/fourByFour.test.mjs` です（サンプルは `python tools/make_fourbyfour_sample.py`）。
 Maya 2024 以降の計算ノード・行列ノード・DL 版・addDL・multDL のテストは `web_src/tests/math.test.mjs` です（サンプルは `python tools/make_math_sample.py`）。カーブのヒストリ（rebuildCurve・reverseCurve・detachCurve・subCurve）と nearestPointOnCurve のテストは `tests/test_curve_ops.py`（形の計算・焼き付け）と `web_src/tests/curveOps.test.mjs`（読み込みとビューアの計算の一致・動くヒストリ・スプライン IK）です（サンプルは `python tools/make_curve_ops_sample.py`）。
+テクスチャの UV の繰り返し・オフセット（place2dTexture）のテストは `tests/test_place2d.py`（読み取り・警告・props）と `web_src/tests/place2d.test.mjs`（ジョイント・キー・exprespy で動かした値をテクスチャに入れる）です（サンプルは `python tools/make_place2d_sample.py`）。
 exprespy のテストは `tests/test_exprespy.py`（変換の結果・解析できない書き方・シーンへの適用・リグの診断）と `web_src/tests/exprespy.test.mjs`（評価をコンストレイントの性質・回転の曲げとひねりへの分解と組み立て直しと比べる）です（サンプルは `python tools/make_exprespy_sample.py`。exprespy の同梱サンプルの constraints.ma・bend_roll.ma のコードを使う）。
 プラグインからの変換のテストは `tests/test_plugin_convert.py`（変換の結果・変換できない書き方・CLI）と `web_src/tests/pluginConvert.test.mjs`（変換した定義の評価をプラグインの式と比べる）です。サンプルのプラグインは `samples/plugins/`、変換した定義とシーンは `python tools/make_plugin_convert_sample.py` で作ります（`samples/plugin_convert_defs.json`・`samples/plugin_convert_sample.ma`）。
 

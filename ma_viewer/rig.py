@@ -38,6 +38,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from .ma_scene import _LIMIT_ENABLES, LIMIT_ATTRS, XFORM_KEYS, MaNode, MaScene, xform_group
 from . import ma_reader as R
+from .place2d import PROP_ALIASES as PLACE2D_ALIASES, PROP_KEYS as PLACE2D_KEYS
 
 CURVE_TYPES = {"animCurveTL", "animCurveTA", "animCurveTU"}
 # lookAt: Maya の「カメラとエイム」のグループ。aimConstraint と同じ働きに、視線のまわりの回転（twist）を足したもの
@@ -194,10 +195,13 @@ _DEFORM_OUT = re.compile(r"^og\[(\d+)\]$")
 # 移動・回転・スケール以外で、リグ（接続・カーブ）で決まる値を評価する属性（animation.props）
 #   node・mesh: 表示（.v・.lodv・描画のオーバーライドの .ove / .ovv）
 #   camera: 焦点距離・フィルムバック・クリップ面・平行投影の幅など
+#   place2d: テクスチャの UV の繰り返し・オフセット（place2dTexture。ma_viewer/place2d.py）
 VIS_KEYS = ("v", "lodv", "ove", "ovv")
 VIS_DEFAULTS = {"v": 1.0, "lodv": 1.0, "ove": 0.0, "ovv": 1.0}
 CAMERA_KEYS = ("fl", "hfa", "vfa", "ncp", "fcp", "ow", "hfo", "vfo", "lsr", "cs")
-PROP_KEYS = {"node": VIS_KEYS, "mesh": VIS_KEYS, "camera": CAMERA_KEYS}
+PROP_KEYS = {"node": VIS_KEYS, "mesh": VIS_KEYS, "camera": CAMERA_KEYS, "place2d": PLACE2D_KEYS}
+# .ma の属性の名前が props の属性と違うもの（place2dTexture は値をそのまま保持する型で、長い名前のこともある）
+PROP_ALIASES = {"place2d": PLACE2D_ALIASES}
 
 
 def _curve_without_shape(ms: MaScene, curve: MaNode):
@@ -338,10 +342,12 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
     # 表示・カメラの属性の入力（コントローラーの独自の属性 → reverse → .v など）
     for kind, n in props:
         for key in PROP_KEYS[kind]:
-            if key in n.inputs:
-                src, sattr = n.inputs[key]
-                info.props.append((kind, n, key, src, sattr))
-                need_plug(src, sattr, n, key)
+            for name in PROP_ALIASES.get(kind, {}).get(key, (key,)):
+                if name in n.inputs:
+                    src, sattr = n.inputs[name]
+                    info.props.append((kind, n, key, src, sattr))
+                    need_plug(src, sattr, n, name)
+                    break
 
     # 表示するカーブの形を決める入力（skinCluster・制御点の接続など）
     for n in geometry:
