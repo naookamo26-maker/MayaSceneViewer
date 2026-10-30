@@ -310,6 +310,30 @@ class SceneTest(unittest.TestCase):
         self.assertEqual(by_name["composeRotExpr"]["inputs"]["i11"], {"node": by_name["composeRotExpr"]["id"],
                                                                       "attr": "reverseOrder"})
 
+    def test_unused_nodes_are_skipped(self):
+        """出力の先が使われていない exprespy は、変換も警告もしない（リグの診断に件数と名前を出す）"""
+        with open(SAMPLE, encoding="utf-8") as f:
+            text = f.read()
+        extra = ('createNode exprespy -n "junkA";\n\tsetAttr ".cd" -type "string" "x = cmds.ls()";\n'
+                 'createNode exprespy -n "junkB";\n\tsetAttr ".cd" -type "string" "OUT[0] = IN[0] * 2";\n'
+                 'createNode exprespy -n "junkC";\n\tsetAttr ".cd" -type "string" "OUT[0] = IN[0] + undefined_x";\n')
+        text = text.replace('createNode exprespy -n "badCmds";', extra + 'createNode exprespy -n "badCmds";')
+        text = text.replace('// End of exprespy_sample.ma', 'connectAttr "src.tx" "junkB.i[0]";\n'
+                            'connectAttr "src.tx" "junkC.i[0]";\nconnectAttr "junkC.o[0]" "junkA.i[0]";\n'
+                            '// End of exprespy_sample.ma')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "unused.ma")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            scene = load_ma(path, animation=True)
+            report = rig_report_file(path)
+        warnings = "\n".join(scene["warnings"] + scene["animation"]["warnings"])
+        for name in ("junkA", "junkB", "junkC"):
+            self.assertNotIn(name, warnings)                  # 解析できないコードでも警告しない
+        self.assertIn("exprespy 15 個", warnings)               # 使われているノードの数は変わらない
+        self.assertIn("■ 出力が使われていない exprespy（評価しません。削除しても動きは変わりません）: 3 個（junkA、junkB、junkC）",
+                      report)
+
     def test_json_round_trip(self):
         text = json.dumps(self.scene, ensure_ascii=False)
         back = json.loads(text)

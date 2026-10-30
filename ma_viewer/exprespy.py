@@ -2437,6 +2437,27 @@ def apply_exprespy(ms) -> Tuple[Dict[str, ExprespyDef], List[str], Dict[str, str
     defs: Dict[str, ExprespyDef] = {}
     ok: List[str] = []
     problems: Dict[str, str] = {}
+    ms.exprespy_unused = []
+    if not nodes:
+        return defs, ok, problems
+    # 出力（.o[n]）の先が使われていない exprespy（どこにもつながっていない・使われていない exprespy にだけ
+    # つながっている）は、変換も警告もしない（計算の結果を使うものがない）
+    dests: Dict[int, list] = {id(n): [] for n in nodes}
+    for src, sattr, dst, _dattr in ms.connections:
+        if src.type == TYPE and id(src) in dests:
+            io = io_plug(sattr)
+            if io is not None and io[0] == "o":
+                dests[id(src)].append(dst)
+    unused = {id(n) for n in nodes if not dests[id(n)]}
+    changed = True
+    while changed:
+        changed = False
+        for n in nodes:
+            if id(n) not in unused and all(d.type == TYPE and id(d) in unused for d in dests[id(n)]):
+                unused.add(id(n))
+                changed = True
+    ms.exprespy_unused = [n.name for n in nodes if id(n) in unused]
+    nodes = [n for n in nodes if id(n) not in unused]
     if not nodes:
         return defs, ok, problems
     from .rig import parse_attrs
