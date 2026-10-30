@@ -575,8 +575,14 @@ def apply_definitions(ms, defs: Definitions) -> Dict[str, List[str]]:
         n.node_def = nd
         applied.setdefault(n.type, []).append(n.name)
         used.add(id(n))
+    rename_plugs(ms, used)
+    return applied
+
+
+def rename_plugs(ms, used: set) -> None:
+    """定義で評価するノード（used: id の集合）の接続の属性名を、定義の短い名前にそろえる"""
     if not used:
-        return applied
+        return
     norm = {}
 
     def rename(n, attr):
@@ -598,7 +604,6 @@ def apply_definitions(ms, defs: Definitions) -> Dict[str, List[str]]:
                 key = rename(n, key)
             new[key] = (src, sattr)
         n.inputs = new
-    return applied
 
 
 def plugin_version_warnings(ms, applied: Dict[str, List[str]], defs: Definitions) -> List[str]:

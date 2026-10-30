@@ -443,8 +443,9 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
 def _used_defs(ms: MaScene, graph_nodes: List[dict]) -> dict:
     """graph で使っている自作ノードの定義（型 → NodeDef）"""
     used = {g["def"] for g in graph_nodes if g.get("def")}
-    defs = getattr(ms, "node_defs", None)
-    return {t: defs.nodes[t] for t in used if defs is not None and t in defs.nodes}
+    pool = dict(getattr(getattr(ms, "node_defs", None), "nodes", None) or {})
+    pool.update(getattr(ms, "exprespy_defs", None) or {})      # exprespy のノードごとの定義
+    return {t: pool[t] for t in used if t in pool}
 
 
 def build_props(ms: MaScene, info, out_index: Dict[int, int], curve_index: Dict[int, int]) -> List[dict]:

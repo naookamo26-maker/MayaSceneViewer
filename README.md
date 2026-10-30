@@ -32,7 +32,7 @@ Maya ASCII（.ma）のモデル形状・ジョイント・スキンウェイト�
 - **ポーズ確認**: ジョイントやトランスフォームを、ビューポートのハンドル（W: 移動、E: 回転、R: スケール）か、右パネル［選択］のポーズ確認欄（移動・回転・スケールの数値）で動かし、ウェイトによる変形を確かめられます。動かした量はローカル軸が基準で、表示だけに使い、ファイルには保存しません。変更は元に戻す・やり直すことができます（Ctrl+Z / Ctrl+Y）。親ジョイントをスケールしたときは、Maya の segmentScaleCompensate と同じく、子の位置だけが伸びて子自身は拡大されません。Maya と同じく、**ロックした属性**（setAttr -l。移動・回転・スケールの成分ごと）は動かしても値が変わりません（3 成分ともロックしたものは入力欄とハンドルの軸を出さず、パネルにロックしたチャンネルを表示します）。**キーのある属性**を動かした分は、フレームを変える（再生・タイムラインの操作）とカーブの値に戻ります（キーのない成分はそのまま。戻したことは Ctrl+Z で取り消せます）。
 - **アニメーションのプレビュー**（.ma から読み込んだとき）: ジョイントやトランスフォームの移動・回転・スケールのキーを再生します（キャラクターセットのキーと Trax のクリップも再生します）。ビューポート下端のタイムラインで、再生・停止（Alt+V）、フレームの移動（スライダー・数値）、コマ送り（Alt+, / Alt+.）、キー送り（, / .）ができます。再生範囲は Maya の設定（playbackOptions）を使い、タイムラインで変えられます。スキンの変形も一緒に動き、ポーズ確認で加えた変更はアニメーションの上に重なります。
   - アニメーションは「ファイルの値」の姿勢で再生します（読み込んだときと、タイムラインを操作したときに自動で切り替わります）。バインドポーズのボタン（B）でバインドポーズに戻すと、どのフレームにいても同じ姿勢になります。バインドポーズの情報がないノード（一番上のグループなど）は、保存したときのフレームの値で表示します。
-  - **リグ**: コンストレイント（point・orient・parent・scale・poleVector・aim、カメラとエイムの lookAt）、IK（回転プレーン・シングルチェーン・スプライン。ジョイントの数は問わない）、計算ノード・行列ノード・四元数ノード・ドリブンキー・アニメーションレイヤー・expression などで動くノードも評価します（一覧は「対応範囲と制限」の「リグ」）。プラグインの自作ノードも、同梱の定義（下の「自作ノードの定義」）があれば評価します。コントローラー（ジョイント・メッシュ以外でリグを動かすノードのうち、カーブの形のないもの）は、役割ごとの形の目印で表示します（下の「コントローラーの目印」）。表示はジョイントとは別に、L キーかツールバーのコントローラー（菱形）のアイコンで切り替えます（Maya でジョイントとロケーターの表示を別々に切り替えるのと同じ。初期状態では非表示）。ポーズ確認でコントローラーを動かすと、IK やコンストレイントが追従します（例: 手のコントローラーを動かすと腕が曲がる）。キーがなくリグだけのシーンでも、タイムラインは出さずに評価します。
+  - **リグ**: コンストレイント（point・orient・parent・scale・poleVector・aim、カメラとエイムの lookAt）、IK（回転プレーン・シングルチェーン・スプライン。ジョイントの数は問わない）、計算ノード・行列ノード・四元数ノード・ドリブンキー・アニメーションレイヤー・expression・exprespy（Python で式を書くプラグイン）などで動くノードも評価します（一覧は「対応範囲と制限」の「リグ」）。プラグインの自作ノードも、同梱の定義（下の「自作ノードの定義」）があれば評価します。コントローラー（ジョイント・メッシュ以外でリグを動かすノードのうち、カーブの形のないもの）は、役割ごとの形の目印で表示します（下の「コントローラーの目印」）。表示はジョイントとは別に、L キーかツールバーのコントローラー（菱形）のアイコンで切り替えます（Maya でジョイントとロケーターの表示を別々に切り替えるのと同じ。初期状態では非表示）。ポーズ確認でコントローラーを動かすと、IK やコンストレイントが追従します（例: 手のコントローラーを動かすと腕が曲がる）。キーがなくリグだけのシーンでも、タイムラインは出さずに評価します。
   - **コントローラーの目印**: リグでの使われ方から役割を判定し、形を変えます。1 つのノードが複数の役割を持つときは、この順で先のものを使います。
     | 形 | 役割 | 判定のしかた |
     |---|---|---|
@@ -121,7 +121,7 @@ python -m ma_viewer convert-plugin myPlugin.py -o ma_viewer/node_defs/myPlugin.j
 
 - ファイルが読み込むプラグイン（requires）と、transform として扱った自作ノード。
 - **自作のトランスフォームノード**: 型を知らないノード（プラグインの自作ノード）でも、transform らしい証拠（親や子がある・移動 / 回転 / スケールの値がある・ワールド行列などを出力している・移動などに接続がある）があれば、通常の transform として扱って評価します（警告に一覧を出します）。
-- 評価できないノード（未対応の型・自作ノード・解釈できない expression）と、それを使っているノードの属性。
+- 評価できないノード（未対応の型・自作ノード・解釈できない expression・コードを解析できない exprespy とその理由）と、それを使っているノードの属性。
 - IK ハンドルごとの上流のつながり：ハンドルの位置・極ベクトル・ひねり・開始ジョイントの親が、何で決まっているかを示します。行頭の ✓ は評価できる、★ は評価できない（そこから先の値はファイルに保存された値のまま）という意味です。
 - 読み込まないカーブ（表示していないノードを動かすもの）: 動かすノードから下流へすべての接続をたどり、表示するノードやリグに届くかを調べます。届く場合は ★ と経路を出します（こちらのたどり方の漏れか、評価できないノードを経由しているため、再生に影響します）。届かないものは ✓ で、再生には影響しません（カメラ・使っていないコントローラーなど）。
 - 値を求められないノード（バインドポーズの形で推定・推定できない）と、警告の全文。
@@ -291,6 +291,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 | 新しい計算ノード（Maya 2024 以降） | sum・multiply・divide・subtract・average・min・max・absolute・negate・power・log・modulo・clampRange・lerp・inverseLerp・smoothStep・三角関数（sin・cos・tan・asin・acos・atan・atan2。角度はラジアン、ファイルの値は度）・比較（equal・greaterThan・lessThan）・論理（and・or・not）・丸め（round・floor・ceil・truncate）・pi、ベクトル（crossProduct・dotProduct・length・normalize・angleBetween・rotateVector）、行列から取り出す（translation・rotation・scale・axisFromMatrix、row・columnFromMatrix、determinant）・multiplyPointByMatrix・multiplyVectorByMatrix、時間の変換（unitToTimeConversion・timeToUnitConversion。時間はフレームとして扱う）。Maya 2026 からの単位つきの版（sumDL など）と、addDoubleLinear・multDoubleLinear の新しい名前 addDL・multDL も同じ計算。lerp・inverseLerp は資料の式と説明が食い違うため、一般的な定義（ウェイト 0 で入力 1、1 で入力 2） |
 | 四元数ノード | quatToEuler・eulerToQuat（回転順 .iro）・quatProd（Maya と同じく入力 1 を先に回す）・quatInvert・quatNormalize・quatSlerp |
 | expression | 式（.ixp）を解釈して評価する。入力 .I[n]・出力 .O[n]・frame・time・変数（$x。float / int）・代入（= += -= *= /= ++ --）・四則演算と %（整数どうしの割り算は切り捨て）・比較・論理・? :・if / else・for・while・数学関数（sin・cos・tan・sind など度の版・asin・acos・atan・atan2・abs・sqrt・pow・exp・log・floor・ceil・sign・min・max・clamp・smoothstep・linstep・deg_to_rad・rad_to_deg・fmod・hypot など）。フレームごとに最初から評価する。frame・time を使う式があれば、キーがなくてもタイムラインを出す |
+| exprespy（プラグイン） | Python で式を書くノード（[exprespy](https://github.com/ryusas/maya_exprespy)）。コード（.cd）は実行せず、構文を解析してノードごとの自作ノードの定義に変換して評価する（`ma_viewer/exprespy.py`）。入力 IN[n]・出力 OUT[n]（.i[n]・.o[n]）は番号ごとに型を決める: 入力は接続元の属性（移動・回転・ピボットなどの 3 つ組は MVector、行列の属性は MMatrix、独自の属性は addAttr の型、それ以外は数）か .ma の値、time1 からの入力は秒、出力は代入した値（MPoint・MVector・MEulerRotation は 3 つ組、MQuaternion は 4 つ、MMatrix は行列）。exprespy と同じく単位は変換しない（角度はラジアン）。使える書き方はプラグインからの変換と同じ（MVector・MPoint・MMatrix・MEulerRotation（reorderIt・setValue・asMatrix）・MQuaternion（2 つのベクトルの間の回転・角度と軸）・MTransformationMatrix・math、import の別名）。同じコードと入出力の型のノードは定義を共有する |
 | transformGeometry（カーブ） | 入力のカーブ（.ig）の CV に行列（.txf。接続でもよい）を掛ける。invertTransform なら逆行列 |
 | カーブのヒストリ（リグとして動くもの） | rebuildCurve・reverseCurve・detachCurve（出力 .oc[i]。keep で捨てた部分は出さない）・subCurve（relative なら 0〜1 をパラメータの範囲に当てる）。計算は読み込み（Python の ma_viewer/nurbs.py）とビューア（web_src/src/curve.js）で同じ手順 |
 | cluster（カーブの変形） | ハンドルの行列（.ma）と bindPreMatrix（.pm）で CV を動かす（Maya の p · gm · pm · ma · gm⁻¹）。CV のウェイト（.wl）とエンベロープで元の位置と混ぜる。クラスタで動くワイヤーにも使える。relative（ハンドルの親の動きを除く）には未対応 |
@@ -299,7 +300,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 | そのほか | distanceDimShape（距離の寸法。開始点 .sp と終了点 .ep（ふつうはロケーターの worldPosition）の距離 .dist。伸びる IK などに使う）、curveInfo（カーブの長さ .al。ストレッチの計算などに使う）、pointOnCurveInfo（パラメータ .pr の点 .p・接線 .t・正規化した接線 .nt・法線 .n・.nn・曲率の中心と半径。turnOnPercentage なら .pr はパラメータの範囲を 0〜1 にそろえた値。長さの割合ではありません）、nearestPointOnCurve（入力の点 .ip にいちばん近いカーブ上の点 .p とパラメータ .pr）、displayLayer（値を読むだけ） |
 
 - ウェイトはカーブで動かせます（スペースの切り替えなど）。コントローラーの独自の属性（IK/FK の切り替えなど）も、カーブや値をそのまま使います。値が書かれていない独自の属性は、addAttr の既定値（-dv）を使います（キーのあるノードにコンストレイントを付けたときにできる blendPoint1・blendOrient1・blendParent1 など。pairBlend のウェイトになる）。
-- 未対応（警告を出し、そこから先はファイルの値）: tangent・normal・geometry などほかのコンストレイント、ikSpringSolver・HumanIK、解釈できない expression（MEL コマンド・getAttr などの呼び出し、文字列、ベクトル、rand などの乱数、.I/.O 以外の属性の参照、フレームをまたいで値を持ち越すグローバル変数）、uvPin・proximityPin・follicle などメッシュ・サーフェスに貼り付けるノード、motionPath、skinCluster・wire・cluster 以外のデフォーマ（カーブにかかる blendShape・nonLinear など）で動くカーブ、メッシュの wire・cluster、プラグインのノード（自作ノード）。どこで止まっているかは「リグの診断」で確認できます。
+- 未対応（警告を出し、そこから先はファイルの値）: tangent・normal・geometry などほかのコンストレイント、ikSpringSolver・HumanIK、解釈できない expression（MEL コマンド・getAttr などの呼び出し、文字列、ベクトル、rand などの乱数、.I/.O 以外の属性の参照、フレームをまたいで値を持ち越すグローバル変数）、コードを解析できない exprespy（COUNT・関数の定義・global・maya.cmds・IN[変数]・形状（メッシュ・カーブ）の入出力・文字列。長さの単位が cm でないシーンは、長さの定数を使うコードの値が Maya と違うことがある）、uvPin・proximityPin・follicle などメッシュ・サーフェスに貼り付けるノード、motionPath、skinCluster・wire・cluster 以外のデフォーマ（カーブにかかる blendShape・nonLinear など）で動くカーブ、メッシュの wire・cluster、プラグインのノード（自作ノード）。どこで止まっているかは「リグの診断」で確認できます。
 - 循環（自分の結果を自分で使う接続）に当たったら、そこはファイルの値で打ち切り、警告を出します。
 - **値を求められないノードの推定（試作）**: 未対応のノードの影響を受けるノード（その子や、それをターゲットにするコンストレイントで動くノードも含む）は、.ma に値が残っていないため、そのままでは原点に集まります。バインドポーズの情報（skinCluster の .pm・dagPose・ジョイントの .bps）があるノードは、値を求められた一番近い祖先からの相対をバインドポーズのとおりに保って表示します（形を保ったまま、確かな部分の動きについていく）。ジョイントの表示（J）で、推定したノードは薄紫、推定もできないノード（バインドポーズの情報がない）は灰色になり、選択したノードの情報に理由を出します。推定では、そのノードの求められた成分（例: キーのある移動）も使いません。
 
@@ -371,6 +372,7 @@ maya_ma_viewer/
 │  ├─ rig.py              リグ（コンストレイント・IK・計算ノード・行列ノード）の探索と animation.graph の作成
 │  ├─ trax.py             キャラクターセットと Trax のクリップ（clipLibrary・clipScheduler・animClip）
 │  ├─ expression.py       expression の式が解釈できるかの判定
+│  ├─ exprespy.py         exprespy（Python で式を書くノード）のコード → ノードごとの自作ノードの定義
 │  ├─ custom_nodes.py     自作ノードの割り当て（設定ファイル）
 │  ├─ curve_history.py    カーブのヒストリ（circle などの形を作るノード）から形を求める
 │  ├─ node_defs.py        自作ノードの定義の読み込み・計算の検証と IR への変換（node_defs/ に同梱した定義）
@@ -433,6 +435,7 @@ python tests/qt_playback_cache_test.py                  # リグの再生キャ�
 ヒストリのあるカーブのテストは `tests/test_curve_history.py`（形の計算・警告・リグの診断）と `web_src/tests/curveHistory.test.mjs`（表示とスプライン IK）です（サンプルは `python tools/make_curve_history_sample.py`）。骨ごとに伸び縮みするスプライン IK（カーブ上の点どうしの距離 → blendColors → multiplyDivide → ジョイントのスケール）と、その下の親のスケールを打ち消す自作ノード（割り当ての segmentScaleCompensate）のテストは `web_src/tests/stretchSpline.test.mjs` と `tests/test_scale_compensation.py` です（サンプルは `python tools/make_stretch_spline_sample.py`）。コンポーネントタグのテストは `tests/test_component_tags.py`（タグと式の読み取り・リグの診断）と `web_src/tests/componentTags.test.mjs`（cluster → wire → スプライン IK）です（サンプルは `python tools/make_component_tag_sample.py`）。
 fourByFourMatrix のテストは `web_src/tests/fourByFour.test.mjs` です（サンプルは `python tools/make_fourbyfour_sample.py`）。
 Maya 2024 以降の計算ノード・行列ノード・DL 版・addDL・multDL のテストは `web_src/tests/math.test.mjs` です（サンプルは `python tools/make_math_sample.py`）。カーブのヒストリ（rebuildCurve・reverseCurve・detachCurve・subCurve）と nearestPointOnCurve のテストは `tests/test_curve_ops.py`（形の計算・焼き付け）と `web_src/tests/curveOps.test.mjs`（読み込みとビューアの計算の一致・動くヒストリ・スプライン IK）です（サンプルは `python tools/make_curve_ops_sample.py`）。
+exprespy のテストは `tests/test_exprespy.py`（変換の結果・解析できない書き方・シーンへの適用・リグの診断）と `web_src/tests/exprespy.test.mjs`（評価をコンストレイントの性質と比べる）です（サンプルは `python tools/make_exprespy_sample.py`）。
 プラグインからの変換のテストは `tests/test_plugin_convert.py`（変換の結果・変換できない書き方・CLI）と `web_src/tests/pluginConvert.test.mjs`（変換した定義の評価をプラグインの式と比べる）です。サンプルのプラグインは `samples/plugins/`、変換した定義とシーンは `python tools/make_plugin_convert_sample.py` で作ります（`samples/plugin_convert_defs.json`・`samples/plugin_convert_sample.ma`）。
 
 画面のない Linux では `xvfb-run -a` を付けて実行します。

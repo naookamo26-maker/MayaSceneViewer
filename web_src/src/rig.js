@@ -707,7 +707,7 @@ export class RigEvaluator {
       const [key, axis] = xformKey(base);
       const k = ANGLE_KEYS.has(key) ? D2R : 1;
       let ro = rest ? rest.ro || 0 : 0;
-      const v = rest && rest[key] ? rest[key].map((x) => x * k) : [0, 0, 0];
+      const v = rest && Array.isArray(rest[key]) ? rest[key].map((x) => x * k) : [0, 0, 0];   // ro は数
       for (const [key2, src] of this.chanInputs(ni)) {
         const [b, a] = xformKey(key2);
         if (b !== key) continue;
