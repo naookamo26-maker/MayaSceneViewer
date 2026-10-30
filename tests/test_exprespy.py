@@ -70,10 +70,18 @@ class TranslateTest(unittest.TestCase):
 
     def test_unsupported(self):
         cases = {
-            "OUT[0] = COUNT": "COUNT",
-            "s = 0\nfor i in range(2):\n    s += IN[i]\nOUT[0] = s": "IN[変数]",
+            "OUT[0] = COUNT": "if not COUNT:（最初の 1 回だけの初期化）の形でだけ",
+            "s = 0\nfor i in range(2):\n    s += IN[i]\nOUT[0] = s": "番号を変数で選ぶ",
             'OUT[0] = cmds.getAttr("a.tx")': "maya.cmds",
-            "def f(x):\n    return x\nOUT[0] = f(1)": "関数の定義",
+            "def f(x):\n    return f(x)\nOUT[0] = f(1)": "再帰呼び出し",
+            "def f(x):\n    for i in range(3):\n        return x\n    return 0\nOUT[0] = f(1)": "ループの中の return",
+            "def f(x):\n    if x:\n        return 1\nOUT[0] = f(1)": "すべての道で return",
+            "def f(x=1):\n    return x\nOUT[0] = f()": "既定値",
+            "if not COUNT:\n    total = 0\ntotal += 1\nOUT[0] = total": "total を、あとで書き換えています",
+            "if not COUNT:\n    a = IN[1]\nOUT[0] = a": "初期化（if not COUNT:）の中で IN を使っています",
+            "if not COUNT:\n    a = 1\nelse:\n    a = 2\nOUT[0] = a": "else",
+            "f = lambda x: x\nOUT[0] = f": "関数 f を値として使っています",
+            "OUT[0] = IN.get(7)": "IN.get(7) の既定値がなく",
             "global g\nOUT[0] = 1": "global",
             "OUT[0] = 1\nOUT[1] = OUT[0]": "OUT[n]（出力）を読んで",
             "OUT[0] = IN[5]": "IN[5] に接続も値もありません",
@@ -89,6 +97,27 @@ class TranslateTest(unittest.TestCase):
                 msg = problem(code)
                 self.assertIsNotNone(msg, code)
                 self.assertIn(expect, msg)
+
+    def test_first_run_block_and_functions(self):
+        code = ("if not COUNT:\n    from math import atan2, pi as _PI\n    K = 1\n    ZERO3 = (0., 0., 0.)\n"
+                "    half = lambda x: x * .5\n"
+                "    def f(v, s):\n        w = v * s\n        if s > 0:\n            return w\n        return -w\n"
+                "a = f(IN.get(K, ZERO3), half(IN[0]))\n"
+                "OUT[0] = a\nOUT[1] = 1 if 3 in IN else 0\nOUT[2] = atan2(1, 1) + _PI")
+        nd, outs, _ = translate(code, {0: "num", 1: "vec3"})
+        self.assertEqual(outs, {0: "vec3", 1: "num", 2: "num"})
+        self.assertIn("i1", nd.code)                          # IN.get(K, …) の K は 1
+        self.assertIn("o1 = (1 if 0 else 0)", nd.code)        # 3 in IN は 0（IN[3] はない）
+        self.assertNotIn("def ", nd.code)                     # 関数は展開する
+        self.assertNotIn("lambda", nd.code)
+        nd2, _, _ = translate("if COUNT == 0:\n    A = 2\nOUT[0] = IN.get(A, 5.)", {0: "num"})
+        self.assertIn("o0 = 5.0", nd2.code)                   # IN[2] がないので既定値
+
+    def test_quaternion_log_exp(self):
+        nd, outs, _ = translate("q = api.MQuaternion(IN[0], 0.5, 0.25, 0.).exp()\nOUT[0] = q.log()", {0: "num"})
+        self.assertEqual(outs, {0: "vec4"})
+        self.assertIn("atan2(", nd.code)
+        self.assertIn("exp(", nd.code)
 
     def test_problem_has_line_number(self):
         self.assertTrue(problem("a = 1\nOUT[0] = cmds.ls()").startswith("2 行目: "))
@@ -155,6 +184,17 @@ class SceneTest(unittest.TestCase):
             scene = load_ma(path, animation=True)
         self.assertIn("exprespy chainB2 のコードを解析できません（接続元の exprespy badCmds のコードを解析できません）",
                       "\n".join(scene["warnings"]))
+
+    def test_bend_roll_sample(self):
+        scene = load_ma(os.path.join(ROOT, "samples", "exprespy_bendroll_sample.ma"), animation=True)
+        graph = [g for g in scene["animation"]["graph"] if g["type"] == "exprespy"]
+        self.assertEqual(len(graph), 9)
+        self.assertTrue(all(g.get("def") for g in graph))
+        self.assertIn("exprespy 9 個", "\n".join(scene["warnings"]))
+        by_name = {g["name"]: g for g in scene["animation"]["graph"]}
+        # 自分の独自の属性（method・reverseOrder）を入力にする
+        self.assertEqual(by_name["composeRotExpr"]["inputs"]["i11"], {"node": by_name["composeRotExpr"]["id"],
+                                                                      "attr": "reverseOrder"})
 
     def test_json_round_trip(self):
         text = json.dumps(self.scene, ensure_ascii=False)

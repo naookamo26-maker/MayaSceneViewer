@@ -41,7 +41,7 @@ MIT License — https://github.com/evanw/esbuild
 
 ## exprespy のサンプルのコード（テストのサンプルのみ・ビューアには同梱なし）
 
-https://github.com/ryusas/maya_exprespy — `samples/exprespy_sample.ma`・`tools/make_exprespy_sample.py` のコンストレイントの 4 つのコードは、exprespy の examples/constraints.ma のもの。
+https://github.com/ryusas/maya_exprespy — `samples/exprespy_sample.ma`・`samples/exprespy_bendroll_sample.ma`・`tools/make_exprespy_sample.py` のコードは、exprespy の examples/constraints.ma・examples/bend_roll.ma のもの。
 
 ```
 MIT License

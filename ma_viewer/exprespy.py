@@ -14,8 +14,10 @@ exprespy ノードはコード（.cd・code。Python）を持ち、コードの�
 
 対応する書き方は Maya の Python API（maya.api.OpenMaya の MVector・MPoint・MMatrix・MEulerRotation・
 MQuaternion・MTransformationMatrix）と math（plugin_convert.Translator が解釈するもの）。
-対応しないもの（理由を警告に出し、そのノードは評価しない）: COUNT（実行の回数）・前回の値を持ち越す変数・
-関数の定義・maya.cmds・形状（メッシュ・カーブ）の入出力・文字列・IN[変数]。
+if not COUNT:（最初の 1 回だけの初期化）は、中身が定数・import・関数の定義だけなら毎回実行するものとして扱い、
+関数（def・lambda）は呼び出したところに展開する。IN[n]・IN.get(n, 既定値) の番号は、数か一度だけ整数を入れた名前。
+対応しないもの（理由を警告に出し、そのノードは評価しない）: 前回の値を持ち越す変数（初期化で入れた値の書き換え・
+global）・maya.cmds・形状（メッシュ・カーブ）の入出力・文字列・IN[変数]・再帰呼び出し・ループの中の return。
 """
 from __future__ import annotations
 
@@ -153,9 +155,9 @@ class _Kinds:
     def of(self, src, attr: str) -> Optional[str]:
         last = attr.split(".")[-1]
         base = last.split("[")[0]
-        if src.type == TYPE:
-            io = io_plug(attr)
-            if io is None or io[0] != "o":
+        io = io_plug(attr) if src.type == TYPE else None
+        if io is not None:                         # exprespy の出力（自分の独自の属性は下の addAttr で見る）
+            if io[0] != "o":
                 return None
             res = self.convert(src)
             if res is None:
@@ -224,8 +226,52 @@ def _module_names(tree) -> set:
     return names
 
 
+def _scope_stores(stmts) -> Dict[str, int]:
+    """文の並びの中で値を入れる名前と回数（関数の中は数えない。関数の定義・lambda の代入も 1 回）"""
+    out: Dict[str, int] = {}
+
+    def visit(node):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            out[node.name] = out.get(node.name, 0) + 1
+            return
+        if isinstance(node, ast.Lambda):
+            return
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            out[node.id] = out.get(node.id, 0) + 1
+        for c in ast.iter_child_nodes(node):
+            visit(c)
+    for s in stmts:
+        visit(s)
+    return out
+
+
+def _is_first_run(test) -> bool:
+    """if not COUNT:・if COUNT == 0:・if COUNT < 1:（最初の 1 回だけの初期化）"""
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return isinstance(test.operand, ast.Name) and test.operand.id == "COUNT"
+    if isinstance(test, ast.Compare) and len(test.ops) == 1:
+        left, right, op = test.left, test.comparators[0], test.ops[0]
+        if isinstance(right, ast.Name) and right.id == "COUNT" and isinstance(op, ast.Eq):
+            left, right = right, left
+        if isinstance(left, ast.Name) and left.id == "COUNT":
+            c = PC._const(right)
+            return (isinstance(op, ast.Eq) and c == 0 or isinstance(op, ast.Lt) and c == 1
+                    or isinstance(op, ast.LtE) and c == 0)
+    return False
+
+
+def _has_return(node) -> bool:
+    if isinstance(node, ast.Return):
+        return True
+    if isinstance(node, (ast.FunctionDef, ast.Lambda)):
+        return False
+    return any(_has_return(c) for c in ast.iter_child_nodes(node))
+
+
 class ExprespyTranslator(PC.Translator):
-    """exprespy のコードを、定義の計算の文に書き換える。IN[n] は入力の属性 i<n>、OUT[n] = … は出力の属性 o<n>"""
+    """exprespy のコードを、定義の計算の文に書き換える。IN[n] は入力の属性 i<n>、OUT[n] = … は出力の属性 o<n>。
+    if not COUNT:（最初の 1 回だけの初期化）は、中身が定数・import・関数の定義だけなら毎回実行するものとして扱う。
+    関数（def・lambda）は呼び出したところに展開する"""
 
     def __init__(self, tree: ast.Module, in_kinds: Dict[int, str], api: int):
         fn = ast.FunctionDef(name="compute", args=ast.arguments(
@@ -237,16 +283,37 @@ class ExprespyTranslator(PC.Translator):
         self.in_kinds = in_kinds
         self.out_kinds: Dict[int, str] = {}
         self.taken |= {"i%d" % k for k in in_kinds} | {"o%d" % k for k in range(1000)}
+        self.funcs: Dict[str, Tuple[List[str], object, bool]] = {}   # 名前 → (引数, 本体, lambda か)
+        self.inlining: List[str] = []
+        # 一度だけ整数を入れる名前（IN[AT_ROLL] の番号に使える）
+        stores = _scope_stores(tree.body)
+        self.int_consts: Dict[str, int] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                c = PC._const(node.value)
+                name = node.targets[0].id
+                if isinstance(c, int) and not isinstance(c, bool) and stores.get(name) == 1:
+                    self.int_consts[name] = c
+        # 初期化（if not COUNT:）で値を入れて、ほかで書き換える名前（前回の値を持ち越す）
+        init, rest = [], []
+        for s in tree.body:
+            (init if isinstance(s, ast.If) and _is_first_run(s.test) else rest).append(s)
+        init_names = _scope_stores([x for s in init for x in s.body])
+        self.carried = sorted(set(init_names) & set(_scope_stores(rest)))
 
     # ---- IN・OUT
-    @staticmethod
-    def io_index(node, name: str) -> Optional[int]:
+    def index_of(self, node, what: str) -> int:
+        k = PC._const(node)
+        if isinstance(node, ast.Name) and node.id in self.int_consts:
+            k = self.int_consts[node.id]
+        if not isinstance(k, int) or isinstance(k, bool):
+            PC._fail("%s の番号を変数で選ぶ書き方は変換できません。番号か、一度だけ整数を入れた名前を書いてください" % what,
+                     node)
+        return k
+
+    def io_index(self, node, name: str) -> Optional[int]:
         if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == name:
-            k = PC._const(node.slice)
-            if not isinstance(k, int) or isinstance(k, bool):
-                PC._fail("%s[変数]（番号を変数で選ぶ書き方）は変換できません。%s[0] のように番号を書いてください"
-                         % (name, name), node)
-            return k
+            return self.index_of(node.slice, "%s[…]" % name)
         return None
 
     def expr(self, e):
@@ -255,6 +322,12 @@ class ExprespyTranslator(PC.Translator):
             return self.input_value(k, e)
         if self.io_index(e, "OUT") is not None:
             PC._fail("OUT[n]（出力）を読んでいます。代入した値は変数に入れて使ってください", e)
+        if isinstance(e, ast.Compare) and len(e.ops) == 1 and isinstance(e.ops[0], (ast.In, ast.NotIn)) \
+                and isinstance(e.comparators[0], ast.Name) and e.comparators[0].id == "IN":
+            has = self.index_of(e.left, "IN の番号") in self.in_kinds
+            return PC.Value("num", "1" if has == isinstance(e.ops[0], ast.In) else "0")
+        if isinstance(e, ast.Lambda):
+            PC._fail("lambda は、名前に入れて呼び出す形（f = lambda x: …）だけ変換できます", e)
         return super().expr(e)
 
     def input_value(self, k: int, node):
@@ -275,15 +348,18 @@ class ExprespyTranslator(PC.Translator):
             if e.id in ("IN", "OUT"):
                 PC._fail("%s をそのまま使っています（%s[0] のように番号で読み書きしてください）" % (e.id, e.id), e)
             if e.id == "COUNT":
-                PC._fail("COUNT（実行の回数）を使うコードは変換できません", e)
+                PC._fail("COUNT（実行の回数）は、if not COUNT:（最初の 1 回だけの初期化）の形でだけ変換できます", e)
             if e.id in ("cmds", "mel"):
                 PC._fail("maya.%s の呼び出しは変換できません（ほかのノードを直接見る処理は再現できません）" % e.id, e)
+            if e.id in self.funcs:
+                PC._fail("関数 %s を値として使っています（呼び出す形だけ変換できます）" % e.id, e)
             if e.id in _PRE_IMPORTED:
                 PC._fail("%s をそのまま値として使っています" % e.id, e)
             if e.id not in ("True", "False"):
                 PC._fail("名前 %s が分かりません（値を入れていない変数・コードの外の名前）" % e.id, e)
         return super().name(e)
 
+    # ---- 文
     def stmt(self, s):
         if isinstance(s, (ast.Import, ast.ImportFrom)):
             mods = [a.name for a in s.names] if isinstance(s, ast.Import) else [s.module or ""]
@@ -294,12 +370,32 @@ class ExprespyTranslator(PC.Translator):
         if isinstance(s, ast.AugAssign) and self.io_index(s.target, "OUT") is not None:
             PC._fail("OUT[n] への += などは変換できません（OUT は実行のたびに空になります）", s)
         if isinstance(s, ast.FunctionDef):
-            PC._fail("関数の定義（def）は変換できません", s)
+            self.define(s.name, s.args, s.body, False, s)
+            return
         if isinstance(s, ast.Global):
             PC._fail("global（前回の値を持ち越す変数）は変換できません", s)
+        if isinstance(s, ast.If) and _is_first_run(s.test):
+            self.first_run(s)
+            return
         return super().stmt(s)
 
+    def first_run(self, s: ast.If):
+        """if not COUNT: …（最初の 1 回だけ実行する初期化）。毎回同じ値になるなら、毎回実行しても結果は同じ"""
+        if s.orelse:
+            PC._fail("if not COUNT: … else: …（2 回目以降だけの処理）は変換できません", s.orelse[0])
+        for node in ast.walk(ast.Module(body=s.body, type_ignores=[])):
+            if isinstance(node, ast.Name) and node.id in ("IN", "OUT"):
+                PC._fail("初期化（if not COUNT:）の中で %s を使っています（最初の 1 回の値を持ち越すため、再現できません）"
+                         % node.id, node)
+        if self.carried:
+            PC._fail("初期化（if not COUNT:）で値を入れた %s を、あとで書き換えています（前回の値を持ち越すため、"
+                     "再現できません）" % "・".join(self.carried), s)
+        self.block(s.body)
+
     def assign(self, target, value_node, s):
+        if isinstance(value_node, ast.Lambda) and isinstance(target, ast.Name):
+            self.define(target.id, value_node.args, value_node.body, True, s)
+            return
         k = self.io_index(target, "OUT")
         if k is None:
             if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name) and target.value.id == "IN":
@@ -318,6 +414,118 @@ class ExprespyTranslator(PC.Translator):
             PC._fail("OUT[%d] に種類の違う値（%s と %s）を代入しています" % (k, prev, kind), s)
         self.out_kinds[k] = kind
         self.emit("o%d = %s" % (k, v.code))
+
+    # ---- 関数（呼び出したところに展開する）
+    def define(self, name: str, args: ast.arguments, body, is_lambda: bool, node):
+        if args.vararg or args.kwarg or args.kwonlyargs or args.defaults or args.posonlyargs:
+            PC._fail("関数 %s の引数の書き方（既定値・*args・**kwargs）は変換できません" % name, node)
+        if not is_lambda:
+            for x in ast.walk(ast.Module(body=body, type_ignores=[])):
+                if isinstance(x, (ast.Global, ast.Nonlocal)):
+                    PC._fail("関数 %s の中の global・nonlocal は変換できません" % name, x)
+        self.funcs[name] = ([a.arg for a in args.args], body, is_lambda)
+        self.env.pop(name, None)
+
+    def call(self, e):
+        f = e.func
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "IN" and f.attr == "get":
+            if not e.args or len(e.args) > 2 or e.keywords:
+                PC._fail("IN.get(番号[, 既定値]) の形で書いてください", e)
+            k = self.index_of(e.args[0], "IN.get")
+            if k in self.in_kinds:
+                return self.input_value(k, e)
+            if len(e.args) < 2:
+                PC._fail("IN.get(%d) の既定値がなく、IN[%d] に接続も値もありません" % (k, k), e)
+            return self.expr(e.args[1])
+        if isinstance(f, ast.Name) and f.id in self.funcs and f.id not in self.env:
+            return self.inline(f.id, e)
+        return super().call(e)
+
+    def call_stmt(self, c):
+        if isinstance(c.func, ast.Name) and c.func.id in self.funcs and c.func.id not in self.env:
+            self.inline(c.func.id, c)
+            return
+        return super().call_stmt(c)
+
+    def inline(self, name: str, e: ast.Call):
+        params, body, is_lambda = self.funcs[name]
+        if name in self.inlining:
+            PC._fail("関数 %s の再帰呼び出しは変換できません" % name, e)
+        if e.keywords or len(e.args) != len(params):
+            PC._fail("関数 %s の引数の数が違います（%d 個）" % (name, len(params)), e)
+        args = [self.expr(a) for a in e.args]
+        saved_env, saved_names = self.env, self.names
+        local_names = set(params) | (set() if is_lambda else set(_scope_stores(body)))
+        self.env = {k: v for k, v in saved_env.items() if k not in local_names}
+        self.names = dict(saved_names)
+        for n in sorted(local_names):
+            self.names[n] = self.fresh(n.strip("_") or "v")
+        self.inlining.append(name)
+        try:
+            for p, v in zip(params, args):
+                var = self.names[p]
+                if v.kind == "tm":
+                    v = self.tm_matrix(v)
+                if v.kind not in ("num", "unit", "vec", "pt", "mat", "quat", "eul"):
+                    PC._fail("関数 %s に渡せない値（%s）を渡しています" % (name, v.kind), e)
+                self.emit("%s = %s" % (var, v.code))
+                self.env[p] = PC.Value("num" if v.kind == "unit" else v.kind, var, **v.extra)
+            if is_lambda:
+                return self.expr(body)
+            return self.function_body(name, body)
+        finally:
+            self.inlining.pop()
+            self.env, self.names = saved_env, saved_names
+
+    def function_body(self, name: str, stmts):
+        """関数の本体を変換し、戻り値を入れた変数を返す。return は最後（if の分かれ道の最後も可）だけ"""
+        ret = {}
+        if any(_has_return(s) for s in stmts) and not self.ends_with_return(stmts):
+            PC._fail("関数 %s は、すべての道で return してください" % name, stmts[-1])
+
+        def run(block):
+            for k, s in enumerate(block):
+                if isinstance(s, ast.Return):
+                    self.set_return(s, ret)
+                    return
+                if isinstance(s, ast.If) and _has_return(s):
+                    rest = list(block[k + 1:])
+                    body = s.body if self.ends_with_return(s.body) else s.body + rest
+                    orelse = s.orelse if self.ends_with_return(s.orelse) else s.orelse + rest
+                    self.emit("if %s:" % self.cond(s.test))
+                    for part, last in ((body, False), (orelse, True)):
+                        if last:
+                            if not part:
+                                break
+                            self.emit("else:")
+                        self.indent += 1
+                        n = len(self.lines)
+                        run(part)
+                        if len(self.lines) == n:
+                            self.emit("pass")
+                        self.indent -= 1
+                    return
+                if _has_return(s):
+                    PC._fail("ループの中の return は変換できません", s)
+                self.stmt(s)
+        run(list(stmts))
+        if "var" not in ret:
+            return PC.Value("none")
+        return PC.Value(ret["kind"], ret["var"], **ret["extra"])
+
+    def set_return(self, s: ast.Return, ret: dict):
+        if s.value is None:
+            PC._fail("値のない return は変換できません", s)
+        v = self.expr(s.value)
+        if v.kind == "tm":
+            v = self.tm_matrix(v)
+        if v.kind == "unit":
+            v = PC.Value("num", v.code)
+        if "var" not in ret:
+            ret.update(var=self.fresh("ret"), kind=v.kind, extra=dict(v.extra))
+        elif ret["kind"] != v.kind and {ret["kind"], v.kind} != {"vec", "pt"}:
+            PC._fail("return の値の種類が違います（%s と %s）" % (ret["kind"], v.kind), s)
+        self.emit("%s = %s" % (ret["var"], v.code))
 
 
 class ExprespyResult:
