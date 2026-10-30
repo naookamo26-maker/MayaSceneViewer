@@ -44,7 +44,7 @@ const parentWorld = (rig, name) => {
 test('exprespy のノードを定義で評価し、解析できないノードは警告する', () => {
   const graph = data.animation.graph.filter((g) => g.type === 'exprespy');
   const defined = graph.filter((g) => g.def).map((g) => g.name).sort();
-  assert.deepEqual(defined, ['aimCnsEx', 'aimUpCnsEx', 'chainA', 'chainB', 'limitEx', 'oriCnsEx', 'posCnsEx', 'pyEx', 'quatEx', 'timeEx']);
+  assert.deepEqual(defined, ['aimCnsEx', 'aimUpCnsEx', 'chainA', 'chainB', 'limitEx', 'oriCnsEx', 'posCnsEx', 'pyEx', 'pyEx2', 'quatEx', 'timeEx']);
   for (const g of graph.filter((x) => x.def)) {
     assert.match(g.def, /^exprespy:[0-9a-f]{12}$/);
     assert.ok(data.animation.nodeDefs[g.def], g.def);
@@ -53,7 +53,7 @@ test('exprespy のノードを定義で評価し、解析できないノード�
   assert.match(warnings, /exprespy badCmds のコードを解析できません（1 行目: maya\.cmds/);
   assert.match(warnings, /exprespy badMesh のコードを解析できません（形状（boxShape\.o）/);
   const rig = at(12);
-  for (const n of ['posCnst', 'oriCnst', 'aimCnst', 'aimUpCnst', 'jT', 'jC', 'jQ', 'jL', 'jP', 'jP2']) rig.chan(idx(n));
+  for (const n of ['posCnst', 'oriCnst', 'aimCnst', 'aimUpCnst', 'jT', 'jC', 'jQ', 'jL', 'jP', 'jP2', 'jR', 'jR2']) rig.chan(idx(n));
   assert.deepEqual([...rig.problems], []);
 });
 
@@ -128,6 +128,19 @@ test('pyEx: ループの展開・try / except KeyError・内包表記・分解�
     const t = rig.chan(idx('jP')).t;
     assert.ok(near(t[0], tx + 5) && near(t[1], 2 * tx + 16) && near(t[2], 2 - tx), `フレーム ${f}: ${t} / tx ${tx}`);
     assert.ok(near(rig.chan(idx('jP2')).t[0], 9), `フレーム ${f}: while`);
+  }
+});
+
+test('pyEx2: 実行時の IN[i]・OUT[i]・展開したループの実行時の break・ループの中の return・辞書・定数の文字列', () => {
+  for (const f of FRAMES) {
+    const rig = at(f);
+    const tx = rig.chan(idx('src')).t[0];
+    const t = rig.chan(idx('jR')).t, t2 = rig.chan(idx('jR2')).t;
+    assert.ok(near(t[0], tx > 0 ? 10 * tx + 2 : tx + 2), `フレーム ${f}: 辞書 ${t[0]} / tx ${tx}`);
+    assert.ok(near(t[1], tx + 2), `フレーム ${f}: 実行時の IN[i] ${t[1]}`);
+    assert.ok(near(t[2], tx > 2.5 ? 0 : 2), `フレーム ${f}: ループの中の return ${t[2]}`);
+    assert.ok(near(t2[0], tx >= 3 ? 0 : tx + 2), `フレーム ${f}: 実行時の break ${t2[0]}`);
+    assert.ok(near(t2[1], 7), `フレーム ${f}: 実行時の OUT[i] ${t2[1]}`);
   }
 });
 

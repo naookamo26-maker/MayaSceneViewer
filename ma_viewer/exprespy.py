@@ -19,9 +19,12 @@ if not COUNT:（最初の 1 回だけの初期化）は、中身が定数・impo
 回数が変換の時点で決まるループ（range(定数)・IN・IN.items()・タプル・enumerate・zip）と内包表記は展開する
 （IN[i]・OUT[i] の番号にループの変数を使える）。try: … except KeyError: は、入力の有無で通る側を選ぶ。
 定数だけの式・None の判定は変換の時点で畳み込み、通らない道は書かない。
+番号が実行時に決まる IN[i]・OUT[i] は、つながっている入力・出力との比較の連鎖にする。展開したループの中の実行時の
+break・continue と、関数の中のループの return は、目印の変数で残りの文を囲む。辞書（キーごとに計算の変数）と
+定数の文字列は、変換の時点で扱う。
 対応しないもの（理由を警告に出し、そのノードは評価しない）: 前回の値を持ち越す変数（初期化で入れた値の書き換え・
-global）・maya.cmds・形状（メッシュ・カーブ）の入出力・文字列・辞書・リストの append・回数が実行時に決まる
-ループの中の IN[変数]・再帰呼び出し・ループの中の return。
+global）・maya.cmds・形状（メッシュ・カーブ）の入出力・中身が実行時に決まる文字列・リストの append・クラス・
+再帰呼び出し・KeyError 以外の except。
 """
 from __future__ import annotations
 
@@ -319,6 +322,14 @@ class _Pre(ast.expr):
         self.value = value
 
 
+_UNKNOWN = object()          # 変換の時点で決まらない値（比較のため）
+_UNKNOWN_STR = object()      # 中身の決まらない文字列
+
+
+class _Dynamic(PC.ConvertError):
+    """番号・キーが変換の時点で決まらない（IN[i] の i が実行時に決まるなど）"""
+
+
 class _Break(Exception):
     """展開したループの break（変換の時点で抜ける）"""
 
@@ -332,7 +343,7 @@ class ExprespyTranslator(PC.Translator):
     if not COUNT:（最初の 1 回だけの初期化）は、中身が定数・import・関数の定義だけなら毎回実行するものとして扱う。
     関数（def・lambda）は呼び出したところに展開する"""
 
-    def __init__(self, tree: ast.Module, in_kinds: Dict[int, str], api: int):
+    def __init__(self, tree: ast.Module, in_kinds: Dict[int, str], api: int, out_connected=()):
         fn = ast.FunctionDef(name="compute", args=ast.arguments(
             posonlyargs=[], args=[ast.arg(arg=a) for a in ("__ep_self", "__ep_plug", "__ep_data")],
             kwonlyargs=[], kw_defaults=[], defaults=[]), body=tree.body, decorator_list=[], lineno=1)
@@ -341,9 +352,12 @@ class ExprespyTranslator(PC.Translator):
         super().__init__(_NoAttrs(), module, None, fn)
         self.in_kinds = in_kinds
         self.out_kinds: Dict[int, str] = {}
+        self.out_connected = set(out_connected)
         self.taken |= {"i%d" % k for k in in_kinds} | {"o%d" % k for k in range(1000)}
         self.funcs: Dict[str, tuple] = {}   # 名前 → (引数, 本体, lambda か, 既定値)
-        self.frames: List[str] = []          # 入れ子の状態（"unroll" 展開したループ・"loop" 計算の for・"if" 実行時の if）
+        # 入れ子の状態: "loop" 計算の for・"if" 実行時の if・"func" 展開した関数の境目・
+        # {"kind": "unroll"} 展開したループ（break・continue の目印の変数）・{"kind": "ret"} ループの中の return
+        self.frames: list = []
         self.inlining: List[str] = []
         # 一度だけ整数を入れる名前（IN[AT_ROLL] の番号に使える）
         stores = _scope_stores(tree.body)
@@ -378,8 +392,7 @@ class ExprespyTranslator(PC.Translator):
             if c is not None and c == int(c):
                 k = int(c)
         if not isinstance(k, int) or isinstance(k, bool):
-            PC._fail("%s の番号を変数で選ぶ書き方は変換できません。番号か、一度だけ整数を入れた名前を書いてください" % what,
-                     node)
+            raise _Dynamic("%s の番号が変換の時点で決まりません" % what, node)
         return k
 
     def io_index(self, node, name: str) -> Optional[int]:
@@ -390,15 +403,25 @@ class ExprespyTranslator(PC.Translator):
     def expr(self, e):
         if isinstance(e, _Pre):
             return e.value
-        k = self.io_index(e, "IN")
-        if k is not None:
+        if isinstance(e, ast.Subscript) and isinstance(e.value, ast.Name) and e.value.id == "IN":
+            try:
+                k = self.index_of(e.slice, "IN[…]")
+            except _Dynamic:
+                return self.dynamic_input(e.slice, None, e)
             return self.input_value(k, e)
-        if self.io_index(e, "OUT") is not None:
+        if isinstance(e, ast.Subscript) and isinstance(e.value, ast.Name) and e.value.id == "OUT":
             PC._fail("OUT[n]（出力）を読んでいます。代入した値は変数に入れて使ってください", e)
         if isinstance(e, ast.Compare) and len(e.ops) == 1 and isinstance(e.ops[0], (ast.In, ast.NotIn)) \
                 and isinstance(e.comparators[0], ast.Name) and e.comparators[0].id == "IN":
-            has = self.index_of(e.left, "IN の番号") in self.in_kinds
-            return PC.Value("num", "1" if has == isinstance(e.ops[0], ast.In) else "0")
+            try:
+                has = "1" if self.index_of(e.left, "IN の番号") in self.in_kinds else "0"
+            except _Dynamic:
+                k = self.num_code(self.expr(e.left), e)
+                has = "(%s)" % " or ".join("(%s == %d)" % (k, n) for n in sorted(self.in_kinds)) if self.in_kinds else "0"
+            return PC.Value("num", has if isinstance(e.ops[0], ast.In) else "(not %s)" % has)
+        v = self.const_expr(e)
+        if v is not None:
+            return v
         if isinstance(e, ast.Lambda):
             PC._fail("lambda は、名前に入れて呼び出す形（f = lambda x: …）だけ変換できます", e)
         v = self.none_expr(e)
@@ -410,6 +433,258 @@ class ExprespyTranslator(PC.Translator):
         if isinstance(e, ast.GeneratorExp):
             PC._fail("ジェネレータ式は sum・min・max・any・all・list・tuple の引数でだけ変換できます", e)
         return super().expr(e)
+
+    def select(self, key_code: str, pairs, default, node, what: str):
+        """実行時に決まる番号・キーで値を選ぶ式（(v0 if k == 0 else (v1 if k == 1 else 既定値))）"""
+        kinds = {v.kind for _k, v in pairs} | ({default.kind} if default is not None else set())
+        kinds = {"vec" if k == "pt" else k for k in kinds}
+        if len(kinds) > 1:
+            PC._fail("%s で選ぶ値の種類がそろっていません（%s）" % (what, "・".join(sorted(kinds))), node)
+        kind = kinds.pop() if kinds else "num"
+        if default is None:
+            size = {"vec2": 2, "vec4": 4}.get(self.in_kinds.get(pairs[0][0]) if pairs else None, 3)
+            zero = {"num": "0", "mat": "identity()", "quat": "[0.0, 0.0, 0.0, 1.0]"}.get(
+                kind, "[%s]" % ", ".join(["0.0"] * size))
+            default = PC.Value(kind, zero)
+            self.notes.append("%d 行目: %s の番号・キーがないときは 0 にします（Maya では KeyError）"
+                              % (getattr(node, "lineno", 0), what))
+        k = self.fresh("k")
+        self.emit("%s = %s" % (k, key_code))
+        code = default.code
+        for key, v in reversed(pairs):
+            code = "(%s if %s == %s else %s)" % (v.code, k, PC._num_text(key), code)
+        return PC.Value(kind, code, **default.extra)
+
+    def dynamic_input(self, idx_node, default_node, node):
+        """IN[i]・IN.get(i, 既定値)（i が実行時に決まる）→ つながっている入力との比較の連鎖"""
+        pairs = [(k, self.input_value(k, node)) for k in sorted(self.in_kinds)]
+        default = None
+        if default_node is not None:
+            default = self.expr(default_node)
+            if default.kind == "none":
+                default = None
+        return self.select(self.num_code(self.expr(idx_node), node), pairs, default, node, "IN[…]")
+
+    def dynamic_output(self, idx_node, value_node, s):
+        """OUT[i] = 値（i が実行時に決まる）→ 接続されている出力ごとの if"""
+        cands = sorted(self.out_connected | set(self.out_kinds))
+        if not cands:
+            PC._fail("OUT[…] の番号が実行時に決まりますが、接続されている出力がありません", s)
+        v = self.out_value(value_node, s)
+        kind = self.out_kind(v, s)
+        tmp, k = self.fresh("v"), self.fresh("k")
+        self.emit("%s = %s" % (tmp, v.code))
+        self.emit("%s = %s" % (k, self.num_code(self.expr(idx_node), s)))
+        for n, o in enumerate(cands):
+            prev = self.out_kinds.get(o)
+            if prev is not None and prev != kind:
+                PC._fail("OUT[%d] に種類の違う値（%s と %s）を代入しています" % (o, prev, kind), s)
+            self.out_kinds[o] = kind
+            self.emit("%s %s == %d:" % ("if" if n == 0 else "elif", k, o))
+            self.emit("    o%d = %s" % (o, tmp))
+
+    def out_value(self, value_node, s):
+        v = self.expr(value_node)
+        if v.kind == "tm":
+            v = self.tm_matrix(v)
+        return v
+
+    def out_kind(self, v, s) -> str:
+        if v.kind == "str":
+            PC._fail("文字列は OUT に出せません（ビューアは文字列の属性を扱いません）", s)
+        kind = _OUT_KINDS.get(v.kind)
+        if kind is None:
+            PC._fail("OUT に出せない値（%s）を代入しています" % v.kind, s)
+        if v.kind == "vec" and v.code.startswith("[") and v.code.count(",") in (1, 3):
+            kind = "vec2" if v.code.count(",") == 1 else "vec4"     # 2 つ・4 つの数のリスト
+        return kind
+
+    # ---- 文字列・辞書（変換の時点で追う）
+    @staticmethod
+    def str_value(text) -> "PC.Value":
+        """文字列（text が None なら、中身が変換の時点で分からない文字列）"""
+        return PC.Value("str", repr(text) if text is not None else "''", s=text)
+
+    def py_const(self, v):
+        """変換の時点で決まる値（数・文字列・None・真偽）。決まらなければ _Dynamic"""
+        if v.kind == "none":
+            return None
+        if v.kind == "str":
+            if v.extra.get("s") is None:
+                raise _Dynamic("文字列の中身が変換の時点で決まりません")
+            return v.extra["s"]
+        if v.kind in ("num", "unit"):
+            c = self.const_of(v.code)
+            if c is not None:
+                return int(c) if c == int(c) else c
+        raise _Dynamic("値が変換の時点で決まりません")
+
+    def const_expr(self, e):
+        """文字列・f 文字列・辞書の式（変換の時点で決まるもの）。対象外なら None"""
+        if isinstance(e, ast.Constant) and isinstance(e.value, str):
+            return self.str_value(e.value)
+        if isinstance(e, ast.JoinedStr):               # f"…{x}…": 中身がすべて決まれば文字列、決まらなければ中身なし
+            parts = []
+            for v in e.values:
+                if isinstance(v, ast.Constant):
+                    parts.append(str(v.value))
+                    continue
+                try:
+                    x = self.py_const(self.expr(v.value))
+                    spec = "".join(str(c.value) for c in getattr(v.format_spec, "values", []) or [])
+                    parts.append(format(x, spec) if spec else str(x))
+                except (_Dynamic, ValueError, TypeError):
+                    return self.str_value(None)
+            return self.str_value("".join(parts))
+        if isinstance(e, ast.Dict):
+            items = {}
+            for kn, vn in zip(e.keys, e.values):
+                if kn is None:
+                    src = self.dict_of(vn)
+                    if src is None:
+                        PC._fail("**辞書 は辞書の変数だけ展開できます", e)
+                    for key, v in src.extra["items"].items():
+                        items[key] = self.dict_slot(v, e)
+                    continue
+                items[self.dict_key(kn, e)] = self.dict_slot(self.expr(vn), e)
+            return PC.Value("dict", "", items=items)
+        if isinstance(e, ast.Subscript):
+            d = self.dict_of(e.value)
+            if d is not None:
+                return self.dict_get(d, e.slice, None, e, strict=True)
+            st = self.str_of(e.value) if self.is_text(e.value) else None
+            if st is not None:
+                try:
+                    return self.str_value(st[self.index_of(e.slice, "文字列の添字")])
+                except IndexError:
+                    PC._fail("文字列の添字が範囲外です", e)
+        if isinstance(e, ast.BinOp) and self.is_text(e.left):
+            left = self.str_of(e.left)
+            if left is not None:
+                if isinstance(e.op, ast.Add):
+                    right = self.str_of(e.right)
+                    if right is None:
+                        PC._fail("文字列に足せるのは文字列だけです", e)
+                    return self.str_value(left + right)
+                if isinstance(e.op, ast.Mod):            # "%s_%d" % (a, b)
+                    args = e.right.elts if isinstance(e.right, ast.Tuple) else [e.right]
+                    try:
+                        return self.str_value(left % tuple(self.py_const(self.expr(a)) for a in args))
+                    except _Dynamic:
+                        return self.str_value(None)
+                    except (TypeError, ValueError):
+                        PC._fail("文字列の % の書式が合いません", e)
+                if isinstance(e.op, ast.Mult):
+                    return self.str_value(left * self.index_of(e.right, "文字列の繰り返し"))
+        return None
+
+    def str_of(self, node) -> Optional[str]:
+        """文字列の式（is_text）なら、その中身（中身が分からなければ変換できない）。文字列でなければ None"""
+        if not self.is_text(node):
+            return None
+        v = self.expr(node)
+        if v.kind != "str":
+            return None
+        if v.extra.get("s") is None:
+            PC._fail("文字列の中身が変換の時点で決まりません（実行時の値を入れた f 文字列など）", node)
+        return v.extra["s"]
+
+    def dict_of(self, node):
+        """式が辞書なら、その値（Value。kind dict）。辞書でなければ None"""
+        if isinstance(node, _Pre):
+            return node.value if node.value.kind == "dict" else None
+        if isinstance(node, ast.Name) and node.id in self.env and self.env[node.id].kind == "dict":
+            return self.env[node.id]
+        if isinstance(node, ast.Dict):
+            return self.expr(node)
+        return None
+
+    def dict_key(self, node, where):
+        """辞書のキー（数・文字列）。変換の時点で決まらなければ _Dynamic"""
+        v = self.expr(node)
+        try:
+            key = self.py_const(v)
+        except _Dynamic:
+            raise _Dynamic("辞書のキーが変換の時点で決まりません", where)
+        if isinstance(key, float) and key == int(key):
+            key = int(key)                                # 1.0 と 1 は同じキー（Python と同じ）
+        return key
+
+    def dict_slot(self, v, node, var=None):
+        """辞書の値。数・ベクトル・行列はキーごとの計算の変数に入れる（実行時の if の中の書き換えのため）"""
+        if v.kind in ("str", "none", "dict"):
+            return v
+        if v.kind == "tm":
+            v = self.tm_matrix(v)
+        if v.kind == "unit":
+            v = PC.Value("num", v.code)
+        if v.kind not in ("num", "vec", "pt", "mat", "quat", "eul"):
+            PC._fail("辞書に入れられない値（%s）です" % v.kind, node)
+        var = var or self.fresh("d")
+        self.emit("%s = %s" % (var, v.code))
+        return PC.Value(v.kind, var, **v.extra)
+
+    def dict_get(self, d, key_node, default, node, strict: bool):
+        items = d.extra["items"]
+        try:
+            key = self.dict_key(key_node, node)
+        except _Dynamic:
+            pairs = [(k, v) for k, v in items.items() if isinstance(k, (int, float))]
+            if len(pairs) != len(items):
+                PC._fail("実行時に決まるキーで読めるのは、キーがすべて数の辞書だけです", node)
+            return self.select(self.num_code(self.expr(key_node), node), pairs, default, node, "辞書[…]")
+        if key in items:
+            return items[key]
+        if strict:
+            PC._fail("辞書にキー %r がありません（KeyError）" % (key,), node)
+        return default if default is not None else PC.Value("none", "None")
+
+    def dict_assign(self, target, value_node, s) -> bool:
+        """辞書[キー] = 値。辞書でなければ False"""
+        if not isinstance(target, ast.Subscript):
+            return False
+        d = self.dict_of(target.value)
+        if d is None:
+            return False
+        items = d.extra["items"]
+        v = self.expr(value_node)
+        try:
+            key = self.dict_key(target.slice, s)
+        except _Dynamic:
+            # 実行時に決まるキー: 数のキーごとの if（ないキーは増やせない）
+            nums = [k for k in items if isinstance(k, (int, float))]
+            if not nums:
+                PC._fail("実行時に決まるキーで書き込めるのは、数のキーのある辞書だけです", s)
+            k = self.fresh("k")
+            self.emit("%s = %s" % (k, self.num_code(self.expr(target.slice), s)))
+            tmp = self.dict_slot(v, s)
+            for n, key in enumerate(nums):
+                cur = items[key]
+                if cur.kind != tmp.kind:
+                    PC._fail("辞書の値の種類が違います（%s と %s）" % (cur.kind, tmp.kind), s)
+                self.emit("%s %s == %s:" % ("if" if n == 0 else "elif", k, PC._num_text(key)))
+                self.emit("    %s = %s" % (cur.code, tmp.code))
+            return True
+        cur = items.get(key)
+        if cur is not None and cur.kind not in ("str", "none", "dict") and v.kind not in ("str", "none", "dict"):
+            if {cur.kind, v.kind} - {"vec", "pt"} and cur.kind != v.kind and not (cur.kind == "num" and v.kind == "unit"):
+                PC._fail("辞書のキー %r に種類の違う値（%s と %s）を入れています" % (key, cur.kind, v.kind), s)
+            items[key] = self.dict_slot(v, s, var=cur.code)     # 同じ変数に入れる（実行時の if の中でも正しい）
+        else:
+            if cur is not None and "if" in self.frames and (cur.kind in ("str", "dict") or v.kind in ("str", "dict")):
+                PC._fail("実行時の if の中で、辞書の文字列・辞書の値を書き換えています（変換できません）", s)
+            items[key] = self.dict_slot(v, s)
+        return True
+
+    def dict_aug(self, s: ast.AugAssign) -> bool:
+        """辞書[キー] += 値"""
+        if not isinstance(s.target, ast.Subscript) or self.dict_of(s.target.value) is None:
+            return False
+        d = self.dict_of(s.target.value)
+        cur = self.dict_get(d, s.target.slice, None, s, strict=True)
+        res = self.binop(s.op, cur, self.expr(s.value), s)
+        self.dict_assign(s.target, _Pre(res), s)
+        return True
 
     def input_value(self, k: int, node):
         kind = self.in_kinds.get(k)
@@ -448,8 +723,11 @@ class ExprespyTranslator(PC.Translator):
             if bad:
                 PC._fail("import %s は変換できません（math と maya.api.OpenMaya だけ）" % bad[0], s)
             return                                         # 別名は読む前に元の名前に戻してある
-        if isinstance(s, ast.AugAssign) and self.io_index(s.target, "OUT") is not None:
+        if isinstance(s, ast.AugAssign) and isinstance(s.target, ast.Subscript) and \
+                isinstance(s.target.value, ast.Name) and s.target.value.id == "OUT":
             PC._fail("OUT[n] への += などは変換できません（OUT は実行のたびに空になります）", s)
+        if isinstance(s, ast.AugAssign) and self.dict_aug(s):
+            return
         if isinstance(s, ast.FunctionDef):
             self.define(s.name, s.args, s.body, False, s)
             return
@@ -470,6 +748,11 @@ class ExprespyTranslator(PC.Translator):
             for t in s.targets:
                 if isinstance(t, ast.Name):
                     self.env.pop(t.id, None)
+                elif isinstance(t, ast.Subscript):
+                    d = self.dict_of(t.value)
+                    if d is None:
+                        PC._fail("del は変数と辞書の要素だけ変換できます", s)
+                    d.extra["items"].pop(self.dict_key(t.slice, s), None)
             return
         if isinstance(s, ast.Assign) and (len(s.targets) > 1 or self.needs_split(s.targets[0], s.value)):
             self.multi_assign(s)
@@ -535,23 +818,23 @@ class ExprespyTranslator(PC.Translator):
             return
         if isinstance(target, ast.Name) and not isinstance(value_node, _Pre):
             v = self.expr(value_node)
-            if v.kind == "none":
-                self.env[target.id] = v                  # None は変換の時点で分かるので、変数にしない
+            if v.kind in ("none", "str", "dict"):
+                self.env[target.id] = v                  # None・文字列・辞書は変換の時点で追う（計算の変数にしない）
                 return
             value_node = ast.copy_location(_Pre(v), value_node)   # 変換した値（右辺は 1 回だけ変換する）
-        k = self.io_index(target, "OUT")
+        try:
+            k = self.io_index(target, "OUT")
+        except _Dynamic:
+            self.dynamic_output(target.slice, value_node, s)
+            return
         if k is None:
             if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name) and target.value.id == "IN":
                 PC._fail("IN[n]（入力）に代入しています", s)
+            if self.dict_assign(target, value_node, s):
+                return
             return super().assign(target, value_node, s)
-        v = self.expr(value_node)
-        if v.kind == "tm":
-            v = self.tm_matrix(v)
-        kind = _OUT_KINDS.get(v.kind)
-        if kind is None:
-            PC._fail("OUT[%d] に出せない値（%s）を代入しています" % (k, v.kind), s)
-        if v.kind == "vec" and v.code.startswith("[") and v.code.count(",") in (1, 3):
-            kind = "vec2" if v.code.count(",") == 1 else "vec4"     # 2 つ・4 つの数のリスト
+        v = self.out_value(value_node, s)
+        kind = self.out_kind(v, s)
         prev = self.out_kinds.get(k)
         if prev is not None and prev != kind:
             PC._fail("OUT[%d] に種類の違う値（%s と %s）を代入しています" % (k, prev, kind), s)
@@ -567,6 +850,21 @@ class ExprespyTranslator(PC.Translator):
         決まらなければ None"""
         if isinstance(node, ast.Name) and node.id == "IN" and node.id not in self.env:
             return [PC.Value("num", str(k)) for k in sorted(self.in_kinds)]
+        d = self.dict_of(node)
+        if d is not None:
+            return [self.key_value(k) for k in d.extra["items"]]
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and not node.args:
+            d = self.dict_of(node.func.value)
+            if d is not None and node.func.attr in ("keys", "values", "items"):
+                items = d.extra["items"]
+                if node.func.attr == "keys":
+                    return [self.key_value(k) for k in items]
+                if node.func.attr == "values":
+                    return list(items.values())
+                return [(self.key_value(k), v) for k, v in items.items()]
+        if self.is_text(node):
+            text = self.str_of(node)
+            return [self.str_value(c) for c in text] if text is not None else None
         if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
             out = []
             for x in node.elts:
@@ -622,6 +920,9 @@ class ExprespyTranslator(PC.Translator):
                 return [x for _c, x in sorted(zip(consts, items), key=lambda p: p[0])]
             return items
         return None
+
+    def key_value(self, key):
+        return self.str_value(key) if isinstance(key, str) else PC.Value("num", PC._num_text(key))
 
     def flat(self, items, node) -> list:
         """並びの要素（Value のタプルは不可）"""
@@ -688,8 +989,10 @@ class ExprespyTranslator(PC.Translator):
             PC._fail("for … else は変換できません", s)
         if self.needs_unroll(s):
             items = self.static_items(s.iter)
-            if items is None and isinstance(s.target, ast.Name) and not self.uses_index(s):
-                items = False                             # 要素の数が分からない並び（ベクトルの変数など）は計算の for
+            if items is None and isinstance(s.target, ast.Name):
+                # 要素の数が分からない並び（ベクトルの変数・range(int(IN[0])) など）は計算の for。
+                # IN[i]・OUT[i] の番号は、実行時に選ぶ（比較の連鎖）
+                items = False
             if items is False:
                 pass
             elif items is None:
@@ -697,12 +1000,14 @@ class ExprespyTranslator(PC.Translator):
                          "回数が変換の時点で決まる並びでたどってください。%d 回まで）" % self.UNROLL_LIMIT, s)
             else:
                 self.unroll(s, items)
+                self.after_loop(s)
                 return
         self.frames.append("loop")
         try:
             super().for_stmt(s)
         finally:
             self.frames.pop()
+        self.after_loop(s)
 
     def needs_unroll(self, s: ast.For) -> bool:
         """ループを展開するか（range 以外の並び・タプルの変数・IN / OUT の番号に変数を使うとき）"""
@@ -732,19 +1037,42 @@ class ExprespyTranslator(PC.Translator):
         stored = set(_scope_stores(s.body))
         if targets & stored:
             PC._fail("ループの変数 %s に代入しています（展開するループでは変換できません）" % "・".join(sorted(targets & stored)), s)
-        self.frames.append("unroll")
+        fr = {"kind": "unroll", "brk": self.fresh("brk"), "cnt": self.fresh("cnt"), "b": False, "flags": 0}
+        self.frames.append(fr)
+        base = self.indent
+        brk_line = len(self.lines)
+        self.emit("%s = 0" % fr["brk"])
         try:
             for it in items:
+                self.indent = base
+                if fr["b"]:                               # 実行時の break のあとの繰り返しは、抜けていなければ
+                    self.emit("if not %s:" % fr["brk"])
+                    self.indent += 1
                 self.bind(s.target, it, s)
+                cnt_line = len(self.lines)
+                self.emit("%s = 0" % fr["cnt"])
+                guarded = False
                 try:
-                    for st in s.body:
+                    for n, st in enumerate(s.body):
+                        before = fr["flags"]
                         self.stmt_strict(st)
+                        if fr["flags"] != before and not guarded and n + 1 < len(s.body):   # 実行時の break・continue のあとの文
+                            self.emit("if not (%s or %s):" % (fr["brk"], fr["cnt"]))
+                            self.indent += 1
+                            guarded = True
                 except _Continue:
-                    continue
+                    pass
                 except _Break:
                     break
+                finally:
+                    if not guarded and not fr.get("c_used"):
+                        del self.lines[cnt_line]          # この繰り返しでは continue の目印を使わない
+                    fr["c_used"] = False
         finally:
             self.frames.pop()
+            self.indent = base
+        if not fr["b"] and not fr["flags"]:
+            del self.lines[brk_line]
 
     def stmt_strict(self, st):
         """文を変換する（変換できなければ、その場で止める。展開したループの中は途中で続けない）"""
@@ -769,22 +1097,69 @@ class ExprespyTranslator(PC.Translator):
             self.frames.pop()
             self.indent -= 1
         self.notes.append("%d 行目: while は %d 回までで打ち切ります" % (s.lineno, self.WHILE_LIMIT))
+        self.after_loop(s)
 
     def jump(self, s):
         """break・continue: 展開したループの中なら変換の時点で抜ける。実行時の条件の中なら変換できない"""
         in_if = False
         for f in reversed(self.frames):
-            if f == "loop":
+            if f in ("loop", "func"):
                 return False                              # 計算の for の中（そのまま書く）
             if f == "if":
                 in_if = True
                 continue
-            if f == "unroll":
-                if in_if:
-                    PC._fail("展開するループ（IN[i] などを使う for）の中で、実行時に決まる条件の %s は変換できません"
-                             % ("break" if isinstance(s, ast.Break) else "continue"), s)
-                raise _Break() if isinstance(s, ast.Break) else _Continue()
+            if isinstance(f, dict) and f["kind"] == "unroll":
+                if not in_if:
+                    raise _Break() if isinstance(s, ast.Break) else _Continue()
+                # 実行時の条件の中: 目印の変数を立て、残りの文・繰り返しを目印で囲む
+                if isinstance(s, ast.Break):
+                    self.emit("%s = 1" % f["brk"])
+                    f["b"] = True
+                else:
+                    self.emit("%s = 1" % f["cnt"])
+                    f["c_used"] = True
+                f["flags"] += 1
+                return True
         return False
+
+    def block(self, stmts, tail: bool = False):
+        """文の並び。break・continue・return のあとの文（実行されない）は変換しない"""
+        out = []
+        for st in stmts:
+            if isinstance(st, ast.Return) and not tail and self.ret_frame() is not None:
+                self.loop_return(st)
+                break
+            out.append(st)
+            if isinstance(st, (ast.Break, ast.Continue)):
+                break
+        return super().block(out, tail)
+
+    def ret_frame(self):
+        """ループの中の return を受ける関数の目印（関数の境目より内側）"""
+        for f in reversed(self.frames):
+            if f == "func":
+                return None
+            if isinstance(f, dict) and f["kind"] == "ret":
+                return f
+        return None
+
+    def loop_return(self, st: ast.Return):
+        """ループの中の return: 戻り値を入れ、戻った目印を立てて、ループを抜ける"""
+        fr = self.ret_frame()
+        self.set_return(st, fr["ret"])
+        self.emit("%s = 1" % fr["done"])
+        self.stmt(ast.copy_location(ast.Break(), st))
+
+    def after_loop(self, node):
+        """ループの中で return したら、外側のループも抜ける（関数の中の入れ子のループ）"""
+        fr = self.ret_frame()
+        if fr is None:
+            return
+        idx = self.frames.index(fr)
+        if any(f == "loop" or isinstance(f, dict) and f["kind"] == "unroll" for f in self.frames[idx + 1:]):
+            self.env[fr["name"]] = PC.Value("num", fr["done"])
+            test = ast.Name(id=fr["name"], ctx=ast.Load())
+            self.stmt(ast.copy_location(ast.If(test=test, body=[ast.Break()], orelse=[]), node))
 
     # ---- try（IN にない番号を読むと KeyError）
     _CATCH = {"KeyError", "LookupError", "Exception", "BaseException"}
@@ -796,8 +1171,11 @@ class ExprespyTranslator(PC.Translator):
                 continue
             if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == "IN" \
                     and isinstance(n.ctx, ast.Load):
-                if self.index_of(n.slice, "IN[…]") not in self.in_kinds:
-                    return True
+                try:
+                    if self.index_of(n.slice, "IN[…]") not in self.in_kinds:
+                        return True
+                except _Dynamic:
+                    PC._fail("try の中で、番号が実行時に決まる IN[…] を読んでいます（KeyError になるかが分かりません）", n)
         return False
 
     def try_stmt(self, s: ast.Try):
@@ -848,9 +1226,15 @@ class ExprespyTranslator(PC.Translator):
         return None if v is None or isinstance(v, complex) else float(v)
 
     def truth(self, v, node) -> str:
-        """条件に使う値の式（None は偽）"""
+        """条件に使う値の式（None は偽。文字列・辞書は空なら偽）"""
         if v.kind == "none":
             return "0"
+        if v.kind == "str":
+            if v.extra.get("s") is None:
+                PC._fail("中身が変換の時点で決まらない文字列を条件に使っています", node)
+            return "1" if v.extra["s"] else "0"
+        if v.kind == "dict":
+            return "1" if v.extra["items"] else "0"
         if v.kind == "unit":
             return v.code
         if v.kind != "num":
@@ -887,6 +1271,19 @@ class ExprespyTranslator(PC.Translator):
         """None がかかわる式（None・is / is not / == / !=・not・and / or）。かかわらなければ None"""
         if isinstance(e, ast.Constant) and e.value is None:
             return PC.Value("none", "None")
+        if isinstance(e, ast.Compare) and any(self.is_text(x) for x in [e.left] + e.comparators):
+            return self.const_compare(e)
+        if isinstance(e, ast.Compare) and len(e.ops) == 1 and isinstance(e.ops[0], (ast.In, ast.NotIn)) and (
+                self.dict_of(e.comparators[0]) is not None):
+            d = self.dict_of(e.comparators[0])
+            try:
+                has = self.dict_key(e.left, e) in d.extra["items"]
+                code = "1" if has else "0"
+            except _Dynamic:
+                k = self.num_code(self.expr(e.left), e)
+                nums = [x for x in d.extra["items"] if isinstance(x, (int, float))]
+                code = "(%s)" % " or ".join("(%s == %s)" % (k, PC._num_text(x)) for x in nums) if nums else "0"
+            return PC.Value("num", code if isinstance(e.ops[0], ast.In) else "(not %s)" % code)
         if isinstance(e, ast.Compare) and len(e.ops) == 1 and isinstance(e.ops[0], (ast.Is, ast.IsNot, ast.Eq, ast.NotEq)):
             a, b = self.expr(e.left), self.expr(e.comparators[0])
             if a.kind == "none" or b.kind == "none":
@@ -937,6 +1334,67 @@ class ExprespyTranslator(PC.Translator):
                             "(%s)" % (" and " if is_and else " or ").join(parts))
         return None
 
+    _STR_METHODS = {"upper", "lower", "strip", "lstrip", "rstrip", "replace", "format", "title", "capitalize", "zfill",
+                    "join"}
+
+    def is_text(self, node) -> bool:
+        """文字列の式か。式を変換せず、書き方の形だけで見る（文字列・f 文字列・文字列の変数・その + / % /
+        添字・str()・文字列のメソッド・文字列を含むタプル）"""
+        if isinstance(node, _Pre):
+            return node.value.kind == "str"
+        if isinstance(node, (ast.Constant, ast.JoinedStr)):
+            return isinstance(node, ast.JoinedStr) or isinstance(node.value, str)
+        if isinstance(node, ast.Name):
+            return node.id in self.env and self.env[node.id].kind == "str"
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            return any(self.is_text(x) for x in node.elts)
+        if isinstance(node, ast.BinOp):
+            return self.is_text(node.left)
+        if isinstance(node, ast.Subscript):
+            return self.is_text(node.value)
+        if isinstance(node, ast.Call):
+            f = node.func
+            if isinstance(f, ast.Name):
+                return f.id == "str" and f.id not in self.env
+            return isinstance(f, ast.Attribute) and f.attr in self._STR_METHODS and self.is_text(f.value)
+        return False
+
+    def const_compare(self, e: ast.Compare):
+        """文字列を含む比較（==・!=・<・in など）を変換の時点で行う。中身が決まらない値と比べるときは、
+        種類の違い（文字列と数）だけで決まる == / != に限る"""
+        def value(node):
+            if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+                return tuple(value(x) for x in node.elts)
+            d = self.dict_of(node)
+            if d is not None:
+                return tuple(d.extra["items"])
+            v = self.expr(node)
+            try:
+                return self.py_const(v)
+            except _Dynamic:
+                return _UNKNOWN_STR if v.kind == "str" else _UNKNOWN
+        vals = [value(x) for x in [e.left] + e.comparators]
+        result = True
+        for op, a, b in zip(e.ops, vals, vals[1:]):
+            if _UNKNOWN in (a, b) or _UNKNOWN_STR in (a, b):
+                str_a, str_b = isinstance(a, str) or a is _UNKNOWN_STR, isinstance(b, str) or b is _UNKNOWN_STR
+                if isinstance(op, (ast.Eq, ast.NotEq)) and str_a != str_b:
+                    ok = isinstance(op, ast.NotEq)       # 文字列と数は等しくない
+                else:
+                    PC._fail("中身が変換の時点で決まらない値と文字列を比べています", e)
+            else:
+                ops = {ast.Eq: lambda x, y: x == y, ast.NotEq: lambda x, y: x != y, ast.Lt: lambda x, y: x < y,
+                       ast.LtE: lambda x, y: x <= y, ast.Gt: lambda x, y: x > y, ast.GtE: lambda x, y: x >= y,
+                       ast.In: lambda x, y: x in y, ast.NotIn: lambda x, y: x not in y,
+                       ast.Is: lambda x, y: x is y if x is None or y is None else x == y,
+                       ast.IsNot: lambda x, y: x is not y if x is None or y is None else x != y}
+                try:
+                    ok = ops[type(op)](a, b)
+                except TypeError:
+                    PC._fail("比べられない値どうしを比べています", e)
+            result = result and ok
+        return PC.Value("num", "1" if result else "0")
+
     def num_code(self, v, node) -> str:
         if v.kind not in ("num", "unit"):
             PC._fail("数以外（%s）を比べています" % v.kind, node)
@@ -960,7 +1418,10 @@ class ExprespyTranslator(PC.Translator):
         if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "IN" and f.attr == "get":
             if not e.args or len(e.args) > 2 or e.keywords:
                 PC._fail("IN.get(番号[, 既定値]) の形で書いてください", e)
-            k = self.index_of(e.args[0], "IN.get")
+            try:
+                k = self.index_of(e.args[0], "IN.get")
+            except _Dynamic:
+                return self.dynamic_input(e.args[0], e.args[1] if len(e.args) > 1 else None, e)
             if k in self.in_kinds:
                 return self.input_value(k, e)
             if len(e.args) < 2:
@@ -968,11 +1429,107 @@ class ExprespyTranslator(PC.Translator):
             return self.expr(e.args[1])
         if isinstance(f, ast.Name) and f.id in self.funcs and f.id not in self.env:
             return self.inline(f.id, e)
+        v = self.text_or_dict_call(e)
+        if v is not None:
+            return v
         if isinstance(f, ast.Name) and f.id not in self.env:
             v = self.builtin(f.id, e)
             if v is not None:
                 return v
         return super().call(e)
+
+    def text_or_dict_call(self, e: ast.Call):
+        """str()・dict()・文字列のメソッド・辞書のメソッド。対象外なら None"""
+        f = e.func
+        if isinstance(f, ast.Name) and f.id not in self.env:
+            if f.id == "str" and len(e.args) == 1:
+                v = self.expr(e.args[0])
+                try:
+                    x = self.py_const(v)
+                    return self.str_value(x if isinstance(x, str) else repr(x) if isinstance(x, float) else str(x))
+                except _Dynamic:
+                    return self.str_value(None)
+            if f.id == "dict" and len(e.args) <= 1:
+                items = {}
+                if e.args:
+                    src = self.dict_of(e.args[0])
+                    pairs = list(src.extra["items"].items()) if src is not None else None
+                    if pairs is None:
+                        seq = self.static_items(e.args[0])
+                        if seq is None:
+                            PC._fail("dict(…) は辞書・(キー, 値) の並び・名前つきの引数から作れます", e)
+                        pairs = [(self.py_const(k), v) for k, v in seq]
+                    for k, v in pairs:
+                        items[k] = self.dict_slot(v, e)
+                for kw in e.keywords:
+                    items[kw.arg] = self.dict_slot(self.expr(kw.value), e)
+                return PC.Value("dict", "", items=items)
+            if f.id == "len" and len(e.args) == 1:
+                d = self.dict_of(e.args[0])
+                if d is not None:
+                    return PC.Value("num", str(len(d.extra["items"])))
+                if self.is_text(e.args[0]):
+                    return PC.Value("num", str(len(self.str_of(e.args[0]))))
+            if f.id == "print":
+                return PC.Value("none", "None")
+            return None
+        if not isinstance(f, ast.Attribute):
+            return None
+        d = self.dict_of(f.value)
+        if d is not None:
+            items = d.extra["items"]
+            if f.attr == "get" and 1 <= len(e.args) <= 2:
+                default = self.expr(e.args[1]) if len(e.args) > 1 else None
+                return self.dict_get(d, e.args[0], default, e, strict=False)
+            if f.attr in ("pop", "setdefault") and e.args:
+                key = self.dict_key(e.args[0], e)
+                if key in items:
+                    v = items[key]
+                    if f.attr == "pop":
+                        del items[key]
+                    return v
+                if len(e.args) < 2:
+                    if f.attr == "setdefault":
+                        items[key] = PC.Value("none", "None")
+                        return items[key]
+                    PC._fail("辞書にキー %r がありません（KeyError）" % (key,), e)
+                v = self.dict_slot(self.expr(e.args[1]), e)
+                if f.attr == "setdefault":
+                    items[key] = v
+                return v
+            if f.attr == "update":
+                src = self.dict_of(e.args[0]) if e.args else None
+                if e.args and src is None:
+                    PC._fail("update には辞書を渡してください", e)
+                for k, v in (list(src.extra["items"].items()) if src is not None else []) + [
+                        (kw.arg, self.expr(kw.value)) for kw in e.keywords]:
+                    self.dict_assign(ast.copy_location(ast.Subscript(value=_Pre(d), slice=_Pre(self.key_value(k)),
+                                                                     ctx=ast.Store()), e), _Pre(v), e)
+                return PC.Value("none", "None")
+            if f.attr == "copy" and not e.args:
+                return PC.Value("dict", "", items={k: self.dict_slot(v, e) for k, v in items.items()})
+            if f.attr in ("keys", "values", "items"):
+                PC._fail("辞書の %s() は for・list・len などの中で使ってください" % f.attr, e)
+            PC._fail("辞書の %s は変換できません" % f.attr, e)
+        if self.is_text(f.value):
+            text = self.str_of(f.value)
+            args = [self.py_const(self.expr(a)) for a in e.args]
+            kw = {k.arg: self.py_const(self.expr(k.value)) for k in e.keywords}
+            if f.attr in ("upper", "lower", "strip", "lstrip", "rstrip", "startswith", "endswith", "replace", "format",
+                          "split", "join", "find", "count", "isdigit", "title", "capitalize", "zfill"):
+                try:
+                    r = getattr(text, f.attr)(*args, **kw)
+                except (TypeError, ValueError, IndexError, KeyError) as exc:
+                    PC._fail("文字列の %s を計算できません（%s）" % (f.attr, exc), e)
+                if isinstance(r, bool):
+                    return PC.Value("num", "1" if r else "0")
+                if isinstance(r, int):
+                    return PC.Value("num", str(r))
+                if isinstance(r, list):
+                    PC._fail("文字列の split の結果は、変換の時点の並びとしては使えません", e)
+                return self.str_value(r)
+            PC._fail("文字列の %s は変換できません" % f.attr, e)
+        return None
 
     def builtin(self, name: str, e: ast.Call):
         """並びを受け取る組み込み関数（sum・len・min・max・any・all・list・tuple）。対象外なら None"""
@@ -1008,6 +1565,9 @@ class ExprespyTranslator(PC.Translator):
         if isinstance(c.func, ast.Name) and c.func.id in self.funcs and c.func.id not in self.env:
             self.inline(c.func.id, c)
             return
+        if isinstance(c.func, ast.Attribute) and self.dict_of(c.func.value) is not None:
+            self.text_or_dict_call(c)                     # d.update(…)・d.pop(…) など
+            return
         return super().call_stmt(c)
 
     def inline(self, name: str, e: ast.Call):
@@ -1036,13 +1596,14 @@ class ExprespyTranslator(PC.Translator):
         for n in sorted(local_names):
             self.names[n] = self.fresh(n.strip("_") or "v")
         self.inlining.append(name)
+        self.frames.append("func")
         try:
             for p, v in zip(params, args):
                 var = self.names[p]
                 if v.kind == "tm":
                     v = self.tm_matrix(v)
-                if v.kind == "none":
-                    self.env[p] = v                      # None は変換の時点で分かるので、変数にしない
+                if v.kind in ("none", "str", "dict"):
+                    self.env[p] = v                      # None・文字列・辞書は変換の時点で追う（辞書は Python と同じく共有）
                     continue
                 if v.kind not in ("num", "unit", "vec", "pt", "mat", "quat", "eul"):
                     PC._fail("関数 %s に渡せない値（%s）を渡しています" % (name, v.kind), e)
@@ -1052,6 +1613,7 @@ class ExprespyTranslator(PC.Translator):
                 return self.expr(body)
             return self.function_body(name, body)
         finally:
+            self.frames.pop()
             self.inlining.pop()
             self.env, self.names = saved_env, saved_names
 
@@ -1075,6 +1637,7 @@ class ExprespyTranslator(PC.Translator):
                         run(body if known else orelse)
                         return
                     self.emit("if %s:" % self.cond(s.test))
+                    self.frames.append("if")
                     for part, last in ((body, False), (orelse, True)):
                         if last:
                             if not part:
@@ -1086,11 +1649,32 @@ class ExprespyTranslator(PC.Translator):
                         if len(self.lines) == n:
                             self.emit("pass")
                         self.indent -= 1
+                    self.frames.pop()
                     return
                 if _has_return(s):
-                    PC._fail("ループの中の return は変換できません", s)
+                    # ループ（try など）の中の return: 戻った目印を置き、抜けたあとの文は戻っていなければ
+                    done = self.fresh("done")
+                    self.emit("%s = 0" % done)
+                    fr = {"kind": "ret", "ret": ret, "done": done, "name": "__%s" % done}
+                    self.frames.append(fr)
+                    try:
+                        self.stmt(s)
+                    finally:
+                        self.frames.remove(fr)
+                    rest = list(block[k + 1:])
+                    if rest:
+                        self.emit("if not %s:" % done)
+                        self.indent += 1
+                        n = len(self.lines)
+                        run(rest)
+                        if len(self.lines) == n:
+                            self.emit("pass")
+                        self.indent -= 1
+                    return
                 self.stmt(s)
         run(list(stmts))
+        if ret.get("const") is not None:
+            return ret["const"]
         if "var" not in ret:
             return PC.Value("none")
         return PC.Value(ret["kind"], ret["var"], **ret["extra"])
@@ -1103,6 +1687,14 @@ class ExprespyTranslator(PC.Translator):
             v = self.tm_matrix(v)
         if v.kind == "unit":
             v = PC.Value("num", v.code)
+        if v.kind in ("none", "str", "dict"):
+            last_func = len(self.frames) - 1 - self.frames[::-1].index("func")
+            if "var" in ret or ret.get("const") is not None or "if" in self.frames[last_func:]:
+                PC._fail("実行時の分かれ道で、None・文字列・辞書を返しています（変換できません）", s)
+            ret["const"] = v
+            return
+        if ret.get("const") is not None:
+            PC._fail("return の値の種類が違います（%s と %s）" % (ret["const"].kind, v.kind), s)
         if "var" not in ret:
             ret.update(var=self.fresh("ret"), kind=v.kind, extra=dict(v.extra))
         elif ret["kind"] != v.kind and {ret["kind"], v.kind} != {"vec", "pt"}:
@@ -1129,7 +1721,7 @@ def translate(code: str, in_kinds: Dict[int, str], out_connected=(), type_name: 
         raise ExprespyError("Python API 1.0（api1）と 2.0（api）を混ぜたコードは変換できません")
     api = 1 if "api1" in names else 2
     tree = PC.AliasResolver(tree).resolve(tree)
-    tr = ExprespyTranslator(tree, in_kinds, api)
+    tr = ExprespyTranslator(tree, in_kinds, api, out_connected)
     try:
         lines = tr.translate()
     except PC.ConvertError as exc:
