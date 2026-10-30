@@ -1419,6 +1419,78 @@
     "tx ← pyEx3（exprespy）",
     "ty ← pyEx3（exprespy）"
    ]
+  },
+  {
+   "name":"jF",
+   "path":"|jF",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "t ← aliasEx（exprespy）",
+    "r ← aliasEx（exprespy）"
+   ]
   }
  ],
  "meshes":[],
@@ -1434,7 +1506,7 @@
  "materials":[],
  "textures":[],
  "warnings":[
-  "exprespy 12 個（posCnsEx、oriCnsEx、aimCnsEx、aimUpCnsEx、timeEx ほか）のコードを解析して評価します。",
+  "exprespy 13 個（posCnsEx、oriCnsEx、aimCnsEx、aimUpCnsEx、timeEx ほか）のコードを解析して評価します。",
   "exprespy pyEx: 15 行目: while は 10000 回までで打ち切ります。",
   "exprespy pyEx2: 6 行目: IN[…] の番号・キーがないときは 0 にします（Maya では KeyError）。",
   "exprespy pyEx3: 27 行目: 再帰 fact は 16 段まで展開します（それより深いと、そのフレームは計算の誤りになります）。",
@@ -1445,8 +1517,8 @@
   "jM: tx ← badMesh（exprespy） が接続で決まるため、ファイルに値がありません。バインドポーズの情報もないため、既定値（移動 0・回転 0）で表示しています。"
  ],
  "stats":{
-  "nodes":20,
-  "joints":16,
+  "nodes":21,
+  "joints":17,
   "meshes":0,
   "curves":0,
   "cameras":0,
@@ -1457,7 +1529,7 @@
   "textures":0,
   "texturesMissing":0,
   "bindPoseNodes":0,
-  "drivenNodes":18
+  "drivenNodes":19
  },
  "animation":{
   "fps":24.0,
@@ -2107,6 +2179,36 @@
      0.0,
      0.0
     ]
+   },
+   {
+    "node":20,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
    }
   ],
   "graph":[
@@ -2161,7 +2263,7 @@
     },
     "inputs":{
      "t":{
-      "node":20,
+      "node":21,
       "attr":"o0"
      }
     }
@@ -2173,7 +2275,7 @@
     "dag":5,
     "inputs":{
      "r":{
-      "node":21,
+      "node":22,
       "attr":"o0"
      }
     }
@@ -2185,7 +2287,7 @@
     "dag":6,
     "inputs":{
      "r":{
-      "node":22,
+      "node":23,
       "attr":"o0"
      }
     }
@@ -2197,7 +2299,7 @@
     "dag":7,
     "inputs":{
      "r":{
-      "node":23,
+      "node":24,
       "attr":"o0"
      }
     }
@@ -2209,7 +2311,7 @@
     "dag":8,
     "inputs":{
      "ty":{
-      "node":24,
+      "node":25,
       "attr":"o0"
      }
     }
@@ -2221,7 +2323,7 @@
     "dag":9,
     "inputs":{
      "tx":{
-      "node":26,
+      "node":27,
       "attr":"o0"
      }
     }
@@ -2233,7 +2335,7 @@
     "dag":10,
     "inputs":{
      "r":{
-      "node":27,
+      "node":28,
       "attr":"o0"
      }
     }
@@ -2257,15 +2359,15 @@
     "dag":13,
     "inputs":{
      "tx":{
-      "node":28,
+      "node":29,
       "attr":"o0"
      },
      "ty":{
-      "node":28,
+      "node":29,
       "attr":"o1"
      },
      "tz":{
-      "node":28,
+      "node":29,
       "attr":"o2"
      }
     }
@@ -2277,15 +2379,15 @@
     "dag":14,
     "inputs":{
      "tx":{
-      "node":29,
+      "node":30,
       "attr":"o0"
      },
      "ty":{
-      "node":29,
+      "node":30,
       "attr":"o1"
      },
      "tz":{
-      "node":29,
+      "node":30,
       "attr":"o2"
      }
     }
@@ -2297,7 +2399,7 @@
     "dag":15,
     "inputs":{
      "tx":{
-      "node":29,
+      "node":30,
       "attr":"o3"
      }
     }
@@ -2309,15 +2411,15 @@
     "dag":16,
     "inputs":{
      "tx":{
-      "node":30,
+      "node":31,
       "attr":"o0"
      },
      "ty":{
-      "node":30,
+      "node":31,
       "attr":"o1"
      },
      "tz":{
-      "node":30,
+      "node":31,
       "attr":"o2"
      }
     }
@@ -2329,11 +2431,11 @@
     "dag":17,
     "inputs":{
      "tx":{
-      "node":30,
+      "node":31,
       "attr":"o3"
      },
      "ty":{
-      "node":30,
+      "node":31,
       "attr":"o4"
      }
     }
@@ -2345,15 +2447,15 @@
     "dag":18,
     "inputs":{
      "tx":{
-      "node":31,
+      "node":32,
       "attr":"o0"
      },
      "ty":{
-      "node":31,
+      "node":32,
       "attr":"o1"
      },
      "tz":{
-      "node":31,
+      "node":32,
       "attr":"o2"
      }
     }
@@ -2365,17 +2467,33 @@
     "dag":19,
     "inputs":{
      "tx":{
-      "node":31,
+      "node":32,
       "attr":"o3"
      },
      "ty":{
-      "node":31,
+      "node":32,
       "attr":"o4"
      }
     }
    },
    {
     "id":20,
+    "name":"jF",
+    "type":"joint",
+    "dag":20,
+    "inputs":{
+     "t":{
+      "node":33,
+      "attr":"o0"
+     },
+     "r":{
+      "node":33,
+      "attr":"o1"
+     }
+    }
+   },
+   {
+    "id":21,
     "name":"posCnsEx",
     "type":"exprespy",
     "dag":-1,
@@ -2416,7 +2534,7 @@
     }
    },
    {
-    "id":21,
+    "id":22,
     "name":"oriCnsEx",
     "type":"exprespy",
     "dag":-1,
@@ -2445,7 +2563,7 @@
     }
    },
    {
-    "id":22,
+    "id":23,
     "name":"aimCnsEx",
     "type":"exprespy",
     "dag":-1,
@@ -2490,7 +2608,7 @@
     }
    },
    {
-    "id":23,
+    "id":24,
     "name":"aimUpCnsEx",
     "type":"exprespy",
     "dag":-1,
@@ -2551,7 +2669,7 @@
     }
    },
    {
-    "id":24,
+    "id":25,
     "name":"timeEx",
     "type":"exprespy",
     "dag":-1,
@@ -2561,7 +2679,7 @@
     }
    },
    {
-    "id":25,
+    "id":26,
     "name":"chainA",
     "type":"exprespy",
     "dag":-1,
@@ -2574,20 +2692,20 @@
     }
    },
    {
-    "id":26,
+    "id":27,
     "name":"chainB",
     "type":"exprespy",
     "dag":-1,
     "def":"exprespy:5cd71269318a",
     "inputs":{
      "i0":{
-      "node":25,
+      "node":26,
       "attr":"o0"
      }
     }
    },
    {
-    "id":27,
+    "id":28,
     "name":"quatEx",
     "type":"exprespy",
     "dag":-1,
@@ -2600,7 +2718,7 @@
     }
    },
    {
-    "id":28,
+    "id":29,
     "name":"limitEx",
     "type":"exprespy",
     "dag":-1,
@@ -2613,7 +2731,7 @@
     }
    },
    {
-    "id":29,
+    "id":30,
     "name":"pyEx",
     "type":"exprespy",
     "dag":-1,
@@ -2630,7 +2748,7 @@
     }
    },
    {
-    "id":30,
+    "id":31,
     "name":"pyEx2",
     "type":"exprespy",
     "dag":-1,
@@ -2648,7 +2766,7 @@
     }
    },
    {
-    "id":31,
+    "id":32,
     "name":"pyEx3",
     "type":"exprespy",
     "dag":-1,
@@ -2656,6 +2774,23 @@
     "attrs":{
      "i1":2.0,
      "i2":0.5
+    },
+    "inputs":{
+     "i0":{
+      "node":1,
+      "attr":"tx"
+     }
+    }
+   },
+   {
+    "id":33,
+    "name":"aliasEx",
+    "type":"exprespy",
+    "dag":-1,
+    "def":"exprespy:e458332fbdf2",
+    "attrs":{
+     "i1":0.5,
+     "i2":0.2
     },
     "inputs":{
      "i0":{
@@ -9175,6 +9310,597 @@
       ]
      ]
     ]
+   },
+   "exprespy:e458332fbdf2":{
+    "type":"exprespy:e458332fbdf2",
+    "attributes":[
+     {
+      "name":"i0",
+      "short":"i0",
+      "type":"double",
+      "default":0.0
+     },
+     {
+      "name":"i1",
+      "short":"i1",
+      "type":"double",
+      "default":0.0
+     },
+     {
+      "name":"i2",
+      "short":"i2",
+      "type":"double",
+      "default":0.0
+     },
+     {
+      "name":"o0",
+      "short":"o0",
+      "type":"double3",
+      "output":true,
+      "default":[
+       0.0,
+       0.0,
+       0.0
+      ],
+      "components":[
+       "o0x",
+       "o0y",
+       "o0z"
+      ]
+     },
+     {
+      "name":"o1",
+      "short":"o1",
+      "type":"double3",
+      "output":true,
+      "default":[
+       0.0,
+       0.0,
+       0.0
+      ],
+      "components":[
+       "o1x",
+       "o1y",
+       "o1z"
+      ]
+     }
+    ],
+    "ir":[
+     [
+      "set",
+      [
+       "l",
+       "_v6"
+      ],
+      [
+       "a",
+       [
+        [
+         "i0",
+         null
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "_t5"
+      ],
+      [
+       "b",
+       "/",
+       [
+        "b",
+        "-",
+        [
+         "l",
+         "_v6"
+        ],
+        [
+         "n",
+         0.0
+        ]
+       ],
+       [
+        "b",
+        "-",
+        [
+         "n",
+         2.0
+        ],
+        [
+         "n",
+         0.0
+        ]
+       ]
+      ]
+     ],
+     [
+      "if",
+      [
+       "b",
+       "<",
+       [
+        "l",
+        "_t5"
+       ],
+       [
+        "n",
+        0
+       ]
+      ],
+      [
+       [
+        "set",
+        [
+         "l",
+         "_ret7"
+        ],
+        [
+         "n",
+         0
+        ]
+       ]
+      ],
+      [
+       [
+        "if",
+        [
+         "b",
+         ">",
+         [
+          "l",
+          "_t5"
+         ],
+         [
+          "n",
+          1
+         ]
+        ],
+        [
+         [
+          "set",
+          [
+           "l",
+           "_ret7"
+          ],
+          [
+           "n",
+           1
+          ]
+         ]
+        ],
+        [
+         [
+          "set",
+          [
+           "l",
+           "_ret7"
+          ],
+          [
+           "l",
+           "_t5"
+          ]
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "k"
+      ],
+      [
+       "l",
+       "_ret7"
+      ]
+     ],
+     [
+      "set",
+      [
+       "o",
+       [
+        [
+         "o0",
+         null
+        ]
+       ]
+      ],
+      [
+       "v",
+       [
+        [
+         "l",
+         "k"
+        ],
+        [
+         "b",
+         "+",
+         [
+          "a",
+          [
+           [
+            "i1",
+            null
+           ]
+          ]
+         ],
+         [
+          "b",
+          "*",
+          [
+           "n",
+           0.5
+          ],
+          [
+           "l",
+           "k"
+          ]
+         ]
+        ],
+        [
+         "n",
+         1.0
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "ax"
+      ],
+      [
+       "b",
+       "*",
+       [
+        "n",
+        0.2
+       ],
+       [
+        "l",
+        "k"
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "ay"
+      ],
+      [
+       "a",
+       [
+        [
+         "i2",
+         null
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "az"
+      ],
+      [
+       "n",
+       0.1
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "_r8"
+      ],
+      [
+       "v",
+       [
+        [
+         "n",
+         0.0
+        ],
+        [
+         "n",
+         0.0
+        ],
+        [
+         "n",
+         0.0
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "_q9"
+      ],
+      [
+       "v",
+       [
+        [
+         "l",
+         "ax"
+        ],
+        [
+         "l",
+         "ay"
+        ],
+        [
+         "l",
+         "az"
+        ],
+        [
+         "n",
+         0
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "_ql10"
+      ],
+      [
+       "c",
+       "length",
+       [
+        [
+         "v",
+         [
+          [
+           "i",
+           [
+            "l",
+            "_q9"
+           ],
+           [
+            "n",
+            0
+           ]
+          ],
+          [
+           "i",
+           [
+            "l",
+            "_q9"
+           ],
+           [
+            "n",
+            1
+           ]
+          ],
+          [
+           "i",
+           [
+            "l",
+            "_q9"
+           ],
+           [
+            "n",
+            2
+           ]
+          ]
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "_qk11"
+      ],
+      [
+       "b",
+       "*",
+       [
+        "c",
+        "exp",
+        [
+         [
+          "i",
+          [
+           "l",
+           "_q9"
+          ],
+          [
+           "n",
+           3
+          ]
+         ]
+        ]
+       ],
+       [
+        "if",
+        [
+         "b",
+         ">",
+         [
+          "l",
+          "_ql10"
+         ],
+         [
+          "n",
+          1e-12
+         ]
+        ],
+        [
+         "b",
+         "/",
+         [
+          "c",
+          "sin",
+          [
+           [
+            "l",
+            "_ql10"
+           ]
+          ]
+         ],
+         [
+          "l",
+          "_ql10"
+         ]
+        ],
+        [
+         "n",
+         1.0
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "_q12"
+      ],
+      [
+       "v",
+       [
+        [
+         "b",
+         "*",
+         [
+          "i",
+          [
+           "l",
+           "_q9"
+          ],
+          [
+           "n",
+           0
+          ]
+         ],
+         [
+          "l",
+          "_qk11"
+         ]
+        ],
+        [
+         "b",
+         "*",
+         [
+          "i",
+          [
+           "l",
+           "_q9"
+          ],
+          [
+           "n",
+           1
+          ]
+         ],
+         [
+          "l",
+          "_qk11"
+         ]
+        ],
+        [
+         "b",
+         "*",
+         [
+          "i",
+          [
+           "l",
+           "_q9"
+          ],
+          [
+           "n",
+           2
+          ]
+         ],
+         [
+          "l",
+          "_qk11"
+         ]
+        ],
+        [
+         "b",
+         "*",
+         [
+          "c",
+          "exp",
+          [
+           [
+            "i",
+            [
+             "l",
+             "_q9"
+            ],
+            [
+             "n",
+             3
+            ]
+           ]
+          ]
+         ],
+         [
+          "c",
+          "cos",
+          [
+           [
+            "l",
+            "_ql10"
+           ]
+          ]
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "l",
+       "_r8"
+      ],
+      [
+       "c",
+       "euler_from_quat",
+       [
+        [
+         "l",
+         "_q12"
+        ],
+        [
+         "n",
+         0
+        ]
+       ]
+      ]
+     ],
+     [
+      "set",
+      [
+       "o",
+       [
+        [
+         "o1",
+         null
+        ]
+       ]
+      ],
+      [
+       "l",
+       "_r8"
+      ]
+     ]
+    ]
    }
   },
   "fallback":[],
@@ -9211,9 +9937,9 @@
    "curves":3,
    "keys":6,
    "channels":3,
-   "nodes":16,
-   "graphNodes":32,
-   "seconds":0.002
+   "nodes":17,
+   "graphNodes":34,
+   "seconds":0.0025
   }
  }
 }

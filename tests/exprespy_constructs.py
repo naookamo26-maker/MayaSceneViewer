@@ -100,4 +100,10 @@ CASES = [
  ("except を分ける", "try:\n    a = IN[0] / IN[1]\n    b = math.acos(IN[2])\nexcept ZeroDivisionError:\n    a, b = 0, 0\nexcept ValueError:\n    a, b = 1, 1\nOUT[0] = a + b"),
  ("再帰（定数）", "def fact(n):\n    return 1 if n <= 1 else n * fact(n - 1)\nOUT[0] = fact(5) * IN[0]"),
  ("再帰（実行時）", "def fact(n):\n    if n <= 1:\n        return 1\n    return n * fact(n - 1)\nOUT[0] = fact(IN[0])"),
+    # API のクラス・関数の別名と、式の中の setValue
+    ("クラスの別名", "if not COUNT:\n    V = api.MVector\nOUT[0] = V(IN[0], 0, 1) + V.kXaxisVector"),
+    ("関数の別名", "sn = math.sin\nOUT[0] = sn(IN[0])"),
+    ("別名の別名", "import maya.api.OpenMaya as om\nVec = om.MVector\nV2 = Vec\nOUT[0] = V2(1, 2, 3)"),
+    ("式の中の setValue", "OUT[0] = api.MEulerRotation().setValue(api.MQuaternion(IN[0], 0, 0, 1).normal())"),
+    ("変数の setValue を式で", "r = api.MEulerRotation(0, 0, 0, 2)\nr2 = r.setValue(api.MMatrix())\nOUT[0] = r2"),
 ]

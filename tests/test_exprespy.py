@@ -224,12 +224,12 @@ class SceneTest(unittest.TestCase):
         anim = self.scene["animation"]
         graph = {g["name"]: g for g in anim["graph"] if g["type"] == "exprespy"}
         for name in ("posCnsEx", "oriCnsEx", "aimCnsEx", "aimUpCnsEx", "timeEx", "chainA", "chainB", "quatEx",
-                     "limitEx", "pyEx", "pyEx2", "pyEx3"):
+                     "limitEx", "pyEx", "pyEx2", "pyEx3", "aliasEx"):
             self.assertRegex(graph[name].get("def", ""), r"^exprespy:[0-9a-f]{12}$", name)
             self.assertIn(graph[name]["def"], anim["nodeDefs"])
         self.assertNotIn("def", graph.get("badCmds", {}))
         warnings = "\n".join(self.scene["warnings"])
-        self.assertIn("exprespy 12 個", warnings)
+        self.assertIn("exprespy 13 個", warnings)
         self.assertIn("exprespy badCmds のコードを解析できません（1 行目: maya.cmds", warnings)
         self.assertIn("exprespy badMesh のコードを解析できません（形状（boxShape.o）", warnings)
         anim_warnings = "\n".join(anim["warnings"])
