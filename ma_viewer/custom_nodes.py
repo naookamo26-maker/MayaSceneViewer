@@ -134,6 +134,47 @@ def apply_node_map(ms, mapping: Dict[str, dict]) -> Dict[str, List[str]]:
     return applied
 
 
+# Maya の標準のノードの型のうち、ビューアが評価しないことのあるもの（自作ノードの割り当ての雛形を出さない）。
+# ビューアが評価する型（rig の SUPPORTED_DG など）も標準の型として扱う
+_STANDARD_TYPES = frozenset("""
+    follicle hairSystem nucleus nRigid nCloth nParticle particle pfxHair hairConstraint dynamicConstraint
+    blendShape nonLinear deformBend deformTwist deformSquash deformFlare deformSine deformWave deltaMush tension
+    ffd lattice baseLattice wrap shrinkWrap proximityWrap sculpt softMod softModHandle jiggle textureDeformer
+    solidify morph cluster clusterHandle jointCluster skinCluster wire tweak groupParts groupId transformGeometry
+    uvPin proximityPin pointOnSurfaceInfo closestPointOnSurface closestPointOnMesh nearestPointOnCurve
+    pointOnCurveInfo curveInfo motionPath tangentConstraint normalConstraint geometryConstraint
+    pointOnPolyConstraint rigidConstraint symmetryConstraint ikSpringSolver ikSplineSolver ikRPsolver ikSCsolver
+    ikMCsolver ikPASolver hikSolver ikHandle ikEffector angleBetween arcLengthDimension distanceDimShape
+    distanceBetween curveFromMeshEdge curveFromSurfaceIso curveFromSurfaceUV curveFromMeshCoM loft extrude revolve
+    rebuildSurface rebuildCurve nurbsTessellate planarTrimSurface offsetCurve extendCurve attachCurve detachCurve
+    fitBspline makeTextCurves makeNurbCircle makeNurbSphere makeNurbPlane makeNurbCylinder reverseCurve subCurve
+    nurbsCurve nurbsSurface mesh locator camera joint transform remapColor remapHsv rgbToHsv hsvToRgb luminance
+    contrast gammaCorrect samplerInfo particleSamplerInfo ramp file place2dTexture place3dTexture projection
+    layeredTexture noise checker setRange remapValue clamp condition reverse multiplyDivide plusMinusAverage
+    blendColors blendWeighted blendTwoAttr pairBlend choice chooser frameCache timeToUnitConversion
+    unitToTimeConversion unitConversion mute character characterOffset clipLibrary clipScheduler animClip
+    dagPose objectSet partition shadingEngine materialInfo lambert blinn phong phongE anisotropic surfaceShader
+    standardSurface openPBRSurface usdPreviewSurface displayLayer renderLayer animLayer reference expression
+    script time multMatrix decomposeMatrix composeMatrix inverseMatrix fourByFourMatrix wtAddMatrix addMatrix
+    holdMatrix blendMatrix aimMatrix pickMatrix parentMatrix vectorProduct quatToEuler eulerToQuat quatProd
+    quatInvert quatNormalize quatSlerp quatAdd quatConjugate quatNegate quatSub addDoubleLinear multDoubleLinear
+    pointMatrixMult pointConstraint orientConstraint parentConstraint scaleConstraint aimConstraint
+    poleVectorConstraint lookAt uvChooser bump2d network container
+""".split())
+_STANDARD_PREFIXES = ("poly", "animCurve", "animBlendNode", "HIK", "deform")
+
+
+def is_standard_type(ms, type_name: str) -> bool:
+    """Maya の標準のノードの型か（requires -nodeType でプラグインの型と書かれていれば標準ではない）。
+    一覧にない型は自作ノードとみなす（割り当ての雛形を出す）"""
+    if type_name in (getattr(ms, "plugin_node_types", None) or {}):
+        return False
+    if type_name in _STANDARD_TYPES or type_name.startswith(_STANDARD_PREFIXES):
+        return True
+    from .rig import SUPPORTED_DG                       # ビューアが評価する型（新しい計算ノードなども）
+    return type_name in SUPPORTED_DG
+
+
 def template_for(ms, type_name: str) -> dict:
     """設定ファイルの雛形（つながっている属性の名前を入れる）"""
     ins, outs = set(), set()
