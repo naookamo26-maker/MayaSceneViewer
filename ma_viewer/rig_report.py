@@ -16,7 +16,7 @@ import json
 import re
 from typing import List, Optional, Set
 
-from .custom_nodes import FILE_NAME, template_for
+from .custom_nodes import FILE_NAME, is_standard_type, template_for
 
 from .ma_scene import MaNode, MaScene, xform_group
 from .rig import (CONSTRAINT_TYPES, CURVE_TYPES, GEOMETRY_TYPES, SUPPORTED_DG, _CHANNEL_KEYS, _DISPLAY_KEYS, _MATRIX_PLUGS,
@@ -335,8 +335,9 @@ def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
     if mapped:
         out.append("■ 設定ファイルで割り当てた自作ノード: %s" % "、".join(
             "%s → %s（%s）" % (t, ms.node_map[t]["as"], "、".join(names[:5])) for t, names in sorted(mapped.items())))
+    # 自作ノードの割り当ての雛形は、自作ノード（Maya の標準の型でないもの）だけに出す
     templates = {t: template_for(ms, t) for t in sorted(info.unsupported)
-                 if t not in ("expression", "exprespy")} if info else {}
+                 if t not in ("expression", "exprespy") and not is_standard_type(ms, t)} if info else {}
     if templates:
         out.append("")
         out.append("■ 自作ノードの割り当て（設定ファイルの雛形）")

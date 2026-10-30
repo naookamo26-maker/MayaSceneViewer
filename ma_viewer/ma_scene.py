@@ -389,6 +389,7 @@ class MaScene:
         self._resolved: Dict[Tuple[str, str], Optional[str]] = {}   # (書かれたパス, 読み込む側) → 見つかったファイル
         self.plugins: List[str] = []                 # requires で読み込むプラグイン（maya 以外）
         self.plugin_versions: Dict[str, str] = {}    # プラグイン → requires に書かれた版
+        self.plugin_node_types: Dict[str, str] = {}  # requires -nodeType に書かれた型 → プラグイン
         self.stats: Dict[str, int] = {}          # 文の種類ごとの数（読み込みの内訳に出す）
         # 「文の種類 ノードの種類」ごとの [秒, 文の数, 文字数]（どこに時間がかかっているかを調べる）
         self.cost: Dict[str, List[float]] = {}
@@ -498,8 +499,24 @@ class MaScene:
             if isinstance(ang, str):
                 self.angular_unit = _ANGULAR_UNITS.get(ang, ang)
         elif cmd == "requires":
+            # requires [-nodeType 型 …] [-dataType 型 …] "プラグイン" "版";
             toks = R.tokenize(rest)
-            vals = [t.value for t in toks if not t.text.startswith("-")]
+            vals, types, k = [], [], 0
+            while k < len(toks):
+                t = toks[k]
+                if t.text.startswith("-"):
+                    if t.text in ("-nodeType", "-nt", "-dataType", "-dt") and k + 1 < len(toks):
+                        if t.text in ("-nodeType", "-nt"):
+                            types.append(toks[k + 1].value)
+                        k += 2
+                        continue
+                    k += 1
+                    continue
+                vals.append(t.value)
+                k += 1
+            if vals and vals[0] != "maya":
+                for nt in types:
+                    self.plugin_node_types.setdefault(nt, vals[0])
             if len(vals) >= 2 and vals[0] == "maya":
                 if self.maya_version is None and not self.ref_depth:
                     self.maya_version = vals[1]

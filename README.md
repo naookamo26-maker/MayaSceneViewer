@@ -130,7 +130,7 @@ python -m ma_viewer convert-plugin myPlugin.py -o ma_viewer/node_defs/myPlugin.j
 **自作ノードの定義**（ツールの配布者向け）: 自作ノード（プラグイン）の中の計算は .ma に書かれていないため、そのままでは評価できません。属性と計算を書いた**定義ファイル**を `ma_viewer/node_defs/` に置いてビューアと一緒に配ると、利用者の環境にプラグインや Maya がなくても、その計算を再現できます（exe にも必ず含めます）。数が不定の配列の属性・compound・ベクトル・行列・角度・時間を扱え、計算は Python の書き方の一部（代入・if・for・関数）で書きます。書き方は [docs/node_definitions.md](docs/node_definitions.md)、確認は `python -m ma_viewer node-defs`。
 Python で書いたノードプラグイン（API 2.0・1.0）は、`python -m ma_viewer convert-plugin myPlugin.py -o ma_viewer/node_defs/myPlugin.json` で定義に変換できます（コードは実行せずに解析します）。変換できないノード（前回の値を覚える・cmds を使う など）は行番号つきで理由を出し、そのノードは書き出しません（[docs/node_definitions.md](docs/node_definitions.md) の「プラグインからの変換」）。
 
-**自作ノードの割り当て**: 同じ計算をする標準ノードがあれば、設定ファイルで割り当てても評価できます（定義を書くより簡単ですが、標準ノードと同じ計算に限ります）。リグの診断に、評価できないノードの型ごとの雛形（つながっている属性名入り）を出すので、「as」と属性名の対応を書き換えて保存し、開き直してください。
+**自作ノードの割り当て**: 同じ計算をする標準ノードがあれば、設定ファイルで割り当てても評価できます（定義を書くより簡単ですが、標準ノードと同じ計算に限ります）。リグの診断に、評価できない自作ノードの型ごとの雛形（つながっている属性名入り）を出すので（follicle・blendShape など Maya の標準の型には出しません。`requires -nodeType` でプラグインの型と書かれた型と、標準の一覧にない型を自作ノードとみなします）、「as」と属性名の対応を書き換えて保存し、開き直してください。
 
 ```json
 {
