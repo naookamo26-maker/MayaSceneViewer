@@ -44,7 +44,7 @@ const parentWorld = (rig, name) => {
 test('exprespy のノードを定義で評価し、解析できないノードは警告する', () => {
   const graph = data.animation.graph.filter((g) => g.type === 'exprespy');
   const defined = graph.filter((g) => g.def).map((g) => g.name).sort();
-  assert.deepEqual(defined, ['aimCnsEx', 'aimUpCnsEx', 'chainA', 'chainB', 'limitEx', 'oriCnsEx', 'posCnsEx', 'pyEx', 'pyEx2', 'pyEx3', 'quatEx', 'timeEx'].concat(['aliasEx', 'lookupEx']).sort());
+  assert.deepEqual(defined, ['aimCnsEx', 'aimUpCnsEx', 'chainA', 'chainB', 'limitEx', 'oriCnsEx', 'posCnsEx', 'pyEx', 'pyEx2', 'pyEx3', 'quatEx', 'timeEx'].concat(['aliasEx', 'lookupEx', 'typoEx']).sort());
   for (const g of graph.filter((x) => x.def)) {
     assert.match(g.def, /^exprespy:[0-9a-f]{12}$/);
     assert.ok(data.animation.nodeDefs[g.def], g.def);
@@ -53,7 +53,7 @@ test('exprespy のノードを定義で評価し、解析できないノード�
   assert.match(warnings, /exprespy badCmds のコードを解析できません（1 行目: maya\.cmds/);
   assert.match(warnings, /exprespy badMesh のコードを解析できません（形状（boxShape\.o）/);
   const rig = at(12);
-  for (const n of ['posCnst', 'oriCnst', 'aimCnst', 'aimUpCnst', 'jT', 'jC', 'jQ', 'jL', 'jP', 'jP2', 'jR', 'jR2', 'jS', 'jS2', 'jF', 'jK']) rig.chan(idx(n));
+  for (const n of ['posCnst', 'oriCnst', 'aimCnst', 'aimUpCnst', 'jT', 'jC', 'jQ', 'jL', 'jP', 'jP2', 'jR', 'jR2', 'jS', 'jS2', 'jF', 'jK', 'jY']) rig.chan(idx(n));
   assert.deepEqual([...rig.problems], []);
 });
 
@@ -188,6 +188,16 @@ test('lookupEx: リストを関数に渡し、ループの変数で切り出す�
     const tx = rig.chan(idx('src')).t[0];
     const t = rig.chan(idx('jK')).t;
     assert.ok(near(t[0], table(tx * 10)) && near(t[1], 2), `フレーム ${f}: ${t} / 期待 ${table(tx * 10)}`);
+  }
+});
+
+test('typoEx: 使われない道の打ち間違い（定義のない名前）は、ほかの道の評価を止めない', () => {
+  for (const f of FRAMES) {
+    const rig = at(f);
+    const tx = rig.chan(idx('src')).t[0];
+    const t = rig.chan(idx('jY')).t;
+    assert.ok(near(t[0], Math.max(tx, 0)) && near(t[1], Math.max(-tx, 0)), `フレーム ${f}: ${t} / tx ${tx}`);
+    assert.deepEqual([...rig.problems], [], `フレーム ${f}`);
   }
 });
 

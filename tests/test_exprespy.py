@@ -202,6 +202,21 @@ class TranslateTest(unittest.TestCase):
                              "            return r + n\n    return -1\nOUT[0] = f(IN[0])", {0: "num"})
         self.assertRegex(nd.code, r"_r\d+ = \(_t\d+ \* 2\)\n\s+_ret\d+ = \(_r\d+ \+ _n\d+\)")
 
+    def test_undefined_name_only_where_reached(self):
+        # 定義のない名前（打ち間違い）は、その道を通ったときだけ計算の誤り（Maya の NameError と同じ）
+        code = ("def clip(v, top=None):\n    if v < 0: return 0\n    if top is not None:\n"
+                "        if v > top: return topp\n    return v\n"
+                "OUT[0] = clip(IN[0])\nOUT[1] = clip(IN[0], 1)\nOUT[2] = 0 if IN[0] > -5 else undefined_func(IN[0])")
+        nd, _, notes = translate(code, {0: "num"})
+        first = nd.code.split("o0 = ")[0]
+        self.assertNotIn("1 / 0", first)                       # top を省略した呼び出しには、打ち間違いの道がない
+        self.assertRegex(nd.code, r"if \(_v\d+ > 1\):\n\s+_ret\d+ = \(1 / 0\)")
+        self.assertIn("o2 = (0 if (i0 > -5) else (1 / 0))", nd.code)
+        self.assertEqual(sum("topp" in n for n in notes), 1)
+        self.assertTrue(any("undefined_func" in n for n in notes))
+        # コードのどこかで値を入れる名前を、入れる前に読むのは変換を止める（変換器の誤りを隠さない）
+        self.assertIn("名前 a が分かりません", problem("OUT[0] = a\na = 1", {}))
+
     def test_and_or_values(self):
         nd, _, _ = translate("OUT[0] = IN[0] or 1.0\nOUT[1] = IN[0] and 0\nOUT[2] = 0 or IN[0]\n"
                              "OUT[3] = 2 or IN[0]\nOUT[4] = None or IN[0] or 5", {0: "num"})
@@ -230,12 +245,12 @@ class SceneTest(unittest.TestCase):
         anim = self.scene["animation"]
         graph = {g["name"]: g for g in anim["graph"] if g["type"] == "exprespy"}
         for name in ("posCnsEx", "oriCnsEx", "aimCnsEx", "aimUpCnsEx", "timeEx", "chainA", "chainB", "quatEx",
-                     "limitEx", "pyEx", "pyEx2", "pyEx3", "aliasEx", "lookupEx"):
+                     "limitEx", "pyEx", "pyEx2", "pyEx3", "aliasEx", "lookupEx", "typoEx"):
             self.assertRegex(graph[name].get("def", ""), r"^exprespy:[0-9a-f]{12}$", name)
             self.assertIn(graph[name]["def"], anim["nodeDefs"])
         self.assertNotIn("def", graph.get("badCmds", {}))
         warnings = "\n".join(self.scene["warnings"])
-        self.assertIn("exprespy 14 個", warnings)
+        self.assertIn("exprespy 15 個", warnings)
         self.assertIn("exprespy badCmds のコードを解析できません（1 行目: maya.cmds", warnings)
         self.assertIn("exprespy badMesh のコードを解析できません（形状（boxShape.o）", warnings)
         anim_warnings = "\n".join(anim["warnings"])
