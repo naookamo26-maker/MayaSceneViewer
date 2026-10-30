@@ -106,4 +106,9 @@ CASES = [
     ("別名の別名", "import maya.api.OpenMaya as om\nVec = om.MVector\nV2 = Vec\nOUT[0] = V2(1, 2, 3)"),
     ("式の中の setValue", "OUT[0] = api.MEulerRotation().setValue(api.MQuaternion(IN[0], 0, 0, 1).normal())"),
     ("変数の setValue を式で", "r = api.MEulerRotation(0, 0, 0, 2)\nr2 = r.setValue(api.MMatrix())\nOUT[0] = r2"),
+    # 切り出し・リストの引数・ループの変数で切り出すループ
+    ("リストの切り出し", "l = [IN[0], IN[1], IN[2]]\nh = l[1:]\nOUT[0] = h[0] + len(l[::2])"),
+    ("文字列の切り出し", "s = 'arm_R'\nOUT[0] = 1 if s[:3] == 'arm' and s[-1] == 'R' else 0"),
+    ("リストを関数に渡す", "def first(xs):\n    return xs[0] + len(xs)\nOUT[0] = first([IN[0], 2])"),
+    ("ループの変数で切り出す", "ks = [0, 10, 20]\ns = 0\nfor i in range(len(ks)):\n    pair = ks[i:i + 2]\n    s += len(pair)\nOUT[0] = s"),
 ]
