@@ -328,6 +328,9 @@ class ExprespyTranslator(PC.Translator):
             return PC.Value("num", "1" if has == isinstance(e.ops[0], ast.In) else "0")
         if isinstance(e, ast.Lambda):
             PC._fail("lambda は、名前に入れて呼び出す形（f = lambda x: …）だけ変換できます", e)
+        v = self.none_expr(e)
+        if v is not None:
+            return v
         return super().expr(e)
 
     def input_value(self, k: int, node):
@@ -396,6 +399,11 @@ class ExprespyTranslator(PC.Translator):
         if isinstance(value_node, ast.Lambda) and isinstance(target, ast.Name):
             self.define(target.id, value_node.args, value_node.body, True, s)
             return
+        if isinstance(target, ast.Name) and (isinstance(value_node, ast.Constant) and value_node.value is None or
+                                             isinstance(value_node, ast.Name) and value_node.id in self.env
+                                             and self.env[value_node.id].kind == "none"):
+            self.env[target.id] = PC.Value("none", "None")   # None は変換の時点で分かるので、変数にしない
+            return
         k = self.io_index(target, "OUT")
         if k is None:
             if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name) and target.value.id == "IN":
@@ -415,15 +423,98 @@ class ExprespyTranslator(PC.Translator):
         self.out_kinds[k] = kind
         self.emit("o%d = %s" % (k, v.code))
 
+    # ---- None と、変換の時点で決まる条件（def f(x, max=None): … if max is not None: … など）
+    @staticmethod
+    def const_of(code: str) -> Optional[float]:
+        try:
+            return float(code)
+        except (TypeError, ValueError):
+            return None
+
+    def truth(self, v, node) -> str:
+        """条件に使う値の式（None は偽）"""
+        if v.kind == "none":
+            return "0"
+        if v.kind == "unit":
+            return v.code
+        if v.kind != "num":
+            PC._fail("条件に数以外（%s）を使っています" % v.kind, node)
+        return v.code
+
+    def cond(self, t) -> str:
+        return self.truth(self.expr(t), t)
+
+    def known_cond(self, test) -> Optional[bool]:
+        """条件が変換の時点で決まれば真偽（None・is None・定数）。決まらなければ None（途中で書いた文は消す）"""
+        n = len(self.lines)
+        try:
+            c = self.const_of(self.cond(test))
+        except PC.ConvertError:
+            c = None
+        if c is None:
+            del self.lines[n:]
+            return None
+        return bool(c)
+
+    def if_branches(self, s, body, orelse, tail: bool):
+        known = self.known_cond(s.test)
+        if known is not None:
+            self.block(body if known else orelse, tail=tail)
+            return
+        return super().if_branches(s, body, orelse, tail)
+
+    def none_expr(self, e):
+        """None がかかわる式（None・is / is not / == / !=・not・and / or）。かかわらなければ None"""
+        if isinstance(e, ast.Constant) and e.value is None:
+            return PC.Value("none", "None")
+        if isinstance(e, ast.Compare) and len(e.ops) == 1 and isinstance(e.ops[0], (ast.Is, ast.IsNot, ast.Eq, ast.NotEq)):
+            a, b = self.expr(e.left), self.expr(e.comparators[0])
+            if a.kind == "none" or b.kind == "none":
+                same = a.kind == b.kind
+                return PC.Value("num", "1" if same == isinstance(e.ops[0], (ast.Is, ast.Eq)) else "0")
+            if isinstance(e.ops[0], (ast.Is, ast.IsNot)):
+                PC._fail("is・is not は None との比較だけ変換できます", e)
+            return PC.Value("num", "(%s %s %s)" % (self.num_code(a, e), "==" if isinstance(e.ops[0], ast.Eq) else "!=",
+                                                   self.num_code(b, e)))
+        if isinstance(e, ast.UnaryOp) and isinstance(e.op, ast.Not):
+            v = self.expr(e.operand)
+            c = self.const_of(self.truth(v, e))
+            if c is not None:
+                return PC.Value("num", "0" if c else "1")
+            return PC.Value("num", "(not %s)" % v.code)
+        if isinstance(e, ast.BoolOp):
+            is_and = isinstance(e.op, ast.And)
+            parts = []
+            for x in e.values:                           # 前から順に（決まった時点で残りは読まない。Python と同じ）
+                code = self.truth(self.expr(x), x)
+                c = self.const_of(code)
+                if c is not None:
+                    if bool(c) != is_and:
+                        return PC.Value("num", "0" if is_and else "1")
+                    continue
+                parts.append(code)
+            if not parts:
+                return PC.Value("num", "1" if is_and else "0")
+            return PC.Value("num", parts[0] if len(parts) == 1 else
+                            "(%s)" % (" and " if is_and else " or ").join(parts))
+        return None
+
+    def num_code(self, v, node) -> str:
+        if v.kind not in ("num", "unit"):
+            PC._fail("数以外（%s）を比べています" % v.kind, node)
+        return v.code
+
     # ---- 関数（呼び出したところに展開する）
     def define(self, name: str, args: ast.arguments, body, is_lambda: bool, node):
-        if args.vararg or args.kwarg or args.kwonlyargs or args.defaults or args.posonlyargs:
-            PC._fail("関数 %s の引数の書き方（既定値・*args・**kwargs）は変換できません" % name, node)
+        if args.vararg or args.kwarg or args.kwonlyargs or args.posonlyargs:
+            PC._fail("関数 %s の引数の書き方（*args・**kwargs・キーワード専用の引数）は変換できません" % name, node)
         if not is_lambda:
             for x in ast.walk(ast.Module(body=body, type_ignores=[])):
                 if isinstance(x, (ast.Global, ast.Nonlocal)):
                     PC._fail("関数 %s の中の global・nonlocal は変換できません" % name, x)
-        self.funcs[name] = ([a.arg for a in args.args], body, is_lambda)
+        params = [a.arg for a in args.args]
+        defaults = dict(zip(params[len(params) - len(args.defaults):], args.defaults))   # 引数の名前 → 既定値の式
+        self.funcs[name] = (params, body, is_lambda, defaults)
         self.env.pop(name, None)
 
     def call(self, e):
@@ -448,12 +539,24 @@ class ExprespyTranslator(PC.Translator):
         return super().call_stmt(c)
 
     def inline(self, name: str, e: ast.Call):
-        params, body, is_lambda = self.funcs[name]
+        params, body, is_lambda, defaults = self.funcs[name]
         if name in self.inlining:
             PC._fail("関数 %s の再帰呼び出しは変換できません" % name, e)
-        if e.keywords or len(e.args) != len(params):
-            PC._fail("関数 %s の引数の数が違います（%d 個）" % (name, len(params)), e)
-        args = [self.expr(a) for a in e.args]
+        if len(e.args) > len(params) or any(isinstance(a, ast.Starred) for a in e.args):
+            PC._fail("関数 %s の引数が多すぎます（%d 個まで）" % (name, len(params)), e)
+        nodes = dict(zip(params, e.args))
+        for kw in e.keywords:
+            if kw.arg is None or kw.arg not in params:
+                PC._fail("関数 %s に引数 %s はありません" % (name, kw.arg or "**"), e)
+            if kw.arg in nodes:
+                PC._fail("関数 %s の引数 %s を 2 回渡しています" % (name, kw.arg), e)
+            nodes[kw.arg] = kw.value
+        for p in params:
+            if p not in nodes:
+                if p not in defaults:
+                    PC._fail("関数 %s の引数 %s がありません" % (name, p), e)
+                nodes[p] = defaults[p]                   # 既定値（数・None など）
+        args = [self.expr(nodes[p]) for p in params]
         saved_env, saved_names = self.env, self.names
         local_names = set(params) | (set() if is_lambda else set(_scope_stores(body)))
         self.env = {k: v for k, v in saved_env.items() if k not in local_names}
@@ -466,6 +569,9 @@ class ExprespyTranslator(PC.Translator):
                 var = self.names[p]
                 if v.kind == "tm":
                     v = self.tm_matrix(v)
+                if v.kind == "none":
+                    self.env[p] = v                      # None は変換の時点で分かるので、変数にしない
+                    continue
                 if v.kind not in ("num", "unit", "vec", "pt", "mat", "quat", "eul"):
                     PC._fail("関数 %s に渡せない値（%s）を渡しています" % (name, v.kind), e)
                 self.emit("%s = %s" % (var, v.code))
@@ -492,6 +598,10 @@ class ExprespyTranslator(PC.Translator):
                     rest = list(block[k + 1:])
                     body = s.body if self.ends_with_return(s.body) else s.body + rest
                     orelse = s.orelse if self.ends_with_return(s.orelse) else s.orelse + rest
+                    known = self.known_cond(s.test)
+                    if known is not None:
+                        run(body if known else orelse)
+                        return
                     self.emit("if %s:" % self.cond(s.test))
                     for part, last in ((body, False), (orelse, True)):
                         if last:

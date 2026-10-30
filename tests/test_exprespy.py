@@ -76,7 +76,10 @@ class TranslateTest(unittest.TestCase):
             "def f(x):\n    return f(x)\nOUT[0] = f(1)": "再帰呼び出し",
             "def f(x):\n    for i in range(3):\n        return x\n    return 0\nOUT[0] = f(1)": "ループの中の return",
             "def f(x):\n    if x:\n        return 1\nOUT[0] = f(1)": "すべての道で return",
-            "def f(x=1):\n    return x\nOUT[0] = f()": "既定値",
+            "def f(*xs):\n    return 1\nOUT[0] = f()": "*args",
+            "def f(x, k=1):\n    return x\nOUT[0] = f(k=2)": "引数 x がありません",
+            "def f(x):\n    return x\nOUT[0] = f(1, y=2)": "引数 y はありません",
+            "x = 1\nOUT[0] = 1 if x is 1 else 0": "None との比較だけ",
             "if not COUNT:\n    total = 0\ntotal += 1\nOUT[0] = total": "total を、あとで書き換えています",
             "if not COUNT:\n    a = IN[1]\nOUT[0] = a": "初期化（if not COUNT:）の中で IN を使っています",
             "if not COUNT:\n    a = 1\nelse:\n    a = 2\nOUT[0] = a": "else",
@@ -113,6 +116,18 @@ class TranslateTest(unittest.TestCase):
         nd2, _, _ = translate("if COUNT == 0:\n    A = 2\nOUT[0] = IN.get(A, 5.)", {0: "num"})
         self.assertIn("o0 = 5.0", nd2.code)                   # IN[2] がないので既定値
 
+    def test_default_args_and_none(self):
+        code = ("def limit(val, max=None):\n    if val < 0: return 0\n    if max is not None and val > max: return max\n"
+                "    return val\nOUT[0] = limit(IN[0])\nOUT[1] = limit(IN[0], max=2)\n"
+                "f = lambda x, k=2: x * k\nOUT[2] = f(IN[0]) + f(IN[0], k=3)\n"
+                "g = None\nOUT[3] = 1 if g is None and not g else 0")
+        nd, outs, _ = translate(code, {0: "num"})
+        self.assertEqual(outs, {0: "num", 1: "num", 2: "num", 3: "num"})
+        first = nd.code.split("o0 = ")[0]
+        self.assertNotIn(">", first)                          # max を省略した呼び出しは上限の判定を消す
+        self.assertIn("> _max", nd.code)                      # max を渡した呼び出しは上限を判定する
+        self.assertIn("o3 = (1 if 1 else 0)", nd.code)        # None の判定は変換の時点で決まる
+
     def test_quaternion_log_exp(self):
         nd, outs, _ = translate("q = api.MQuaternion(IN[0], 0.5, 0.25, 0.).exp()\nOUT[0] = q.log()", {0: "num"})
         self.assertEqual(outs, {0: "vec4"})
@@ -131,12 +146,13 @@ class SceneTest(unittest.TestCase):
     def test_defined_and_problems(self):
         anim = self.scene["animation"]
         graph = {g["name"]: g for g in anim["graph"] if g["type"] == "exprespy"}
-        for name in ("posCnsEx", "oriCnsEx", "aimCnsEx", "aimUpCnsEx", "timeEx", "chainA", "chainB", "quatEx"):
+        for name in ("posCnsEx", "oriCnsEx", "aimCnsEx", "aimUpCnsEx", "timeEx", "chainA", "chainB", "quatEx",
+                     "limitEx"):
             self.assertRegex(graph[name].get("def", ""), r"^exprespy:[0-9a-f]{12}$", name)
             self.assertIn(graph[name]["def"], anim["nodeDefs"])
         self.assertNotIn("def", graph.get("badCmds", {}))
         warnings = "\n".join(self.scene["warnings"])
-        self.assertIn("exprespy 8 個", warnings)
+        self.assertIn("exprespy 9 個", warnings)
         self.assertIn("exprespy badCmds のコードを解析できません（1 行目: maya.cmds", warnings)
         self.assertIn("exprespy badMesh のコードを解析できません（形状（boxShape.o）", warnings)
         anim_warnings = "\n".join(anim["warnings"])
