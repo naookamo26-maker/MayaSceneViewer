@@ -36,7 +36,7 @@ code { font-family: Consolas, "SF Mono", monospace; font-size: 11px; color: var(
   grid-template-rows: auto auto minmax(0, 1fr) auto auto;   /* ツールバー・カメラシーケンサ・ビューポート・カーブエディタ・ステータス */
   height: 100vh;
 }
-#left, #right { grid-row: 2 / 5; }
+#left, #right { grid-row: 2 / 4; }   /* カーブエディタ（行 4）は左右のパネルの下に全幅で置く */
 #viewport { grid-row: 3; grid-column: 2; }   /* カメラシーケンサ（行 2）の下。タイムラインのボタンと離す */
 #status { grid-row: 5; }
 
@@ -537,9 +537,9 @@ body.drag-over #viewport { box-shadow: inset 0 0 0 2px var(--joint); }
 .progress.sub i { background: var(--text-dim); }
 #loading-sub-text { margin: 0; font-size: 11px; }
 
-/* ---- カーブエディタ（ビューポートの下。初期状態では最小化。見るだけ） ---- */
+/* ---- カーブエディタ（ビューポートの下。左右のパネルもまたいで全幅。初期状態では最小化。見るだけ） ---- */
 #curve-editor {
-  grid-row: 4; grid-column: 2; min-width: 0; position: relative;
+  grid-row: 4; grid-column: 1 / -1; min-width: 0; position: relative;   /* 左右のパネルをまたいで全幅 */
   display: flex; flex-direction: column;
   height: 260px;
   background: var(--panel); border-top: 1px solid var(--line);
