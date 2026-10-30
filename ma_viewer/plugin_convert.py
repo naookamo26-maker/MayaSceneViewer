@@ -1564,6 +1564,19 @@ class Translator:
         self.emit("%s = [%s[0] * sin(%s), %s[1] * sin(%s), %s[2] * sin(%s), cos(%s)]" % (q, n, h, n, h, n, h, h))
         return q
 
+    def quat_log_exp(self, quat: str, m: str) -> str:
+        """MQuaternion の log（(軸 · 角度, log |q|)）・exp（e^w · (軸 · sin |v|, cos |v|)）。値を入れた変数の名前を返す"""
+        q, ln, k, out = (self.fresh(x) for x in ("q", "ql", "qk", "q"))
+        self.emit("%s = %s" % (q, quat))
+        self.emit("%s = length([%s[0], %s[1], %s[2]])" % (ln, q, q, q))
+        if m == "log":
+            self.emit("%s = (atan2(%s, %s[3]) / %s if %s > 1e-12 else 0.0)" % (k, ln, q, ln, ln))
+            self.emit("%s = [%s[0] * %s, %s[1] * %s, %s[2] * %s, log(length(%s))]" % (out, q, k, q, k, q, k, q))
+        else:
+            self.emit("%s = exp(%s[3]) * (sin(%s) / %s if %s > 1e-12 else 1.0)" % (k, q, ln, ln, ln))
+            self.emit("%s = [%s[0] * %s, %s[1] * %s, %s[2] * %s, exp(%s[3]) * cos(%s)]" % (out, q, k, q, k, q, k, q, ln))
+        return out
+
     def quat_axis_angle(self, axis: str, angle: str) -> str:
         """MQuaternion(角度, 軸): 軸のまわりに角度（ラジアン）回す回転。値を入れた変数の名前を返す"""
         n, h, q = (self.fresh(x) for x in ("qn", "qh", "q"))
@@ -1741,6 +1754,8 @@ class Translator:
                 return Value("quat", "quat_inverse(%s)" % base.code)
             if m == "normal":
                 return Value("quat", "quat_normalize(%s)" % base.code)
+            if m in ("log", "exp") and not args:
+                return Value("quat", self.quat_log_exp(base.code, m))
             _fail("MQuaternion の %s は変換できません" % m, e)
         _fail("%s の %s は変換できません" % (k, m), e)
 
@@ -1901,7 +1916,7 @@ _KNOWN_METHODS = (_GETTERS_NUM | _GETTERS_VEC | _GETTERS_MAT | _GETTERS_UNIT | _
                       "isConnected", "elementByLogicalIndex", "numElements", "evaluateNumElements", "asMObject",
                       "asMAngle", "asMDistance", "asMTime", "getElement", "det4x4", "det3x3", "isEquivalent",
                       "isSingular", "setElement", "setToIdentity", "setToProduct", "reorderIt", "reorder", "setValue",
-                      "asVector"})
+                      "asVector", "log", "exp"})
 _KNOWN_CLASSES = _VEC_CLASSES | _PT_CLASSES | _MAT_CLASSES | {
     "MTransformationMatrix", "MEulerRotation", "MQuaternion", "MAngle", "MDistance", "MTime", "MFnMatrixData",
     "MPlug", "MFnDependencyNode"}

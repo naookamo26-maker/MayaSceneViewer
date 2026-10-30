@@ -19,6 +19,14 @@ examples/constraints.ma（MIT License, Copyright (c) 2016 Ryusuke Sasaki）の�
       （import の別名 from maya.api.OpenMaya import MVector as V も確かめる）
   * quatEx: MQuaternion(角度, 軸) と asEulerRotation → jQ.r = (0, 0, src.rz)
   * badCmds（maya.cmds の呼び出し）・badMesh（メッシュの形状の入力）: 解析できない（警告を出し、評価しない）
+
+samples/exprespy_bendroll_sample.ma・.json: exprespy の同梱サンプル examples/bend_roll.ma（MIT License,
+Copyright (c) 2016 Ryusuke Sasaki）のコード（if not COUNT: の初期化・def・lambda・IN.get・四元数の log・exp）。
+src の回転にキー（rx 10 → -50・ry 20 → 70・rz -30 → 40 度、回転順 xzy）。src の回転を、曲げ（bend）とひねり（roll）に
+分けて（decomposeRotExpr）組み立て直す（composeRotExpr）:
+  * チェーン 1: bend1（曲げ）→ 子の roll1（ひねり）。roll1 のワールドの回転 = src の回転
+  * チェーン 2: roll2（ひねり）→ 子の bend2（曲げ。reverseOrder）。bend2 のワールドの回転 = src の回転
+  * チェーン 3（method = 1、指数写像）: roll3.rx = src の回転ベクトルの X 成分、bend3 = exp(回転ベクトルの Y・Z 成分)
 """
 from __future__ import annotations
 
@@ -30,6 +38,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 OUT_MA = os.path.join(ROOT, "samples", "exprespy_sample.ma")
 OUT_JSON = os.path.join(ROOT, "samples", "exprespy_sample.json")
+OUT_BR_MA = os.path.join(ROOT, "samples", "exprespy_bendroll_sample.ma")
+OUT_BR_JSON = os.path.join(ROOT, "samples", "exprespy_bendroll_sample.json")
 
 # exprespy の examples/constraints.ma のコード（MIT License, Copyright (c) 2016 Ryusuke Sasaki）
 POS = ("pos = api.MPoint(IN[0] + IN[1] + IN[2])\npos *= IN[3]\npos *= IN[4]\npos -= IN[5] + IN[6]\npos += IN[7]\n"
@@ -47,6 +57,110 @@ AIM_UP = ("aim0 = api.MVector.kYaxisVector\nupv0 = api.MVector.kXaxisVector\ncrs
           "    aim0.z, upv0.z, crs0.z, 0.,\n    0., 0., 0., 1.])\nm *= api.MMatrix([\n    aim1.x, aim1.y, aim1.z, 0.,\n"
           "    upv1.x, upv1.y, upv1.z, 0.,\n    crs1.x, crs1.y, crs1.z, 0.,\n    0., 0., 0., 1.])\n"
           "r = api.MEulerRotation([0., 0., 0.], IN[12])\nr.setValue(m)\nOUT[0] = r\n")
+# exprespy の examples/bend_roll.ma のコード（MIT License, Copyright (c) 2016 Ryusuke Sasaki）
+COMPOSE_ROT = """if not COUNT:
+    from maya.api.OpenMaya import (
+        MVector, MQuaternion, MEulerRotation,
+    )
+    from math import sin, cos, tan
+
+    AT_ROLL = 0
+    AT_BENDH = 1
+    AT_BENDV = 2
+    AT_AXIS_ORIENT = 3
+    AT_ROTATE_ORDER = 4
+    METHOD = 10
+    AT_REVERSE_ORDER = 11
+
+    ZERO3 = (0., 0., 0.)
+    _X_VEC = MVector.kXaxisVector
+    _Y_VEC = MVector.kYaxisVector
+    _Z_VEC = MVector.kZaxisVector
+
+    def fromRollBendHV(rhv):
+        half = .5 * rhv[0]
+        f = sin(half)
+        quat = MQuaternion(_X_VEC[0] * f, _X_VEC[1] * f, _X_VEC[2] * f, cos(half))
+
+        h = tan(-.5 * rhv[1])
+        v = tan(.5 * rhv[2])
+        f = 2. / (h * h + v * v + 1.)
+        quat *= MQuaternion(_X_VEC, _X_VEC * (f - 1.) + _Y_VEC * (v * f) + _Z_VEC * (h * f))
+        return quat
+
+rhv = IN.get(AT_ROLL, 0.), IN.get(AT_BENDH, 0.), IN.get(AT_BENDV, 0.)
+
+reverse = IN.get(AT_REVERSE_ORDER, 0)
+if reverse:
+    rhv = (-rhv[0], -rhv[1], -rhv[2])
+if IN.get(METHOD, 0):
+    quat = MQuaternion(rhv[0] * .5, rhv[1] * .5, rhv[2] * .5, 0.).exp()
+else:
+    quat = fromRollBendHV(rhv)
+if reverse:
+    quat = quat.inverse()
+
+oriQ = MEulerRotation(IN.get(AT_AXIS_ORIENT, ZERO3)).asQuaternion()
+quat = oriQ.inverse() * quat
+quat *= oriQ
+
+rot = MEulerRotation(ZERO3, IN.get(AT_ROTATE_ORDER, 0))
+rot.setValue(quat)
+
+OUT[0] = rot
+"""
+DECOMPOSE_ROT = """if not COUNT:
+    from maya.api.OpenMaya import (
+        MVector, MQuaternion, MEulerRotation,
+    )
+    from math import atan2, pi as _PI
+
+    AT_ROTATE = 0
+    AT_ROTATE_ORDER = 1
+    AT_AXIS_ORIENT = 2
+    METHOD = 10
+    AT_REVERSE_ORDER = 11
+
+    ZERO3 = (0., 0., 0.)
+    _X_VEC = MVector.kXaxisVector
+    _Y_VEC = MVector.kYaxisVector
+    _Z_VEC = MVector.kZaxisVector
+
+    _2PI = 2. * _PI
+    boundAngle = lambda x: (x - _2PI) if x > _PI else ((x + _2PI) if x < -_PI else x)
+
+    def toRollBendHV(quat):
+        vec = _X_VEC.rotateBy(quat)
+        bendQ = MQuaternion(_X_VEC, vec)
+        b = (_X_VEC * vec) + 1.
+
+        rollQ = quat * bendQ.inverse()
+        return (
+            boundAngle(atan2(rollQ[0], rollQ[3]) * 2.),
+            atan2(_Z_VEC * vec, b) * -2.,
+            atan2(_Y_VEC * vec, b) * 2.,
+        )
+
+quat = MEulerRotation(IN.get(AT_AXIS_ORIENT, ZERO3)).asQuaternion()
+oriQ = quat.inverse()
+quat *= MEulerRotation(IN.get(AT_ROTATE, ZERO3), IN.get(AT_ROTATE_ORDER, 0)).asQuaternion()
+quat *= oriQ
+
+reverse = IN.get(AT_REVERSE_ORDER, 0)
+if reverse:
+    quat = quat.inverse()
+if IN.get(METHOD, 0):
+    rhv = quat.log()
+    rhv = (rhv[0] * 2., rhv[1] * 2., rhv[2] * 2.)
+else:
+    rhv = toRollBendHV(quat)
+if reverse:
+    rhv = (-rhv[0], -rhv[1], -rhv[2])
+
+OUT[0] = rhv[0]
+OUT[1] = rhv[1]
+OUT[2] = rhv[2]
+"""
 TIME = "OUT[0] = math.sin(IN[0] * 2.0) * IN[1]"
 CHAIN_A = "from maya.api.OpenMaya import MVector as V\nOUT[0] = V(IN[0]) * 2.0"
 CHAIN_B = "v = IN[0]\nOUT[0] = v.length()"
@@ -65,6 +179,84 @@ def exprespy(name: str, code: str, n_inputs: int = 0, extra=()):
     if n_inputs:
         out.append('\tsetAttr -s %d ".i";' % n_inputs)
     return out
+
+
+def rot_node(name: str, code: str, method: int, reverse: bool, values=()):
+    """bend_roll.ma と同じ exprespy（独自の属性 method・reverseOrder を自分の入力 i[10]・i[11] につなぐ）"""
+    out = ['createNode exprespy -n "%s";' % name,
+           '\taddAttr -ci true -sn "method" -ln "method" -min 0 -max 1 '
+           '-en "Stereographic Projection:Exponential Map" -at "enum";',
+           '\taddAttr -ci true -sn "reverseOrder" -ln "reverseOrder" -min 0 -max 1 -at "bool";',
+           '\tsetAttr ".cd" -type "string" %s;' % ma_string(code)]
+    out += ['\tsetAttr ".i[%d]" %s;' % kv for kv in values]
+    if method:
+        out.append('\tsetAttr ".method" %d;' % method)
+    if reverse:
+        out.append('\tsetAttr ".reverseOrder" yes;')
+    return out
+
+
+def bend_roll_scene():
+    lines = ['//Maya ASCII 2024 scene', '//Name: exprespy_bendroll_sample.ma',
+             'requires maya "2024";', 'requires "exprespy" "3.0.1.20220627";',
+             'currentUnit -l centimeter -a degree -t film;',
+             'createNode joint -n "src";', '\tsetAttr ".ro" 3;',
+             'createNode joint -n "srcEnd" -p "src";', '\tsetAttr ".t" -type "double3" 5 0 0 ;',
+             'createNode joint -n "bend1";', '\tsetAttr ".t" -type "double3" 0 0 2 ;',
+             'createNode joint -n "roll1" -p "bend1";', '\tsetAttr ".t" -type "double3" 2 0 0 ;',
+             'createNode joint -n "end1" -p "roll1";', '\tsetAttr ".t" -type "double3" 3 0 0 ;',
+             'createNode joint -n "roll2";', '\tsetAttr ".t" -type "double3" 0 0 4 ;',
+             'createNode joint -n "bend2" -p "roll2";',
+             'createNode joint -n "end2" -p "bend2";', '\tsetAttr ".t" -type "double3" 5 0 0 ;',
+             'createNode joint -n "roll3";', '\tsetAttr ".t" -type "double3" 0 0 6 ;',
+             'createNode joint -n "bend3";', '\tsetAttr ".t" -type "double3" 0 0 8 ;']
+    z3 = ("-type \"double3\" 0 0 0 ",)
+    lines += rot_node("decomposeRotExpr", DECOMPOSE_ROT, 0, False, [(2, z3[0])])
+    lines += rot_node("composeRotExpr", COMPOSE_ROT, 0, True, [(0, "0"), (3, z3[0])])
+    lines += rot_node("composeRotExpr1", COMPOSE_ROT, 0, False, [(1, "0"), (2, "0"), (3, z3[0])])
+    lines += rot_node("decomposeRotExpr1", DECOMPOSE_ROT, 0, True, [(2, z3[0])])
+    lines += rot_node("composeRotExpr2", COMPOSE_ROT, 0, True, [(1, "0"), (2, "0"), (3, z3[0])])
+    lines += rot_node("composeRotExpr3", COMPOSE_ROT, 0, False, [(0, "0"), (3, z3[0])])
+    lines += rot_node("decomposeRotExpr2", DECOMPOSE_ROT, 1, False, [(2, z3[0])])
+    lines += rot_node("composeRotExpr4", COMPOSE_ROT, 1, False, [(1, "0"), (2, "0"), (3, z3[0])])
+    lines += rot_node("composeRotExpr5", COMPOSE_ROT, 1, False, [(0, "0"), (3, z3[0])])
+    for axis, (a, b) in zip("XYZ", ((10, -50), (20, 70), (-30, 40))):
+        lines += ['createNode animCurveTA -n "src_rotate%s";' % axis, '\tsetAttr ".tan" 2;',
+                  '\tsetAttr -s 2 ".ktv[0:1]"  1 %d 24 %d;' % (a, b)]
+    lines += ['createNode script -n "sceneConfigurationScriptNode";',
+              '\tsetAttr ".b" -type "string" "playbackOptions -min 1 -max 24 -ast 1 -aet 24 ";',
+              '\tsetAttr ".st" 6;']
+    lines += ['connectAttr "src_rotate%s.o" "src.r%s";' % (a, a.lower()) for a in "XYZ"]
+    for name in ("decomposeRotExpr", "decomposeRotExpr1", "decomposeRotExpr2"):
+        lines += ['connectAttr "src.r" "%s.i[0]";' % name, 'connectAttr "src.ro" "%s.i[1]";' % name]
+    links = [("decomposeRotExpr", 1, "composeRotExpr", 1), ("decomposeRotExpr", 2, "composeRotExpr", 2),
+             ("decomposeRotExpr", 0, "composeRotExpr1", 0), ("decomposeRotExpr1", 0, "composeRotExpr2", 0),
+             ("decomposeRotExpr1", 1, "composeRotExpr3", 1), ("decomposeRotExpr1", 2, "composeRotExpr3", 2),
+             ("decomposeRotExpr2", 0, "composeRotExpr4", 0), ("decomposeRotExpr2", 1, "composeRotExpr5", 1),
+             ("decomposeRotExpr2", 2, "composeRotExpr5", 2)]
+    lines += ['connectAttr "%s.o[%d]" "%s.i[%d]";' % x for x in links]
+    for node, joint in (("composeRotExpr", "bend1"), ("composeRotExpr1", "roll1"), ("composeRotExpr2", "roll2"),
+                        ("composeRotExpr3", "bend2"), ("composeRotExpr4", "roll3"), ("composeRotExpr5", "bend3")):
+        lines += ['connectAttr "%s.o[0]" "%s.r";' % (node, joint), 'connectAttr "%s.ro" "%s.i[4]";' % (joint, node)]
+    for name in ("decomposeRotExpr", "decomposeRotExpr1", "decomposeRotExpr2", "composeRotExpr", "composeRotExpr1",
+                 "composeRotExpr2", "composeRotExpr3", "composeRotExpr4", "composeRotExpr5"):
+        lines += ['connectAttr "%s.method" "%s.i[10]";' % (name, name),
+                  'connectAttr "%s.reverseOrder" "%s.i[11]";' % (name, name)]
+    lines.append('// End of exprespy_bendroll_sample.ma')
+    return lines
+
+
+def write_scene(lines, ma_path, json_path):
+    with open(ma_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
+    print("書き出しました: %s" % ma_path)
+    from ma_viewer.extract_ma import load_ma
+    scene = load_ma(ma_path, animation=True)
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(scene, f, ensure_ascii=False, separators=(",", ":"), indent=1)
+    print("書き出しました: %s" % json_path)
+    for w in scene.get("warnings", []) + (scene.get("animation") or {}).get("warnings", []):
+        print("  警告: %s" % w)
 
 
 def main():
@@ -156,16 +348,8 @@ def main():
               'connectAttr "boxShape.o" "badMesh.i[0]";',
               'connectAttr "badMesh.o[0]" "jM.tx";',
               '// End of exprespy_sample.ma']
-    with open(OUT_MA, "w", encoding="utf-8", newline="\n") as f:
-        f.write("\n".join(lines) + "\n")
-    print("書き出しました: %s" % OUT_MA)
-    from ma_viewer.extract_ma import load_ma
-    scene = load_ma(OUT_MA, animation=True)
-    with open(OUT_JSON, "w", encoding="utf-8") as f:
-        json.dump(scene, f, ensure_ascii=False, separators=(",", ":"), indent=1)
-    print("書き出しました: %s" % OUT_JSON)
-    for w in scene.get("warnings", []) + (scene.get("animation") or {}).get("warnings", []):
-        print("  警告: %s" % w)
+    write_scene(lines, OUT_MA, OUT_JSON)
+    write_scene(bend_roll_scene(), OUT_BR_MA, OUT_BR_JSON)
 
 
 if __name__ == "__main__":

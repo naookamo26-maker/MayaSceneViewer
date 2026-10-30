@@ -119,3 +119,52 @@ test('quatEx: MQuaternion(角度, 軸) と asEulerRotation', () => {
     assert.ok(near(r[0], 0) && near(r[1], 0) && near(r[2], rz), `フレーム ${f}: ${r} / ${rz}`);
   }
 });
+
+// ---------------------------------------------------------------------------------------------------------------
+// bend_roll（if not COUNT: の初期化・def・lambda・IN.get・自分の独自の属性の入力・四元数の log・exp）
+const br = JSON.parse(readFileSync(path.resolve(here, '../../samples/exprespy_bendroll_sample.json'), 'utf8'));
+const brIdx = (n) => { const i = br.nodes.findIndex((x) => x.name === n); assert.ok(i >= 0, n); return i; };
+function brAt(f) {
+  const rig = new RigEvaluator(new AnimationClip(br.animation), br.nodes, (ni) => new Matrix4().fromArray(br.nodes[ni].matrix));
+  rig.evaluate(f);
+  return rig;
+}
+
+test('bend_roll: すべての exprespy を定義で評価する', () => {
+  const graph = br.animation.graph.filter((g) => g.type === 'exprespy');
+  assert.equal(graph.length, 9);
+  assert.ok(graph.every((g) => g.def), graph.filter((g) => !g.def).map((g) => g.name).join(','));
+  const rig = brAt(12);
+  for (const n of ['bend1', 'roll1', 'roll2', 'bend2', 'roll3', 'bend3']) rig.chan(brIdx(n));
+  assert.deepEqual([...rig.problems], []);
+});
+
+test('bend_roll: 曲げとひねりに分けて組み立て直すと、元の回転になる（両方の順）', () => {
+  for (const f of FRAMES) {
+    const rig = brAt(f);
+    const src = rotOf(rig.world(brIdx('src')));
+    for (const n of ['roll1', 'bend2']) {
+      assert.ok(near(Math.abs(rotOf(rig.world(brIdx(n))).dot(src)), 1, 1e-9), `フレーム ${f}: ${n}`);
+    }
+    // ひねりは X 軸まわりだけ、曲げは X 軸の向きを src と同じにする
+    for (const n of ['roll1', 'roll2']) {
+      const r = rig.chan(brIdx(n)).r;
+      assert.ok(near(r[1], 0) && near(r[2], 0), `フレーム ${f}: ${n} ${r}`);
+    }
+    const xAxis = (m) => new Vector3(1, 0, 0).applyQuaternion(rotOf(m));
+    assert.ok(nearVec(xAxis(rig.world(brIdx('bend1'))), xAxis(rig.world(brIdx('src')))), `フレーム ${f}: bend1 の X 軸`);
+  }
+});
+
+test('bend_roll: 指数写像（method = 1）は回転ベクトルの成分に分ける（四元数の log・exp）', () => {
+  for (const f of FRAMES) {
+    const rig = brAt(f);
+    const q = rotOf(rig.world(brIdx('src')));
+    const v = new Vector3(q.x, q.y, q.z);
+    const rv = v.clone().normalize().multiplyScalar(2 * Math.atan2(v.length(), q.w));     // 回転ベクトル
+    assert.ok(near(rig.chan(brIdx('roll3')).r[0] * D2R, rv.x, 1e-9), `フレーム ${f}: roll3`);
+    const b = new Vector3(0, rv.y, rv.z);
+    const expect = new Quaternion().setFromAxisAngle(b.clone().normalize(), b.length());
+    assert.ok(near(Math.abs(rotOf(rig.world(brIdx('bend3'))).dot(expect)), 1, 1e-9), `フレーム ${f}: bend3`);
+  }
+});
