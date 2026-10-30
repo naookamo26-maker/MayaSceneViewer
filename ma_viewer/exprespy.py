@@ -22,9 +22,12 @@ if not COUNT:（最初の 1 回だけの初期化）は、中身が定数・impo
 番号が実行時に決まる IN[i]・OUT[i] は、つながっている入力・出力との比較の連鎖にする。展開したループの中の実行時の
 break・continue と、関数の中のループの return は、目印の変数で残りの文を囲む。辞書（キーごとに計算の変数）と
 定数の文字列は、変換の時点で扱う。
+変数・属性に入れたリストは要素を追い（append など）、コードの中のクラスはインスタンスを追ってメソッドを展開する。
+except は、0 で割る・math の範囲外・if 条件: raise・ない入力を、実行前の条件と目印の変数に書き換える。
+再帰は、引数が変換の時点で決まれば最後まで、実行時に決まれば 16 段まで展開する。
 対応しないもの（理由を警告に出し、そのノードは評価しない）: 前回の値を持ち越す変数（初期化で入れた値の書き換え・
-global）・maya.cmds・形状（メッシュ・カーブ）の入出力・中身が実行時に決まる文字列・リストの append・クラス・
-再帰呼び出し・KeyError 以外の except。
+global）・maya.cmds・形状（メッシュ・カーブ）の入出力・中身が実行時に決まる文字列・実行時の条件で長さが変わる
+リスト・Maya のクラスを親にするクラス・try の中の if・for の中の例外になりうる計算。
 """
 from __future__ import annotations
 
@@ -359,6 +362,8 @@ class ExprespyTranslator(PC.Translator):
         # {"kind": "unroll"} 展開したループ（break・continue の目印の変数）・{"kind": "ret"} ループの中の return
         self.frames: list = []
         self.inlining: List[str] = []
+        self.classes: Dict[str, dict] = {}   # コードの中のクラス（名前 → メソッド・クラスの属性・親）
+        self.method_ctx: list = []           # 展開中のメソッドの (クラス, self)（super() のため）
         # 一度だけ整数を入れる名前（IN[AT_ROLL] の番号に使える）
         stores = _scope_stores(tree.body)
         self.int_consts: Dict[str, int] = {}
@@ -422,6 +427,15 @@ class ExprespyTranslator(PC.Translator):
         v = self.const_expr(e)
         if v is not None:
             return v
+        if isinstance(e, ast.Attribute):
+            obj = self.obj_of(e.value)
+            if obj is not None:
+                return self.obj_attr(obj, e.attr, e)
+            if isinstance(e.value, ast.Name) and e.value.id in self.classes and e.value.id not in self.env:
+                v = self.class_attr(e.value.id, e.attr)
+                if v is None:
+                    PC._fail("クラス %s に属性 %s がありません" % (e.value.id, e.attr), e)
+                return v
         if isinstance(e, ast.Lambda):
             PC._fail("lambda は、名前に入れて呼び出す形（f = lambda x: …）だけ変換できます", e)
         v = self.none_expr(e)
@@ -546,12 +560,15 @@ class ExprespyTranslator(PC.Translator):
                     for key, v in src.extra["items"].items():
                         items[key] = self.dict_slot(v, e)
                     continue
-                items[self.dict_key(kn, e)] = self.dict_slot(self.expr(vn), e)
+                items[self.dict_key(kn, e)] = self.dict_slot(self.tracked(vn), e)
             return PC.Value("dict", "", items=items)
         if isinstance(e, ast.Subscript):
             d = self.dict_of(e.value)
             if d is not None:
                 return self.dict_get(d, e.slice, None, e, strict=True)
+            lst = self.list_of(e.value)
+            if lst is not None and not isinstance(e.slice, ast.Slice):
+                return self.list_get(lst, e.slice, e)
             st = self.str_of(e.value) if self.is_text(e.value) else None
             if st is not None:
                 try:
@@ -597,6 +614,10 @@ class ExprespyTranslator(PC.Translator):
             return self.env[node.id]
         if isinstance(node, ast.Dict):
             return self.expr(node)
+        if isinstance(node, ast.Attribute):                # オブジェクトの属性の辞書
+            o = self.obj_of(node.value)
+            v = o.extra["attrs"].get(node.attr) if o is not None else None
+            return v if v is not None and v.kind == "dict" else None
         return None
 
     def dict_key(self, node, where):
@@ -611,8 +632,9 @@ class ExprespyTranslator(PC.Translator):
         return key
 
     def dict_slot(self, v, node, var=None):
-        """辞書の値。数・ベクトル・行列はキーごとの計算の変数に入れる（実行時の if の中の書き換えのため）"""
-        if v.kind in ("str", "none", "dict"):
+        """辞書・リスト・オブジェクトの値。数・ベクトル・行列は要素ごとの計算の変数に入れる（実行時の if の中の
+        書き換えのため）"""
+        if v.kind in ("str", "none", "dict", "obj", "list") or v.extra.get("items") is not None:
             return v
         if v.kind == "tm":
             v = self.tm_matrix(v)
@@ -647,7 +669,7 @@ class ExprespyTranslator(PC.Translator):
         if d is None:
             return False
         items = d.extra["items"]
-        v = self.expr(value_node)
+        v = self.tracked(value_node)
         try:
             key = self.dict_key(target.slice, s)
         except _Dynamic:
@@ -685,6 +707,335 @@ class ExprespyTranslator(PC.Translator):
         res = self.binop(s.op, cur, self.expr(s.value), s)
         self.dict_assign(s.target, _Pre(res), s)
         return True
+
+    # ---- リスト（変数に入れたリストは、変換の時点で要素を追う）
+    def runtime_depth(self) -> int:
+        """実行時の if・計算の for の入れ子の深さ（長さを変える処理がそこで行われるか見るため）"""
+        return sum(1 for f in self.frames if f in ("if", "loop"))
+
+    def list_items_of(self, node, v):
+        if isinstance(node, ast.List):
+            return [self.expr(x) for x in node.elts]
+        if isinstance(node, ast.ListComp):
+            return self.flat(self.comprehension(node), node)
+        items = self.static_items(node.args[0]) if node.args else []
+        if items is None:
+            PC._fail("list(…) は、要素の数が変換の時点で決まる並びだけ変換できます", node)
+        return self.flat(items, node)
+
+    def tracked(self, node):
+        """値の式。リストの書き方（[…]・内包表記）なら、要素を追うリストにする（属性・辞書の値・要素に入れるため）"""
+        if isinstance(node, (ast.List, ast.ListComp)):
+            return self.make_list(self.list_items_of(node, None), node)
+        return self.expr(node)
+
+    def make_list(self, items, node):
+        v = PC.Value("vec", "", items=[self.dict_slot(x, node) for x in items], depth=self.runtime_depth())
+        self.relist(v)
+        return v
+
+    @staticmethod
+    def relist(v):
+        """リストの値の種類と式を、要素から作り直す（すべて数ならベクトルとしても使える）"""
+        items = v.extra["items"]
+        if all(x.kind in ("num", "unit") for x in items):
+            v.kind, v.code = "vec", "[%s]" % ", ".join(x.code for x in items)
+        else:
+            v.kind, v.code = "list", ""
+
+    @staticmethod
+    def is_list(v) -> bool:
+        return v.kind in ("vec", "list") and isinstance(v.extra.get("items"), list)
+
+    def list_of(self, node):
+        if isinstance(node, _Pre):
+            return node.value if self.is_list(node.value) else None
+        if isinstance(node, ast.Name) and node.id in self.env and self.is_list(self.env[node.id]):
+            return self.env[node.id]
+        if isinstance(node, ast.Attribute):                # オブジェクトの属性のリスト（self.items など）
+            o = self.obj_of(node.value)
+            v = o.extra["attrs"].get(node.attr) if o is not None else None
+            return v if v is not None and self.is_list(v) else None
+        return None
+
+    def list_index(self, lst, node, where) -> int:
+        n = len(lst.extra["items"])
+        k = self.index_of(node, "リストの添字")
+        if k < 0:
+            k += n
+        if not 0 <= k < n:
+            PC._fail("リストの添字 %d が範囲外です（長さ %d）" % (k, n), where)
+        return k
+
+    def list_get(self, lst, idx_node, node):
+        items = lst.extra["items"]
+        try:
+            return items[self.list_index(lst, idx_node, node)]
+        except _Dynamic:
+            return self.select(self.num_code(self.expr(idx_node), node), list(enumerate(items)), None, node, "リスト[…]")
+
+    def check_length_change(self, lst, node, what):
+        if self.runtime_depth() > lst.extra.get("depth", 0):
+            PC._fail("実行時の if・回数が実行時に決まるループの中でリストの %s をしています（長さが実行時に決まるため、"
+                     "変換できません）" % what, node)
+
+    def list_assign(self, target, value_node, s) -> bool:
+        if not isinstance(target, ast.Subscript):
+            return False
+        lst = self.list_of(target.value)
+        if lst is None:
+            return False
+        items = lst.extra["items"]
+        v = self.tracked(value_node)
+        try:
+            k = self.list_index(lst, target.slice, s)
+        except _Dynamic:
+            tmp = self.dict_slot(v, s)
+            kv = self.fresh("k")
+            self.emit("%s = %s" % (kv, self.num_code(self.expr(target.slice), s)))
+            for n, cur in enumerate(items):
+                if cur.kind != tmp.kind:
+                    PC._fail("リストの要素の種類が違います（%s と %s）" % (cur.kind, tmp.kind), s)
+                self.emit("%s %s == %d:" % ("if" if n == 0 else "elif", kv, n))
+                self.emit("    %s = %s" % (cur.code, tmp.code))
+            return True
+        cur = items[k]
+        if cur.kind in ("str", "none", "dict", "obj", "list") or v.kind in ("str", "none", "dict", "obj", "list"):
+            if self.runtime_depth() > lst.extra.get("depth", 0):
+                PC._fail("実行時の if の中で、リストの文字列・辞書などの要素を書き換えています（変換できません）", s)
+            items[k] = self.dict_slot(v, s)
+        else:
+            if cur.kind != v.kind and {cur.kind, v.kind} != {"vec", "pt"} and not (cur.kind == "num" and v.kind == "unit"):
+                PC._fail("リストの要素に種類の違う値（%s と %s）を入れています" % (cur.kind, v.kind), s)
+            items[k] = self.dict_slot(v, s, var=cur.code)
+        self.relist(lst)
+        return True
+
+    def list_aug(self, s: ast.AugAssign) -> bool:
+        if isinstance(s.target, ast.Name) and self.list_of(s.target) is not None and isinstance(s.op, ast.Add):
+            lst = self.list_of(s.target)
+            items = self.static_items(s.value)
+            if items is None:
+                PC._fail("リストに += できるのは、要素の数が決まる並びだけです", s)
+            self.check_length_change(lst, s, "+=")
+            lst.extra["items"].extend(self.dict_slot(x, s) for x in self.flat(items, s))
+            self.relist(lst)
+            return True
+        if not isinstance(s.target, ast.Subscript) or self.list_of(s.target.value) is None:
+            return False
+        lst = self.list_of(s.target.value)
+        cur = self.list_get(lst, s.target.slice, s)
+        res = self.binop(s.op, cur, self.expr(s.value), s)
+        self.list_assign(s.target, _Pre(res), s)
+        return True
+
+    def list_method(self, lst, e: ast.Call):
+        f, items = e.func.attr, lst.extra["items"]
+        if f == "append" and len(e.args) == 1:
+            self.check_length_change(lst, e, "append")
+            items.append(self.dict_slot(self.tracked(e.args[0]), e))
+        elif f == "extend" and len(e.args) == 1:
+            self.check_length_change(lst, e, "extend")
+            seq = self.static_items(e.args[0])
+            if seq is None:
+                PC._fail("extend には、要素の数が決まる並びを渡してください", e)
+            items.extend(self.dict_slot(x, e) for x in self.flat(seq, e))
+        elif f == "insert" and len(e.args) == 2:
+            self.check_length_change(lst, e, "insert")
+            k = self.index_of(e.args[0], "insert の位置")
+            items.insert(k, self.dict_slot(self.expr(e.args[1]), e))
+        elif f == "pop" and len(e.args) <= 1:
+            self.check_length_change(lst, e, "pop")
+            if not items:
+                PC._fail("空のリストを pop しています", e)
+            k = self.list_index(lst, e.args[0], e) if e.args else len(items) - 1
+            v = items.pop(k)
+            self.relist(lst)
+            return v
+        elif f in ("reverse", "clear") and not e.args:
+            self.check_length_change(lst, e, f)
+            if f == "reverse":
+                items.reverse()
+            else:
+                items.clear()
+        elif f in ("index", "count") and len(e.args) == 1:
+            x = self.py_const(self.expr(e.args[0]))
+            vals = [self.py_const(v) for v in items]
+            if f == "count":
+                return PC.Value("num", str(vals.count(x)))
+            if x not in vals:
+                PC._fail("リストに %r がありません（ValueError）" % (x,), e)
+            return PC.Value("num", str(vals.index(x)))
+        elif f == "copy" and not e.args:
+            return self.make_list(list(items), e)
+        else:
+            PC._fail("リストの %s は変換できません" % f, e)
+        self.relist(lst)
+        return PC.Value("none", "None")
+
+    # ---- クラス（インスタンスは変換の時点で追い、メソッドは呼び出したところに展開する）
+    def define_class(self, s: ast.ClassDef):
+        bases = []
+        for b in s.bases:
+            if isinstance(b, ast.Name) and b.id == "object":
+                continue
+            if isinstance(b, ast.Name) and b.id in self.classes:
+                bases.append(b.id)
+                continue
+            PC._fail("クラス %s の親（%s）は変換できません（コードの中で定義したクラスだけ）" % (s.name, ast.unparse(b)), s)
+        if len(bases) > 1 or s.keywords or s.decorator_list:
+            PC._fail("クラス %s の書き方（多重継承・デコレータ）は変換できません" % s.name, s)
+        cls = {"name": s.name, "base": bases[0] if bases else None, "methods": {}, "static": set(), "attrs": {}}
+        for st in s.body:
+            if isinstance(st, ast.FunctionDef):
+                deco = [PC._tail(d) for d in st.decorator_list]
+                if any(d not in ("staticmethod",) for d in deco):
+                    PC._fail("メソッド %s.%s のデコレータ（%s）は変換できません" % (s.name, st.name, "・".join(deco)), st)
+                if st.args.vararg or st.args.kwarg or st.args.kwonlyargs or st.args.posonlyargs:
+                    PC._fail("メソッド %s.%s の引数の書き方は変換できません" % (s.name, st.name), st)
+                params = [a.arg for a in st.args.args]
+                defaults = dict(zip(params[len(params) - len(st.args.defaults):], st.args.defaults))
+                cls["methods"][st.name] = (params, st.body, False, defaults)
+                if "staticmethod" in deco:
+                    cls["static"].add(st.name)
+            elif isinstance(st, ast.Assign) and len(st.targets) == 1 and isinstance(st.targets[0], ast.Name):
+                cls["attrs"][st.targets[0].id] = self.dict_slot(self.expr(st.value), st)
+            elif isinstance(st, ast.Pass) or (isinstance(st, ast.Expr) and isinstance(st.value, ast.Constant)):
+                continue
+            else:
+                PC._fail("クラス %s の中のこの書き方は変換できません" % s.name, st)
+        self.classes[s.name] = cls
+        self.env.pop(s.name, None)
+
+    def find_method(self, cls_name: str, name: str):
+        while cls_name is not None:
+            cls = self.classes[cls_name]
+            if name in cls["methods"]:
+                return cls_name, cls["methods"][name], name in cls["static"]
+            cls_name = cls["base"]
+        return None
+
+    def class_attr(self, cls_name: str, name: str):
+        while cls_name is not None:
+            cls = self.classes[cls_name]
+            if name in cls["attrs"]:
+                return cls["attrs"][name]
+            cls_name = cls["base"]
+        return None
+
+    def obj_of(self, node):
+        """式がオブジェクト（コードの中のクラスのインスタンス）なら、その値。でなければ None"""
+        if isinstance(node, _Pre):
+            return node.value if node.value.kind == "obj" else None
+        if isinstance(node, ast.Name) and node.id in self.env and self.env[node.id].kind == "obj":
+            return self.env[node.id]
+        if isinstance(node, ast.Attribute):
+            o = self.obj_of(node.value)
+            if o is not None:
+                v = o.extra["attrs"].get(node.attr)
+                return v if v is not None and v.kind == "obj" else None
+        return None
+
+    def instantiate(self, cls_name: str, e: ast.Call):
+        obj = PC.Value("obj", "", cls=cls_name, attrs={})
+        found = self.find_method(cls_name, "__init__")
+        if found is not None:
+            owner, func, _static = found
+            self.method_ctx.append((owner, obj))
+            try:
+                self.inline("%s.__init__" % owner, e, func=func, bound=(obj,))
+            finally:
+                self.method_ctx.pop()
+        elif e.args or e.keywords:
+            PC._fail("クラス %s には __init__ がないので、引数を渡せません" % cls_name, e)
+        return obj
+
+    def obj_attr(self, obj, name: str, node):
+        v = obj.extra["attrs"].get(name)
+        if v is None:
+            v = self.class_attr(obj.extra["cls"], name)
+        if v is None:
+            if self.find_method(obj.extra["cls"], name) is not None:
+                PC._fail("メソッド %s を値として使っています（呼び出す形だけ変換できます）" % name, node)
+            PC._fail("%s に属性 %s がありません（AttributeError）" % (obj.extra["cls"], name), node)
+        return v
+
+    def obj_assign(self, target, value_node, s) -> bool:
+        if not isinstance(target, ast.Attribute):
+            return False
+        obj = self.obj_of(target.value)
+        if obj is None:
+            return False
+        attrs = obj.extra["attrs"]
+        v = self.tracked(value_node)
+        cur = attrs.get(target.attr)
+        tracked = ("str", "none", "dict", "obj", "list")
+        if cur is not None and cur.kind not in tracked and v.kind not in tracked and cur.extra.get("items") is None:
+            if cur.kind != v.kind and {cur.kind, v.kind} != {"vec", "pt"} and not (cur.kind == "num" and v.kind == "unit"):
+                PC._fail("属性 %s に種類の違う値（%s と %s）を入れています" % (target.attr, cur.kind, v.kind), s)
+            attrs[target.attr] = self.dict_slot(v, s, var=cur.code)
+        else:
+            if cur is not None and "if" in self.frames:
+                PC._fail("実行時の if の中で、属性 %s の文字列・辞書などを書き換えています（変換できません）" % target.attr, s)
+            attrs[target.attr] = self.dict_slot(v, s)
+        return True
+
+    def obj_aug(self, s: ast.AugAssign) -> bool:
+        if not isinstance(s.target, ast.Attribute) or self.obj_of(s.target.value) is None:
+            return False
+        obj = self.obj_of(s.target.value)
+        res = self.binop(s.op, self.obj_attr(obj, s.target.attr, s), self.expr(s.value), s)
+        self.obj_assign(s.target, _Pre(res), s)
+        return True
+
+    def method_call(self, e: ast.Call):
+        """obj.method(…)・Class.method(…)・super().method(…)。対象外なら None"""
+        f = e.func
+        if not isinstance(f, ast.Attribute):
+            return None
+        if isinstance(f.value, ast.Call) and isinstance(f.value.func, ast.Name) and f.value.func.id == "super" \
+                and "super" not in self.env:
+            if not self.method_ctx:
+                PC._fail("super() はメソッドの中だけで使えます", e)
+            owner, obj = self.method_ctx[-1]
+            base = self.classes[owner]["base"]
+            found = self.find_method(base, f.attr) if base else None
+            if found is None:
+                PC._fail("親クラスにメソッド %s がありません" % f.attr, e)
+            return self.run_method(found, obj, e)
+        obj = self.obj_of(f.value)
+        if obj is None and isinstance(f.value, ast.Call):
+            v = self.expr(f.value)                        # Cls(…).method(…)・f(…).method(…)（作ったその場で呼ぶ）
+            if v.kind == "obj":
+                obj = v
+            elif self.is_list(v):
+                return self.list_method(v, e)
+            else:
+                return self.call(ast.copy_location(ast.Call(func=ast.Attribute(value=_Pre(v), attr=f.attr, ctx=ast.Load()),
+                                                            args=e.args, keywords=e.keywords), e))
+        if obj is not None:
+            found = self.find_method(obj.extra["cls"], f.attr)
+            if found is None:
+                PC._fail("%s にメソッド %s がありません" % (obj.extra["cls"], f.attr), e)
+            return self.run_method(found, obj, e)
+        if isinstance(f.value, ast.Name) and f.value.id in self.classes and f.value.id not in self.env:
+            found = self.find_method(f.value.id, f.attr)
+            if found is None:
+                PC._fail("クラス %s にメソッド %s がありません" % (f.value.id, f.attr), e)
+            return self.run_method(found, None, e)            # Class.method(obj, …)・静的メソッド
+        lst = self.list_of(f.value)
+        if lst is not None:
+            return self.list_method(lst, e)
+        return None
+
+    def run_method(self, found, obj, e):
+        owner, func, static = found
+        self.method_ctx.append((owner, obj))
+        try:
+            return self.inline("%s.%s" % (owner, e.func.attr), e, func=func,
+                               bound=() if static or obj is None else (obj,))
+        finally:
+            self.method_ctx.pop()
 
     def input_value(self, k: int, node):
         kind = self.in_kinds.get(k)
@@ -726,7 +1077,10 @@ class ExprespyTranslator(PC.Translator):
         if isinstance(s, ast.AugAssign) and isinstance(s.target, ast.Subscript) and \
                 isinstance(s.target.value, ast.Name) and s.target.value.id == "OUT":
             PC._fail("OUT[n] への += などは変換できません（OUT は実行のたびに空になります）", s)
-        if isinstance(s, ast.AugAssign) and self.dict_aug(s):
+        if isinstance(s, ast.AugAssign) and (self.dict_aug(s) or self.list_aug(s) or self.obj_aug(s)):
+            return
+        if isinstance(s, ast.ClassDef):
+            self.define_class(s)
             return
         if isinstance(s, ast.FunctionDef):
             self.define(s.name, s.args, s.body, False, s)
@@ -818,8 +1172,12 @@ class ExprespyTranslator(PC.Translator):
             return
         if isinstance(target, ast.Name) and not isinstance(value_node, _Pre):
             v = self.expr(value_node)
-            if v.kind in ("none", "str", "dict"):
-                self.env[target.id] = v                  # None・文字列・辞書は変換の時点で追う（計算の変数にしない）
+            if isinstance(value_node, (ast.List, ast.ListComp)) or (
+                    isinstance(value_node, ast.Call) and isinstance(value_node.func, ast.Name)
+                    and value_node.func.id == "list" and "list" not in self.env):
+                v = self.make_list(self.list_items_of(value_node, v), value_node)   # 変数に入れるリスト（append など）
+            if v.kind in ("none", "str", "dict", "obj", "list") or v.extra.get("items") is not None:
+                self.env[target.id] = v                  # 変換の時点で追う値（計算の変数にしない。同じものを共有）
                 return
             value_node = ast.copy_location(_Pre(v), value_node)   # 変換した値（右辺は 1 回だけ変換する）
         try:
@@ -830,7 +1188,8 @@ class ExprespyTranslator(PC.Translator):
         if k is None:
             if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name) and target.value.id == "IN":
                 PC._fail("IN[n]（入力）に代入しています", s)
-            if self.dict_assign(target, value_node, s):
+            if self.dict_assign(target, value_node, s) or self.list_assign(target, value_node, s) \
+                    or self.obj_assign(target, value_node, s):
                 return
             return super().assign(target, value_node, s)
         v = self.out_value(value_node, s)
@@ -853,6 +1212,9 @@ class ExprespyTranslator(PC.Translator):
         d = self.dict_of(node)
         if d is not None:
             return [self.key_value(k) for k in d.extra["items"]]
+        lst = self.list_of(node)
+        if lst is not None:
+            return list(lst.extra["items"])
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and not node.args:
             d = self.dict_of(node.func.value)
             if d is not None and node.func.attr in ("keys", "values", "items"):
@@ -1178,37 +1540,207 @@ class ExprespyTranslator(PC.Translator):
                     PC._fail("try の中で、番号が実行時に決まる IN[…] を読んでいます（KeyError になるかが分かりません）", n)
         return False
 
-    def try_stmt(self, s: ast.Try):
-        """try: … except KeyError: …: IN にない番号を読む文まで実行して except へ（入力の有無は変換の時点で分かる）"""
-        handler = None
+    # 例外の親子（except で受けるか）。ここにない名前は Exception の子とみなす
+    _EXC_PARENT = {"ZeroDivisionError": "ArithmeticError", "OverflowError": "ArithmeticError",
+                   "ArithmeticError": "Exception", "KeyError": "LookupError", "IndexError": "LookupError",
+                   "LookupError": "Exception", "ValueError": "Exception", "Exception": "BaseException"}
+
+    def catches(self, handler, exc: str) -> bool:
+        if handler.type is None:
+            return True
+        names = [PC._tail(x) for x in handler.type.elts] if isinstance(handler.type, ast.Tuple) else [PC._tail(handler.type)]
+        x = exc
+        while x is not None:
+            if x in names:
+                return True
+            x = self._EXC_PARENT.get(x, "Exception" if x not in ("Exception", "BaseException") else None)
+        return False
+
+    def risks(self, st) -> List[Tuple[str, ast.expr, str]]:
+        """文の実行で起きうる例外（例外の名前, 起きる条件の式の材料, 説明）。
+        0 で割る（/・//・%）、math.sqrt・log・log10 の範囲外、math.acos・asin の範囲外。条件式（a if c else b）・
+        and / or の右側など、実行されないかもしれない部分は見ない"""
+        out = []
+
+        def visit(n):
+            if isinstance(n, (ast.FunctionDef, ast.Lambda, ast.ClassDef)):
+                return
+            if isinstance(n, ast.IfExp):
+                visit(n.test)
+                return
+            if isinstance(n, ast.BoolOp):
+                visit(n.values[0])
+                return
+            if isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Div, ast.FloorDiv, ast.Mod)):
+                out.append(("ZeroDivisionError", ("zero", n.right), "0 で割る"))
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) \
+                    and n.func.value.id == "math" and n.args:
+                if n.func.attr == "sqrt":
+                    out.append(("ValueError", ("neg", n.args[0]), "負の数の sqrt"))
+                elif n.func.attr in ("log", "log10", "log2"):
+                    out.append(("ValueError", ("nonpos", n.args[0]), "0 以下の log"))
+                elif n.func.attr in ("acos", "asin"):
+                    out.append(("ValueError", ("unit", n.args[0]), "範囲外の %s" % n.func.attr))
+            for c in ast.iter_child_nodes(n):
+                visit(c)
+        if isinstance(st, ast.AugAssign) and isinstance(st.op, (ast.Div, ast.FloorDiv, ast.Mod)):
+            out.append(("ZeroDivisionError", ("zero", st.value), "0 で割る"))
+        for c in ([st.value] if isinstance(st, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Expr, ast.Return))
+                  and getattr(st, "value", None) is not None else []):
+            visit(c)
+        return out
+
+    def risky_inside(self, st, handler_for) -> bool:
+        """if・for などの中に、受ける except のある例外（0 で割る・math の範囲外・raise）があるか"""
+        for n in ast.walk(st):
+            if isinstance(n, ast.Raise) and handler_for(self.raise_name(n) or "Exception") is not None:
+                return True
+            if isinstance(n, (ast.Assign, ast.AugAssign, ast.Expr, ast.Return)) and n is not st:
+                if any(handler_for(e) is not None for e, _r, _l in self.risks(n)):
+                    return True
+        return False
+
+    def risk_cond(self, risk, node) -> Optional[str]:
+        kind, operand = risk
+        try:
+            v = self.expr(operand)
+        except PC.ConvertError:
+            return None                                   # 割る数が数でない（ベクトルなど）。文の変換で理由を出す
+        if v.kind not in ("num", "unit"):
+            return None                                   # ベクトル ÷ 数 などの割る数でないもの
+        x = v.code
+        cond = {"zero": "(%s == 0)", "neg": "(%s < 0)", "nonpos": "(%s <= 0)", "unit": "(abs(%s) > 1)"}[kind] % x
+        c = self.const_of(cond)
+        return None if c == 0 else cond
+
+    @staticmethod
+    def raise_name(st) -> Optional[str]:
+        exc = st.exc
+        if exc is None:
+            return None
+        return PC._tail(exc.func if isinstance(exc, ast.Call) else exc)
+
+    def try_stmt(self, s: ast.Try):  # noqa: C901
+        """try: … except …: … を、例外の起きる条件に書き換える。
+        IN にない番号の IN[k]（KeyError）は変換の時点で分かる。0 で割る・math の範囲外（ZeroDivisionError・ValueError）・
+        if 条件: raise 例外 は、文を実行する前に条件を調べ、起きたら目印の変数（どの except か）を立てて残りの文を飛ばす"""
         for h in s.handlers:
-            names = []
-            if h.type is None:
-                names = ["BaseException"]
-            elif isinstance(h.type, ast.Tuple):
-                names = [PC._tail(x) for x in h.type.elts]
-            else:
-                names = [PC._tail(h.type)]
-            if any(n in self._CATCH for n in names):
-                handler = h
-                break
-        if handler is None:
-            PC._fail("try は、except KeyError・except Exception・except: だけ変換できます（入力がないときの処理）", s)
-        if handler.name:
-            PC._fail("except … as %s は変換できません" % handler.name, handler)
-        raised = False
-        for st in s.body:
-            if self.missing_input(st):
-                if not isinstance(st, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Expr, ast.Return)):
-                    PC._fail("try の中の if・for などの中で、ない入力（IN[k]）を読んでいます（変換できません）", st)
-                raised = True
-                break
-            self.stmt(st)
-        if raised:
-            self.block(handler.body)
+            if h.name and any(isinstance(n, ast.Name) and n.id == h.name
+                              for st in h.body for n in ast.walk(st)):
+                PC._fail("except … as %s の %s を使っています（例外の中身は変換できません）" % (h.name, h.name), h)
+
+        def handler_for(exc):
+            return next((k for k, h in enumerate(s.handlers) if self.catches(h, exc)), None)
+        err = self.fresh("err")
+        err_line = len(self.lines)
+        self.emit("%s = 0" % err)
+        base = self.indent
+        guarded = False                                   # 前の文で例外の目印を立てうるか
+        static_err = None                                 # 変換の時点で決まった例外（except の番号）
+        used = False
+        if True:
+            for st in s.body:
+                # 変換の時点で決まる例外（IN にない番号・無条件の raise）
+                exc = None
+                if self.missing_input(st):
+                    if not isinstance(st, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Expr, ast.Return)):
+                        PC._fail("try の中の if・for などの中で、ない入力（IN[k]）を読んでいます（変換できません）", st)
+                    exc = "KeyError"
+                elif isinstance(st, ast.Raise):
+                    exc = self.raise_name(st) or "Exception"
+                if exc is not None:
+                    k = handler_for(exc)
+                    if k is None:
+                        PC._fail("try の中で %s が起きますが、受ける except がありません" % exc, st)
+                    if guarded:
+                        self.emit("if not %s:" % err)
+                        self.emit("    %s = %d" % (err, k + 1))
+                    else:
+                        static_err = k
+                    used = True
+                    break
+                # if 条件: raise 例外（実行時の条件）
+                if isinstance(st, ast.If) and len(st.body) == 1 and isinstance(st.body[0], ast.Raise) and not st.orelse:
+                    name = self.raise_name(st.body[0]) or "Exception"
+                    k = handler_for(name)
+                    if k is None:
+                        PC._fail("try の中で %s が起きますが、受ける except がありません" % name, st)
+                    known = self.known_cond(st.test)
+                    if known is False:
+                        continue
+                    cond = "1" if known else self.cond(st.test)
+                    self.emit(("if not %s and %s:" % (err, cond)) if guarded else ("if %s:" % cond))
+                    self.emit("    %s = %d" % (err, k + 1))
+                    guarded = used = True
+                    continue
+                # 実行時に起きうる例外（0 で割る・math の範囲外）
+                conds = []
+                for exc_name, risk, _label in self.risks(st):
+                    k = handler_for(exc_name)
+                    if k is None:
+                        continue                          # 受ける except がない（Maya ではノードの誤り）
+                    c = self.risk_cond(risk, st)
+                    if c is not None:
+                        conds.append((c, k))
+                simple = isinstance(st, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Expr, ast.Return))
+                if not simple and self.risky_inside(st, handler_for):
+                    PC._fail("try の中の if・for などの中の、例外になりうる計算（0 で割る・raise など）は変換できません", st)
+                if guarded:
+                    self.emit("if not %s:" % err)        # 前の文で例外が起きていなければ
+                    self.indent += 1
+                m = len(self.lines)
+                skippable = guarded or bool(conds)        # 例外の目印で飛ばされうる文は、実行時の if の中と同じ扱い
+                if skippable:
+                    self.frames.append("if")
+                try:
+                    if conds:
+                        for n, (c, k) in enumerate(conds):
+                            self.emit("%s %s:" % ("if" if n == 0 else "elif", c))
+                            self.emit("    %s = %d" % (err, k + 1))
+                        self.emit("else:")
+                        self.indent += 1
+                        n0 = len(self.lines)
+                        self.stmt(st)
+                        if len(self.lines) == n0:
+                            self.emit("pass")
+                        guarded = used = True
+                    else:
+                        self.stmt(st)
+                        if len(self.lines) == m and self.indent > base:
+                            self.emit("pass")
+                finally:
+                    if skippable:
+                        self.frames.pop()
+                    self.indent = base
+        if not used or static_err is not None and not guarded:
+            del self.lines[err_line]                      # 目印を使わない
+        # except・else・finally
+        if static_err is not None:
+            self.block(s.handlers[static_err].body)
+        elif used:
+            for n, h in enumerate(s.handlers):
+                self.emit("%s %s == %d:" % ("if" if n == 0 else "elif", err, n + 1))
+                self.indent += 1
+                m = len(self.lines)
+                self.frames.append("if")
+                try:
+                    self.block(h.body)
+                finally:
+                    self.frames.pop()
+                if len(self.lines) == m:
+                    self.emit("pass")
+                self.indent -= 1
+            if s.orelse:
+                self.emit("else:")
+                self.indent += 1
+                self.frames.append("if")
+                try:
+                    self.block(s.orelse)
+                finally:
+                    self.frames.pop()
+                self.indent -= 1
         else:
             self.block(s.orelse)
-            self.notes.append("%d 行目: try の except は、入力がないとき（KeyError）だけ再現します" % s.lineno)
         self.block(s.finalbody)
 
     # ---- None と、変換の時点で決まる条件（def f(x, max=None): … if max is not None: … など）
@@ -1235,6 +1767,10 @@ class ExprespyTranslator(PC.Translator):
             return "1" if v.extra["s"] else "0"
         if v.kind == "dict":
             return "1" if v.extra["items"] else "0"
+        if v.extra.get("items") is not None:
+            return "1" if v.extra["items"] else "0"
+        if v.kind == "obj":
+            return "1"
         if v.kind == "unit":
             return v.code
         if v.kind != "num":
@@ -1429,6 +1965,21 @@ class ExprespyTranslator(PC.Translator):
             return self.expr(e.args[1])
         if isinstance(f, ast.Name) and f.id in self.funcs and f.id not in self.env:
             return self.inline(f.id, e)
+        if isinstance(f, ast.Name) and f.id in self.classes and f.id not in self.env:
+            return self.instantiate(f.id, e)
+        if isinstance(f, ast.Name) and f.id == "isinstance" and len(e.args) == 2 and "isinstance" not in self.env:
+            obj = self.obj_of(e.args[0])
+            names = [x.id for x in (e.args[1].elts if isinstance(e.args[1], ast.Tuple) else [e.args[1]])
+                     if isinstance(x, ast.Name)]
+            cls = obj.extra["cls"] if obj is not None else None
+            chain = []
+            while cls is not None:
+                chain.append(cls)
+                cls = self.classes[cls]["base"]
+            return PC.Value("num", "1" if set(chain) & set(names) else "0")
+        v = self.method_call(e)
+        if v is not None:
+            return v
         v = self.text_or_dict_call(e)
         if v is not None:
             return v
@@ -1568,29 +2119,46 @@ class ExprespyTranslator(PC.Translator):
         if isinstance(c.func, ast.Attribute) and self.dict_of(c.func.value) is not None:
             self.text_or_dict_call(c)                     # d.update(…)・d.pop(…) など
             return
+        if self.method_call(c) is not None:               # obj.method(…)・リストの append など
+            return
+        if isinstance(c.func, ast.Name) and c.func.id in self.classes and c.func.id not in self.env:
+            self.instantiate(c.func.id, c)
+            return
         return super().call_stmt(c)
 
-    def inline(self, name: str, e: ast.Call):
-        params, body, is_lambda, defaults = self.funcs[name]
-        if name in self.inlining:
-            PC._fail("関数 %s の再帰呼び出しは変換できません" % name, e)
-        if len(e.args) > len(params) or any(isinstance(a, ast.Starred) for a in e.args):
-            PC._fail("関数 %s の引数が多すぎます（%d 個まで）" % (name, len(params)), e)
-        nodes = dict(zip(params, e.args))
+    RECURSION_LIMIT = 16        # 再帰を展開する深さ（越えると、実行時にそこへ来たら計算の誤り）
+    INLINE_LIMIT = 2000         # 1 つのコードで関数を展開する回数の上限（再帰の展開が大きくなりすぎないように）
+
+    def inline(self, name: str, e: ast.Call, func=None, bound=()):
+        """関数を呼び出したところに展開する。func は (引数, 本体, lambda か, 既定値)（省略時は名前で引く）。
+        bound は先に入れる引数の値（メソッドの self）"""
+        params, body, is_lambda, defaults = func or self.funcs[name]
+        self.inline_count = getattr(self, "inline_count", 0) + 1
+        if self.inline_count > self.INLINE_LIMIT:
+            PC._fail("関数の展開が大きすぎます（%d 回まで。枝分かれする再帰など）" % self.INLINE_LIMIT, e)
+        if self.inlining.count(name) >= self.RECURSION_LIMIT:
+            # 実行時に決まる深さの再帰: ここまで来たら計算の誤り（0 で割る）にして、黙って違う値を出さない
+            self.notes.append("%d 行目: 再帰 %s は %d 段まで展開します（それより深いと、そのフレームは計算の誤りになります）"
+                              % (e.lineno, name, self.RECURSION_LIMIT))
+            return PC.Value("num", "(1 / 0)")
+        if len(e.args) + len(bound) > len(params) or any(isinstance(a, ast.Starred) for a in e.args):
+            PC._fail("関数 %s の引数が多すぎます（%d 個まで）" % (name, len(params) - len(bound)), e)
+        nodes = dict(zip(params[len(bound):], e.args))
         for kw in e.keywords:
             if kw.arg is None or kw.arg not in params:
                 PC._fail("関数 %s に引数 %s はありません" % (name, kw.arg or "**"), e)
             if kw.arg in nodes:
                 PC._fail("関数 %s の引数 %s を 2 回渡しています" % (name, kw.arg), e)
             nodes[kw.arg] = kw.value
-        for p in params:
+        for p in params[len(bound):]:
             if p not in nodes:
                 if p not in defaults:
                     PC._fail("関数 %s の引数 %s がありません" % (name, p), e)
                 nodes[p] = defaults[p]                   # 既定値（数・None など）
-        args = [self.expr(nodes[p]) for p in params]
+        args = list(bound) + [self.expr(nodes[p]) for p in params[len(bound):]]
         saved_env, saved_names = self.env, self.names
-        local_names = set(params) | (set() if is_lambda else set(_scope_stores(body)))
+        stored = set() if is_lambda else set(_scope_stores(body))     # 関数の中で値を入れる名前
+        local_names = set(params) | stored
         self.env = {k: v for k, v in saved_env.items() if k not in local_names}
         self.names = dict(saved_names)
         for n in sorted(local_names):
@@ -1602,11 +2170,14 @@ class ExprespyTranslator(PC.Translator):
                 var = self.names[p]
                 if v.kind == "tm":
                     v = self.tm_matrix(v)
-                if v.kind in ("none", "str", "dict"):
-                    self.env[p] = v                      # None・文字列・辞書は変換の時点で追う（辞書は Python と同じく共有）
+                if v.kind in ("none", "str", "dict", "obj", "list"):
+                    self.env[p] = v                      # 変換の時点で追う値（辞書・リスト・オブジェクトは Python と同じく共有）
                     continue
                 if v.kind not in ("num", "unit", "vec", "pt", "mat", "quat", "eul"):
                     PC._fail("関数 %s に渡せない値（%s）を渡しています" % (name, v.kind), e)
+                if v.kind in ("num", "unit") and p not in stored and self.const_of(v.code) is not None:
+                    self.env[p] = PC.Value("num", v.code)    # 書き換えない定数の引数は定数のまま（range(n) の展開・条件の畳み込み）
+                    continue
                 self.emit("%s = %s" % (var, v.code))
                 self.env[p] = PC.Value("num" if v.kind == "unit" else v.kind, var, **v.extra)
             if is_lambda:
@@ -1687,7 +2258,7 @@ class ExprespyTranslator(PC.Translator):
             v = self.tm_matrix(v)
         if v.kind == "unit":
             v = PC.Value("num", v.code)
-        if v.kind in ("none", "str", "dict"):
+        if v.kind in ("none", "str", "dict", "obj", "list") or v.extra.get("items") is not None:
             last_func = len(self.frames) - 1 - self.frames[::-1].index("func")
             if "var" in ret or ret.get("const") is not None or "if" in self.frames[last_func:]:
                 PC._fail("実行時の分かれ道で、None・文字列・辞書を返しています（変換できません）", s)
@@ -1826,14 +2397,17 @@ def apply_exprespy(ms) -> Tuple[Dict[str, ExprespyDef], List[str], Dict[str, str
         key = "%s:%s" % (TYPE, hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12])
         if key in defs:
             nd = defs[key]
-            return ExprespyResult(nd, nd.out_kinds, [])
+            return ExprespyResult(nd, nd.out_kinds, nd.notes)
         nd, out_kinds, notes = translate(code, in_kinds, out_connected.get(id(n), ()), type_name=key,
                                          source="exprespy %s" % n.name)
         nd.out_kinds = out_kinds
+        nd.notes = notes
         defs[key] = nd
         return ExprespyResult(nd, out_kinds, notes)
 
     used = set()
+    notes_of: Dict[str, List[str]] = {}
+    ms.exprespy_notes = notes_of                         # ノード名 → 変換の注意（再帰の深さ・ない番号は 0 など）
     for n in nodes:
         res = convert(n)
         if res is None:
@@ -1841,6 +2415,8 @@ def apply_exprespy(ms) -> Tuple[Dict[str, ExprespyDef], List[str], Dict[str, str
         n.node_def = res.node_def
         used.add(id(n))
         ok.append(n.name)
+        if res.notes:
+            notes_of[n.name] = res.notes
     # 変換できなかったノードの理由は、変換できたノードの分を除く（循環の検出で先に入ったもの）
     for name in ok:
         problems.pop(name, None)

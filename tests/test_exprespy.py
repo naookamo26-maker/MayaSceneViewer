@@ -75,10 +75,14 @@ class TranslateTest(unittest.TestCase):
             "OUT[int(IN[1])] = 1": "接続されている出力がありません",
             "d = {'a': 1}\nOUT[0] = d['b']": "辞書にキー 'b' がありません",
             "n = 'a' + str(IN[1])\nOUT[0] = 1 if n == 'a1' else 0": "文字列の中身が変換の時点で決まりません",
-            "try:\n    x = IN[0]\nexcept ValueError:\n    x = 0\nOUT[0] = x": "except KeyError",
+            "try:\n    x = 1 / IN[0]\nexcept ValueError as e:\n    print(e)\n    x = 0\nOUT[0] = x": "の e を使っています",
+            "try:\n    for i in range(2):\n        x = 1 / IN[1]\nexcept ZeroDivisionError:\n    x = 0\nOUT[0] = x":
+                "try の中の if・for などの中の、例外になりうる計算",
+            "l = []\nif IN[1] > 0:\n    l.append(1)\nOUT[0] = len(l)": "長さが実行時に決まる",
+            "class A(api.MPxNode):\n    pass\nOUT[0] = 1": "親（api.MPxNode）は変換できません",
             "OUT[0] = sum(IN[1] for i in range(int(IN[1])))": "要素の数が決まる並び",
             'OUT[0] = cmds.getAttr("a.tx")': "maya.cmds",
-            "def f(x):\n    return f(x)\nOUT[0] = f(1)": "再帰呼び出し",
+            "def f(n):\n    return f(n - 1) + f(n - 2)\nOUT[0] = f(IN[1])": "関数の展開が大きすぎます",
             "OUT[0] = 'text'": "文字列は OUT に出せません",
             "def f(x):\n    if x:\n        return 1\nOUT[0] = f(1)": "すべての道で return",
             "def f(*xs):\n    return 1\nOUT[0] = f()": "*args",
@@ -130,7 +134,7 @@ class TranslateTest(unittest.TestCase):
         self.assertEqual(outs, {0: "num", 1: "num", 2: "num", 3: "num"})
         first = nd.code.split("o0 = ")[0]
         self.assertNotIn(">", first)                          # max を省略した呼び出しは上限の判定を消す
-        self.assertIn("> _max", nd.code)                      # max を渡した呼び出しは上限を判定する
+        self.assertIn("(_val5 > 2)", nd.code)                 # max を渡した呼び出しは上限を判定する（定数のまま）
         self.assertIn("o3 = 1\n", nd.code + "\n")            # None の判定は変換の時点で決まる
 
     def test_python_constructs(self):
@@ -172,6 +176,26 @@ class TranslateTest(unittest.TestCase):
         self.assertIn("if (i0 > 0):\n    _d1 = 1", nd.code)     # 実行時の if の中でも、キーの変数に入れる
         self.assertIn("o0 = _d1", nd.code)
 
+    def test_lists_classes_except_recursion(self):
+        nd, _, _ = translate("l = [0, 0]\nif IN[0] > 0:\n    l[1] = IN[0]\nl.append(3)\nOUT[0] = l[1] + len(l)",
+                             {0: "num"})
+        self.assertIn("if (i0 > 0):\n    _d2 = i0", nd.code)    # 実行時の if の中の要素の書き換え
+        self.assertIn("o0 = (_d2 + 3)", nd.code)               # append した長さは変換の時点で決まる
+        nd, _, _ = translate("class S:\n    def __init__(self):\n        self.n = 0\n    def add(self, x):\n"
+                             "        if x > 0:\n            self.n += x\ns = S()\ns.add(IN[0])\nOUT[0] = s.n",
+                             {0: "num"})
+        self.assertRegex(nd.code, r"if \(_x\d+ > 0\):\n    (_d\d+) = \(\1 \+ _x\d+\)\no0 = \1")
+        nd, _, _ = translate("try:\n    r = IN[0] / IN[1]\nexcept ZeroDivisionError:\n    r = 0\nOUT[0] = r",
+                             {0: "num", 1: "num"})
+        self.assertIn("if (i1 == 0):\n    _err1 = 1\nelse:\n    r = (i0 / i1)\nif _err1 == 1:\n    r = 0", nd.code)
+        nd, _, notes = translate("def fact(n):\n    return 1 if n <= 1 else n * fact(n - 1)\nOUT[0] = fact(4)", {})
+        self.assertNotIn("1 / 0", nd.code)                     # 定数の再帰は変換の時点で最後まで
+        self.assertEqual(notes, [])
+        nd, _, notes = translate("def fact(n):\n    return 1 if n <= 1 else n * fact(n - 1)\nOUT[0] = fact(IN[0])",
+                                 {0: "num"})
+        self.assertIn("(1 / 0)", nd.code)                      # 実行時の深さの再帰は 16 段まで
+        self.assertTrue(any("16 段" in n for n in notes))
+
     def test_and_or_values(self):
         nd, _, _ = translate("OUT[0] = IN[0] or 1.0\nOUT[1] = IN[0] and 0\nOUT[2] = 0 or IN[0]\n"
                              "OUT[3] = 2 or IN[0]\nOUT[4] = None or IN[0] or 5", {0: "num"})
@@ -200,12 +224,12 @@ class SceneTest(unittest.TestCase):
         anim = self.scene["animation"]
         graph = {g["name"]: g for g in anim["graph"] if g["type"] == "exprespy"}
         for name in ("posCnsEx", "oriCnsEx", "aimCnsEx", "aimUpCnsEx", "timeEx", "chainA", "chainB", "quatEx",
-                     "limitEx", "pyEx", "pyEx2"):
+                     "limitEx", "pyEx", "pyEx2", "pyEx3"):
             self.assertRegex(graph[name].get("def", ""), r"^exprespy:[0-9a-f]{12}$", name)
             self.assertIn(graph[name]["def"], anim["nodeDefs"])
         self.assertNotIn("def", graph.get("badCmds", {}))
         warnings = "\n".join(self.scene["warnings"])
-        self.assertIn("exprespy 11 個", warnings)
+        self.assertIn("exprespy 12 個", warnings)
         self.assertIn("exprespy badCmds のコードを解析できません（1 行目: maya.cmds", warnings)
         self.assertIn("exprespy badMesh のコードを解析できません（形状（boxShape.o）", warnings)
         anim_warnings = "\n".join(anim["warnings"])
