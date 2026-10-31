@@ -1310,12 +1310,12 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     props += [("mesh", n) for n, *_ in mesh_entries] + [("camera", n) for n in camera_shapes]
     from .place2d import collect as collect_place2d       # テクスチャの UV の繰り返し・オフセット
     props += [("place2d", p) for p in collect_place2d(ms)]
-    # HumanIK: キャラクターと、スケルトンを動かすものを調べる。コントロールリグの FK は行列ノードに組み立てて評価し、
-    # そのほか（リターゲットなど）は評価しない（警告はキャラクターごとに 1 つにまとめる）
-    from .hik import analyze_hik, build_fk_rigs, hik_driven_ids, hik_warnings
+    # HumanIK: キャラクターと、スケルトンを動かすものを調べる。コントロールリグの FK・リターゲット・スタンスは行列ノードに
+    # 組み立てて評価し（近似）、そのほかは評価しない（警告はキャラクターごとにまとめる）
+    from .hik import analyze_hik, build_hik_rigs, hik_driven_ids, hik_warnings
     ms.hik_characters = analyze_hik(ms)
     if ms.hik_characters:
-        build_fk_rigs(ms, ms.hik_characters)
+        build_hik_rigs(ms, ms.hik_characters)
     hik_driven = hik_driven_ids(ms.hik_characters)
     for w in hik_warnings(ms.hik_characters):
         ms.warn(w)

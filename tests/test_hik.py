@@ -157,16 +157,49 @@ connectAttr "HIKSolverNode1.OutputCharacterState" "HIKState2SK1.InputCharacterSt
         (c,) = analyze_hik(parse_ma_text(HEADER + body))
         self.assertEqual([s.kind for s in c.sources], ["stance"])
 
-    def test_warnings_are_grouped(self):
-        _ms, _scene, warnings = convert(RETARGET)
+    def test_retarget_is_built(self):
+        ms, _scene, warnings = convert(RETARGET)
+        tgt = next(c for c in ms.hik_characters if c.name == "TargetHik")
+        self.assertEqual(tgt.retarget_parts, ["Hips", "Spine"])
+        self.assertEqual(tgt.retarget_static, ["LeftArm"])          # ソースにない部位は、スタンスの形で親についていく
+        self.assertFalse(tgt.driven)
+        hips = next(n for n in ms.nodes if n.name == "Hips")
+        self.assertEqual(hips.inputs["rx"][0].name, "Hips_hikRT_dr")
+        mr = next(n for n in ms.nodes if n.name == "Hips_hikRT_r")
+        self.assertEqual({k: (v[0].name, v[1]) for k, v in mr.inputs.items()},
+                         {"i[1]": ("Src_Hips", "wm"), "i[2]": ("Hips", "pim")})   # 基準（Reference）の部位がない
         hik = [w for w in warnings if w.startswith("HumanIK:")]
-        self.assertEqual(len(hik), 1)
-        self.assertIn("キャラクター TargetHik のスケルトン（Hips、Spine、LeftArm。3 個）は、キャラクター SourceHik からの"
-                      "リターゲットで動きます", hik[0])
+        self.assertEqual(len(hik), 1, hik)
+        self.assertIn("キャラクター TargetHik のスケルトン（3 部位）は、キャラクター SourceHik からのリターゲットを近似して"
+                      "再生します", hik[0])
+        self.assertIn("ソースにない部位 1 個はスタンスの形で親についていきます", hik[0])
+        self.assertFalse([w for w in warnings if "が接続で決まるため" in w or "HIKState2SK（" in w], warnings)
+
+    def test_unknown_source_warnings_are_grouped(self):
+        body = TARGET + '''createNode HIKSK2State -n "HIKSK2State9";
+connectAttr "HIKSK2State9.OutputCharacterState" "HIKState2SK1.InputCharacterState";
+'''
+        ms, _scene, warnings = convert(body)
+        (c,) = ms.hik_characters
+        self.assertEqual([s.kind for s in c.sources], ["unknown"])
+        hik = [w for w in warnings if w.startswith("HumanIK:")]
+        self.assertEqual(len(hik), 1, hik)
+        self.assertIn("キャラクター TargetHik のスケルトン（Hips、Spine、LeftArm。3 個）は、HIKSK2State9（HIKSK2State）で動きます",
+                      hik[0])
         self.assertIn("スケルトンのベイク処理", hik[0])
         # ジョイントごとの「接続で決まる」と、HIKState2SK の「未対応」は HumanIK の警告にまとめる
         self.assertFalse([w for w in warnings if "が接続で決まるため" in w], warnings)
         self.assertFalse([w for w in warnings if "HIKState2SK（" in w], warnings)
+
+    def test_stance_is_built(self):
+        body = TARGET + '''createNode HIKSolverNode -n "HIKSolverNode1";
+connectAttr "HIKSolverNode1.OutputCharacterState" "HIKState2SK1.InputCharacterState";
+'''
+        ms, _scene, warnings = convert(body)
+        (c,) = ms.hik_characters
+        self.assertEqual(c.stance_parts, ["Hips", "LeftArm", "Spine"])
+        self.assertTrue([w for w in warnings if "キャラクター TargetHik のスケルトン（3 部位）は、ソースがないため、スタンス" in w],
+                        warnings)
 
     def test_control_rig_fk(self):
         ms, _scene, warnings = convert(CONTROL_RIG)
@@ -204,11 +237,19 @@ connectAttr "HIKSolverNode1.OutputCharacterState" "HIKState2SK1.InputCharacterSt
         text = report(RETARGET)
         self.assertIn("■ HumanIK", text)
         self.assertIn("- キャラクター TargetHik: 部位 3 個をキャラクタライズ（Hips=Hips、Spine=Spine、LeftArm=LeftArm）", text)
-        self.assertIn("★ スケルトンを動かすもの: キャラクター SourceHik からのリターゲット（HIKRetargeterNode1 → HIKState2SK）",
+        self.assertIn("✓ スケルトンを動かすもの: キャラクター SourceHik からのリターゲット（HIKRetargeterNode1 → HIKState2SK）",
                       text)
+        self.assertIn("✓ リターゲットで求める部位: 2 個（Hips、Spine）。腰の高さの比 1", text)
+        self.assertIn("✓ ソースにない部位（スタンスの形で親についていく）: LeftArm", text)
         self.assertIn("このキャラクターをソースにするキャラクター: TargetHik（部位のジョイントのうちキーのあるもの 1 個）", text)
-        self.assertIn("HIKState2SK: 27 か所（HumanIK。下の「HumanIK」を参照）", text)
+        self.assertNotIn("HIKState2SK: ", text)                        # 評価できないノードには出ない
         self.assertNotIn("自作ノードの割り当て", text)                   # HIK の型に雛形を出さない
+
+    def test_rig_report_unknown_source(self):
+        text = report(TARGET + 'createNode HIKSK2State -n "HIKSK2State9";\n'
+                      'connectAttr "HIKSK2State9.OutputCharacterState" "HIKState2SK1.InputCharacterState";\n')
+        self.assertIn("HIKState2SK: 27 か所（HumanIK。下の「HumanIK」を参照）", text)
+        self.assertIn("★ HumanIK で動くノード（評価しません）: 3 個（Hips、Spine、LeftArm）", text)
 
     def test_rig_report_control_rig(self):
         text = report(CONTROL_RIG)
