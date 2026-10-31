@@ -44,7 +44,7 @@ const parentWorld = (rig, name) => {
 test('exprespy のノードを定義で評価し、解析できないノードは警告する', () => {
   const graph = data.animation.graph.filter((g) => g.type === 'exprespy');
   const defined = graph.filter((g) => g.def).map((g) => g.name).sort();
-  assert.deepEqual(defined, ['aimCnsEx', 'aimUpCnsEx', 'chainA', 'chainB', 'limitEx', 'oriCnsEx', 'posCnsEx', 'pyEx', 'pyEx2', 'pyEx3', 'quatEx', 'timeEx'].concat(['aliasEx', 'lookupEx', 'typoEx']).sort());
+  assert.deepEqual(defined, ['aimCnsEx', 'aimUpCnsEx', 'chainA', 'chainB', 'limitEx', 'oriCnsEx', 'posCnsEx', 'pyEx', 'pyEx2', 'pyEx3', 'quatEx', 'timeEx'].concat(['aliasEx', 'lookupEx', 'typoEx', 'longEx']).sort());
   for (const g of graph.filter((x) => x.def)) {
     assert.match(g.def, /^exprespy:[0-9a-f]{12}$/);
     assert.ok(data.animation.nodeDefs[g.def], g.def);
@@ -53,7 +53,7 @@ test('exprespy のノードを定義で評価し、解析できないノード�
   assert.match(warnings, /exprespy badCmds のコードを解析できません（1 行目: maya\.cmds/);
   assert.match(warnings, /exprespy badMesh のコードを解析できません（形状（boxShape\.o）/);
   const rig = at(12);
-  for (const n of ['posCnst', 'oriCnst', 'aimCnst', 'aimUpCnst', 'jT', 'jC', 'jQ', 'jL', 'jP', 'jP2', 'jR', 'jR2', 'jS', 'jS2', 'jF', 'jK', 'jY']) rig.chan(idx(n));
+  for (const n of ['posCnst', 'oriCnst', 'aimCnst', 'aimUpCnst', 'jT', 'jC', 'jQ', 'jL', 'jP', 'jP2', 'jR', 'jR2', 'jS', 'jS2', 'jF', 'jK', 'jY', 'jZ']) rig.chan(idx(n));
   assert.deepEqual([...rig.problems], []);
 });
 
@@ -198,6 +198,16 @@ test('typoEx: 使われない道の打ち間違い（定義のない名前）は
     const t = rig.chan(idx('jY')).t;
     assert.ok(near(t[0], Math.max(tx, 0)) && near(t[1], Math.max(-tx, 0)), `フレーム ${f}: ${t} / tx ${tx}`);
     assert.deepEqual([...rig.problems], [], `フレーム ${f}`);
+  }
+});
+
+test('longEx: 300 項の足し引き（変換後の計算を入れ子にしない）', () => {
+  for (const f of FRAMES) {
+    const rig = at(f);
+    const tx = rig.chan(idx('src')).t[0];
+    let x = 1.0;
+    for (let k = 0; k < 300; k++) x = k % 3 ? x + 0.01 * (k % 7 + 1) * tx : x - 0.01 * (k % 7 + 1) * tx;
+    assert.ok(near(rig.chan(idx('jZ')).t[0], x, 1e-9), `フレーム ${f}: ${rig.chan(idx('jZ')).t[0]} / ${x}`);
   }
 });
 

@@ -76,6 +76,7 @@ TIME_NAMES = {"frame", "time"}          # いまのフレーム・秒
 _BIN_OPS = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/", ast.FloorDiv: "//", ast.Mod: "%", ast.Pow: "**"}
 _CMP_OPS = {ast.Eq: "==", ast.NotEq: "!=", ast.Lt: "<", ast.LtE: "<=", ast.Gt: ">", ast.GtE: ">="}
 _COMPONENTS = {"x": 0, "y": 1, "z": 2, "w": 3}
+_CHAIN_GROUP = {"+": "add", "-": "add", "*": "mul", "/": "mul"}   # 左から順に続けて計算する演算子の組
 _ELEM_RE = re.compile(r"([A-Za-z_]\w*)(?:\[([^\]]*)\])?")
 
 
@@ -288,6 +289,7 @@ class NodeDef:
 #
 # 式:   ["n", 数]  ["v", [式...]]  ["l", 名前]  ["a", 属性のパス]  ["b", 演算子, 式, 式]  ["u", 演算子, 式]
 #       ["if", 条件, 式, 式]  ["c", 関数名, [式...]]  ["i", 式, 添字の式]  ["g", 式, 成分の番号]
+#       ["ch", [演算子...], [式...]]（a + b - c …・a * b / c …。式を左から順に演算子で続ける）
 #       属性のパス: [[短い名前, 添字の式 or None], ...]（compound の子は 2 つ目以降）
 # 文:   ["set", 代入先, 式]  ["aug", 演算子, 代入先, 式]  ["if", 条件, [文...], [文...]]
 #       ["for", 変数名, 式, [文...]]  ["break"]  ["continue"]
@@ -445,6 +447,17 @@ class Compiler:
             op = _BIN_OPS.get(type(e.op))
             if op is None:
                 self.err(e, "使えない演算子です")
+            group = _CHAIN_GROUP.get(op)
+            if group is not None and isinstance(e.left, ast.BinOp) and \
+                    _CHAIN_GROUP.get(_BIN_OPS.get(type(e.left.op))) == group:
+                # a + b - c + …（同じ種類の続き）: 入れ子にせず左から順に計算する ["ch", [演算子…], [式…]]
+                # （項の多い式で、IR の入れ子が深くなりすぎないように。計算の順序は Python と同じ）
+                ops, rights, node = [], [], e
+                while isinstance(node, ast.BinOp) and _CHAIN_GROUP.get(_BIN_OPS.get(type(node.op))) == group:
+                    ops.append(_BIN_OPS[type(node.op)])
+                    rights.append(node.right)
+                    node = node.left
+                return ["ch", ops[::-1], [self.expr(node)] + [self.expr(x) for x in rights[::-1]]]
             return ["b", op, self.expr(e.left), self.expr(e.right)]
         if isinstance(e, ast.UnaryOp):
             if isinstance(e.op, ast.USub):

@@ -270,7 +270,7 @@ class ComputeTest(unittest.TestCase):
         self.assertEqual(r.unknown, {})
         self.assertEqual(data["nodes"]["testNode"]["compute"], [
             "n = count(values)", "first = values[0]", "linked = connected(input)", "obj = input",
-            "if connected(input):", "    m = obj", "    output = (((1.0 + n) + first) + linked)"])
+            "if connected(input):", "    m = obj", "    output = (1.0 + n + first + linked)"])
         self.assertTrue(any("isNull" in n for n in r.notes), r.notes)
 
     def test_unknown_calls_listed(self):
@@ -330,7 +330,7 @@ class ComputeTest(unittest.TestCase):
         self.assertEqual(r.unknown, {})
         self.assertEqual(data["nodes"]["testNode"]["compute"], [
             "a = input", "m = (a * identity())",
-            "x = (((((element(m, 3, 0) + element(m, 3, 1)) + element(m, 3, 2)) + element(m, 0, 0)) + determinant(m)) "
+            "x = (element(m, 3, 0) + element(m, 3, 1) + element(m, 3, 2) + element(m, 0, 0) + determinant(m) "
             "+ determinant3(m))",
             "if (equivalent(m, a) and (not (abs(determinant(m)) < 1e-10))):", "    m = set_element(m, 3, 0, x)",
             "n = identity()", "n = (m * a)", "n = identity()",
@@ -665,7 +665,7 @@ class ComputeTest(unittest.TestCase):
                                   ("weightC", "wc", "float", 1.5), ("total", "tot", "float", None)])
                 self.assertEqual(spec["compute"], [
                     "first = weightA", "second = weightB", "third = weightC",
-                    "total = ((first + (second * 2.0)) + third)"])
+                    "total = (first + (second * 2.0) + third)"])
 
     CHAIN_PLUGIN = textwrap.dedent('''\
         import maya.api.OpenMaya as om

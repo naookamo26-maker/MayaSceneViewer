@@ -213,6 +213,11 @@ export function compileNodeDef(def) {
         if (e[1] === 'or') { const a = evalExpr(e[2], env); return truthy(a) ? a : evalExpr(e[3], env); }
         return BIN[e[1]](evalExpr(e[2], env), evalExpr(e[3], env));
       }
+      case 'ch': {                                   // a + b - c …（左から順に。項の多い式を入れ子にしない）
+        let v = evalExpr(e[2][0], env);
+        for (let k = 0; k < e[1].length; k++) v = BIN[e[1][k]](v, evalExpr(e[2][k + 1], env));
+        return v;
+      }
       case 'u': {
         const a = evalExpr(e[2], env);
         if (e[1] === 'not') return !truthy(a);
