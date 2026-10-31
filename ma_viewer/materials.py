@@ -41,6 +41,68 @@ DEFAULT_COLORS = {"aiStandardSurface": (0.8, 0.8, 0.8), "standardSurface": (0.8,
                   "openPBRSurface": (0.8, 0.8, 0.8)}
 
 
+# ---------------------------------------------------------------------------
+# 層を重ねるノード（layeredShader・layeredTexture）。層 0 がいちばん上。ビューアは層を重ねて描けないので、
+# 上から見て最初の不透明な層（その下の層は Maya でも見えない）を表示し、それより上の見える層は警告する
+_LAYER_RE = re.compile(r"^(?:cs|inputs)\[(\d+)\]\.(c|color|it|transparency|a|alpha|bm|blendMode|iv|isVisible)$")
+_LAYER_ROLE = {"c": "color", "color": "color", "it": "transparency", "transparency": "transparency",
+               "a": "alpha", "alpha": "alpha", "bm": "blendMode", "blendMode": "blendMode",
+               "iv": "isVisible", "isVisible": "isVisible"}
+LAYERED_TYPES = ("layeredShader", "layeredTexture")
+
+
+def layer_keys(keys) -> Dict[int, Dict[str, str]]:
+    """属性名（cs[0].c・inputs[1].transparency など）→ 層の番号 → 役割（color・transparency・alpha・blendMode・
+    isVisible）→ 属性名"""
+    out: Dict[int, Dict[str, str]] = {}
+    for k in keys:
+        m = _LAYER_RE.match(k)
+        if m:
+            out.setdefault(int(m.group(1)), {}).setdefault(_LAYER_ROLE[m.group(2)], k)
+    return out
+
+
+def pick_layer(layer_type: str, indices, state) -> Tuple[Optional[int], List[int]]:
+    """表示する層と、それより上で表示しない（重ねられない）見える層。
+
+    state(i) → {"connected": 透明度・アルファに接続があるか, "value": 透明度（layeredShader。0〜1）か
+    アルファ（layeredTexture）, "blend": 重ね方（layeredTexture。0 None・1 Over）, "visible": 表示するか}
+    layeredShader は透明度 0、layeredTexture はアルファ 1 で重ね方が None・Over なら不透明。
+    不透明な層がなければいちばん下の層"""
+    order = sorted(indices)
+    above: List[int] = []
+    for i in order:
+        st = state(i)
+        if not st.get("visible", True):
+            continue
+        v = st.get("value")
+        if layer_type == "layeredShader":
+            v = 0.0 if v is None else v
+            if not st.get("connected") and v >= 0.999:
+                continue                                  # 完全に透明（見えない）
+            opaque = not st.get("connected") and v <= 1e-6
+        else:
+            v = 1.0 if v is None else v
+            if not st.get("connected") and v <= 1e-6:
+                continue
+            opaque = not st.get("connected") and v >= 0.999 and st.get("blend", 1) in (0, 1)
+        if opaque:
+            return i, above
+        above.append(i)
+    if not order:
+        return None, []
+    base = above[-1] if above else order[-1]
+    return base, [i for i in above if i != base]
+
+
+def layer_note(node_name: str, layer_type: str, base: int, skipped: List[int], shown: str) -> Optional[str]:
+    """表示しない層があるときの警告"""
+    if not skipped:
+        return None
+    return ("%s（%s）: 層 %s は半透明かマスク付きのため重ねて表示できません。層 %d（%s）だけ表示します。"
+            % (node_name, layer_type, "・".join(str(i) for i in skipped), base, shown))
+
+
 def albedo_attrs(shader_type: str) -> Tuple[str, ...]:
     return ALBEDO_ATTRS.get(shader_type, FALLBACK_ALBEDO_ATTRS)
 

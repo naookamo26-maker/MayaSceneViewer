@@ -324,12 +324,14 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
   | standardSurface・openPBRSurface | baseColor、normalCamera、specularRoughness、metalness、emissionColor、opacity |
   | StingrayPBS | TEX_color_map、TEX_normal_map、TEX_roughness_map、TEX_metallic_map、TEX_ao_map、TEX_emissive_map |
   | usdPreviewSurface | diffuseColor、normal、roughness、metallic、occlusion、emissiveColor、opacity |
+  | layeredShader | 表示する層（下記）につながったシェーダーの属性。層の色に file ノードが直接つながっていればそれ、何もなければ層の色の値 |
 
   そのほかのシェーダーでは color・baseColor などの名前でベースカラーを探します。
+- **層を重ねるノード**（layeredShader・layeredTexture）: ビューアは層を重ねて描けないので、上（層 0）から見て最初の不透明な層を表示します（その下の層は Maya でも見えません）。layeredShader は透明度 0（つながったシェーダーの透明度を見る。Hypershade でつなぐと outTransparency もつながるため）、layeredTexture はアルファ 1 で重ね方が None・Over なら不透明とし、非表示（isVisible オフ）・完全に透明な層は数えません。それより上に見える層（半透明・file のアルファなどのマスク付き・Add などの重ね方）があれば、表示しない層として警告します。不透明な層がなければいちばん下の層を表示します。
 - file ノードの出力のどれをつないでいるかを見て、チャンネルを選びます（例: ORM の outColorG をラフネスに、outColorB をメタリックに）。画像全体（outColor）を 1 チャンネルのマップにつないでいる場合は R を使います。
 - ノーマルマップは、file ノードが直接つながっている場合（StingrayPBS など）と、bump2d（使い方が「Tangent Space Normals」）・aiNormalMap を経由する場合に対応します。高さのバンプ（bump2d の「Bump」）は未対応です。接線は画面上で求めるため、Maya と細部の陰影が少し違うことがあります。緑の向きは OpenGL 形式（Maya と同じ）が既定で、［マップ］で DirectX 形式に切り替えられます。
 - AO は、three.js の仕様で環境光（空と地面の光）の部分だけを暗くします。
-- 色の属性に file ノードが**直接**つながっている場合だけ表示します（layeredTexture などを挟む場合は警告を出し、マテリアルの色で表示します）。テクスチャがないマテリアルは、Maya のマテリアルの色で表示します。
+- 色の属性に file ノードが直接（または layeredTexture を経由して）つながっている場合に表示します（ほかのノードを挟む場合は警告を出し、マテリアルの色で表示します）。テクスチャがないマテリアルは、Maya のマテリアルの色で表示します。
 - 対応形式: TGA（RLE 圧縮・アルファあり・左下／左上始まりのいずれも可）、PNG、JPEG、BMP、GIF、WebP。TIFF・PSD・EXR・.tx などは表示できません（警告を出します）。長辺が 2048px を超える画像は表示用に縮小します。
 - パスの検索順:
   1. 書かれているパスそのもの（相対パスなら、プロジェクトのルート → .ma のフォルダを基準）。Maya 内では、Maya が解決したパスを最優先にします。

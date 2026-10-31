@@ -19,8 +19,9 @@ from . import schema
 from .ma_scene import (FAST, XFORM_KEYS, FlatFaces, MaNode, MaScene, ProgressFn, RawNumbers, _ranges, clamp_limits,
                        fast_numbers, locked_channels, np, numpy_enabled, parse_component_list, parse_ma_file)
 from . import ma_reader as R
-from .materials import (ALPHA_OUTPUTS, OPACITY_ATTRS, OUTPUT_CHANNEL, SCALAR_ATTRS, TextureResolver, albedo_attrs,
-                        default_color, map_attrs, texture_entry, texture_warnings, to_udim_pattern)
+from .materials import (ALPHA_OUTPUTS, MAP_ATTRS, OPACITY_ATTRS, OUTPUT_CHANNEL, SCALAR_ATTRS, TextureResolver,
+                        albedo_attrs, default_color, layer_keys, layer_note, map_attrs, pick_layer, texture_entry,
+                        texture_warnings, to_udim_pattern)
 
 _OG_RE = re.compile(r"og\[(\d+)\]$")
 _INFLUENCE_RE = re.compile(r"(?:ma|matrix)\[(\d+)\]$")
@@ -874,6 +875,13 @@ class _MaterialBuilder:
                 self.ms.warn("%s: 高さのバンプ（bump2d・%s）は未対応です。法線マップ（Tangent Space Normals）のみ表示します。"
                              % (shader.name, node.name), key="#高さのバンプ " + shader.name)
                 return None
+            if node.type == "layeredTexture":
+                layer = self._layer_source(node)
+                if layer is not None and layer[0].type == "file":
+                    return layer[0], OUTPUT_CHANNEL.get(layer[1], "rgb")
+                if layer is None:
+                    return None
+                node = layer[0]                           # 下の警告に、層につながったノードを出す
             if kind == "normal" and node.type == "aiNormalMap":
                 # 属性名 input は短縮名 ip に正規化されている
                 f = node.inputs.get("ip") or node.inputs.get("input") or node.inputs.get("i")
@@ -884,6 +892,74 @@ class _MaterialBuilder:
             return None
         return None
 
+    def _layer_source(self, node: MaNode) -> Optional[Tuple[MaNode, str]]:
+        """layeredTexture の表示する層の色の接続元（なければ None）"""
+        raw = node.raw or {}
+        layers = layer_keys(list(raw) + list(node.inputs))
+
+        def state(i):
+            k = layers[i]
+            a, bm, iv = k.get("alpha"), k.get("blendMode"), k.get("isVisible")
+            vis = str((raw.get(iv) or ["yes"])[0]).lower() if iv else "yes"
+            return {"connected": bool(a and a in node.inputs), "value": _num(raw.get(a), 1.0) if a else None,
+                    "blend": int(_num(raw.get(bm), 1.0)) if bm else 1, "visible": vis not in ("no", "off", "false", "0")}
+        base, skipped = pick_layer("layeredTexture", list(layers), state)
+        if base is None:
+            return None
+        src = node.inputs.get(layers[base].get("color", ""))
+        note = layer_note(node.name, "layeredTexture", base, skipped, src[0].name if src else "色の値")
+        if note:
+            self.ms.warn(note, key="#layered " + node.name)
+        return src
+
+    def _layered_shader(self, shader: MaNode):
+        """layeredShader の表示する層 → (表示に使うシェーダー, アルベドの属性名, マップの属性名)。
+        層の色にシェーダーの outColor がつながっていればそのシェーダー、そうでなければ層の色そのもの"""
+        raw = shader.raw or {}
+        layers = layer_keys(list(raw) + list(shader.inputs))
+
+        def avg(vals):
+            try:
+                return sum(float(x) for x in vals[:3]) / len(vals[:3]) if vals else None
+            except ValueError:
+                return None
+
+        def state(i):
+            t = layers[i].get("transparency")
+            src = shader.inputs.get(t) if t else None
+            if src is None:
+                return {"connected": False, "value": avg(raw.get(t)) if t else None}
+            # Hypershade でつなぐと、層の透明度にはシェーダーの outTransparency がつながる。そのシェーダーの透明度
+            # （file のアルファなどがつながっていればマスク）で決める
+            node, sattr = src
+            if node.type in MAP_ATTRS and sattr in ("ot", "outTransparency"):
+                nraw = node.raw or {}
+                for k in ("it", "transparency"):
+                    if k in node.inputs:
+                        return {"connected": True, "value": None}
+                    if nraw.get(k):
+                        return {"connected": False, "value": avg(nraw[k])}
+                for k in ("opacity", "opc", "o"):
+                    if k in node.inputs:
+                        return {"connected": True, "value": None}
+                    if nraw.get(k):
+                        o = avg(nraw[k])
+                        return {"connected": False, "value": None if o is None else 1.0 - o}
+                return {"connected": False, "value": 0.0}         # 透明度の指定のないシェーダー: 不透明
+            return {"connected": True, "value": None}
+        base, skipped = pick_layer("layeredShader", list(layers), state)
+        if base is None:
+            return shader, ("cs[0].c",), {}
+        key = layers[base].get("color", "cs[%d].c" % base)
+        src = shader.inputs.get(key)
+        under = src[0] if src and src[0].type in MAP_ATTRS and src[1] in ("oc", "outColor") else None
+        note = layer_note(shader.name, "layeredShader", base, skipped, under.name if under else (src[0].name if src else "色の値"))
+        if note:
+            self.ms.warn(note, key="#layered " + shader.name)
+        if under is not None:
+            return under, albedo_attrs(under.type), map_attrs(under.type)
+        return shader, (key,), {"baseColor": (key,)}
+
     def material_for_sg(self, sg: MaNode) -> int:
         ss = sg.inputs.get("ss")
         if ss is None:
@@ -891,9 +967,13 @@ class _MaterialBuilder:
         shader = ss[0]
         if id(shader) in self._mat_of:
             return self._mat_of[id(shader)]
+        top = shader                                      # シェーディンググループにつながったシェーダー（名前と種類に使う）
+        albedo, map_defs = albedo_attrs(shader.type), map_attrs(shader.type)
+        if shader.type == "layeredShader":
+            shader, albedo, map_defs = self._layered_shader(shader)
         raw = shader.raw or {}
         color = list(default_color(shader.type))
-        for a in albedo_attrs(shader.type):
+        for a in albedo:
             vals = raw.get(a)
             if vals and len(vals) >= 3:
                 try:
@@ -903,7 +983,7 @@ class _MaterialBuilder:
                 break
         maps = {}
         base_file = None
-        for kind, attrs in map_attrs(shader.type).items():
+        for kind, attrs in map_defs.items():
             src = self._map_source(shader, kind, attrs)
             if src is None:
                 continue
@@ -929,10 +1009,10 @@ class _MaterialBuilder:
                     use_alpha = True
                     break
         idx = len(self.materials)
-        self._mat_of[id(shader)] = idx
+        self._mat_of[id(top)] = idx
         if base_file is not None:
             self._file_of_mat[idx] = base_file
-        entry = {"name": shader.name, "type": shader.type, "shadingGroup": sg.name,
+        entry = {"name": top.name, "type": top.type, "shadingGroup": sg.name,
                  "color": schema.round_list(color), "texture": maps.get("baseColor", {}).get("texture", -1),
                  "useAlpha": use_alpha, "maps": maps}
         entry.update(scalars)
