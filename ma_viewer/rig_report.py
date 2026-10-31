@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from .custom_nodes import FILE_NAME, is_standard_type, template_for
 
@@ -407,12 +407,39 @@ def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
     if tainted:
         out.append("- 推定できない（ファイルの値のまま）: %s" % "、".join(names[i] for i in tainted[:30])
                    + (" ほか %d 個" % (len(tainted) - 30) if len(tainted) > 30 else ""))
+    out.extend(_ref_edit_section(ms))
     warnings = scene["warnings"] + (anim or {}).get("warnings", [])
     if warnings:
         out.append("")
         out.append("■ 警告")
         out.extend("- " + w for w in warnings)
     return "\n".join(out)
+
+
+def _ref_edit_section(ms: MaScene) -> List[str]:
+    """リファレンスの編集で相手のノードが見つからなかったもの（見つからない名前ごと）と、名前で当てたもの"""
+    missing = getattr(ms, "ref_edit_missing", None) or []
+    by_name = getattr(ms, "ref_edit_by_name", None) or []
+    if not missing and not by_name:
+        return []
+    out = ["", "■ リファレンスの編集で相手のノードが見つからないもの（その編集は使いません）"]
+    groups: Dict[Tuple[str, str], Dict[str, int]] = {}
+    for rn, kind, name in missing:
+        g = groups.setdefault((name, rn), {})
+        g[kind] = g.get(kind, 0) + 1
+    if not groups:
+        out.append("  なし")
+    for (name, rn), kinds in sorted(groups.items(), key=lambda kv: -sum(kv[1].values()))[:40]:
+        out.append("  ★ %s（%s の編集: %s）" % (name, rn, "・".join("%s %d 件" % kv for kv in sorted(kinds.items()))))
+    if len(groups) > 40:
+        out.append("  …ほか %d 個" % (len(groups) - 40))
+    if groups:
+        out.append("  保存したあとに、リファレンスの元のファイルでノードの名前・階層を変えたか、消した可能性があります。")
+    if by_name:
+        out.append("  パスでは見つからず、同じ名前のノードに当てた編集: %d 件" % len(by_name))
+        for path, real in by_name[:10]:
+            out.append("    %s → %s" % (path, real))
+    return out
 
 
 def _spline_detail(h: dict, sp: dict) -> List[str]:
