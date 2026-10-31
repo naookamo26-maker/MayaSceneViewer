@@ -1080,8 +1080,9 @@ export class RigEvaluator {
         break;
       }
       case 'decomposeMatrix': {
-        // Maya と同じ分け方（せん断を分けてから回転にする。鏡に映した行列は 3 軸のスケールを負にする。角度は 0 に近い方）
-        const { t, q, s, sh } = decomposeMaya(this.mat(id, 'imat'));
+        // Maya と同じ分け方（せん断を分けてから回転にする。鏡に映した行列は Z のスケールを負にする（MTransformationMatrix。
+        // コンストレイントの 3 軸とは違う）。角度は 0 に近い方）
+        const { t, q, s, sh } = decomposeMaya(this.mat(id, 'imat'), undefined, undefined, undefined, undefined, 'z');
         const e = mayaEuler(q, Math.round(this.num(id, 'ro', 0)));
         o = { ...expand('ot', t.toArray(), XYZ), ...expand('or', e, XYZ), ...expand('os', s.toArray(), XYZ),
           ...expand('osh', sh.toArray(), XYZ), ...expand('oq', [q.x, q.y, q.z, q.w], ['x', 'y', 'z', 'w']) };
