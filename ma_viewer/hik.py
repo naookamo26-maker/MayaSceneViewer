@@ -56,6 +56,10 @@ class HikCharacter:
     fk_parts: List[str] = field(default_factory=list)           # FK のコントローラーで評価する部位
     fk_missing: List[str] = field(default_factory=list)         # FK のコントローラーのない部位（評価しない）
     ik_active: List[str] = field(default_factory=list)          # Reach が 0 でない（またはキーのある）IK エフェクター
+    retarget_parts: List[str] = field(default_factory=list)     # リターゲット（近似）で求める部位
+    retarget_static: List[str] = field(default_factory=list)    # ソースにない部位（スタンスのローカルのまま）
+    stance_parts: List[str] = field(default_factory=list)       # スタンスで表示する部位
+    height_ratio: Optional[float] = None        # リターゲットの腰の高さの比（ターゲット ÷ ソース）
 
     @property
     def name(self) -> str:
@@ -200,10 +204,24 @@ def hik_warnings(chars: List[HikCharacter]) -> List[str]:
                 out.append("HumanIK: キャラクター %s の IK エフェクター %s は Reach が 0 ではない（またはキーがある）ため、"
                            "Maya では FK の姿勢から動きますが、ビューアは FK の姿勢で表示します。"
                            % (c.name, "、".join(c.ik_active[:6]) + (" ほか" if len(c.ik_active) > 6 else "")))
+        if c.retarget_parts or c.retarget_static:
+            srcs = "、".join(dict.fromkeys(s.character.name for s in c.sources if s.kind == "retarget" and s.character))
+            out.append("HumanIK: キャラクター %s のスケルトン（%d 部位）は、キャラクター %s からのリターゲットを近似して再生します"
+                       "（部位の向きはスタンスとの差を移し、腰の位置は腰の高さの比 %.3g で縮めます。ほかの部位の位置は"
+                       "ターゲットの骨の長さのまま%s。HumanIK のリターゲットの設定（ソースの一致・Reach・床の接地など）は"
+                       "再現しません）。"
+                       % (c.name, len(c.retarget_parts) + len(c.retarget_static), srcs, c.height_ratio or 1.0,
+                          "。ソースにない部位 %d 個はスタンスの形で親についていきます" % len(c.retarget_static)
+                          if c.retarget_static else ""))
+        if c.stance_parts:
+            out.append("HumanIK: キャラクター %s のスケルトン（%d 部位）は、ソースがないため、スタンス（キャラクタライズの姿勢）"
+                       "で表示します。" % (c.name, len(c.stance_parts)))
         if not c.driven:
             continue
-        how = "・".join(dict.fromkeys(describe_source(s) for s in c.sources if s.kind != "control_rig" or not c.fk_parts))
-        how = how or "コントロールリグ（FK のコントローラーのない部位）"
+        if c.fk_missing:
+            how = "コントロールリグ（FK のコントローラーのない部位）"
+        else:
+            how = "・".join(dict.fromkeys(describe_source(s) for s in c.sources))
         out.append("HumanIK: キャラクター %s のスケルトン（%s。%d 個）は、%sで動きます。ビューアは HumanIK を評価しないため、"
                    "これらの動きは再生されません（バインドポーズの情報があればその形で、なければファイルの値で表示します）。"
                    "Maya でスケルトンにベイクして保存する"
@@ -215,7 +233,8 @@ def hik_warnings(chars: List[HikCharacter]) -> List[str]:
 
 def hik_report(chars: List[HikCharacter]) -> List[str]:
     """リグの診断の「HumanIK」の節"""
-    out = ["■ HumanIK（コントロールリグの FK は近似で評価。そのほかは評価しません。スケルトンにベイクすると再生できます）"]
+    out = ["■ HumanIK（コントロールリグの FK・リターゲット・スタンスは近似で評価します。Maya と同じ動きにするには、"
+           "スケルトンにベイクしてください）"]
     if not chars:
         out.append("  なし")
         return out
@@ -226,8 +245,9 @@ def hik_report(chars: List[HikCharacter]) -> List[str]:
             out.append("- キャラクター %s: 部位 %d 個をキャラクタライズ（%s）"
                        % (c.name, len(c.bones), "、".join("%s=%s" % (k, j.name) for k, j in list(c.bones.items())[:6])
                           + (" ほか" if len(c.bones) > 6 else "")))
+        solved = c.fk_parts or c.retarget_parts or c.retarget_static or c.stance_parts
         for s in c.sources:
-            mark = "✓" if s.kind == "control_rig" and c.fk_parts else "★"
+            mark = "✓" if solved else "★"
             out.append("    %s スケルトンを動かすもの: %s（%s → HIKState2SK）" % (mark, describe_source(s), s.via))
         if c.fk_parts:
             out.append("    ✓ FK のコントローラーから求める部位: %d 個（%s）"
@@ -236,9 +256,18 @@ def hik_report(chars: List[HikCharacter]) -> List[str]:
             out.append("    ★ FK のコントローラーのない部位（評価しません）: %s" % "、".join(c.fk_missing))
         if c.ik_active:
             out.append("    ★ Reach が 0 でない IK エフェクター（FK の姿勢で表示）: %s" % "、".join(c.ik_active))
+        if c.retarget_parts:
+            out.append("    ✓ リターゲットで求める部位: %d 個（%s）。腰の高さの比 %.4g"
+                       % (len(c.retarget_parts), "、".join(c.retarget_parts[:8]) + (" ほか" if len(c.retarget_parts) > 8 else ""),
+                          c.height_ratio or 1.0))
+        if c.retarget_static:
+            out.append("    ✓ ソースにない部位（スタンスの形で親についていく）: %s" % "、".join(c.retarget_static))
+        if c.stance_parts:
+            out.append("    ✓ スタンスで表示する部位: %d 個（%s）"
+                       % (len(c.stance_parts), "、".join(c.stance_parts[:8]) + (" ほか" if len(c.stance_parts) > 8 else "")))
         if c.driven:
             out.append("    ★ HumanIK で動くノード（評価しません）: %d 個（%s）" % (len(c.driven), _names(c.driven, 8)))
-        elif c.bones and not c.fk_parts:
+        elif c.bones and not solved:
             out.append("    ✓ スケルトンは HumanIK で動いていません（ジョイントのキー・ファイルの値で表示）")
         if c.feeds:
             out.append("    このキャラクターをソースにするキャラクター: %s（部位のジョイントのうちキーのあるもの %d 個）"
@@ -318,70 +347,202 @@ def _base_attr(k: str) -> str:
     return k.split("[")[0]
 
 
-def build_fk_rigs(ms, chars: List[HikCharacter]) -> int:
-    """コントロールリグで動くスケルトンを、FK のコントローラーからの行列ノードに置き換える。戻り値: 置き換えた部位の数"""
+def _state2sk_joints(ms, s2sk) -> Dict[str, Tuple[object, List[str]]]:
+    """HIKState2SK の出力: 部位 → (ジョイント, [つながっているジョイントの属性])"""
+    joints: Dict[str, Tuple[object, List[str]]] = {}
+    for src, sattr, dst, dattr in ms.connections:
+        if src is s2sk and dst.is_dag and sattr[-2:] in _FK_CHANNELS:
+            j, lst = joints.setdefault(sattr[:-2], (dst, []))
+            if j is dst:
+                lst.append(dattr)
+    return joints
+
+
+def _chain_inputs(items):
+    """掛け算の並び（行列 = 16 個の数、または (ノード, 属性)）の、隣り合う行列をまとめる"""
     from . import mathutil as M
-    from .rig import parse_attrs
+    out = []
+    for it in items:
+        if isinstance(it, list) and out and isinstance(out[-1], list):
+            out[-1] = M.mul(out[-1], it)
+        else:
+            out.append(it)
+    return out
+
+
+def _mult(ms, name: str, items):
+    """multMatrix（i[0] · i[1] · …）。行列はファイルの値（baked）、(ノード, 属性) は接続"""
+    items = _chain_inputs(items)
+    baked = {"i[%d]" % i: it for i, it in enumerate(items) if isinstance(it, list)}
+    m = _new_node(ms, name, "multMatrix", baked)
+    for i, it in enumerate(items):
+        if not isinstance(it, list):
+            _connect(ms, it[0], it[1], m, "i[%d]" % i)
+    return m
+
+
+def _wire_joint(ms, s2sk, j, plugs, base: str, t_local, r_local, k: float):
+    """ジョイントの移動・回転を、ローカルの行列になる掛け算の並びからつなぐ（HIKState2SK の接続は外す）。
+    移動 = t_local の積の移動、回転 = rotateAxis⁻¹ · r_local の積 · jointOrient⁻¹ を回転順で分けたもの"""
+    from . import mathutil as M
+    ra, jo = j.vec3("ra"), j.vec3("jo")
+    inv_ra = M.inverse(M.euler([ra[0] * k, ra[1] * k, ra[2] * k], "xyz"))
+    inv_jo = M.inverse(M.euler([jo[0] * k, jo[1] * k, jo[2] * k], "xyz"))
+    mt = _mult(ms, base + "_t", t_local)
+    mr = _mult(ms, base + "_r", [inv_ra] + list(r_local) + [inv_jo])
+    dt = _new_node(ms, base + "_dt", "decomposeMatrix", {})
+    dr = _new_node(ms, base + "_dr", "decomposeMatrix", {"ro": int(j.xattrs.get("ro", 0) or 0)})
+    _connect(ms, mt, "o", dt, "imat")
+    _connect(ms, mr, "o", dr, "imat")
+    ms.connections = [x for x in ms.connections if not (x[0] is s2sk and x[2] is j)]
+    for d in plugs:
+        if j.inputs.get(d, (None,))[0] is s2sk:
+            del j.inputs[d]
+    for axis in "xyz":
+        _connect(ms, dt, "ot" + axis, j, "t" + axis)
+        _connect(ms, dr, "or" + axis, j, "r" + axis)
+
+
+class _Stance:
+    """キャラクターのスタンス（部位ごとのワールドの行列。<部位>Tx〜Tz・Rx〜Rz）"""
+
+    def __init__(self, ms, c: HikCharacter, k: float):
+        from .rig import parse_attrs
+        self.attrs = parse_attrs(ms.text, c.node) if c.node.span else {}
+        self.k = k
+        self.ref = c.bones.get("Reference")             # キャラクターの基準（Reference の部位のノード）
+
+    def matrix(self, part: str):
+        from . import mathutil as M
+        g = lambda a: float(self.attrs.get(part + a, 0) or 0)      # noqa: E731
+        m = M.euler([g("Rx") * self.k, g("Ry") * self.k, g("Rz") * self.k], "xyz")
+        m[12:15] = [g("Tx"), g("Ty"), g("Tz")]
+        return m
+
+    def ref_delta(self):
+        """基準のスタンスからの動き（掛け算の並びの要素: 基準のスタンス⁻¹ · 基準の今のワールド）。基準の部位がなければなし"""
+        from . import mathutil as M
+        return [M.inverse(self.matrix("Reference")), (self.ref, "wm")] if self.ref is not None else []
+
+    def ref_delta_inverse(self):
+        """ref_delta の逆（基準の今のワールド⁻¹ · 基準のスタンス）"""
+        return [(self.ref, "wim"), self.matrix("Reference")] if self.ref is not None else []
+
+    def hips_height(self) -> float:
+        from . import mathutil as M
+        a, b = M.position(self.matrix("Hips")), M.position(self.matrix("Reference"))
+        return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+
+def _stance_world_of(ms, c: HikCharacter, st: _Stance):
+    """スタンスのときのジョイントのワールドの行列（部位はスタンス、キャラクタライズしていないジョイントはファイルの
+    ローカル · 親のスタンスのワールド）"""
+    from . import mathutil as M
+    from .extract_ma import _Ctx
+    ctx = _Ctx(ms)
+    part_of = {id(j): p for p, j in c.bones.items()}
+    memo: Dict[int, list] = {}
+
+    def world(n):
+        if n is None:
+            return M.identity()
+        hit = memo.get(id(n))
+        if hit is None:
+            p = part_of.get(id(n))
+            if p is not None:
+                hit = st.matrix(p)
+            else:
+                parent = n.parent if n.flag("it", True) else None
+                hit = M.mul(ctx.local_matrix(n), world(parent))
+            memo[id(n)] = hit
+        return hit
+    return world
+
+
+def build_hik_rigs(ms, chars: List[HikCharacter]) -> int:
+    """HIKState2SK で動くスケルトンを、ビューアの行列ノードに組み立てる。戻り値: 組み立てた部位の数
+
+    * コントロールリグ（FK）: 上の説明のとおり
+    * リターゲット（近似）: 部位の向きは、ソースのキャラクターの部位の今の向きと、両方のスタンスの向きの差から
+        W = 回転(ターゲットのスタンス · ソースのスタンス⁻¹) · ソースの今のワールド · Dₛ⁻¹ · Dₜ
+      （D = 基準のスタンス⁻¹ · 基準の今のワールド。基準（Reference の部位）がスタンスから動いた分。両方の基準が
+      スタンスのままなら、ソースの部位がワールドで回った分だけ、ターゲットの部位もワールドで回る）。
+      腰（Hips）の位置は、ソースの腰のスタンスからの動き（ソースのスタンスの空間）を腰の高さの比（ターゲット ÷ ソース。
+      基準からの距離）で縮めて、ターゲットのスタンスの位置に足し、Dₜ を掛ける。ほかの部位の位置は、ターゲットのスタンスのローカルの
+      位置（骨の長さはターゲットのまま）。ソースにない部位は、スタンスのローカル（親についていく）
+    * スタンス（ソースのない HIKSolverNode）: 部位はスタンスの行列 · Dₜ
+    """
+    from . import mathutil as M
     k = math.pi / 180.0 if ms.angular_unit not in ("rad", "radian") else 1.0
+    by_node = {id(c.node): c for c in chars}
     total = 0
     for c in chars:
         if c.node.type != "HIKCharacterNode":
             continue
-        stance = None
+        st = _Stance(ms, c, k)
+        stance_world = None
         for s in c.sources:
-            if s.kind != "control_rig" or s.fk2state is None or s.state2sk is None:
+            if s.state2sk is None:
                 continue
-            if stance is None:
-                stance = parse_attrs(ms.text, c.node) if c.node.span else {}
-            ctrl = {}
-            for key, (src, sattr) in s.fk2state.inputs.items():
-                if key.endswith("GX") and sattr.split("[")[0] in ("wm", "worldMatrix") and src.is_dag:
-                    ctrl[key[:-2]] = src
-            for e in s.effectors:
-                attrs = parse_attrs(ms.text, e) if e.span else {}
-                reach = [abs(float(attrs.get(a, 0) or 0)) for a in ("rt", "rr")]
-                if max(reach) > 1e-6 or _is_keyed(e, ("rt", "rr", "reachTranslation", "reachRotation")):
-                    c.ik_active.append(e.name)
-            # HIKState2SK の出力: 部位 → (ジョイント, [(出力の属性, ジョイントの属性)])
-            joints: Dict[str, Tuple[object, List[Tuple[str, str]]]] = {}
-            for src, sattr, dst, dattr in ms.connections:
-                if src is s.state2sk and dst.is_dag and sattr[-2:] in _FK_CHANNELS:
-                    part = sattr[:-2]
-                    j, lst = joints.setdefault(part, (dst, []))
-                    if j is dst:
-                        lst.append((sattr, dattr))
-            for part, (j, plugs) in sorted(joints.items()):
-                cn = ctrl.get(part)
-                if cn is None:
-                    c.fk_missing.append(part)
-                    continue
-                g = lambda a: float(stance.get(part + a, 0) or 0)       # noqa: E731
-                skel = M.euler([g("Rx") * k, g("Ry") * k, g("Rz") * k], "xyz")
-                off = M.mul(skel, M.inverse(_rest_world_rot(cn, k)))
-                ra, jo = j.vec3("ra"), j.vec3("jo")
-                inv_ra = M.inverse(M.euler([ra[0] * k, ra[1] * k, ra[2] * k], "xyz"))
-                inv_jo = M.inverse(M.euler([jo[0] * k, jo[1] * k, jo[2] * k], "xyz"))
-                ro = int(j.xattrs.get("ro", 0) or 0)
-                base = "%s_hikFK" % j.name
-                mt = _new_node(ms, base + "_t", "multMatrix", {"i[0]": off})
-                mr = _new_node(ms, base + "_r", "multMatrix", {"i[0]": M.mul(inv_ra, off), "i[3]": inv_jo})
-                dt = _new_node(ms, base + "_dt", "decomposeMatrix", {})
-                dr = _new_node(ms, base + "_dr", "decomposeMatrix", {"ro": ro})
-                for m in (mt, mr):
-                    _connect(ms, cn, "wm", m, "i[1]")
-                    _connect(ms, j, "pim", m, "i[2]")
-                _connect(ms, mt, "o", dt, "imat")
-                _connect(ms, mr, "o", dr, "imat")
-                # HIKState2SK の接続を外して、移動・回転を行列ノードからつなぐ
-                drop = {d for _sa, d in plugs}
-                ms.connections = [x for x in ms.connections if not (x[0] is s.state2sk and x[2] is j)]
-                for d in drop:
-                    if j.inputs.get(d, (None,))[0] is s.state2sk:
-                        del j.inputs[d]
-                for axis in "xyz":
-                    _connect(ms, dt, "ot" + axis, j, "t" + axis)
-                    _connect(ms, dr, "or" + axis, j, "r" + axis)
-                c.fk_parts.append(part)
-                total += 1
-            c.driven = [d for d in c.driven if any(src.type == "HIKState2SK" for src, _a in d.inputs.values())]
+            joints = _state2sk_joints(ms, s.state2sk)
+            if s.kind == "control_rig" and s.fk2state is not None:
+                ctrl = {}
+                for key, (src, sattr) in s.fk2state.inputs.items():
+                    if key.endswith("GX") and sattr.split("[")[0] in ("wm", "worldMatrix") and src.is_dag:
+                        ctrl[key[:-2]] = src
+                for e in s.effectors:
+                    from .rig import parse_attrs
+                    attrs = parse_attrs(ms.text, e) if e.span else {}
+                    reach = [abs(float(attrs.get(a, 0) or 0)) for a in ("rt", "rr")]
+                    if max(reach) > 1e-6 or _is_keyed(e, ("rt", "rr", "reachTranslation", "reachRotation")):
+                        c.ik_active.append(e.name)
+                for part, (j, plugs) in sorted(joints.items()):
+                    cn = ctrl.get(part)
+                    if cn is None:
+                        c.fk_missing.append(part)
+                        continue
+                    skel = _rot_only(st.matrix(part))
+                    off = M.mul(skel, M.inverse(_rest_world_rot(cn, k)))
+                    local = [off, (cn, "wm"), (j, "pim")]
+                    _wire_joint(ms, s.state2sk, j, plugs, "%s_hikFK" % j.name, local, local, k)
+                    c.fk_parts.append(part)
+                    total += 1
+            elif s.kind == "retarget" and s.character is not None and id(s.character) in by_node:
+                sc = by_node[id(s.character)]
+                ss = _Stance(ms, sc, k)
+                if stance_world is None:
+                    stance_world = _stance_world_of(ms, c, st)
+                ht, hs = st.hips_height(), ss.hips_height()
+                ratio = ht / hs if hs > 1e-9 and ht > 1e-9 else 1.0
+                c.height_ratio = ratio
+                for part, (j, plugs) in sorted(joints.items()):
+                    sj = sc.bones.get(part)
+                    parent = j.parent if j.flag("it", True) else None
+                    rest_local = M.mul(stance_world(j), M.inverse(stance_world(parent)))
+                    if sj is None or part not in c.bones:      # ソースにない部位（値のない属性は 0。HumanIK は 0 を書かない）
+                        _wire_joint(ms, s.state2sk, j, plugs, "%s_hikRT" % j.name, [rest_local], [rest_local], k)
+                        c.retarget_static.append(part)
+                        total += 1
+                        continue
+                    off = _rot_only(M.mul(st.matrix(part), M.inverse(ss.matrix(part))))
+                    src_world = [(sj, "wm")] + ss.ref_delta_inverse()       # ソースの部位（ソースのスタンスの空間）
+                    r_local = [off] + src_world + st.ref_delta() + [(j, "pim")]
+                    if part == "Hips":
+                        ps, pt = M.position(ss.matrix(part)), M.position(st.matrix(part))
+                        t_local = (src_world + [M.translate([-x for x in ps]), M.scale([ratio] * 3), M.translate(pt)]
+                                   + st.ref_delta() + [(j, "pim")])
+                    else:
+                        t_local = [M.translate(M.position(rest_local))]
+                    _wire_joint(ms, s.state2sk, j, plugs, "%s_hikRT" % j.name, t_local, r_local, k)
+                    c.retarget_parts.append(part)
+                    total += 1
+            elif s.kind == "stance":
+                for part, (j, plugs) in sorted(joints.items()):
+                    if part not in c.bones:
+                        continue
+                    local = [st.matrix(part)] + st.ref_delta() + [(j, "pim")]
+                    _wire_joint(ms, s.state2sk, j, plugs, "%s_hikST" % j.name, local, local, k)
+                    c.stance_parts.append(part)
+                    total += 1
+        c.driven = [d for d in c.driven if any(src.type == "HIKState2SK" for src, _a in d.inputs.values())]
     return total

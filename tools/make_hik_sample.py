@@ -1,23 +1,34 @@
 # -*- coding: utf-8 -*-
-"""HumanIK のコントロールリグ（FK）で動くスケルトンの検証用サンプルを生成する。
+"""HumanIK で動くスケルトン（コントロールリグの FK・リターゲット・スタンス）の検証用サンプルを生成する。
 
-  python tools/make_hik_sample.py   → samples/hik_fk_sample.ma, samples/hik_fk_sample.json
+  python tools/make_hik_sample.py   → samples/hik_sample.ma, samples/hik_sample.json
 
-Maya 2020 の HumanIK が書き出す接続の形（Kano のコントロールリグのシーンで確かめた）で、値は自作のもの。
-  * スケルトン（Root → Hips → Spine → Spine1 → ShoulderExtra → LeftArm → LeftForeArm → LeftHand、Spine1 → Head、
-    Hips → LeftUpLeg → LeftLeg）。ShoulderExtra はキャラクタライズしない（HIKState2SK で動かない）ジョイント。
-    ジョイントごとに jointOrient・rotateAxis・回転順・バインド時の回転の値を変えてある。腕は A ポーズ（下に 31 度）
-  * キャラクター Character1（HIKCharacterNode）: 部位ごとのスタンスのワールドの位置 <部位>Tx〜Tz と向き <部位>Rx〜Rz
-    （xyz の順。スケルトンのバインドポーズと同じ）
-  * コントロールリグ: Character1_Ctrl_Reference（transform）の下の hikFKJoint。スタンスで回転の値は 0。
-    向きは部位ごとに jointOrient・rotateAxis で決め、単位行列でないもの（腕は A ポーズの向きなど）もある
-    → HIKFK2State → HIKSolverNode ← HIKPinning2State ← HIKEffector2State ← hikIKEffector（Reach 0）
-    → HIKState2SK → スケルトンの移動・回転・スケール
-  * キー（再生範囲 1〜10。1 はすべて 0 = スタンス）: Hips の移動 Y・Z と回転 Y、Spine の回転 X、LeftArm の回転 Z・X、
-    LeftForeArm の回転 Y、LeftUpLeg の回転 X、Head の回転 Z
-期待値: フレーム 1 はスケルトン = バインドポーズ。どのフレームも、部位のワールドの向きは
-  （コントローラーのワールドの向き）· （スタンスのコントローラーの向き）⁻¹ · （スタンスのスケルトンの向き）（列ベクトル）、
-  位置はコントローラーの位置。ShoulderExtra は Spine1 のワールド · ファイルのローカル。
+Maya 2020 の HumanIK が書き出す接続の形（Kano のコントロールリグのシーンと Rokoko の Maya-Demo-Project で確かめた）で、
+値は自作のもの。
+  * Character1: コントロールリグの FK で動く
+    - スケルトン（Root → Hips → Spine → Spine1 → ShoulderExtra → LeftArm → LeftForeArm → LeftHand、Spine1 → Head、
+      Hips → LeftUpLeg → LeftLeg）。ShoulderExtra はキャラクタライズしない（HIKState2SK で動かない）ジョイント。
+      ジョイントごとに jointOrient・rotateAxis・回転順・バインド時の回転の値を変えてある。腕は A ポーズ（下に 31 度）
+    - キャラクター（HIKCharacterNode）: 部位ごとのスタンスのワールドの位置 <部位>Tx〜Tz と向き <部位>Rx〜Rz
+      （xyz の順。スケルトンのバインドポーズと同じ）
+    - コントロールリグ: Character1_Ctrl_Reference（transform）の下の hikFKJoint。スタンスで回転の値は 0。
+      向きは部位ごとに jointOrient・rotateAxis で決め、単位行列でないもの（腕は A ポーズの向きなど）もある
+      → HIKFK2State → HIKSolverNode ← HIKPinning2State ← HIKEffector2State ← hikIKEffector（Reach 0）
+      → HIKState2SK1 → スケルトンの移動・回転・スケール
+    - キー（再生範囲 1〜10。1 はすべて 0 = スタンス）: Hips の移動 Y・Z と回転 Y、Spine の回転 X、LeftArm の回転 Z・X、
+      LeftForeArm の回転 Y、LeftUpLeg の回転 X、Head の回転 Z
+  * Character2: Character1 のスケルトンからのリターゲット（HIKSK2State → HIKRetargeterNode → HIKState2SK2）。
+    体の大きさは 0.8 倍（腰の高さの比 0.8）、骨の向きは Character1 と別、基準（B_Root）はスタンスで X に -90 度。
+    ShoulderExtra はなく、ソースにない親指（LeftHandThumb1）がある
+  * Character3: スタンス（ソースのない HIKSolverNode → HIKState2SK3）。Character1 と同じ形で、キャラクタライズのあとに
+    基準（C_Root）ごと X に 50 動かしてある（スタンスの値は動かす前、バインドポーズは動かしたあと）
+期待値:
+  * Character1: フレーム 1 はバインドポーズ。部位のワールドの向きは（コントローラーのワールドの向き）·（スタンスの
+    コントローラーの向き）⁻¹ ·（スタンスのスケルトンの向き）（列ベクトル）、位置はコントローラーの位置。ShoulderExtra は
+    Spine1 のワールド · ファイルのローカル
+  * Character2: フレーム 1 はバインドポーズ。部位はソースの部位がワールドで回った分だけワールドで回る。腰はソースの腰の
+    動きの 0.8 倍だけ動く。ほかの部位の位置は親 · スタンスのローカル。親指はスタンスの形で手についていく
+  * Character3: どのフレームもバインドポーズ（スタンス · 基準の動き）
 """
 from __future__ import annotations
 
@@ -29,8 +40,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
-OUT_MA = os.path.join(ROOT, "samples", "hik_fk_sample.ma")
-OUT_JSON = os.path.join(ROOT, "samples", "hik_fk_sample.json")
+OUT_MA = os.path.join(ROOT, "samples", "hik_sample.ma")
+OUT_JSON = os.path.join(ROOT, "samples", "hik_sample.json")
 
 from ma_viewer import mathutil as M  # noqa: E402
 
@@ -78,6 +89,25 @@ SKELETON = [
     ("LeftUpLeg", "Hips", "LeftUpLeg", (10, 95, 0), (180, 0, -92), (0, 0, 0), (0, 0, 0), 0),
     ("LeftLeg", "LeftUpLeg", "LeftLeg", (11, 50, 2), (178, 3, -91), (0, 0, 0), (2, 0, 0), 4),
 ]
+# リターゲットのターゲット（Character2）: 体の大きさ 0.8 倍、骨の向きは別、基準（B_Root）は X に -90 度（Rokoko の
+# サンプルのキャラクターと同じく、スタンスで基準が回っている）。ShoulderExtra はなく、ソースにない親指（LeftHandThumb1）がある
+SKELETON_B = [
+    ("B_Root", None, "Reference", (0, 0, 0), (-90, 0, 0), (0, 0, 0), (0, 0, 0), 0),
+    ("B_Hips", "B_Root", "Hips", (0, 80, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), 0),
+    ("B_Spine", "B_Hips", "Spine", (0, 88, 0.8), (0, 0, 2), (0, 0, 0), (0, 0, 0), 4),
+    ("B_Spine1", "B_Spine", "Spine1", (0, 100, 1.6), (0, 0, 0), (0, 0, 0), (5, 0, 0), 0),
+    ("B_LeftArm", "B_Spine1", "LeftArm", (12, 112, 0), (10, -5, -31), (0, 0, 0), (0, 0, 0), 2),
+    ("B_LeftForeArm", "B_LeftArm", "LeftForeArm", (32, 100, -0.8), (0, 0, -33), (0, 0, 20), (0, 0, 0), 0),
+    ("B_LeftHand", "B_LeftForeArm", "LeftHand", (49.6, 89.6, 0), (0, 0, -31), (0, 0, 0), (0, 0, 0), 1),
+    ("B_LeftHandThumb1", "B_LeftHand", "LeftHandThumb1", (51, 87, 3), (0, 20, -31), (0, 0, 0), (0, 0, 0), 0),
+    ("B_Head", "B_Spine1", "Head", (0, 128, 2.4), (0, 0, 0), (0, 0, 0), (0, 0, 0), 0),
+    ("B_LeftUpLeg", "B_Hips", "LeftUpLeg", (8, 76, 0), (0, 0, -90), (0, 0, 0), (0, 0, 0), 0),
+    ("B_LeftLeg", "B_LeftUpLeg", "LeftLeg", (8.8, 40, 1.6), (0, 0, -91), (0, 0, 0), (0, 0, 0), 0),
+]
+# スタンスのキャラクター（Character3）: Character1 と同じ形を、キャラクタライズのあとで基準（C_Root）ごと X に 50 動かした
+C_SHIFT = (50.0, 0.0, 0.0)
+SKELETON_C = [("C_" + n, "C_" + p if p else None, part, (pos[0] + C_SHIFT[0], pos[1], pos[2]), rot, ra, r, ro)
+              for n, p, part, pos, rot, ra, r, ro in SKELETON]
 # コントロールリグ: 部位 → (親, スタンスのワールドの向き（度・xyz）, rotateAxis)。位置はスケルトンと同じ
 CONTROLS = [
     ("Hips", None, (0, 0, 0), (0, 0, 0)),
@@ -111,18 +141,10 @@ def fmt(v):
     return " ".join("%.12g" % x for x in v)
 
 
-def main():
-    lines = ['//Maya ASCII 2020 scene', '//Name: hik_fk_sample.ma', 'requires maya "2020";',
-             'requires -nodeType "HIKSolverNode" -nodeType "HIKCharacterNode" -nodeType "HIKFK2State"',
-             '\t\t -nodeType "HIKEffector2State" -nodeType "HIKPinning2State" -nodeType "HIKState2SK"',
-             '\t\t -nodeType "HIKProperty2State" -nodeType "hikFKJoint" -nodeType "hikIKEffector"',
-             '\t\t -dataType "HIKCharacter" -dataType "HIKCharacterState" -dataType "HIKEffectorState"',
-             '\t\t -dataType "HIKPropertySetState" "mayaHIK" "1.0_HIK_2016.5";',
-             'currentUnit -l centimeter -a degree -t film;']
-    conns = []
-    world = {}
-    part_of = {}
-    for name, parent, part, pos, rot, ra, r, ro in SKELETON:
+def emit_skeleton(lines, conns, spec, char, s2sk, stance_shift=(0.0, 0.0, 0.0)):
+    """スケルトン・キャラクター（スタンス）・HIKState2SK の接続を書く。スタンスはワールドの位置 − stance_shift"""
+    world, part_of = {}, {}
+    for name, parent, part, pos, rot, ra, r, ro in spec:
         w = mat(pos, rot)
         world[name] = w
         t, jo = local_values(w, world.get(parent), ra, r, ro)
@@ -138,20 +160,43 @@ def main():
         lines.append('\tsetAttr ".bps" -type "matrix" %s ;' % fmt(w))
         if part:
             part_of[name] = part
-            conns.append('connectAttr "%s.ch" "Character1.%s";' % (name, part))
-    # キャラクター（スタンス）
-    lines.append('createNode HIKCharacterNode -n "Character1";')
+            conns.append('connectAttr "%s.ch" "%s.%s";' % (name, char, part))
+    lines.append('createNode HIKCharacterNode -n "%s";' % char)
     lines.append('\tsetAttr ".OutputCharacterDefinition" -type "HIKCharacter" ;')
     lines.append('\tsetAttr ".InputCharacterizationLock" yes;')
-    for name, _p, part, pos, rot, *_rest in SKELETON:
+    for name, _p, part, pos, *_rest in spec:
         if not part:
             continue
-        for axis, v in zip("xyz", pos):
-            if v:
-                lines.append('\tsetAttr ".%sT%s" %.12g;' % (part, axis, v))
+        for axis, v, d in zip("xyz", pos, stance_shift):
+            if v - d:
+                lines.append('\tsetAttr ".%sT%s" %.12g;' % (part, axis, v - d))
         for axis, v in zip("xyz", euler_xyz(world[name])):
             if abs(v) > 1e-12:
                 lines.append('\tsetAttr ".%sR%s" %.12g;' % (part, axis, v))
+    lines.append('createNode HIKState2SK -n "%s";' % s2sk)
+    conns.append('connectAttr "%s.OutputCharacterDefinition" "%s.InputCharacterDefinition";' % (char, s2sk))
+    for name, part in part_of.items():
+        if part == "Reference":
+            continue
+        for ch in ("Tx", "Ty", "Tz", "Rx", "Ry", "Rz", "Sx", "Sy", "Sz"):
+            conns.append('connectAttr "%s.%s%s" "%s.%s";' % (s2sk, part, ch, name, ch.lower()))
+        conns += ['connectAttr "%s.pm" "%s.%sPGX";' % (name, s2sk, part),
+                  'connectAttr "%s.jo" "%s.%sPreR";' % (name, s2sk, part),
+                  'connectAttr "%s.ra" "%s.%sPostR";' % (name, s2sk, part),
+                  'connectAttr "%s.ro" "%s.%sROrder";' % (name, s2sk, part)]
+    return world, part_of
+
+
+def main():
+    lines = ['//Maya ASCII 2020 scene', '//Name: hik_sample.ma', 'requires maya "2020";',
+             'requires -nodeType "HIKSolverNode" -nodeType "HIKCharacterNode" -nodeType "HIKFK2State"',
+             '\t\t -nodeType "HIKEffector2State" -nodeType "HIKPinning2State" -nodeType "HIKState2SK"',
+             '\t\t -nodeType "HIKProperty2State" -nodeType "hikFKJoint" -nodeType "hikIKEffector"',
+             '\t\t -dataType "HIKCharacter" -dataType "HIKCharacterState" -dataType "HIKEffectorState"',
+             '\t\t -dataType "HIKPropertySetState" "mayaHIK" "1.0_HIK_2016.5";',
+             'currentUnit -l centimeter -a degree -t film;']
+    conns = []
+    world, part_of = emit_skeleton(lines, conns, SKELETON, "Character1", "HIKState2SK1")
     # コントロールリグ
     pos_of = {part: pos for _n, _p, part, pos, *_r in SKELETON}
     lines.append('createNode transform -n "Character1_Ctrl_Reference";')
@@ -175,30 +220,42 @@ def main():
               'connectAttr "Character1_Ctrl_LeftWristEffector.rt" "HIKEffector2State1.LeftWristEffectorReachT[0]";',
               'connectAttr "Character1_Ctrl_LeftWristEffector.rr" "HIKEffector2State1.LeftWristEffectorReachR[0]";']
     for t in ("HIKFK2State1:HIKFK2State", "HIKEffector2State1:HIKEffector2State", "HIKPinning2State1:HIKPinning2State",
-              "HIKproperties1:HIKProperty2State", "HIKSolverNode1:HIKSolverNode", "HIKState2SK1:HIKState2SK"):
+              "HIKproperties1:HIKProperty2State", "HIKSolverNode1:HIKSolverNode"):
         n, tp = t.split(":")
         lines.append('createNode %s -n "%s";' % (tp, n))
     conns += [
         'connectAttr "Character1.OutputCharacterDefinition" "HIKFK2State1.InputCharacterDefinition";',
         'connectAttr "Character1.OutputCharacterDefinition" "HIKSolverNode1.InputCharacterDefinition";',
-        'connectAttr "Character1.OutputCharacterDefinition" "HIKState2SK1.InputCharacterDefinition";',
         'connectAttr "HIKproperties1.OutputPropertySetState" "HIKSolverNode1.InputPropertySetState";',
         'connectAttr "HIKFK2State1.OutputCharacterState" "HIKSolverNode1.InputCharacterState";',
         'connectAttr "HIKEffector2State1.EFF" "HIKPinning2State1.InputEffectorState";',
         'connectAttr "HIKPinning2State1.OutputEffectorState" "HIKSolverNode1.InputEffectorState";',
         'connectAttr "HIKSolverNode1.OutputCharacterState" "HIKState2SK1.InputCharacterState";',
     ]
+    # リターゲット: Character1 のスケルトン → HIKSK2State → HIKRetargeterNode → Character2 のスケルトン
+    emit_skeleton(lines, conns, SKELETON_B, "Character2", "HIKState2SK2")
+    lines += ['createNode HIKSK2State -n "HIKSK2State1";', 'createNode HIKRetargeterNode -n "HIKRetargeterNode1";',
+              'createNode HIKProperty2State -n "HIKproperties2";']
     for name, part in part_of.items():
-        if part == "Reference":
-            continue
-        for ch in ("Tx", "Ty", "Tz", "Rx", "Ry", "Rz", "Sx", "Sy", "Sz"):
-            conns.append('connectAttr "HIKState2SK1.%s%s" "%s.%s";' % (part, ch, name, ch.lower()))
-        conns += ['connectAttr "%s.pm" "HIKState2SK1.%sPGX";' % (name, part),
-                  'connectAttr "%s.jo" "HIKState2SK1.%sPreR";' % (name, part),
-                  'connectAttr "%s.ra" "HIKState2SK1.%sPostR";' % (name, part),
-                  'connectAttr "%s.ro" "HIKState2SK1.%sROrder";' % (name, part),
-                  'connectAttr "%s.ssc" "HIKState2SK1.%sSC";' % (name, part),
-                  'connectAttr "%s.is" "HIKState2SK1.%sIS";' % (name, part)]
+        conns.append('connectAttr "%s.wm" "HIKSK2State1.%sGX";' % (name, part))
+    conns += [
+        'connectAttr "Character1.OutputCharacterDefinition" "HIKSK2State1.InputCharacterDefinition";',
+        'connectAttr "HIKSK2State1.OutputCharacterState" "HIKRetargeterNode1.InputCharacterState";',
+        'connectAttr "Character1.OutputCharacterDefinition" "HIKRetargeterNode1.InputCharacterDefinitionSrc";',
+        'connectAttr "Character2.OutputCharacterDefinition" "HIKRetargeterNode1.InputCharacterDefinitionDst";',
+        'connectAttr "HIKproperties1.OutputPropertySetState" "HIKRetargeterNode1.InputSrcPropertySetState";',
+        'connectAttr "HIKproperties2.OutputPropertySetState" "HIKRetargeterNode1.InputDstPropertySetState";',
+        'connectAttr "B_Root.wm" "HIKRetargeterNode1.referenceGX";',
+        'connectAttr "HIKRetargeterNode1.OutputCharacterState" "HIKState2SK2.InputCharacterState";',
+    ]
+    # スタンス: ソースのない HIKSolverNode → Character3 のスケルトン（キャラクタライズのあとで基準を動かした）
+    emit_skeleton(lines, conns, SKELETON_C, "Character3", "HIKState2SK3", stance_shift=C_SHIFT)
+    lines += ['createNode HIKSolverNode -n "HIKSolverNode3";', 'createNode HIKProperty2State -n "HIKproperties3";']
+    conns += [
+        'connectAttr "Character3.OutputCharacterDefinition" "HIKSolverNode3.InputCharacterDefinition";',
+        'connectAttr "HIKproperties3.OutputPropertySetState" "HIKSolverNode3.InputPropertySetState";',
+        'connectAttr "HIKSolverNode3.OutputCharacterState" "HIKState2SK3.InputCharacterState";',
+    ]
     # キー
     for part, attr, v in KEYS:
         ctype = "animCurveTL" if attr.startswith("t") else "animCurveTA"
@@ -215,7 +272,7 @@ def main():
               '\tsetAttr ".b" -type "string" "playbackOptions -min 1 -max 10 -ast 1 -aet 10 ";',
               '\tsetAttr ".st" 6;']
     lines += conns
-    lines.append('// End of hik_fk_sample.ma')
+    lines.append('// End of hik_sample.ma')
     with open(OUT_MA, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
     from ma_viewer.extract_ma import load_ma
