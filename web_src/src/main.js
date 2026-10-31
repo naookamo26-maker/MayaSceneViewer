@@ -61,6 +61,7 @@ const MB = 1024 * 1024;
 const _v = new Vector3();
 const _v2 = new Vector3();
 const _q = new Quaternion();
+const _m4 = new Matrix4();
 
 class ViewerApp {
   constructor() {
@@ -1876,8 +1877,9 @@ class ViewerApp {
     if (!obj) return;
     const cam = this.activeCamera();
     if (!(this.camEdit && this.camEdit.ci === this.viewCamera)) {   // 停止中に動かした視点は、フレームが変わるまで保つ
-      obj.updateWorldMatrix(true, false);
-      obj.matrixWorld.decompose(cam.position, _q, _v);
+      // ノードの行列は直接書き換えるので（matrixAutoUpdate = false）、three.js の更新の印（r185 から updateWorldMatrix は
+      // matrixWorldNeedsUpdate を見る）に頼らず、親からたどってワールド行列を求める
+      worldMatrixOf(obj, _m4).decompose(cam.position, _q, _v);
       cam.quaternion.copy(_q);
     }
     cam.updateMatrixWorld(true);
@@ -2103,6 +2105,13 @@ function niceCeil(x) {
 
 // ---------------------------------------------------------------------- 外部 API
 const app = new ViewerApp();
+
+/** obj のワールド行列（親の行列からたどって求める。matrixWorld は書き換えない） */
+function worldMatrixOf(obj, target) {
+  target.copy(obj.matrix);
+  for (let p = obj.parent; p; p = p.parent) target.premultiply(p.matrix);
+  return target;
+}
 
 window.mayaViewer = {
   version: VERSION,
