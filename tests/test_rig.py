@@ -647,6 +647,24 @@ class TestStage6(unittest.TestCase):
         from ma_viewer.rig_report import rig_report_file
         self.assertIn("■ transform として扱った自作ノード: myCtrlTransform（cx_ctrl）", rig_report_file(self.path))
 
+    def test_custom_calc_node_not_transform(self):
+        """入力の属性の名前が r・t などの計算用の自作ノード（親子なし・transform の行列の出力なし）は transform として
+        扱わない（扱うと計算の結果を使わず、評価できないノードとしても出なくなる）"""
+        body = ('createNode transform -n "tgt";\n\tsetAttr ".r" -type "double3" 0 0 30 ;\n'
+                'createNode joint -n "kid";\n'
+                'createNode decomposeMatrix -n "dm";\n'
+                'createNode myCalcNode -n "calc";\n'
+                '\taddAttr -ci true -sn "r" -ln "inRotate" -at "double3" -nc 3;\n'
+                '\taddAttr -ci true -sn "or" -ln "outRotate" -at "double3" -nc 3;\n'
+                '\tsetAttr ".r" -type "double3" 1 2 3 ;\n'
+                'connectAttr "tgt.wm" "dm.imat";\nconnectAttr "dm.or" "calc.r";\nconnectAttr "calc.or" "kid.r";\n')
+        ms = parse_ma_text(HEADER + body, "test.ma")
+        sc = scene_to_dict(ms)
+        self.assertNotIn("myCalcNode", ms.custom_transforms)
+        self.assertFalse(any("myCalcNode" in w and "transform として" in w for w in sc["warnings"]))
+        build_animation(ms, ms.out_index)
+        self.assertIn("myCalcNode", ms.graph_info.unsupported)          # 評価できないノード（リグの診断に出る）
+
     def test_custom_node_map(self):
         """自作ノードの割り当て: 設定ファイル（.ma と同じフォルダ）を読み、標準ノードとして評価する"""
         import json

@@ -1117,13 +1117,14 @@ class _Lap:
 
 _XFORM_SOURCE_PLUGS = {"wm", "worldMatrix", "pm", "parentMatrix", "wim", "worldInverseMatrix", "pim",
                        "parentInverseMatrix", "xm", "xformMatrix"}
-_XFORM_DEST_KEYS = {"t", "tx", "ty", "tz", "r", "rx", "ry", "rz", "s", "sx", "sy", "sz"}
 
 
 def promote_custom_transforms(ms: MaScene) -> Dict[str, List[str]]:
     """型を知らないノード（プラグインの自作ノード）のうち、transform らしいものを transform として扱う。
 
-    証拠: 親や子がある・移動 / 回転 / スケールの値がある・ワールド行列などを出力している・移動などに接続がある。
+    証拠: 親や子がある・ワールド行列などの transform にしかない出力（.wm・.pm・.pim など）をつないでいる。
+    移動・回転・スケールの名前（t・r・rx など）の属性への入力や値だけでは決めない（計算用の自作ノードにも、入力の
+    名前が r・t のものがある。transform として扱うと計算の結果を使わず、評価できないノードとしても出なくなる）。
     戻り値: 型 → ノード名の一覧（警告と診断に使う）
     """
     from .ma_scene import RAW_TYPES, SHAPE_TYPES, TRANSFORM_TYPES, _SKIP_ATTR_TYPES
@@ -1132,18 +1133,16 @@ def promote_custom_transforms(ms: MaScene) -> Dict[str, List[str]]:
         "mesh", "skinCluster", "tweak", "groupParts", "groupId", "script", "dagPose", "time", "ikRPsolver",
         "ikSCsolver", "ikSplineSolver", "ikSystem", "materialInfo", "shadingEngine", "objectSet"}
     evidence = set()
-    for src, sattr, dst, dattr in ms.connections:
+    for src, sattr, _dst, _dattr in ms.connections:
         if R.normalize_attr(sattr).split("[")[0] in _XFORM_SOURCE_PLUGS:
             evidence.add(id(src))
-        if dattr.split("[")[0] in _XFORM_DEST_KEYS:
-            evidence.add(id(dst))
     out: Dict[str, List[str]] = {}
     for n in ms.nodes:
         t = n.type
         if (t in known or t.startswith("animCurve") or t.startswith("poly") or t.endswith("Constraint") or n.is_shape
                 or n.node_def is not None):
             continue
-        if not (n.parent is not None or n.children or id(n) in evidence or any(k in n.xattrs for k in ("t", "r", "s"))):
+        if not (n.parent is not None or n.children or id(n) in evidence):
             continue
         n.is_dag = True
         out.setdefault(t, []).append(n.name)
