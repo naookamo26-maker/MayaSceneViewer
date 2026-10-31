@@ -159,7 +159,7 @@ _STANDARD_TYPES = frozenset("""
     holdMatrix blendMatrix aimMatrix pickMatrix parentMatrix vectorProduct quatToEuler eulerToQuat quatProd
     quatInvert quatNormalize quatSlerp quatAdd quatConjugate quatNegate quatSub addDoubleLinear multDoubleLinear
     pointMatrixMult pointConstraint orientConstraint parentConstraint scaleConstraint aimConstraint
-    poleVectorConstraint lookAt uvChooser bump2d network container
+    poleVectorConstraint lookAt uvChooser bump2d network container deleteComponent
 """.split())
 _STANDARD_PREFIXES = ("poly", "animCurve", "animBlendNode", "HIK", "hik", "deform")
 # Maya に付属するプラグイン（requires -nodeType に型が書かれていても、自作ノードではない）
