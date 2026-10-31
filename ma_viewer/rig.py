@@ -712,7 +712,7 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
             from .component_tags import deformer_masks
             masks = deformer_masks(ms, n)
             if masks:
-                entry["mask"] = masks                     # コンポーネントタグで選んだ、変形する CV（入力ごと）
+                entry["mask"] = masks                     # コンポーネントタグか groupParts で選んだ、変形する CV（入力ごと）
         if n.type == "skinCluster" and n.skin is not None:
             sk = n.skin
             entry["skin"] = {

@@ -4,6 +4,7 @@
 前提: python tools/make_component_tag_sample.py（samples/component_tag_sample.ma を作る）
 """
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -73,6 +74,62 @@ class ComponentTagTest(unittest.TestCase):
         report = rig_report_file(SAMPLE)
         self.assertIn("fin_k4（cluster）", report)
         self.assertIn("コンポーネントタグで動かす CV（入力 0）: 3", report)
+
+
+def group_parts_variant(text):
+    """サンプルからタグを消し、Maya 2021 までの書き方（cluster ごとに groupParts の .ic "cv[n]" と groupId）にする"""
+    text = "\n".join(ln for ln in text.splitlines() if ".gtag[" not in ln and ".ip[0].gtg" not in ln)
+    text = re.sub(r' "gtag" 4 .*?;', ";", text)
+    prev = {1: "fin_drvShapeOrig.ws", 2: "fin_k1.og[0]", 3: "fin_k2.og[0]", 4: "fin_k3.og[0]"}
+    add = []
+    for n in range(1, 5):
+        old = 'connectAttr "%s" "fin_k%d.ip[0].ig";' % (prev[n], n)
+        assert old in text
+        text = text.replace(old, "")
+        add += ['createNode groupId -n "fin_k%dGroupId";' % n,
+                'createNode groupParts -n "fin_k%dGroupParts";' % n,
+                '\tsetAttr ".ic" -type "componentList" 1 "cv[%d]";' % (n - 1),
+                'connectAttr "%s" "fin_k%dGroupParts.ig";' % (prev[n], n),
+                'connectAttr "fin_k%dGroupId.id" "fin_k%dGroupParts.gi";' % (n, n),
+                'connectAttr "fin_k%dGroupParts.og" "fin_k%d.ip[0].ig";' % (n, n),
+                'connectAttr "fin_k%dGroupId.id" "fin_k%d.ip[0].gi";' % (n, n)]
+    return text.replace("// End of", "\n".join(add) + "\n// End of")
+
+
+class GroupPartsTest(unittest.TestCase):
+    """タグを使わない古い書き方: groupParts の .inputComponents（cv[n]）と groupId で、cluster が動かす CV を選ぶ"""
+
+    setUpClass = ComponentTagTest.__dict__["setUpClass"]
+    masks = ComponentTagTest.masks
+
+    def test_masks_from_group_parts(self):
+        text = group_parts_variant(self.text)
+        self.assertNotIn(".gtg", text)
+        m = self.masks(text)
+        self.assertEqual([m["fin_k%d" % k] for k in range(1, 5)], [{"0": [k]} for k in range(4)])
+        self.assertIsNone(m["fin_all"])
+
+    def test_all_cvs_or_other_group(self):
+        """cv[*]・全部の CV を並べたもの・別の groupId の groupParts は、絞らない（入れない）"""
+        text = group_parts_variant(self.text)
+        m = self.masks(text.replace('"fin_k2GroupParts";\n\tsetAttr ".ic" -type "componentList" 1 "cv[1]";',
+                                    '"fin_k2GroupParts";\n\tsetAttr ".ic" -type "componentList" 1 "cv[*]";')
+                           .replace('"fin_k3GroupParts";\n\tsetAttr ".ic" -type "componentList" 1 "cv[2]";',
+                                    '"fin_k3GroupParts";\n\tsetAttr ".ic" -type "componentList" 1 "cv[0:3]";')
+                           .replace('connectAttr "fin_k4GroupId.id" "fin_k4GroupParts.gi";',
+                                    'connectAttr "fin_k1GroupId.id" "fin_k4GroupParts.gi";'))
+        self.assertEqual(m["fin_k1"], {"0": [0]})
+        self.assertIsNone(m["fin_k2"])
+        self.assertIsNone(m["fin_k3"])
+        self.assertIsNone(m["fin_k4"])
+
+    def test_report_shows_group_parts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "variant.ma")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(group_parts_variant(self.text))
+            report = rig_report_file(path)
+        self.assertIn("groupPartsで動かす CV（入力 0）: 3", report)
 
 
 if __name__ == "__main__":

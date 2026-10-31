@@ -1396,7 +1396,7 @@ export class RigEvaluator {
     return out;
   }
 
-  /** コンポーネントタグで選んだ、入力 k の変形する CV の番号（Set）。選んでいなければ null（すべて） */
+  /** コンポーネントタグか groupParts の .inputComponents で選んだ、入力 k の変形する CV の番号（Set）。選んでいなければ null（すべて） */
   maskOf(g, k) {
     const list = (g.mask || {})[k];
     if (!Array.isArray(list)) return null;

@@ -146,8 +146,60 @@ def _tagged_source(ms: MaScene, node: MaNode, key: str) -> Optional[MaNode]:
     return None
 
 
-def deformer_masks(ms: MaScene, node: MaNode) -> Dict[str, List[int]]:
-    """デフォーマの入力ごとの、変形する CV の番号 {"k": [番号…]}。すべての CV（または式がない）なら入れない"""
+def _source_curve(node: MaNode, key: str) -> Optional[MaNode]:
+    """デフォーマの入力（key）を上流へたどった、元のカーブ（CV の数を知るため）"""
+    x, seen = node.inputs.get(key, (None, ""))[0], set()
+    while x is not None and id(x) not in seen:
+        seen.add(id(x))
+        if x.type == "nurbsCurve":
+            return x
+        nxt = None
+        for k, (src, _sattr) in x.inputs.items():
+            if _UPSTREAM_RE.match(k):
+                nxt = src
+                break
+        x = nxt
+    return None
+
+
+def group_parts_mask(ms: MaScene, node: MaNode, k: int) -> Optional[List[int]]:
+    """コンポーネントタグを使わない古い書き方: デフォーマの入力 k（ip[k].ig）の上流の groupParts のうち、デフォーマと
+    同じ groupId（ip[k].gi ← groupId → groupParts.gi）のものの .inputComponents（cv[1] など）。すべてなら None"""
+    from .ma_scene import parse_component_list
+    gid = node.inputs.get("ip[%d].gi" % k)
+    if gid is None:
+        return None
+    x, seen = node.inputs.get("ip[%d].ig" % k, (None, ""))[0], set()
+    parts = None
+    while x is not None and id(x) not in seen and x.type != "nurbsCurve":
+        seen.add(id(x))
+        if x.type == "groupParts" and x.inputs.get("gi", (None,))[0] is gid[0]:
+            parts = x
+            break
+        nxt = None
+        for key, (src, _sattr) in x.inputs.items():
+            if _UPSTREAM_RE.match(key):
+                nxt = src
+                break
+        x = nxt
+    if parts is None:
+        return None
+    ranges = parse_component_list((parts.raw or {}).get("ic") or [], "cv")
+    if not ranges or any(b < 0 for _a, b in ranges):
+        return None                                    # 何も書かれていない・cv[*]（すべて）
+    src = _source_curve(node, "ip[%d].ig" % k)
+    ncv = curve_tags(ms, src)[1] if src is not None else 0
+    sel = sorted({v for a, b in ranges for v in range(a, b + 1)})
+    if ncv and len(sel) >= ncv and sel[-1] < ncv:
+        return None
+    return sel
+
+
+def deformer_masks(ms: MaScene, node: MaNode, sources: Optional[Dict[str, str]] = None) -> Dict[str, List[int]]:
+    """デフォーマの入力ごとの、変形する CV の番号 {"k": [番号…]}。コンポーネントタグ（ip[k].gtg）で選ぶか、タグを
+    使わない古い書き方なら groupParts の .inputComponents で選ぶ。すべての CV なら入れない。
+    sources を渡すと、入力ごとにどちらで選んだか（"コンポーネントタグ" / "groupParts"）を入れる"""
+    sources = {} if sources is None else sources
     exprs = {}
     for key, sa in _setattrs(ms, node):
         m = _EXPR_RE.match(key)
@@ -164,4 +216,14 @@ def deformer_masks(ms: MaScene, node: MaNode) -> Dict[str, List[int]]:
         sel = evaluate(expr, tags, ncv)
         if len(sel) < ncv:
             out[str(k)] = sorted(sel)
+            sources[str(k)] = "コンポーネントタグ"
+    # タグの式がない入力は、groupParts の .inputComponents で選ぶ
+    for key in node.inputs:
+        m = re.match(r"^ip\[(\d+)\]\.ig$", key)
+        if not m or str(int(m.group(1))) in out or exprs.get(int(m.group(1))) not in (None, "", "*"):
+            continue
+        sel = group_parts_mask(ms, node, int(m.group(1)))
+        if sel is not None:
+            out[m.group(1)] = sel
+            sources[m.group(1)] = "groupParts"
     return out
