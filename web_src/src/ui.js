@@ -238,7 +238,7 @@ export class UI {
     $('opt-grid').setAttribute('aria-pressed', String(!!st.grid));
     $('opt-tex').setAttribute('aria-pressed', String(st.textures));
     $('opt-bind').setAttribute('aria-pressed', String(st.poseSource === 'bind'));
-    $('opt-camera-icons').checked = st.cameraIcons !== false;
+    $('opt-camera-icons').checked = !!st.cameraIcons;
     $('opt-hud').checked = st.hud !== false;
     $('opt-camera-gate').checked = st.cameraGate !== false;
     $('opt-normal-flip').checked = !!st.normalFlipY;

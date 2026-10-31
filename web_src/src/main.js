@@ -46,7 +46,7 @@ const DEFAULTS = {
   maps: { normal: true, roughness: false, metalness: false, ao: false, emissive: false, opacity: false },
   normalFlipY: false,            // ノーマルマップの緑を反転（DirectX 形式）
   tool: 'select', space: 'local', gizmoSize: 1,
-  cameraIcons: true,             // シーンのカメラの形を描く
+  cameraIcons: false,            // シーンのカメラの形を描く（初期状態は表示しない）
   cameraGate: true,              // カメラから見るとき、解像度ゲートの外側を暗くする
   hud: true,                     // ヘッドアップディスプレイ（再生のフレームレート）
   playbackCacheMB: 256,          // リグの再生キャッシュの上限（MB。0 なら使わない。次回の起動でも使う）
@@ -1993,18 +1993,32 @@ class ViewerApp {
       return;
     }
     if (this.selected < 0) { this.frameAll(); return; }
-    // 選択ノード以下のメッシュとジョイントを包む
+    // Maya の「選択をフレーム」と同じく、選択ノード以下の形（メッシュ・カーブ）と、それ自身が形を持つノード
+    // （ジョイント・ロケーター・カメラ）の位置を包む。形のない transform（グループ）の原点・ピボットは含めない。
+    // 包むものが何もなければ（空のグループなど）、ノードの位置に合わせる
+    const nodes = this.data.nodes;
     const sub = new Set([this.selected]);
-    this.data.nodes.forEach((n, i) => { if (sub.has(n.parent)) sub.add(i); });
+    nodes.forEach((n, i) => { if (sub.has(n.parent)) sub.add(i); });
     const box = new Box3();
     for (const e of this.built.meshes) {
       if (!sub.has(e.transform)) continue;
       const step = Math.max(1, Math.floor(e.vertexCount / 5000));
       for (let v = 0; v < e.vertexCount; v += step) box.expandByPoint(vertexWorldPosition(e, v, this.settings.skin, _v2));
     }
-    for (const ni of sub) box.expandByPoint(_v2.setFromMatrixPosition(this.built.nodeObjects[ni].matrixWorld));
     this.curves.expandBox(box, sub);
-    const r = Math.max(box.getSize(_v).length() / 2, this.overlay.radius() * 12, this.sceneRadius * 0.05);
+    const cameraNodes = new Set(this.cameras.map((c) => c.transform));
+    for (const ni of sub) {
+      const n = nodes[ni];
+      if (n.type === 'joint' || n.shape === 'locator' || cameraNodes.has(ni)) {
+        box.expandByPoint(_v2.setFromMatrixPosition(this.built.nodeObjects[ni].matrixWorld));
+      }
+    }
+    if (box.isEmpty()) {
+      for (const ni of sub) box.expandByPoint(_v2.setFromMatrixPosition(this.built.nodeObjects[ni].matrixWorld));
+    }
+    // 大きさのないもの（ジョイント 1 つ・ロケーターなど）は、目印が見える程度の大きさにする
+    const size = box.getSize(_v).length() / 2;
+    const r = size > 1e-9 ? Math.max(size, this.sceneRadius * 0.005) : Math.max(this.overlay.radius() * 12, this.sceneRadius * 0.05);
     this.fit(box.getCenter(new Vector3()), r);
   }
 
