@@ -230,7 +230,7 @@ class _Extractor:
             "visible": bool(cmds.getAttr(path + ".visibility")),
             "attrs": attrs,
         }
-        why = _selectability(path)
+        why = _selectability(path) or _shapes_selectability(path)
         if why:
             entry["unselectable"] = why
         if ntype == "joint":
@@ -700,6 +700,20 @@ def _selectability(path: str) -> Optional[str]:
     except Exception:  # noqa: BLE001  属性がない・偽の Maya など
         return None
     return None
+
+
+def _shapes_selectability(path: str) -> Optional[str]:
+    """ロケーター・自作の DAG ノードなどのシェイプが、すべてビューポートで選べないなら、その理由
+    （extract_ma._shapes_unselectable と同じ。メッシュ・カーブ・カメラのシェイプは、それぞれで判定する）"""
+    try:
+        shapes = cmds.listRelatives(path, shapes=True, fullPath=True) or []
+        shapes = [c for c in shapes if not cmds.getAttr(c + ".intermediateObject")]
+        if not shapes or any(cmds.nodeType(c) in ("mesh", "nurbsCurve", "camera") for c in shapes):
+            return None
+        whys = [_selectability(c) for c in shapes]
+    except Exception:  # noqa: BLE001  属性がない・偽の Maya など
+        return None
+    return whys[0] if all(whys) else None
 
 
 def _unique(paths):

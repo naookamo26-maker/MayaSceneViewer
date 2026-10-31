@@ -284,6 +284,9 @@ class TestSelectability(unittest.TestCase):
         self.assertEqual((nodes["arm_geo"], meshes["arm_geoShape"]), ("リファレンス", "リファレンス"))   # レイヤー
         self.assertEqual((nodes["wrist"], nodes["wrist_end"]), ("テンプレート", "テンプレート"))  # オーバーライド（子も）
         self.assertIsNone(nodes["forearm_twist"])
+        self.assertEqual(nodes["loc_ref"], "リファレンス")                     # ロケーターのシェイプのオーバーライド
+        self.assertIsNone(nodes["loc_ref_jnt"])
+        self.assertIsNone(nodes["loc_ok"])
         self.assertIsNone(meshes["hidden_geoShape"])
         self.assertFalse(any("unselectable" in n for n in load_ma(PLAIN)["nodes"]))
 
