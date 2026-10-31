@@ -100,6 +100,16 @@ test('行列の積は Maya と同じ順（m1 * m2 は m1 を先に掛ける）',
   assert.ok(near(dir[0], 0) && near(dir[1], 1), dir.join());
 });
 
+test('行列・四元数から回転の値: Maya の API と同じ標準の答え（真ん中の軸が ±90° の範囲。0 に近い方ではない）', () => {
+  // Y まわりに 150 度: Maya の MTransformationMatrix.rotation() は (180, 30, 180)（コンストレイントの (0, 150, 0) とは違う）
+  const vecOut = [{ name: 'output', short: 'o', type: 'vector', output: true, components: ['ox', 'oy', 'oz'] }];
+  const m = c('compose', v(0, 0, 0), v(0, 150 * Math.PI / 180, 0), v(1, 1, 1));
+  const deg = (r) => r.map((x) => Math.round(x * 180 / Math.PI));
+  assert.deepEqual(deg(run(set(c('rotation', m, n(0))), {}, vecOut).o).map(Math.abs), [180, 30, 180]);
+  const q = c('quat_from_matrix', m);
+  assert.deepEqual(deg(run(set(c('euler_from_quat', q, n(0))), {}, vecOut).o).map(Math.abs), [180, 30, 180]);
+});
+
 test('行列の要素（Maya の行・列。移動は 3 行目）・行列式・比較', () => {
   const m = c('compose', v(5, 6, 7), v(0, 0, Math.PI / 2), v(2, 2, 2));
   assert.equal(run(set(c('element', m, n(3), n(0)))).o, 5);                 // 移動 x
