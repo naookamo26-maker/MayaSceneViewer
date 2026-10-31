@@ -9,7 +9,7 @@
 //   T · S⁻¹ · (平行移動を除いた残り)
 // として、子の位置だけが伸びて子自身は拡大されないようにする。
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
-import { composeMaya, decomposeMaya, mayaEuler } from './animation.js';
+import { clampLimits, composeLocalMatrix, composeMaya, decomposeMaya, mayaEuler, poseChannels } from './animation.js';
 
 const D2R = Math.PI / 180;
 const MIN_SCALE = 1e-3;
@@ -105,6 +105,42 @@ export function fixChannels(base, pose, fixed, frame = {}) {
   const pos = new Vector3(), quat = new Quaternion(), scl = new Vector3();
   D.decompose(pos, quat, scl);
   return poseFromTransform(pos, quat, scl);
+}
+
+/**
+ * 追加分 pose を、Maya の移動・回転・スケールの制限（limit）の範囲に収めたものにする。動かした結果をチャンネルの値に
+ * 分け（poseChannels）、範囲の外の成分を端の値にしてから組み直し、追加分を求め直す。範囲の中なら pose をそのまま返す
+ * @param c チャンネルの値（{ t, r（度）, s, ro, ra, jo, rp, sp, rpt, spt, sh, opm, joint, lim }。lim がなければそのまま）
+ * @param isScale 打ち消す親のスケール（なければ null）
+ */
+export function limitPose(c, isScale, pose) {
+  if (!c || !c.lim) return pose;
+  const p = normalizePose(pose);
+  const moved = poseChannels(c, isScale, poseMatrix(p, new Matrix4()));
+  const before = JSON.stringify([moved.t, moved.r, moved.s]);
+  clampLimits(moved);
+  if (JSON.stringify([moved.t, moved.r, moved.s]) === before) return pose;
+  const base = composeLocalMatrix(c, isScale, new Matrix4());
+  const D = base.invert().multiply(composeLocalMatrix(moved, isScale, new Matrix4()));
+  const pos = new Vector3(), quat = new Quaternion(), scl = new Vector3();
+  D.decompose(pos, quat, scl);
+  return poseFromTransform(pos, quat, scl);
+}
+
+const roIndex = (v) => (typeof v === 'string' ? Math.max(0, ROTATE_ORDERS.indexOf(v)) : Math.round(v || 0));
+
+/**
+ * 共通 JSON のノードの、制限（limits）のあるノードのファイルのチャンネルの値（limitPose に渡す形。制限がなければ null）。
+ * attrs（移動・回転・スケール・回転順・jointOrient。制限の範囲に収める）・pivots（ピボット・rotateAxis・せん断）・opm から組み立てる
+ */
+export function nodeChannels(n) {
+  if (!n || !n.limits) return null;
+  const a = n.attrs || {};
+  const joint = n.type === 'joint';
+  return clampLimits({                       // 表示の行列（matrix）と同じく、ファイルの値も制限の範囲に収める
+    ...(n.pivots || {}), joint, t: (a.t || [0, 0, 0]).slice(), r: (a.r || [0, 0, 0]).slice(), s: (a.s || [1, 1, 1]).slice(),
+    ro: roIndex(a.ro), jo: joint ? a.jo || null : null, opm: n.opm || null, lim: n.limits,
+  });
 }
 
 let poseVersion = 0;                       // 追加分を変えるたびに増やす（ほかの PoseState とも重ならない）

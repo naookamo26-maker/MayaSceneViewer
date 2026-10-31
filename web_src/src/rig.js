@@ -8,7 +8,7 @@
 //   * 循環（自分の結果を自分で使う）に当たったら、そこはファイルの値で打ち切る
 // 完全な再現は目指さず、Maya と同じ考え方の近似にする（docs/data_format.md「animation.graph」）。
 import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
-import { clampLimits, composeLocalMatrix, composeMaya, decomposeMaya, evaluateCurve, mayaEuler } from './animation.js';
+import { clampLimits, composeLocalMatrix, composeMaya, decomposeMaya, evaluateCurve, mayaEuler, poseChannels } from './animation.js';
 import { compileExpression } from './expression.js';
 import { evaluateTrax } from './trax.js';
 import { compileNodeDef, componentPlug } from './nodeDef.js';
@@ -140,7 +140,7 @@ const NOTHING = () => undefined;
 const NULL = () => null;
 const TIME_RE = /\b(frame|time)\b/;       // expression が時間を読むか
 // 値のキャッシュ（chan のキーは ni · 3 + モード、plug は id → 属性 → 値）
-const emptyCache = () => ({ chan: new Map(), local: new Map(), world: new Map(), plug: new Map(), out: new Map(), ik: new Map() });
+const emptyCache = () => ({ chan: new Map(), posed: new Map(), local: new Map(), world: new Map(), plug: new Map(), out: new Map(), ik: new Map() });
 
 /** ファイルの値が度で書かれている角度の属性（内部ではラジアンで扱う） */
 /** aim と up が平行な aimConstraint の解き方の候補（最短の回転をどこから測るか） */
@@ -402,7 +402,8 @@ export class RigEvaluator {
 
   /**
    * フレーム f の、動くノードのローカル行列（ポーズ確認の追加分を含まない）を計算する。
-   * @param poseOf (ni) => Matrix4 | null  ポーズ確認の追加分（ワールド行列の計算にだけ使う）
+   * @param poseOf (ni) => Matrix4 | null  ポーズ確認の追加分（ノード自身の軸の追加分）。ワールド行列と、ほかのノードが読む
+   *   移動・回転・スケールの値（posedChan）に入れ、制限（limit）の範囲に収める
    * @param poseKey poseOf の中身が同じあいだは同じ値（PoseState.version）。ないときは、フレームをまたぐキャッシュを使わない
    */
   evaluate(f, poseOf = NO_POSE, target = this.matrices, poseKey = undefined) {
@@ -541,10 +542,10 @@ export class RigEvaluator {
     return o ? P.clone().multiply(o) : P;
   }
 
-  /** ローカル行列（Maya の .matrix。offsetParentMatrix を含まない） */
+  /** ローカル行列（Maya の .matrix。offsetParentMatrix を含まない。ポーズ確認の追加分を含む） */
   localMatrix(ni) {
     const o = this.opmOf(ni);
-    const L = this.localFile(ni);
+    const L = this.posedLocal(ni);
     return o ? o.clone().invert().multiply(L) : L;
   }
 
@@ -645,14 +646,37 @@ export class RigEvaluator {
   /** ワールド行列（ファイルの値 · ポーズ確認の追加分） */
   world(ni) {
     return this.memo(this.cache.world, this.keep.world, ni, () => {
-      const local = this.localFile(ni).clone();
-      const d = this.poseOf(ni);
-      if (d) local.multiply(d);
-      return new Matrix4().multiplyMatrices(this.parentWorld(ni), local);
+      return new Matrix4().multiplyMatrices(this.parentWorld(ni), this.posedLocal(ni));
     }, () => {
       const local = this.staticLocal(ni);
       return new Matrix4().multiplyMatrices(this.parentWorld(ni), local);
     }, () => `world ${ni}`);
+  }
+
+  /**
+   * ポーズ確認の追加分を含むローカル行列。チャンネルの値の分かるノードは、追加分を移動・回転・スケールの値に入れて
+   * 制限（limit）の範囲に収めたもの（ファイルの値 · 組み直した差分。制限にかからなければ ファイルの値 · 追加分）
+   */
+  posedLocal(ni) {
+    const d = this.poseOf(ni);
+    if (!d) return this.localFile(ni);
+    const local = this.localFile(ni).clone();
+    if (!this.rest(ni) || this.fallback.has(ni)) return local.multiply(d);
+    const isScale = this.isScaleOf(ni);
+    const before = composeLocalMatrix(this.chan(ni, 'full'), isScale, new Matrix4());
+    return local.multiply(before.invert().multiply(composeLocalMatrix(this.posedChan(ni), isScale, new Matrix4())));
+  }
+
+  /**
+   * ほかのノードが読む移動・回転・スケールの値（ポーズ確認の追加分を入れ、制限の範囲に収めたもの）。
+   * 追加分がなければ chan(ni, 'full') と同じ
+   */
+  posedChan(ni) {
+    const d = this.rest(ni) && !this.fallback.has(ni) ? this.poseOf(ni) : null;
+    if (!d) return this.chan(ni, 'full');
+    return this.memo(this.cache.posed, this.keep.posed, ni,
+      () => clampLimits(poseChannels(this.chan(ni, 'full'), this.isScaleOf(ni), d)),
+      () => this.chan(ni, 'full'), () => `pose ${ni}`);
   }
 
   /** バインドポーズのワールド行列（バインドポーズの情報がないノードはファイルの値。フレームによらない） */
@@ -687,7 +711,7 @@ export class RigEvaluator {
     const comp = (arr, k) => (k >= 0 ? arr[k] : arr);
     if (/^[trs][xyz]?$/.test(base)) {
       const axis = base.length === 2 ? XYZ.indexOf(base[1]) : -1;
-      const c = rest ? this.chan(ni, base[0] === 't' ? 't' : 'full') : null;
+      const c = !rest ? null : this.poseOf(ni) ? this.posedChan(ni) : this.chan(ni, base[0] === 't' ? 't' : 'full');
       if (!c) return axis >= 0 ? (base[0] === 's' ? 1 : 0) : (base[0] === 's' ? [1, 1, 1] : [0, 0, 0]);
       if (base[0] === 't') return comp(c.t, axis);
       if (base[0] === 'r') return comp(c.r.map((v) => v * D2R), axis);

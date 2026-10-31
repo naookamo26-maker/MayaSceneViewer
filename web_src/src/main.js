@@ -6,7 +6,7 @@ import {
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
-import { PoseState, fixChannels, hasFixed, identityPose, poseFromTransform, poseMatrix, poseQuaternion } from './pose.js';
+import { PoseState, fixChannels, hasFixed, identityPose, limitPose, nodeChannels, poseFromTransform, poseMatrix, poseQuaternion } from './pose.js';
 import {
   applyPoseSource, hasBindPose, poseBaseMatrix, BASE_COLOR, buildScene, characterRadius, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
   vertexWorldPosition, writeVertexColors,
@@ -1440,11 +1440,29 @@ class ViewerApp {
     return this.data && this.data.nodes[ni] ? this.data.nodes[ni].locked || null : null;
   }
 
-  /** ポーズ確認の追加分を、Maya でロックしたチャンネルが変わらないものにする（Maya ではロックした属性は動かせない） */
+  /**
+   * ポーズ確認の追加分を、Maya で動かせる範囲のものにする（Maya ではロックした属性は動かせず、移動・回転・スケールの
+   * 制限（limit）の外には出ない）
+   */
   lockedPose(ni, pose) {
+    if (!this.pose) return pose;
     const locked = this.lockedOf(ni);
-    if (!hasFixed(locked) || !this.pose) return pose;
-    return fixChannels(this.pose.restLocal(ni), pose, locked, this.channelFrame(ni));
+    if (hasFixed(locked)) pose = fixChannels(this.pose.restLocal(ni), pose, locked, this.channelFrame(ni));
+    const ch = this.limitChannels(ni);
+    return ch ? limitPose(ch.c, ch.isScale, pose) : pose;
+  }
+
+  /**
+   * 制限（limit）のあるノードの、いまのチャンネルの値 { c, isScale }（制限がなければ null）。リグで値の決まるノードは
+   * いまのフレームの評価の値、それ以外はファイルの値（共通 JSON の nodes の attrs・pivots・limits）
+   */
+  limitChannels(ni) {
+    if (this.rig && this.rig.rest(ni)) {
+      const c = this.rig.chan(ni);
+      return c && c.lim ? { c, isScale: this.rig.isScaleOf(ni) } : null;
+    }
+    const c = this.data ? nodeChannels(this.data.nodes[ni]) : null;
+    return c ? { c, isScale: null } : null;
   }
 
   /** キーのあるチャンネル（カーブで決まる移動・回転・スケールの成分。{ t | r | s: [X, Y, Z] } か null） */

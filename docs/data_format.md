@@ -51,6 +51,8 @@ transform・joint などの変換ノードです。**親は必ず子より前に
 | `parent` | 親の番号（ルートは -1） |
 | `matrix` | ローカル行列（16 要素） |
 | `locked` | Maya でロックした移動・回転・スケール（`{ "t" | "r" | "s": [X, Y, Z] }`。ロックのあるものだけ。まとめ（.t）のロックは 3 成分とも） |
+| `limits` | 移動・回転・スケールの制限（Maya の minTransLimit など。有効なものだけ）`{ "t" | "r" | "s": [[最小 × 3], [最大 × 3]] }`（無効な成分は null。回転は度）。`matrix` は制限に収めた値。ポーズ確認で動かした値もこの範囲に収める |
+| `pivots` | `limits` のあるノードの、既定値でないピボット・rotateAxis（度）・せん断（`rp`・`sp`・`rpt`・`spt`・`ra`・`sh`）。ポーズ確認で動かした結果をチャンネルの値に分けるのに使う |
 | `opm` | offsetParentMatrix（16 要素。単位行列でないときだけ。`matrix` には掛け込み済み。親の空間 `.parentMatrix` = 親のワールド行列 · opm を求めるのに使う） |
 | `worldMatrix` | ワールド行列（参照用。ビューアは階層から計算し直す） |
 | `inheritsTransform` | false の場合、ビューアはルート直下に置く |

@@ -424,6 +424,33 @@ function withOffsetParent(x, target) {
   return target.premultiply(x.opm.isMatrix4 ? x.opm : _f.fromArray(x.opm));
 }
 
+/**
+ * ローカル行列 composeLocalMatrix(x, isScale) · D を、Maya のチャンネルの値（移動・回転（度。回転順 x.ro）・スケール）に
+ * 分けたもの（x の写し。ピボット・rotateAxis・jointOrient・せん断・offsetParentMatrix は x のまま）。ポーズ確認で
+ * 動かした分（ノード自身の軸の追加分 D）を、そのノードの属性の値として読むために使う。回転は x.r に近い角度を選ぶ。
+ * 追加分の回転と軸ごとに違うスケールが生むせん断は、Maya のチャンネルにないので残さない
+ */
+export function poseChannels(x, isScale, D) {
+  const L = composeLocalMatrix(x, isScale, new Matrix4()).multiply(D);
+  const out = { ...x, t: x.t.slice(), r: x.r.slice(), s: x.s.slice() };
+  const opm = x.opm ? (x.opm.isMatrix4 ? x.opm.clone() : new Matrix4().fromArray(x.opm)) : new Matrix4();
+  // 線形の部分: L = opm · T · isScale⁻¹ · jo · R · ra · (せん断) · S（ピボットは移動だけに効く）
+  const P = opm.clone();
+  if (isScale) P.multiply(new Matrix4().makeScale(isScale[0] ? 1 / isScale[0] : 1, isScale[1] ? 1 / isScale[1] : 1, isScale[2] ? 1 / isScale[2] : 1));
+  if (x.joint && x.jo) P.multiply(new Matrix4().makeRotationFromEuler(new Euler(x.jo[0] * D2R, x.jo[1] * D2R, x.jo[2] * D2R, 'ZYX')));
+  const N = P.invert().multiply(L).setPosition(0, 0, 0);
+  const { q, s } = decomposeMaya(N);
+  if (x.ra) q.multiply(new Quaternion().setFromEuler(new Euler(x.ra[0] * D2R, x.ra[1] * D2R, x.ra[2] * D2R, 'ZYX')).invert());
+  const r = mayaEuler(q, x.ro || 0, x.r.map((v) => v * D2R));
+  out.r = r.map((v) => v / D2R);
+  out.s = s.toArray();
+  // 移動: L = opm · T · X（X は移動 0・opm なしで組んだ行列）→ T = opm⁻¹ · L · X⁻¹
+  const X = composeLocalMatrix({ ...out, t: [0, 0, 0], opm: null }, isScale, new Matrix4());
+  const T = opm.clone().invert().multiply(L).multiply(X.invert());
+  out.t = [T.elements[12], T.elements[13], T.elements[14]];
+  return out;
+}
+
 const AXIS = { x: 0, y: 1, z: 2 };
 
 /** 読み込んだアニメーション。evaluate(フレーム) でノードごとのローカル行列を計算する */
