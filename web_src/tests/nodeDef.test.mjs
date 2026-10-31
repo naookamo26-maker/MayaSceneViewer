@@ -100,14 +100,14 @@ test('行列の積は Maya と同じ順（m1 * m2 は m1 を先に掛ける）',
   assert.ok(near(dir[0], 0) && near(dir[1], 1), dir.join());
 });
 
-test('行列・四元数から回転の値: Maya の API と同じ標準の答え（真ん中の軸が ±90° の範囲。0 に近い方ではない）', () => {
-  // Y まわりに 150 度: Maya の MTransformationMatrix.rotation() は (180, 30, 180)（コンストレイントの (0, 150, 0) とは違う）
+test('行列・四元数から回転の値: Maya の API と同じく 0 に近い方（Maya で確かめた値）', () => {
+  // Y まわりに 150 度: Maya の MTransformationMatrix.rotation() は (0, 150, 0)（Maya 2025 で確かめた。(180, 30, 180) ではない）
   const vecOut = [{ name: 'output', short: 'o', type: 'vector', output: true, components: ['ox', 'oy', 'oz'] }];
   const m = c('compose', v(0, 0, 0), v(0, 150 * Math.PI / 180, 0), v(1, 1, 1));
   const deg = (r) => r.map((x) => Math.round(x * 180 / Math.PI));
-  assert.deepEqual(deg(run(set(c('rotation', m, n(0))), {}, vecOut).o).map(Math.abs), [180, 30, 180]);
+  assert.deepEqual(deg(run(set(c('rotation', m, n(0))), {}, vecOut).o).map(Math.abs), [0, 150, 0]);
   const q = c('quat_from_matrix', m);
-  assert.deepEqual(deg(run(set(c('euler_from_quat', q, n(0))), {}, vecOut).o).map(Math.abs), [180, 30, 180]);
+  assert.deepEqual(deg(run(set(c('euler_from_quat', q, n(0))), {}, vecOut).o).map(Math.abs), [0, 150, 0]);
 });
 
 test('鏡に映した行列の分解は MTransformationMatrix と同じ（反転は Z のスケール。回転は残りの部分）', () => {
