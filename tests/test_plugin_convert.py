@@ -909,5 +909,20 @@ class CliTest(unittest.TestCase):
                 self.assertNotIn(b"UnicodeEncodeError", r.stderr)
 
 
+# 属性を作る補助の関数（モジュールの関数）。既定値をラベルの位置から別の関数で求め、isinstance で書き方を分ける
+HELPER_DEFAULTS = 'import maya.api.OpenMaya as om\n\nmaya_useNewAPI = True\nNODE_NAME = "swapAxes"\nNODE_ID = om.MTypeId(0x0007F001)\n\n\ndef index_of(value, items):\n    for k in range(0, len(items)):\n        if items[k] == value:\n            return k\n\n\ndef make_enum(long, short, labels, initial, keyable=True):\n    fn = om.MFnEnumAttribute()\n    if isinstance(initial, int):\n        obj = fn.create(long, short, initial)\n    else:\n        obj = fn.create(long, short, index_of(initial, labels))\n    for k in range(0, len(labels)):\n        fn.addField(labels[k], k)\n    fn.keyable = keyable\n    return obj\n\n\nclass SwapAxes(om.MPxNode):\n    aFirst = om.MObject()\n    aSecond = om.MObject()\n    aThird = om.MObject()\n    aFlip = om.MObject()\n    aIn = om.MObject()\n    aOut = om.MObject()\n\n    @classmethod\n    def creator(cls):\n        return cls()\n\n    @classmethod\n    def initialize(cls):\n        names, signs = [\'X\', \'Y\', \'Z\'], [\'+\', \'-\']\n        cls.aFirst = make_enum(\'firstAxis\', \'fa\', names, \'X\')\n        cls.aSecond = make_enum(\'secondAxis\', \'sa\', names, \'Y\')\n        cls.aThird = make_enum(\'thirdAxis\', \'ta\', names, 2)\n        cls.aFlip = make_enum(\'flipFirst\', \'ff\', signs, \'+\')\n        t = om.MFnMatrixAttribute()\n        cls.aIn = t.create(\'inMat\', \'im\')\n        cls.aOut = t.create(\'outMat\', \'om\')\n        t.writable = False\n        for a in (cls.aFirst, cls.aSecond, cls.aThird, cls.aFlip, cls.aIn, cls.aOut):\n            cls.addAttribute(a)\n        for a in (cls.aFirst, cls.aSecond, cls.aThird, cls.aFlip, cls.aIn):\n            cls.attributeAffects(a, cls.aOut)\n\n    def compute(self, plug, data):\n        m = data.inputValue(SwapAxes.aIn).asMatrix()\n        i0 = data.inputValue(SwapAxes.aFirst).asShort()\n        i1 = data.inputValue(SwapAxes.aSecond).asShort()\n        i2 = data.inputValue(SwapAxes.aThird).asShort()\n        s = [1, -1][data.inputValue(SwapAxes.aFlip).asShort()]\n        out = om.MMatrix([m.getElement(i0, 0) * s, m.getElement(i0, 1) * s, m.getElement(i0, 2) * s, 0,\n                          m.getElement(i1, 0), m.getElement(i1, 1), m.getElement(i1, 2), 0,\n                          m.getElement(i2, 0), m.getElement(i2, 1), m.getElement(i2, 2), 0,\n                          m.getElement(3, 0), m.getElement(3, 1), m.getElement(3, 2), 1])\n        data.outputValue(SwapAxes.aOut).setMMatrix(out)\n        data.setClean(plug)\n\n\ndef initializePlugin(obj):\n    om.MFnPlugin(obj, "test", "1.0").registerNode(NODE_NAME, NODE_ID, SwapAxes.creator, SwapAxes.initialize)\n\n\ndef uninitializePlugin(obj):\n    om.MFnPlugin(obj).deregisterNode(NODE_ID)\n'
+
+
+class HelperDefaultTest(unittest.TestCase):
+    def test_enum_defaults_from_helper(self):
+        """補助の関数の中の if（isinstance）は通る分かれ道だけを読み、既定値は同じファイルの関数を変換の時点で計算する。
+        タプルへの代入（names, signs = [...], [...]）の値も引数として渡る"""
+        data, results, problems = convert_source(HELPER_DEFAULTS, "swapPlug.py")
+        self.assertEqual(problems, [])
+        attrs = {a["short"]: a for a in data["nodes"]["swapAxes"]["attributes"]}
+        self.assertEqual([attrs[k].get("default", 0) for k in ("fa", "sa", "ta", "ff")], [0, 1, 2, 0])
+        self.assertFalse(any("重なる" in str(r) for r in results))
+
+
 if __name__ == "__main__":
     unittest.main()

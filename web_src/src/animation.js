@@ -284,28 +284,37 @@ const _f = new Matrix4();
  * 残りはせん断 (xy, xz, yz)。three.js の decompose は軸を正規化するだけなので、せん断があると回転がずれる。
  * 鏡に映した行列（行列式が負）は、反転を 3 軸すべてのスケールに入れる（スケール (−sx, −sy, −sz)。three.js は X に入れる）。
  * 例: diag(1, 1, −1) → Z まわりに 180° の回転・スケール (−1, −1, −1)。Maya が保存したコンストレイントの結果（.lr）と
- * IK の回転で確かめた（左右を反転して作ったリグの右側）
+ * IK の回転で確かめた（左右を反転して作ったリグの右側）。
+ * mirror = 'z' なら反転を Z のスケールだけに入れる（スケール (sx, sy, −sz)。例: diag(1, 1, −1) → 回転なし・スケール
+ * (1, 1, −1)）。decomposeMatrix ノード・MTransformationMatrix の分け方（行列を組み立てて decomposeMatrix → 回転にする
+ * リグで確かめた）。コンストレイント・IK は 'all'
  */
-export function decomposeMaya(m, t = new Vector3(), q = new Quaternion(), s = new Vector3(), sh = new Vector3()) {
+export function decomposeMaya(m, t = new Vector3(), q = new Quaternion(), s = new Vector3(), sh = new Vector3(), mirror = 'all') {
   const e = m.elements;
   t.set(e[12], e[13], e[14]);
   const x = new Vector3(e[0], e[1], e[2]), y = new Vector3(e[4], e[5], e[6]), z = new Vector3(e[8], e[9], e[10]);
   let sx = x.length();
   if (sx < 1e-12) { m.decompose(t, q, s); sh.set(0, 0, 0); return { t, q, s, sh }; }
   x.divideScalar(sx);
-  const dxy = y.dot(x);
+  let dxy = y.dot(x);
   y.addScaledVector(x, -dxy);
   let sy = y.length();
   if (sy < 1e-12) { m.decompose(t, q, s); sh.set(0, 0, 0); return { t, q, s, sh }; }
   y.divideScalar(sy);
-  const dxz = z.dot(x), dyz = z.dot(y);
+  let dxz = z.dot(x), dyz = z.dot(y);
   z.addScaledVector(x, -dxz).addScaledVector(y, -dyz);
   let sz = z.length();
   if (sz < 1e-12) { m.decompose(t, q, s); sh.set(0, 0, 0); return { t, q, s, sh }; }
   z.divideScalar(sz);
-  if (new Vector3().crossVectors(x, y).dot(z) < 0) {     // 鏡に映した行列: 反転は 3 軸すべて（せん断はそのまま）
-    sx = -sx; sy = -sy; sz = -sz;
-    x.negate(); y.negate(); z.negate();
+  if (new Vector3().crossVectors(x, y).dot(z) < 0) {     // 鏡に映した行列
+    if (mirror === 'z') {                                // 反転は Z のスケールだけ
+      sz = -sz;
+      z.negate();
+    } else {                                             // 反転は 3 軸すべて（せん断の係数も反転した軸に合わせる）
+      sx = -sx; sy = -sy; sz = -sz;
+      x.negate(); y.negate(); z.negate();
+      dxy = -dxy; dxz = -dxz; dyz = -dyz;
+    }
   }
   q.setFromRotationMatrix(new Matrix4().makeBasis(x, y, z));
   s.set(sx, sy, sz);

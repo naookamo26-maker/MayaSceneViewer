@@ -110,6 +110,15 @@ test('行列・四元数から回転の値: Maya の API と同じ標準の答�
   assert.deepEqual(deg(run(set(c('euler_from_quat', q, n(0))), {}, vecOut).o).map(Math.abs), [180, 30, 180]);
 });
 
+test('鏡に映した行列の分解は MTransformationMatrix と同じ（反転は Z のスケール。回転は残りの部分）', () => {
+  const m = c('matrix', ['v', [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1].map(n)]);
+  const q = run([['set', ['o', [['o', null]]], c('quat_from_matrix', m)]], {},
+    [{ name: 'output', short: 'o', type: 'double4', output: true, components: ['ox', 'oy', 'oz', 'ow'] }]).o;
+  assert.ok(near(Math.abs(q[3]), 1), `回転なし: ${q}`);
+  const s = run(set(c('scale', m)), {}, [{ name: 'output', short: 'o', type: 'vector', output: true, components: ['ox', 'oy', 'oz'] }]).o;
+  assert.deepEqual(s.map((x) => Math.round(x)), [1, 1, -1]);
+});
+
 test('行列の要素（Maya の行・列。移動は 3 行目）・行列式・比較', () => {
   const m = c('compose', v(5, 6, 7), v(0, 0, Math.PI / 2), v(2, 2, 2));
   assert.equal(run(set(c('element', m, n(3), n(0)))).o, 5);                 // 移動 x

@@ -96,7 +96,8 @@ function pyRound(x, nd = 0) {
 }
 
 // 鏡に映した行列は Z のスケールを負にする（Maya の MTransformationMatrix と同じ分け方）
-const decompose = (m) => decomposeMaya(mat(m, '行列の分解'));
+// 行列の分解は MTransformationMatrix と同じ（鏡に映した行列は Z のスケールを負にする）
+const decompose = (m) => decomposeMaya(mat(m, '行列の分解'), undefined, undefined, undefined, undefined, 'z');
 
 const FUNCS = {
   sin: Math.sin, cos: Math.cos, tan: Math.tan, asin: Math.asin, acos: Math.acos, atan: Math.atan, atan2: Math.atan2,

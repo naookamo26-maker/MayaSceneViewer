@@ -239,7 +239,168 @@ class AttrScanner:
                 return self.module.class_constant(owner, node.attr)
             if self.cls is not None:
                 return self.module.class_constant(self.cls.name, node.attr)
+        return self.const_expr(node, env)
+
+    # ---- 変換の時点で決まる値（属性の既定値・名前を作る補助の関数のため。プラグインのコードは実行しない）
+    _CONST_CMP = {ast.Eq: lambda a, b: a == b, ast.NotEq: lambda a, b: a != b, ast.Lt: lambda a, b: a < b,
+                  ast.LtE: lambda a, b: a <= b, ast.Gt: lambda a, b: a > b, ast.GtE: lambda a, b: a >= b,
+                  ast.In: lambda a, b: a in b, ast.NotIn: lambda a, b: a not in b,
+                  ast.Is: lambda a, b: a is b, ast.IsNot: lambda a, b: a is not b}
+    _CONST_BIN = {ast.Sub: lambda a, b: a - b, ast.Mult: lambda a, b: a * b, ast.Div: lambda a, b: a / b,
+                  ast.FloorDiv: lambda a, b: a // b, ast.Pow: lambda a, b: a ** b}
+    _CONST_TYPES = {"int": int, "float": float, "str": str, "bool": bool, "list": list, "tuple": tuple}
+
+    def const_expr(self, node, env):
+        """リスト・添字・比較・and / or / not・算術・len / range / isinstance など・同じファイルの関数の呼び出し
+        （const_call）を、変換の時点で値にする（決まらなければ None）"""
+        val = lambda x: self.name_value(x, env)  # noqa: E731
+        try:
+            if isinstance(node, (ast.List, ast.Tuple)):
+                items = [val(x) for x in node.elts]
+                return None if any(v is None for v in items) else (items if isinstance(node, ast.List) else tuple(items))
+            if isinstance(node, ast.Subscript):
+                base, index = val(node.value), val(node.slice)
+                if isinstance(base, (list, tuple, str)) and isinstance(index, int) and not isinstance(index, bool):
+                    return base[index]
+                if isinstance(base, dict) and index in base:
+                    return base[index]
+                return None
+            if isinstance(node, ast.Compare):
+                left = val(node.left)
+                if left is None:
+                    return None
+                for op, right_node in zip(node.ops, node.comparators):
+                    right = val(right_node)
+                    fn = self._CONST_CMP.get(type(op))
+                    if right is None or fn is None or not fn(left, right):
+                        return False if right is not None and fn is not None else None
+                    left = right
+                return True
+            if isinstance(node, ast.BoolOp):
+                vals = [val(x) for x in node.values]
+                if any(v is None for v in vals):
+                    return None
+                return all(vals) if isinstance(node.op, ast.And) else any(vals)
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+                v = val(node.operand)
+                return None if v is None else (not v)
+            if isinstance(node, ast.BinOp) and type(node.op) in self._CONST_BIN:
+                a, b = val(node.left), val(node.right)
+                if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+                    return self._CONST_BIN[type(node.op)](a, b)
+                return None
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and not node.keywords:
+                name = node.func.id
+                if name == "isinstance" and len(node.args) == 2:
+                    v = val(node.args[0])
+                    kinds = node.args[1].elts if isinstance(node.args[1], ast.Tuple) else [node.args[1]]
+                    types = [self._CONST_TYPES.get(_tail(k) or "") for k in kinds]
+                    if v is None or any(t is None for t in types):
+                        return None
+                    return isinstance(v, tuple(types))
+                args = [val(x) for x in node.args]
+                if any(a is None for a in args):
+                    return None
+                builtin = {"len": len, "range": lambda *a: list(range(*a)), "int": int, "float": float, "str": str,
+                           "abs": abs, "min": min, "max": max, "round": round}.get(name)
+                if builtin is not None:
+                    return builtin(*args)
+                fn = self.module.functions.get(name)
+                if fn is not None:
+                    return self.const_call(fn, args)
+        except (TypeError, ValueError, IndexError, KeyError, ZeroDivisionError, OverflowError):
+            return None
         return None
+
+    def const_call(self, fn: ast.FunctionDef, args: list):
+        """同じファイルの関数（代入・for・if・return だけのもの）を、変換の時点で計算する（決まらなければ None）"""
+        params = [a.arg for a in fn.args.args]
+        local = {}
+        defaults = fn.args.defaults
+        for name, d in zip(params[len(params) - len(defaults):], defaults):
+            local[name] = self.name_value(d, {})
+        for name, v in zip(params, args):
+            local[name] = v
+        steps = [0]
+
+        class _Ret(Exception):
+            def __init__(self, value):
+                super().__init__()
+                self.value = value
+
+        class _Stop(Exception):
+            pass
+
+        def run(stmts):
+            for st in stmts:
+                steps[0] += 1
+                if steps[0] > 10000:
+                    raise _Stop()
+                if isinstance(st, ast.Return):
+                    raise _Ret(self.name_value(st.value, local) if st.value is not None else None)
+                if isinstance(st, ast.Assign) and len(st.targets) == 1:
+                    v = self.name_value(st.value, local)
+                    if v is None or not self.const_bind(st.targets[0], v, local):
+                        raise _Stop()
+                elif isinstance(st, ast.AugAssign) and isinstance(st.target, ast.Name):
+                    v = self.name_value(ast.BinOp(left=ast.Name(id=st.target.id, ctx=ast.Load()), op=st.op,
+                                                  right=st.value), local)
+                    if v is None:
+                        raise _Stop()
+                    local[st.target.id] = v
+                elif isinstance(st, ast.For):
+                    items = self.name_value(st.iter, local)
+                    if not isinstance(items, (list, tuple, str)):
+                        raise _Stop()
+                    for it in items:
+                        if not self.const_bind(st.target, it, local):
+                            raise _Stop()
+                        try:
+                            run(st.body)
+                        except _Brk:
+                            break
+                        except _Cont:
+                            continue
+                    else:
+                        run(st.orelse)
+                elif isinstance(st, ast.If):
+                    t = self.name_value(st.test, local)
+                    if t is None:
+                        raise _Stop()
+                    run(st.body if t else st.orelse)
+                elif isinstance(st, ast.Break):
+                    raise _Brk()
+                elif isinstance(st, ast.Continue):
+                    raise _Cont()
+                elif isinstance(st, ast.Pass) or (isinstance(st, ast.Expr) and isinstance(st.value, ast.Constant)):
+                    continue                             # 説明の文字列
+                else:
+                    raise _Stop()
+
+        class _Brk(Exception):
+            pass
+
+        class _Cont(Exception):
+            pass
+
+        try:
+            run(fn.body)
+        except _Ret as r:
+            return r.value
+        except (_Stop, _Brk, _Cont):
+            return None
+        return None                                      # 最後まで return しない（Python では None）
+
+    @staticmethod
+    def const_bind(target, value, env) -> bool:
+        """名前・タプルへの代入（a, b = [1, 2], [3]）を env に入れる。入れられなければ False"""
+        if isinstance(target, ast.Name):
+            env[target.id] = value
+            return True
+        if isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (list, tuple)) \
+                and len(value) == len(target.elts):
+            return all(AttrScanner.const_bind(t, v, env) for t, v in zip(target.elts, value))
+        return False
 
     def ref(self, node, env) -> Optional[AttrInfo]:
         """Cls.aX・self.aX・aX → 属性"""
@@ -300,6 +461,13 @@ class AttrScanner:
             if src is not None:
                 for t in targets:
                     self.bind(t, src)
+                return
+            # 定数の代入（names, signs = ['X', 'Y', 'Z'], ['+', '-'] など）: 補助の関数の引数・既定値の計算に使う
+            v = self.name_value(value, env)
+            if v is not None:
+                for t in targets:
+                    if isinstance(t, (ast.Name, ast.Tuple, ast.List)):
+                        self.const_bind(t, v, env)
             return
         if isinstance(s, ast.Expr) and isinstance(s.value, ast.Call):
             self.call(s.value, env)
@@ -313,6 +481,12 @@ class AttrScanner:
                 if bound is not None:
                     self.block(s.body, dict(env, **bound))
             return
+        if isinstance(s, ast.If):
+            # 条件が変換の時点で決まれば（isinstance(defval, int) など）、通る分かれ道だけを読む
+            test = self.name_value(s.test, env)
+            if test is not None:
+                self.block(s.body if test else s.orelse, env)
+                return
         if isinstance(s, (ast.If, ast.Try, ast.With)):
             for part in ("body", "orelse", "finalbody"):
                 self.block(getattr(s, part, []) or [], env)

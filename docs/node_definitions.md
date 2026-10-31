@@ -129,6 +129,7 @@ python -m ma_viewer node-defs                                                   
 - 実行には Python 3.9 以降が要ります（追加のパッケージは不要）。リポジトリ（または配布した ma_viewer フォルダ）のある場所で `python -m ma_viewer …` として実行します。**exe（MayaSceneViewer.exe）はビューアだけなので、このコマンドはありません。**
 - `import maya.OpenMaya as om`・`import math as mt`・`from math import sqrt`・`from maya.api.OpenMaya import MVector as Vec`・モジュールの先頭の `NumAttr = om.MFnNumericAttribute` のような別名は、元の名前に戻してから読みます。
 - プラグインのコードは **実行しません**（Maya も不要）。Python の構文を解析して、属性と compute の計算を読みます。
+- 属性を作る補助の関数（`create_enumAttr("axisY", "ay", labels, "Y")` のようなもの）も、引数を当てはめて読みます。補助の関数の中の `if`（`isinstance(defval, int)` など）は、条件が変換の時点で決まれば通る分かれ道だけを読みます。既定値をラベルの位置などから同じファイルの関数で求める場合も、その関数（代入・for・if・return だけのもの）を変換の時点で計算します（実行はしません）。Maya の .ma には既定値と同じ値は書かれないので、既定値が分からないと、その属性は 0 として計算されます。
 - `initializePlugin` の `registerNode` で登録したノードごとに、変換できたか（○）、できない理由（★ と行番号）、注意（※）を出します。変換できたノードだけを書き出し、1 つでも変換できなければ終了コード 1 です。
 - `plugin` はファイル名（`--plugin` で変更。.ma の `requires` の名前に合わせます）、`pluginVersion` は `MFnPlugin(obj, 作者, 版)` の版（`--version` で変更）です。
 - 変換した計算は人が読める形で書き出すので、必要なら手で直せます（`-o` を付けずに実行すると内容を確かめられます）。
