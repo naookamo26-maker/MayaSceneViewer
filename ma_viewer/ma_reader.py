@@ -92,6 +92,84 @@ ATTR_ALIASES = {
 }
 
 
+_LEAD_BYTES: Dict[str, frozenset] = {}
+
+
+def _lead_bytes(enc: str) -> frozenset:
+    """2 バイト文字の 1 バイト目になるバイト（シフト JIS などの cp932・gbk・cp949・cp950。UTF-8 などは空）"""
+    if enc not in _LEAD_BYTES:
+        out = set()
+        if enc.lower().replace("-", "").replace("_", "") not in ("utf8", "latin1", "cp1252", "ascii"):
+            for b in range(0x80, 0x100):
+                try:
+                    bytes([b]).decode(enc)
+                except UnicodeDecodeError:
+                    out.add(b)
+                except LookupError:
+                    break
+        _LEAD_BYTES[enc] = frozenset(out)
+    return _LEAD_BYTES[enc]
+
+
+def join_quoted_bytes(raw: bytes, enc: str) -> str:
+    """\"…\" + \"…\" と分けて保存された文字列（バイト列）をつなぎ、エスケープを戻して文字にする。
+    2 バイト文字の 2 バイト目の 0x5C（シフト JIS の「表」「ソ」など）をエスケープと読み違えない。2 バイト文字の途中で
+    分けてあっても、つないでから文字にする。最初の "…" から、+ でつながる最後の "…" までを読む"""
+    lead = _lead_bytes(enc)
+    unesc = {0x6E: 0x0A, 0x74: 0x09, 0x72: 0x0D}       # \n・\t・\r（ほかは次の 1 バイトそのもの）
+    out = bytearray()
+    i, n, pending = 0, len(raw), False
+    while i < n and raw[i] != 0x22:
+        i += 1
+    while i < n and raw[i] == 0x22:
+        i += 1
+        while i < n:
+            c = raw[i]
+            if c == 0x22:
+                i += 1                                     # "…" の終わり（2 バイト目が " になることはない）
+                break
+            if pending:                                    # 前の "…" の最後の 1 バイト目に続く 2 バイト目
+                out.append(c)
+                pending = False
+                i += 1
+                continue
+            if c in lead:
+                if i + 1 < n and raw[i + 1] != 0x22:
+                    out += raw[i:i + 2]
+                    i += 2
+                else:                                      # 2 バイト文字の途中で "…" が終わる
+                    out.append(c)
+                    pending = True
+                    i += 1
+                continue
+            if c == 0x5C and i + 1 < n:
+                out.append(unesc.get(raw[i + 1], raw[i + 1]))
+                i += 2
+                continue
+            i += 1
+            out.append(c)
+        j = i
+        while j < n and raw[j] in b" \t\r\n":
+            j += 1
+        if j < n and raw[j] == 0x2B:                       # + "…"
+            j += 1
+            while j < n and raw[j] in b" \t\r\n":
+                j += 1
+            i = j
+            continue
+        break
+    return out.decode(enc, "replace")
+
+
+def string_value_at(ms, start: int, end: int) -> Optional[str]:
+    """本文の start から始まる "…" + "…" の文字列。本文を latin-1 で読んだとき（読めないバイトがあったとき）だけ、
+    元のバイト列に戻して、ファイルの文字コードで読み直す。それ以外は None（ふつうに読めている）"""
+    if getattr(ms, "text_encoding", None) != "latin-1":
+        return None
+    raw = ms.text[start:end].encode("latin-1")
+    return join_quoted_bytes(raw, getattr(ms, "declared_encoding", None) or "utf-8")
+
+
 def unquote(tok: str) -> str:
     """"..." を外してエスケープを戻す。"""
     if len(tok) >= 2 and tok[0] == '"' and tok[-1] == '"':
