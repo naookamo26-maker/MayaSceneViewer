@@ -104,7 +104,7 @@ def code_text(ms, n) -> Optional[str]:
     m = _CODE_RE.search(ms.text, a, b)
     if not m:
         return None
-    return "".join(R.unquote(t) for t in _STR_RE.findall(m.group(1)))
+    return R.string_value_at(ms, m.start(1), b) or "".join(R.unquote(t) for t in _STR_RE.findall(m.group(1)))
 
 
 def io_plug(attr: str) -> Optional[Tuple[str, int]]:
@@ -2388,7 +2388,12 @@ def translate(code: str, in_kinds: Dict[int, str], out_connected=(), type_name: 
     try:
         tree = ast.parse(code.replace("\r\n", "\n"), mode="exec")
     except SyntaxError as exc:
-        raise ExprespyError("書き方の誤り（%s）" % exc.msg, exc.lineno or 0)
+        line = (exc.text or "").rstrip("\r\n")
+        shown = "".join(c if c.isprintable() or c == "\t" else "\\u%04X" % ord(c) for c in line.strip())
+        if len(shown) > 80:
+            shown = shown[:80] + "…"
+        raise ExprespyError("書き方の誤り（%s）%s" % (exc.msg, "。読んだ行: %s" % shown if shown else ""),
+                            exc.lineno or 0)
     names = _module_names(tree)
     if "api1" in names and "api" in names:
         raise ExprespyError("Python API 1.0（api1）と 2.0（api）を混ぜたコードは変換できません")

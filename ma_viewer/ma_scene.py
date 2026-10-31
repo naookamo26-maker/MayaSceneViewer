@@ -362,6 +362,8 @@ class MaScene:
         self.resolution = MaNode("defaultResolution", "resolution", None, -1)
         self.resolution.raw = {}
         self.text = ""                               # コメントを除いた本文（animCurve などの span はこの位置）
+        self.text_encoding: Optional[str] = None     # 本文を読んだ文字コード（latin-1 なら、読めないバイトがあった）
+        self.declared_encoding: Optional[str] = None  # ファイルの //Codeset の文字コード
         self.out_index: Dict[int, int] = {}          # id(ノード) → 共通 JSON の nodes の番号（変換後に設定）
         self.graph_info = None                       # rig.GraphInfo（変換時に設定）
         self.bind_ids = set()                        # バインドポーズの情報を持つノードの id（変換時に設定）
@@ -1402,6 +1404,13 @@ _CODESET_MAP = {"932": "cp932", "936": "gbk", "949": "cp949", "950": "cp950",
 
 
 def read_ma_text(path: str) -> str:
+    return read_ma_text_info(path)[0]
+
+
+def read_ma_text_info(path: str) -> Tuple[str, str, Optional[str]]:
+    """(本文, 読んだ文字コード, ファイルの //Codeset の文字コード)。どの文字コードでも読めないバイトがあれば、
+    1 バイトを 1 文字にする latin-1 で読む（文字列の中身は、必要なところで元のバイト列に戻して読み直す。
+    Maya は長い文字列を "…" + "…" に分けて保存し、2 バイト文字の途中で分けることもあるため）"""
     with open(path, "rb") as f:
         data = f.read()
     if data[:4] in (b"FOR4", b"FOR8"):
@@ -1412,10 +1421,10 @@ def read_ma_text(path: str) -> str:
         enc = _CODESET_MAP.get(m.group(1).decode("ascii", "ignore"))
     for e in ([enc] if enc else []) + ["utf-8", "cp932"]:
         try:
-            return data.decode(e)
+            return data.decode(e), e, enc
         except (UnicodeDecodeError, LookupError):
             continue
-    return data.decode("latin-1")
+    return data.decode("latin-1"), "latin-1", enc
 
 
 _BLOCK_END_RE = re.compile(r"\n(?=[^\t \n])")
@@ -1538,8 +1547,9 @@ def parse_ma_file(path: str, progress: ProgressFn = None, load_references: bool 
         progress(0.0, "読み込み中: %s" % os.path.basename(path))
     import time
     t0 = time.perf_counter()
-    text = read_ma_text(path)
+    text, used, declared = read_ma_text_info(path)
     read_seconds = time.perf_counter() - t0
     scene = parse_ma_text(text, path, progress, load_references=load_references)
+    scene.text_encoding, scene.declared_encoding = used, declared
     scene.read_seconds += read_seconds          # リファレンスを読んだ時間も含む
     return scene

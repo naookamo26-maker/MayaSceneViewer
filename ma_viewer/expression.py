@@ -23,7 +23,7 @@ FUNCTIONS = {
 }
 KEYWORDS = {"float", "int", "if", "else", "for", "while", "frame", "time", "true", "false", "on", "off", "yes", "no"}
 
-_IXP_RE = re.compile(r'setAttr\s+(?:-k\s+\w+\s+)?"\.(?:ixp|internalExpression)"\s+-type\s+"string"\s*'
+_IXP_RE = re.compile(r'setAttr\s+(?:-k\s+\w+\s+)?"\.(?:ixp|internalExpression)"\s+-type\s+"string"\s*\(?\s*'
                      r'("(?:[^"\\]|\\.)*"(?:\s*\+\s*"(?:[^"\\]|\\.)*")*)', re.S)
 _STR_RE = re.compile(r'"(?:[^"\\]|\\.)*"', re.S)
 _TOKEN_RE = re.compile(r"""
@@ -48,7 +48,7 @@ def expression_text(ms, n) -> Optional[str]:
     m = _IXP_RE.search(ms.text, a, b)
     if not m:
         return None
-    return "".join(R.unquote(t) for t in _STR_RE.findall(m.group(1)))
+    return R.string_value_at(ms, m.start(1), b) or "".join(R.unquote(t) for t in _STR_RE.findall(m.group(1)))
 
 
 def check_expression(text: str) -> Optional[str]:
