@@ -215,6 +215,28 @@ def selectability(n: MaNode, attrs: Optional[dict] = None) -> Optional[str]:
     return DISPLAY_TYPE_LABELS.get(display)
 
 
+# シェイプの表示の設定を見るノードの型（形をビューアで描くものは、それぞれのシェイプの判定を使う）
+_OWN_SHAPE_TYPES = frozenset({"mesh", "nurbsCurve", "camera"})
+
+
+def _shapes_unselectable(ms: MaScene, x: MaNode) -> Optional[str]:
+    """ロケーター・自作の DAG ノードなどのシェイプが、すべてビューポートで選べない（シェイプ側のテンプレート・
+    描画のオーバーライド）なら、その理由。Maya はシェイプをクリックして transform を選ぶので、transform も選べない"""
+    shapes = [c for c in x.children if c.is_shape and c.type not in _OWN_SHAPE_TYPES]
+    if not shapes or len(shapes) != sum(1 for c in x.children if c.is_shape):
+        return None
+    why = None
+    for c in shapes:
+        a = _shape_attrs(ms, c)
+        if _num(a.get("io")) >= 0.5:
+            continue
+        w = selectability(c, a)
+        if not w:
+            return None
+        why = why or w
+    return why
+
+
 def _curve_inputs():
     from .curve_history import CURVE_INPUT
     return CURVE_INPUT
@@ -1342,7 +1364,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             "visible": _visible_self(x),
             "attrs": {k: (schema.round_list(v) if isinstance(v, list) else v) for k, v in attrs.items()},
         }
-        why = selectability(x)
+        why = selectability(x) or _shapes_unselectable(ms, x)
         if why:
             entry["unselectable"] = why     # Maya のビューポートでは選択できない（テンプレート・リファレンス）
         # コントローラーの目印に使う: ロケーターのシェイプと、描画のオーバーライド・ディスプレイレイヤーの色

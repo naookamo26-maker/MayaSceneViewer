@@ -7,6 +7,8 @@ samples/sample_arm.ma に、次のものを足したもの:
   * box: テンプレート（.template）→ ビューポートでは選べない
   * arm_geo: 表示の種類がリファレンスのディスプレイレイヤー（refLayer）に入れる → 選べない
   * wrist: 描画のオーバーライドの表示の種類をテンプレートにする → wrist とその子（wrist_end）は選べない
+  * loc_ref: ロケーターのシェイプだけ、描画のオーバーライドの表示の種類をリファレンスにする → loc_ref は選べない
+    （子のジョイント loc_ref_jnt は選べる）。loc_ok: シェイプに設定のないロケーター → 選べる
 """
 from __future__ import annotations
 
@@ -36,6 +38,14 @@ def main():
         '\tsetAttr ".dt" 2;',
         '\tsetAttr ".do" 1;',
         'connectAttr "refLayer.di" "arm_geo.do";',
+        'createNode transform -n "loc_ref";',
+        'createNode locator -n "loc_refShape" -p "loc_ref";',
+        '\tsetAttr ".ove" yes;',
+        '\tsetAttr ".ovdt" 2;',
+        'createNode joint -n "loc_ref_jnt" -p "loc_ref";',
+        'createNode transform -n "loc_ok";',
+        'createNode locator -n "loc_okShape" -p "loc_ok";',
+        'createNode joint -n "loc_ok_jnt" -p "loc_ok";',
     ]
     text = body + "\n".join(out) + "\n" + tail.replace("sample_arm.ma", "select_sample.ma")
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:

@@ -2050,4 +2050,12 @@ createNode displayLayer -n "refLayer";
 	setAttr ".dt" 2;
 	setAttr ".do" 1;
 connectAttr "refLayer.di" "arm_geo.do";
+createNode transform -n "loc_ref";
+createNode locator -n "loc_refShape" -p "loc_ref";
+	setAttr ".ove" yes;
+	setAttr ".ovdt" 2;
+createNode joint -n "loc_ref_jnt" -p "loc_ref";
+createNode transform -n "loc_ok";
+createNode locator -n "loc_okShape" -p "loc_ok";
+createNode joint -n "loc_ok_jnt" -p "loc_ok";
 // End of select_sample.ma
