@@ -701,8 +701,9 @@ export class UI {
     const a = n.attrs || {};
     const typeLabel = info.cameras && info.cameras.length ? 'カメラ'
       : ({ joint: 'ジョイント', transform: 'トランスフォーム' }[n.type] || n.type);
-    head.innerHTML = `<p class="info-title">${esc(n.name)}<span class="info-type">${esc(typeLabel)}</span>`
-      + `${info.posed ? '<span class="posed-badge">ポーズ変更中</span>' : ''}</p>`
+    // 「ポーズ変更中」の印は、出ていないときも場所を取っておく（動かし始め・戻したときに下の行が上下に動かないように）
+    head.innerHTML = `<p class="info-title"><span class="info-name">${esc(n.name)}<span class="info-type">${esc(typeLabel)}</span></span>`
+      + `<span class="posed-badge${info.posed ? '' : ' off'}"${info.posed ? '' : ' aria-hidden="true"'}>ポーズ変更中</span></p>`
       + `<p class="info-path">${esc(n.path)}</p>`;
 
     const SRC = { pm: 'skinCluster の .pm', dagPose: 'dagPose', bps: 'ジョイントの .bps' };

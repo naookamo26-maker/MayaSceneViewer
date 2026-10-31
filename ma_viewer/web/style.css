@@ -256,8 +256,12 @@ summary {
 }
 .badge.warn { background: rgba(242, 169, 59, 0.2); color: var(--select); }
 
-.info-title { font-size: 14px; font-weight: 600; margin: 2px 0 0; word-break: break-all; }
-.info-type { color: var(--text-dim); margin-left: 6px; font-size: 11px; font-weight: 400; }
+.info-title {
+  display: flex; align-items: flex-start; gap: 6px;
+  font-size: 14px; line-height: 20px; font-weight: 600; margin: 2px 0 0;
+}
+.info-name { flex: 1; min-width: 0; word-break: break-all; }
+.info-type { color: var(--text-dim); margin-left: 6px; font-size: 11px; font-weight: 400; white-space: nowrap; }
 .info-path { color: var(--text-dim); font-size: 11px; word-break: break-all; margin: 2px 0 8px; }
 table.kv { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 table.kv th { text-align: left; font-weight: 400; color: var(--text-dim); padding: 2px 8px 2px 0; white-space: nowrap; vertical-align: top; }
@@ -267,10 +271,12 @@ table.kv td.l { text-align: left; }
 .sub-note { margin-left: 8px; font-size: 11px; color: var(--text-dim); opacity: 0.8; }
 #pose-ctrls { margin: 6px 0 4px; padding: 2px 0 10px; border-bottom: 1px solid var(--line); }
 #pose-ctrls .sub { margin-top: 4px; color: var(--text); }
+/* 見出しの右端に固定（名前の折り返しに影響しない）。出ていないときも場所は取っておく */
 .posed-badge {
-  display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 9px;
+  flex: none; margin-top: 2px; padding: 0 6px; border-radius: 9px; line-height: 16px; white-space: nowrap;
   background: rgba(242, 169, 59, 0.18); color: var(--select); font-size: 11px; font-weight: 400;
 }
+.posed-badge.off { visibility: hidden; }
 
 .wlist { list-style: none; margin: 6px 0 0; padding: 0; }
 .wlist li { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 3px 0; }
