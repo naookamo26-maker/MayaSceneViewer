@@ -18,8 +18,9 @@ import maya.api.OpenMayaAnim as oma
 from maya import cmds
 
 from . import schema
-from .materials import (ALPHA_OUTPUTS, OPACITY_ATTRS, OUTPUT_CHANNEL, SCALAR_ATTRS, TextureResolver, albedo_attrs,
-                        default_color, map_attrs, texture_entry, texture_warnings, to_udim_pattern)
+from .materials import (ALPHA_OUTPUTS, MAP_ATTRS, OPACITY_ATTRS, OUTPUT_CHANNEL, SCALAR_ATTRS, TextureResolver,
+                        albedo_attrs, default_color, layer_note, map_attrs, pick_layer, texture_entry,
+                        texture_warnings, to_udim_pattern)
 from .mathutil import ROTATE_ORDERS, identity, inverse_or_identity, mul
 
 WEIGHT_EPS = 1e-7
@@ -387,6 +388,79 @@ class _Extractor:
             out = (out + [-1] * n_faces)[:n_faces]
         return out
 
+    def _source(self, plug: str) -> Optional[Tuple[str, str]]:
+        """plug の接続元 (ノード, 属性)（なければ None）"""
+        try:
+            plugs = cmds.listConnections(plug, source=True, destination=False, plugs=True, skipConversionNodes=True) or []
+        except (RuntimeError, ValueError):
+            return None
+        return tuple(plugs[0].split(".", 1)) if plugs else None
+
+    def _avg(self, plug: str) -> Optional[float]:
+        try:
+            v = cmds.getAttr(plug)
+        except (RuntimeError, ValueError):
+            return None
+        if isinstance(v, list) and v and isinstance(v[0], tuple):
+            v = v[0]
+        if isinstance(v, (tuple, list)):
+            return sum(float(x) for x in v) / len(v) if v else None
+        return float(v)
+
+    def _layered_shader(self, shader: str):
+        """layeredShader の表示する層 → (表示に使うシェーダー, アルベドの属性名, マップの属性名)（extract_ma と同じ選び方）"""
+        indices = cmds.getAttr(shader + ".inputs", multiIndices=True) or []
+
+        def state(i):
+            src = self._source("%s.inputs[%d].transparency" % (shader, i))
+            if src is None:
+                return {"connected": False, "value": self._avg("%s.inputs[%d].transparency" % (shader, i))}
+            node, sattr = src
+            if cmds.nodeType(node) in MAP_ATTRS and sattr in ("outTransparency", "ot"):
+                for a in ("transparency", "opacity"):
+                    if not cmds.attributeQuery(a, node=node, exists=True):
+                        continue
+                    if self._source(node + "." + a):
+                        return {"connected": True, "value": None}
+                    v = self._avg(node + "." + a)
+                    return {"connected": False, "value": v if a == "transparency" or v is None else 1.0 - v}
+                return {"connected": False, "value": 0.0}
+            return {"connected": True, "value": None}
+        base, skipped = pick_layer("layeredShader", indices, state)
+        if base is None:
+            return shader, (), {}
+        key = "inputs[%d].color" % base
+        src = self._source(shader + "." + key)
+        under = src[0] if src and cmds.nodeType(src[0]) in MAP_ATTRS and src[1] in ("outColor", "oc") else None
+        note = layer_note(shader, "layeredShader", base, skipped, under or (src[0] if src else "色の値"))
+        if note:
+            self.warn(note)
+        if under is not None:
+            t = cmds.nodeType(under)
+            return under, albedo_attrs(t), map_attrs(t)
+        return shader, (key,), {"baseColor": (key,)}
+
+    def _layer_source(self, node: str) -> Optional[Tuple[str, str]]:
+        """layeredTexture の表示する層の色の接続元（なければ None）"""
+        indices = cmds.getAttr(node + ".inputs", multiIndices=True) or []
+
+        def state(i):
+            p = "%s.inputs[%d]." % (node, i)
+            try:
+                blend, vis = int(cmds.getAttr(p + "blendMode")), bool(cmds.getAttr(p + "isVisible"))
+            except (RuntimeError, ValueError):
+                blend, vis = 1, True
+            return {"connected": self._source(p + "alpha") is not None, "value": self._avg(p + "alpha"),
+                    "blend": blend, "visible": vis}
+        base, skipped = pick_layer("layeredTexture", indices, state)
+        if base is None:
+            return None
+        src = self._source("%s.inputs[%d].color" % (node, base))
+        note = layer_note(node, "layeredTexture", base, skipped, src[0] if src else "色の値")
+        if note:
+            self.warn(note)
+        return src
+
     def _material_for_sg(self, sg: str) -> int:
         shaders = cmds.listConnections(sg + ".surfaceShader", source=True, destination=False) or []
         if not shaders:
@@ -394,10 +468,14 @@ class _Extractor:
         shader = shaders[0]
         if shader in self._mat_of:
             return self._mat_of[shader]
+        top, top_type = shader, cmds.nodeType(shader)    # シェーディンググループにつながったシェーダー（名前と種類に使う）
+        albedo, map_defs = albedo_attrs(top_type), map_attrs(top_type)
+        if top_type == "layeredShader":
+            shader, albedo, map_defs = self._layered_shader(shader)
         stype = cmds.nodeType(shader)
         color = list(default_color(stype))
-        for a in albedo_attrs(stype):
-            if not cmds.attributeQuery(a, node=shader, exists=True):
+        for a in albedo:
+            if not _has_attr(shader, a):
                 continue
             try:
                 val = cmds.getAttr(shader + "." + a)
@@ -408,7 +486,7 @@ class _Extractor:
             break
         maps = {}
         file_node = None
-        for kind, attrs in map_attrs(stype).items():
+        for kind, attrs in map_defs.items():
             src = self._map_source(shader, kind, attrs)
             if src is None:
                 continue
@@ -435,10 +513,10 @@ class _Extractor:
                                                   plugs=True, skipConversionNodes=True) or []
             use_alpha = any(p.split(".", 1)[0] == shader and _opacity_plug(p) for p in plugs)
         idx = len(self.materials)
-        self._mat_of[shader] = idx
+        self._mat_of[top] = idx
         if file_node is not None:
             self._file_of_mat[idx] = file_node
-        entry = {"name": shader, "type": stype, "shadingGroup": sg, "color": schema.round_list(color),
+        entry = {"name": top, "type": top_type, "shadingGroup": sg, "color": schema.round_list(color),
                  "texture": maps.get("baseColor", {}).get("texture", -1), "useAlpha": use_alpha, "maps": maps}
         entry.update(scalars)
         self.materials.append(entry)
@@ -447,7 +525,7 @@ class _Extractor:
     def _map_source(self, shader: str, kind: str, attrs):
         """マップの種類 kind の接続元 → (file ノード, チャンネル)。法線は bump2d・aiNormalMap 経由も。"""
         for a in attrs:
-            if not cmds.attributeQuery(a, node=shader, exists=True):
+            if not _has_attr(shader, a):
                 continue
             plugs = cmds.listConnections(shader + "." + a, source=True, destination=False, plugs=True,
                                          skipConversionNodes=True) or []
@@ -455,6 +533,12 @@ class _Extractor:
                 return None
             node, sattr = plugs[0].split(".", 1)
             t = cmds.nodeType(node)
+            if t == "layeredTexture":
+                layer = self._layer_source(node)
+                if layer is None:
+                    return None
+                node, sattr = layer
+                t = cmds.nodeType(node)
             if t == "file":
                 return node, OUTPUT_CHANNEL.get(sattr, "rgb")
             if kind == "normal" and t == "bump2d":
@@ -676,6 +760,13 @@ class _Extractor:
                 "drivenNodes": 0,
             },
         }
+
+
+def _has_attr(node: str, attr: str) -> bool:
+    """node に属性があるか。層の属性（inputs[0].color のような番号付き）は attributeQuery で調べられないので objExists"""
+    if "[" in attr or "." in attr:
+        return bool(cmds.objExists(node + "." + attr))
+    return bool(cmds.attributeQuery(attr, node=node, exists=True))
 
 
 _DISPLAY_TYPE_LABELS = {1: "テンプレート", 2: "リファレンス"}

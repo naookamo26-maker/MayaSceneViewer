@@ -186,7 +186,7 @@ RAW_TYPES = {
     "file", "place2dTexture", "uvChooser", "shadingEngine", "lambert", "blinn", "phong", "phongE",
     "anisotropic", "surfaceShader", "aiStandardSurface", "standardSurface", "openPBRSurface",
     "StingrayPBS", "usdPreviewSurface", "aiFlat", "dagPose", "groupParts", "bump2d", "aiNormalMap",
-    "displayLayer", "camera",
+    "displayLayer", "camera", "layeredShader", "layeredTexture",
 }
 
 _LINEAR_UNITS = {"mm": "mm", "millimeter": "mm", "cm": "cm", "centimeter": "cm",
