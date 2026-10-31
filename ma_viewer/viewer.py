@@ -508,12 +508,19 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.a_refs = self._act("リファレンスを読み込む", self._toggle_references, checkable=True,
                                 checked=_settings_bool("loadReferences", True),
                                 tip=".ma のリファレンス（file -r）の中身も読み込む（次に開くファイルから有効。F5 で読み直し）")
+        # 切り分け用: exprespy を評価しない（環境変数 MA_VIEWER_NO_EXPRESPY=1 と同じ。読み込みの処理が見る）
+        eval_ex = _settings_bool("evalExprespy", True) and os.environ.get("MA_VIEWER_NO_EXPRESPY") != "1"
+        os.environ["MA_VIEWER_NO_EXPRESPY"] = "0" if eval_ex else "1"
+        self.a_exprespy = self._act("exprespy を評価する", self._toggle_exprespy, checkable=True, checked=eval_ex,
+                                    tip="オフにすると exprespy を評価せず、つながる値はファイルの値のままにする"
+                                        "（結果がおかしいときの切り分け用。次に開くファイルから有効。F5 で読み直し）")
         m = mb.addMenu("ファイル")
         for a in (a_open, a_reload, a_export):
             m.addAction(a)
         m.addSeparator()
         m.addAction(self.a_anim)
         m.addAction(self.a_refs)
+        m.addAction(self.a_exprespy)
         m.addSeparator()
         m.addAction(a_close)
 
@@ -741,6 +748,12 @@ class ViewerWindow(QtWidgets.QMainWindow):
     def _toggle_references(self, on):
         _settings_set("loadReferences", bool(on))
         self.statusBar().showMessage("リファレンスを%s（次に開くファイルから）" % ("読み込みます" if on else "読み込みません"),
+                                     5000)
+
+    def _toggle_exprespy(self, on):
+        _settings_set("evalExprespy", bool(on))
+        os.environ["MA_VIEWER_NO_EXPRESPY"] = "0" if on else "1"
+        self.statusBar().showMessage("exprespy を%s（次に開くファイルから。F5 で読み直し）" % ("評価します" if on else "評価しません"),
                                      5000)
 
     def _toggle_animation(self, on):

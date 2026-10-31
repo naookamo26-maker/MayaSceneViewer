@@ -1181,8 +1181,13 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     # exprespy（Python で式を書くノード）: コードをノードごとの定義に変換して評価する
     ms.exprespy_defs, ms.exprespy_nodes, ms.exprespy_problems = {}, [], {}
     if any(n.type == "exprespy" for n in ms.nodes):     # 変換器の読み込み（約 10 ms）は使うシーンだけ
-        from .exprespy import apply_exprespy
-        ms.exprespy_defs, ms.exprespy_nodes, ms.exprespy_problems = apply_exprespy(ms)
+        if os.environ.get("MA_VIEWER_NO_EXPRESPY") == "1":
+            # 切り分け用: exprespy を評価しない（対応前と同じく評価できないノードにし、つながる値はファイルの値）
+            ms.warn("exprespy の評価を止めています（［ファイル］→［exprespy を評価する］・環境変数 MA_VIEWER_NO_EXPRESPY）。"
+                    "exprespy につながる値はファイルの値のままです。")
+        else:
+            from .exprespy import apply_exprespy
+            ms.exprespy_defs, ms.exprespy_nodes, ms.exprespy_problems = apply_exprespy(ms)
     if ms.exprespy_nodes:
         ms.warn("exprespy %d 個（%s）のコードを解析して評価します。" % (
             len(ms.exprespy_nodes), "、".join(ms.exprespy_nodes[:5]) + (" ほか" if len(ms.exprespy_nodes) > 5 else "")))
