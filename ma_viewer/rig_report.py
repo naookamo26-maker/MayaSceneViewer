@@ -199,9 +199,10 @@ def _curve_tree(ms: MaScene, node: MaNode, attr: str, indent: str = "    ", seen
         line = "✓ %s（%s）.%s: 評価できる" % (node.name, node.type, attr)
         if node.type in ("wire", "cluster", "skinCluster"):
             from .component_tags import deformer_masks
-            for k, cvs in sorted(deformer_masks(ms, node).items()):
+            how_sel: Dict[str, str] = {}
+            for k, cvs in sorted(deformer_masks(ms, node, how_sel).items()):
                 shown = ", ".join(str(v) for v in cvs[:12]) + (" …" if len(cvs) > 12 else "")
-                line += "・コンポーネントタグで動かす CV（入力 %s）: %s" % (k, shown or "なし")
+                line += "・%sで動かす CV（入力 %s）: %s" % (how_sel.get(k, ""), k, shown or "なし")
     elif node.type in PRODUCERS:
         line = "✓ %s（%s）.%s: 形を作るノード（計算できる）" % (node.name, node.type, attr)
     elif node.type in ("multMatrix", "decomposeMatrix", "composeMatrix", "inverseMatrix") or node.is_dag:
@@ -507,14 +508,14 @@ def _chain_lines(chain, ind: str) -> List[str]:
         if st["type"] == "wire":
             extra.append("エンベロープ %.3f" % st.get("envelope", 1))
             if st.get("tagged") is not None:
-                extra.append("コンポーネントタグで動かす CV %d 個" % st["tagged"])
+                extra.append("動かす CV（コンポーネントタグ・groupParts の指定） %d 個" % st["tagged"])
             if st.get("deformed") is not None:
                 extra.append("変形するカーブの CV の最大の移動 %.3f" % st["deformed"])
         if st["type"] == "cluster":
             extra.append("ハンドル %s の位置 %s" % (st.get("handle") or "（接続なし）", f3(st["handlePos"]) if st.get("handlePos") else "?"))
             extra.append("bindPreMatrix: %s" % st.get("pm", "?"))
             if st.get("tagged") is not None:
-                extra.append("タグで動かす CV: %s" % (", ".join(str(v) for v in st["tagged"][:12]) or "なし"))
+                extra.append("動かす CV（コンポーネントタグ・groupParts の指定）: %s" % (", ".join(str(v) for v in st["tagged"][:12]) or "なし"))
             if st.get("movedCvs") is not None:
                 mv = st["movedCvs"]
                 extra.append("動いた CV: %s" % (", ".join("%d（%.3f）" % (v, d) for v, d in mv[:12])
