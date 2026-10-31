@@ -43,7 +43,8 @@ class StandardTypesTest(unittest.TestCase):
 
     def test_is_standard_type(self):
         ms = parse_ma_text('requires -nodeType "follicle" "fakePlugin" "1.0";\n')
-        for t in ("blendShape", "uvPin", "motionPath", "polyCube", "animCurveTL", "HIKSolverNode", "multMatrix", "sum"):
+        for t in ("blendShape", "uvPin", "motionPath", "polyCube", "animCurveTL", "HIKSolverNode", "multMatrix", "sum",
+                  "deleteComponent"):
             self.assertTrue(is_standard_type(ms, t), t)
         for t in ("myCustomDriver", "aiStandardSurface", "follicle"):   # follicle はプラグインの型と書かれている
             self.assertFalse(is_standard_type(ms, t), t)

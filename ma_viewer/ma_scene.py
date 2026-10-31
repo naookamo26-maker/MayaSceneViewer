@@ -53,6 +53,10 @@ TRANSFORM_TYPES = {
     "normalConstraint", "geometryConstraint", "pointOnPolyConstraint", "dagContainer",
 }
 
+# 標準のノードのうち、ほかの型と同じに扱うもの（読み込むときに型を置き換える）。
+# hikFKJoint: HumanIK のコントロールリグの FK のコントローラー（joint を継承した型。jointOrient などもジョイントと同じ）
+TYPE_ALIASES = {"hikFKJoint": "joint"}
+
 # シェイプ（行列を持たない DAG 末端ノード）として扱う型
 SHAPE_TYPES = {
     "mesh", "nurbsCurve", "nurbsSurface", "locator", "camera", "subdiv", "lattice",
@@ -592,6 +596,7 @@ class MaScene:
             return
         node_type = pos[0].value
         name = opts.get("-n") or opts.get("-name") or (node_type + str(len(self.nodes)))
+        node_type = TYPE_ALIASES.get(node_type, node_type)
         parent_ref = opts.get("-p") or opts.get("-parent")
         shared = bool(opts.get("-s") or opts.get("-shared"))
         if shared and self.ref_depth:

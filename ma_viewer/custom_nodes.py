@@ -159,15 +159,18 @@ _STANDARD_TYPES = frozenset("""
     holdMatrix blendMatrix aimMatrix pickMatrix parentMatrix vectorProduct quatToEuler eulerToQuat quatProd
     quatInvert quatNormalize quatSlerp quatAdd quatConjugate quatNegate quatSub addDoubleLinear multDoubleLinear
     pointMatrixMult pointConstraint orientConstraint parentConstraint scaleConstraint aimConstraint
-    poleVectorConstraint lookAt uvChooser bump2d network container
+    poleVectorConstraint lookAt uvChooser bump2d network container deleteComponent
 """.split())
-_STANDARD_PREFIXES = ("poly", "animCurve", "animBlendNode", "HIK", "deform")
+_STANDARD_PREFIXES = ("poly", "animCurve", "animBlendNode", "HIK", "hik", "deform")
+# Maya に付属するプラグイン（requires -nodeType に型が書かれていても、自作ノードではない）
+BUNDLED_PLUGINS = {"mayaHIK", "matrixNodes", "quatNodes", "lookdevKit"}
 
 
 def is_standard_type(ms, type_name: str) -> bool:
-    """Maya の標準のノードの型か（requires -nodeType でプラグインの型と書かれていれば標準ではない）。
-    一覧にない型は自作ノードとみなす（割り当ての雛形を出す）"""
-    if type_name in (getattr(ms, "plugin_node_types", None) or {}):
+    """Maya の標準のノードの型か（requires -nodeType でプラグインの型と書かれていれば標準ではない。
+    ただし mayaHIK など Maya に付属するプラグインの型は標準）。一覧にない型は自作ノードとみなす（割り当ての雛形を出す）"""
+    plugin = (getattr(ms, "plugin_node_types", None) or {}).get(type_name)
+    if plugin is not None and plugin not in BUNDLED_PLUGINS:
         return False
     if type_name in _STANDARD_TYPES or type_name.startswith(_STANDARD_PREFIXES):
         return True

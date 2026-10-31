@@ -17,6 +17,7 @@ import re
 from typing import Dict, List, Optional, Set, Tuple
 
 from .custom_nodes import FILE_NAME, is_standard_type, template_for
+from .hik import hik_report, is_hik_type
 
 from .ma_scene import MaNode, MaScene, xform_group
 from .rig import (CONSTRAINT_TYPES, CURVE_TYPES, GEOMETRY_TYPES, SUPPORTED_DG, _CHANNEL_KEYS, _DISPLAY_KEYS, _MATRIX_PLUGS,
@@ -308,7 +309,7 @@ def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
         out.append("  なし")
     else:
         for t, items in sorted(info.unsupported.items(), key=lambda kv: -len(kv[1])):
-            out.append("- %s: %d か所" % (t, len(items)))
+            out.append("- %s: %d か所%s" % (t, len(items), "（HumanIK。下の「HumanIK」を参照）" if is_hik_type(t) else ""))
             for name, consumer, attr in items[:8]:
                 out.append("    %s → %s.%s" % (name, consumer, attr))
             if len(items) > 8:
@@ -359,6 +360,10 @@ def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
     else:
         for e in info.ik:
             out.extend(_ik_section(ms, e))
+    hik_chars = getattr(ms, "hik_characters", None) or []
+    if hik_chars:
+        out.append("")
+        out.extend(hik_report(hik_chars))
     out.append("")
     out.append("■ ヒストリのあるカーブ（形を作るノードから形を求めるもの）")
     baked = getattr(ms, "curve_history_baked", 0)
