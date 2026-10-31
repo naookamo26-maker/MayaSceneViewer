@@ -1361,6 +1361,18 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         locked = locked_channels(x.locks)
         if locked:
             entry["locked"] = locked              # Maya でロックした移動・回転・スケール（ポーズ確認でも動かさない）
+        lim = x.limits(math.pi / 180.0 / ctx.ang) if ctx.ang else x.limits()
+        if lim:
+            # 移動・回転（度）・スケールの制限。ポーズ確認で動かした値もこの範囲に収める。値を組み直すための
+            # ピボット・rotateAxis・せん断（既定値でないもの）も出す
+            if "r" in lim:
+                lim["r"] = [[None if v is None else ctx.deg((v, 0.0, 0.0))[0] for v in side] for side in lim["r"]]
+            entry["limits"] = lim
+            piv = {k: list(x.vec3(k)) for k in ("ra", "rp", "sp", "rpt", "spt", "sh") if any(x.vec3(k))}
+            if "ra" in piv:
+                piv["ra"] = ctx.deg(x.vec3("ra"))
+            if piv:
+                entry["pivots"] = piv
         opm = x.xattrs.get("opm")
         if opm is not None and len(opm) == 16 and any(abs(a - b) > 1e-12 for a, b in zip(opm, M.identity())):
             entry["opm"] = [float(v) for v in opm]   # offsetParentMatrix（matrix に掛け込み済み。親の空間 .parentMatrix を求めるため）

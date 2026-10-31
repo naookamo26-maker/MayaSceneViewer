@@ -277,6 +277,32 @@
      0.0
     ]
    },
+   "limits":{
+    "t":[
+     [
+      null,
+      null,
+      null
+     ],
+     [
+      2.0,
+      null,
+      null
+     ]
+    ],
+    "r":[
+     [
+      null,
+      null,
+      null
+     ],
+     [
+      null,
+      null,
+      45.0
+     ]
+    ]
+   },
    "segmentScaleCompensate":true,
    "drivenBy":[
     "tx ← ctrl（transform）",
@@ -411,6 +437,20 @@
      1.0
     ],
     "ro":"xyz"
+   },
+   "limits":{
+    "r":[
+     [
+      null,
+      null,
+      null
+     ],
+     [
+      30.0,
+      null,
+      null
+     ]
+    ]
    }
   },
   {
@@ -1571,7 +1611,7 @@
    "channels":2,
    "nodes":8,
    "graphNodes":8,
-   "seconds":0.0006
+   "seconds":0.0015
   }
  }
 }
