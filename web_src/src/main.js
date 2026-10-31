@@ -46,7 +46,7 @@ const DEFAULTS = {
   maps: { normal: true, roughness: false, metalness: false, ao: false, emissive: false, opacity: false },
   normalFlipY: false,            // ノーマルマップの緑を反転（DirectX 形式）
   tool: 'select', space: 'local', gizmoSize: 1,
-  cameraIcons: true,             // シーンのカメラの形を描く
+  cameraIcons: false,            // シーンのカメラの形を描く（初期状態は表示しない）
   cameraGate: true,              // カメラから見るとき、解像度ゲートの外側を暗くする
   hud: true,                     // ヘッドアップディスプレイ（再生のフレームレート）
   playbackCacheMB: 256,          // リグの再生キャッシュの上限（MB。0 なら使わない。次回の起動でも使う）
