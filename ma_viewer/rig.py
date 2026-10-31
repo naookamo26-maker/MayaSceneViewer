@@ -835,6 +835,8 @@ def graph_warnings(info: GraphInfo) -> List[str]:
                        % ("解釈できない" if t == "expression" else "コードを解析できない", t, items[0][0],
                           "、".join(names[:4]) + (" ほか" if len(names) > 4 else "")))
             continue
+        if t == "HIKState2SK":
+            continue                    # HumanIK で動くスケルトン: キャラクターごとの警告（hik.py）にまとめる
         out.append("アニメーション: %s（%s など）は未対応のため、これにつながる %s の値は再生されません。"
                    % (t, items[0][0], "、".join(names[:4]) + (" ほか" if len(names) > 4 else "")))
     for c, key, bad in info.soft_dropped:

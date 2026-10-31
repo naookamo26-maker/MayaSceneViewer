@@ -1314,6 +1314,12 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     for n in list(graph_info.dag.values()):
         keep_chain(n)
     ms.graph_info = graph_info
+    # HumanIK（評価しない）: キャラクターと、スケルトンを動かすものを調べて、警告を 1 つにまとめる
+    from .hik import analyze_hik, hik_driven_ids, hik_warnings
+    ms.hik_characters = analyze_hik(ms)
+    hik_driven = hik_driven_ids(ms.hik_characters)
+    for w in hik_warnings(ms.hik_characters):
+        ms.warn(w)
 
     lap("出力するノードの決定")
     # --- バインドポーズ（.pm → dagPose → .bps の優先順）---------------------------
@@ -1362,14 +1368,18 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     # 接続で値が決まる（.ma に値が残っていない）属性
     driven: Dict[int, List[str]] = {}
     curve_driven = set()                # 接続元がすべてカーブか、評価できるノード（アニメーションで評価する）
+    hik_only = set()                    # 接続元がすべて HIKState2SK（HumanIK で動くスケルトン）
     for n in ms.nodes:
         if id(n) not in keep or n.is_shape:
             continue
-        by_curve = True
+        by_curve = by_hik = True
         for key, (src, sattr) in n.inputs.items():
             if key.split("[")[0].split(".")[0] in _CHANNEL_ATTRS:
                 driven.setdefault(id(n), []).append("%s ← %s（%s）" % (key, src.name, src.type))
                 by_curve = by_curve and key in _CURVE_CHANNELS and src.type in ("animCurveTL", "animCurveTA", "animCurveTU")
+                by_hik = by_hik and src.type == "HIKState2SK"
+        if by_hik and id(n) in driven and id(n) in hik_driven:
+            hik_only.add(id(n))         # HumanIK だけで動く（警告は HumanIK の 1 つにまとめる）
         if (by_curve or id(n) in graph_info.graph_driven) and id(n) in driven:
             curve_driven.add(id(n))     # アニメーションを読み込むと評価される（カーブ・コンストレイント・計算ノード）
 
@@ -1403,8 +1413,8 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         shown = "、".join(chans[:3]) + (" ほか" if len(chans) > 3 else "")
         if nid in bind_local:
             ctx.local[nid] = bind_local[nid]
-        if nid in curve_driven:
-            continue                    # アニメーションカーブで決まる（アニメーションを読み込むとその値で表示する）
+        if nid in curve_driven or nid in hik_only:
+            continue                    # アニメーションカーブで決まる（アニメーションを読み込むとその値で表示する）・HumanIK
         if nid in bind_local:
             ms.warn("%s: %s が接続で決まるため、ファイルに値がありません。バインドポーズ（%s）の姿勢で表示します。"
                     % (node.name, shown, BIND_SOURCE_LABELS[bind_src[nid][2]]), key="#接続で値が決まるノード", limit=20)
