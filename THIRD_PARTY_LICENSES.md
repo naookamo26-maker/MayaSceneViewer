@@ -1,13 +1,13 @@
 # サードパーティのライセンス
 
-## three.js r160（ma_viewer/web/viewer.bundle.js に同梱）
+## three.js r187（ma_viewer/web/viewer.bundle.js に同梱）
 
 https://github.com/mrdoob/three.js
 
 ```
 The MIT License
 
-Copyright © 2010-2023 three.js authors
+Copyright © 2010-2026 three.js authors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

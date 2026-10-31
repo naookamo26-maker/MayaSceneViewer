@@ -9,9 +9,9 @@
     "bench": "node bench/rig.bench.mjs"
   },
   "dependencies": {
-    "three": "0.160.0"
+    "three": "0.187.0"
   },
   "devDependencies": {
-    "esbuild": "0.20.2"
+    "esbuild": "0.28.2"
   }
 }
