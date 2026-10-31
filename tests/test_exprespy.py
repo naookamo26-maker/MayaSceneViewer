@@ -217,6 +217,15 @@ class TranslateTest(unittest.TestCase):
         # コードのどこかで値を入れる名前を、入れる前に読むのは変換を止める（変換器の誤りを隠さない）
         self.assertIn("名前 a が分かりません", problem("OUT[0] = a\na = 1", {}))
 
+    def test_very_long_expression(self):
+        # 項のとても多い式: 変換後の計算のかっこ・IR を入れ子にしない（Python の上限・JSON の書き出しで止まらない）
+        import json
+        terms = " + ".join("%.3f * IN[%d]" % (0.1 + k * 0.001, k % 3) for k in range(600))
+        nd, _, _ = translate("x = 1.0 + %s - 2\nOUT[0] = x" % terms, {0: "num", 1: "num", 2: "num"})
+        self.assertEqual(nd.ir[0][2][0], "ch")                 # ["ch", [演算子…], [式…]]（平らな続き）
+        self.assertEqual(len(nd.ir[0][2][1]), 601)
+        json.dumps(nd.to_json(), indent=1)                    # 字下げつき（Python の実装）でも書き出せる
+
     def test_and_or_values(self):
         nd, _, _ = translate("OUT[0] = IN[0] or 1.0\nOUT[1] = IN[0] and 0\nOUT[2] = 0 or IN[0]\n"
                              "OUT[3] = 2 or IN[0]\nOUT[4] = None or IN[0] or 5", {0: "num"})
@@ -245,12 +254,12 @@ class SceneTest(unittest.TestCase):
         anim = self.scene["animation"]
         graph = {g["name"]: g for g in anim["graph"] if g["type"] == "exprespy"}
         for name in ("posCnsEx", "oriCnsEx", "aimCnsEx", "aimUpCnsEx", "timeEx", "chainA", "chainB", "quatEx",
-                     "limitEx", "pyEx", "pyEx2", "pyEx3", "aliasEx", "lookupEx", "typoEx"):
+                     "limitEx", "pyEx", "pyEx2", "pyEx3", "aliasEx", "lookupEx", "typoEx", "longEx"):
             self.assertRegex(graph[name].get("def", ""), r"^exprespy:[0-9a-f]{12}$", name)
             self.assertIn(graph[name]["def"], anim["nodeDefs"])
         self.assertNotIn("def", graph.get("badCmds", {}))
         warnings = "\n".join(self.scene["warnings"])
-        self.assertIn("exprespy 15 個", warnings)
+        self.assertIn("exprespy 16 個", warnings)
         self.assertIn("exprespy badCmds のコードを解析できません（1 行目: maya.cmds", warnings)
         self.assertIn("exprespy badMesh のコードを解析できません（形状（boxShape.o）", warnings)
         anim_warnings = "\n".join(anim["warnings"])
@@ -330,7 +339,7 @@ class SceneTest(unittest.TestCase):
         warnings = "\n".join(scene["warnings"] + scene["animation"]["warnings"])
         for name in ("junkA", "junkB", "junkC"):
             self.assertNotIn(name, warnings)                  # 解析できないコードでも警告しない
-        self.assertIn("exprespy 15 個", warnings)               # 使われているノードの数は変わらない
+        self.assertIn("exprespy 16 個", warnings)               # 使われているノードの数は変わらない
         self.assertIn("■ 出力が使われていない exprespy（評価しません。削除しても動きは変わりません）: 3 個（junkA、junkB、junkC）",
                       report)
 

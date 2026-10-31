@@ -1434,7 +1434,7 @@ class Translator:
         if k == ("num", "num"):
             if sym == "^":
                 _fail("数の ^ は変換できません", node)
-            return Value("num", "(%s %s %s)" % (a.code, sym, b.code))
+            return self.chain("num", a, sym, b)
         if sym == "^" and a.kind in vecs and b.kind in vecs:
             return Value("vec", "cross(%s, %s)" % (a.code, b.code))          # MVector の ^ は外積
         if sym == "*":
@@ -1455,10 +1455,24 @@ class Translator:
             kind = "vec" if (a.kind == b.kind) or sym == "-" and a.kind == "pt" and b.kind == "pt" else "pt"
             if a.kind == "vec" and b.kind == "vec":
                 kind = "vec"
-            return Value(kind, "(%s %s %s)" % (a.code, sym, b.code))
+            return self.chain(kind, a, sym, b)
         if sym == "/" and a.kind in vecs and b.kind == "num":
             return Value(a.kind, "(%s / %s)" % (a.code, b.code))
         _fail("%s %s %s は変換できません" % (a.kind, sym, b.kind), node)
+
+    _CHAIN_GROUP = {"+": "add", "-": "add", "*": "mul", "/": "mul"}
+
+    def chain(self, kind: str, a: Value, sym: str, b: Value) -> Value:
+        """a 演算子 b の式。左から順に計算する同じ種類の続き（a + b - c・a * b / c）は、左のかっこを外す
+        （項の多い式で、かっこの入れ子が Python の上限（200 段）を超えないように。計算の順序は同じ）"""
+        left = a.code
+        group = self._CHAIN_GROUP.get(sym)
+        if group is not None and a.extra.get("chain") == group and a.extra.get("chain_code") == left:
+            left = left[1:-1]
+        code = "(%s %s %s)" % (left, sym, b.code)
+        if group is None:
+            return Value(kind, code)
+        return Value(kind, code, chain=group, chain_code=code)
 
     # ---- 関数・コンストラクタ・メソッド
     def call(self, e: ast.Call) -> Value:

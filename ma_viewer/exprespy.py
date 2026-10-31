@@ -2384,7 +2384,20 @@ class ExprespyResult:
 
 def translate(code: str, in_kinds: Dict[int, str], out_connected=(), type_name: str = "exprespy",
               source: str = "exprespy"):
-    """コードを定義に変換する。戻り値: (ExprespyDef, 出力の種類, 注意)。変換できなければ ExprespyError"""
+    """コードを定義に変換する。戻り値: (ExprespyDef, 出力の種類, 注意)。変換できなければ ExprespyError。
+    項のとても多い式（a + b + … が数百項）でも変換できるよう、変換の間だけ再帰の上限を上げる"""
+    import sys
+    limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(max(limit, 20000))
+    try:
+        return _translate(code, in_kinds, out_connected, type_name, source)
+    except RecursionError:
+        raise ExprespyError("式が長すぎて変換できません（項や入れ子がとても多い式）")
+    finally:
+        sys.setrecursionlimit(limit)
+
+
+def _translate(code: str, in_kinds: Dict[int, str], out_connected, type_name: str, source: str):
     try:
         tree = ast.parse(code.replace("\r\n", "\n"), mode="exec")
     except SyntaxError as exc:
