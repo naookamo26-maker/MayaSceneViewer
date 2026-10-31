@@ -183,6 +183,11 @@ body.right-collapsed #right .panel-strip {
 .row:hover { background: var(--panel-2); }
 .row.selected { background: rgba(242, 169, 59, 0.18); box-shadow: inset 2px 0 0 var(--select); }
 .row.dim .name { color: var(--text-dim); }
+/* 選んだノードの祖先（閉じた中に選択があることを示す薄い強調） */
+.row.child-selected { background: rgba(242, 169, 59, 0.11); }
+.row.child-selected .eye { background: linear-gradient(rgba(242, 169, 59, 0.11), rgba(242, 169, 59, 0.11)), var(--panel); }
+/* 絞り込みで、名前の合う行の親として出している行 */
+.row.filter-parent .name { color: var(--text-dim); }
 .row[hidden] { display: none; }
 .twisty {
   width: 14px; flex: none; text-align: center; color: var(--text-dim);

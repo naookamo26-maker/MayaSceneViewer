@@ -23,6 +23,8 @@ const ICON = {
   transform: '<svg width="12" height="12" viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" fill="none" stroke="#8e97a1" stroke-width="1.3"/></svg>',
   mesh: '<svg width="12" height="12" viewBox="0 0 12 12"><path d="M6 1.5 10.5 9.5H1.5Z" fill="none" stroke="#c9c6c0" stroke-width="1.3" stroke-linejoin="round"/></svg>',
   skin: '<svg width="12" height="12" viewBox="0 0 12 12"><path d="M6 1.5 10.5 9.5H1.5Z" fill="rgba(94,200,229,.25)" stroke="#5ec8e5" stroke-width="1.3" stroke-linejoin="round"/></svg>',
+  locator: '<svg width="12" height="12" viewBox="0 0 12 12"><path d="M6 1v10M1 6h10M2.8 9.2l6.4-6.4" fill="none" stroke="#8e97a1" stroke-width="1.3" stroke-linecap="round"/></svg>',
+  camera: '<svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="3.5" width="7" height="5.5" rx="1" fill="none" stroke="#8e97a1" stroke-width="1.2"/><path d="M8 5.5 11 4v4.5L8 7" fill="none" stroke="#8e97a1" stroke-width="1.2" stroke-linejoin="round"/></svg>',
 };
 
 const EYE = '<svg class="on" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 7s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4Z" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="7" cy="7" r="1.8" fill="currentColor"/></svg><svg class="off" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 7s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4Z" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".5"/><path d="M2 12 12 2" stroke="currentColor" stroke-width="1.4"/></svg>';
@@ -401,12 +403,71 @@ export class UI {
       if (row.mesh >= 0) this.app.selectMesh(row.mesh);      // メッシュの行はその行を選択状態にする
       else this.app.select(row.node, { notify: true });
     });
+    // Maya のアウトライナーと同じく、キー操作はマウスが上にあるパネルで受ける（treeKey）
+    tree.addEventListener('pointerenter', () => { this.treeHover = true; });
+    tree.addEventListener('pointerleave', () => { this.treeHover = false; });
     $('tree-expand-all').addEventListener('click', () => this.setAllOpen(true));
     $('tree-collapse-all').addEventListener('click', () => this.setAllOpen(false));
     $('tree-filter').addEventListener('input', (e) => {
       this.filter = e.target.value.trim().toLowerCase();
       this.applyTreeVisibility();
     });
+  }
+
+  /**
+   * 階層の上でのキー操作（Maya のアウトライナー）。F: 選択を表示（祖先を開いてスクロール）、↑ ↓: 表示している前後の行を選ぶ、
+   * ← : 閉じる（閉じていれば親を選ぶ）、→ : 開く（開いていれば最初の子を選ぶ）。使ったら true
+   */
+  treeKey(e) {
+    if (!this.treeHover || !this.rows || !this.rows.length) return false;
+    const k = e.key;
+    if (k === 'f' || k === 'F') { this.revealSelected(); return true; }
+    if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) return false;
+    const cur = this.selectedRow;
+    const shown = this.rows.filter((r) => !r.el.hidden);
+    if (!cur || cur.el.hidden) {
+      if (shown.length && (k === 'ArrowUp' || k === 'ArrowDown')) this.selectRow(k === 'ArrowUp' ? shown[shown.length - 1] : shown[0]);
+      return true;
+    }
+    const i = shown.indexOf(cur);
+    if (k === 'ArrowUp' && i > 0) this.selectRow(shown[i - 1]);
+    else if (k === 'ArrowDown' && i < shown.length - 1) this.selectRow(shown[i + 1]);
+    else if (k === 'ArrowLeft') {
+      if (cur.hasChildren && !this.collapsed.has(cur.key) && !this.filter) { this.collapsed.add(cur.key); this.applyTreeVisibility(); }
+      else {
+        const p = cur.mesh >= 0 ? this.rowOfNode.get(cur.node) : this.rowOfNode.get(this.app.data.nodes[cur.node].parent);
+        if (p && !p.el.hidden) this.selectRow(p);
+      }
+    } else if (k === 'ArrowRight' && cur.hasChildren) {
+      if (this.collapsed.has(cur.key)) { this.collapsed.delete(cur.key); this.applyTreeVisibility(); }
+      else if (shown[i + 1] && shown[i + 1].depth > cur.depth) this.selectRow(shown[i + 1]);
+    }
+    return true;
+  }
+
+  /** 階層の行を選ぶ（クリックと同じ）。表示の範囲に入れる */
+  selectRow(row) {
+    if (row.mesh >= 0) this.app.selectMesh(row.mesh);
+    else this.app.select(row.node, { notify: true });
+    row.el.scrollIntoView({ block: 'nearest' });
+  }
+
+  /** 選択している行を見えるようにする（祖先を開いて、まん中にスクロール。Maya のアウトライナーの F） */
+  revealSelected() {
+    const row = this.selectedRow;
+    if (!row) return;
+    const nodes = this.app.data.nodes;
+    let changed = false;
+    for (let p = row.mesh >= 0 ? row.node : nodes[row.node].parent; p >= 0; p = nodes[p].parent) {
+      if (this.collapsed.delete('n' + p)) changed = true;
+    }
+    if (this.filter && row.el.hidden) {                    // 絞り込みで隠れていれば、絞り込みを外す
+      this.filter = '';
+      $('tree-filter').value = '';
+      changed = true;
+    }
+    if (changed) this.applyTreeVisibility();
+    if (!row.el.hidden) row.el.scrollIntoView({ block: 'center' });
   }
 
   populate(data, built) {
@@ -417,12 +478,14 @@ export class UI {
     this.rowOfMesh = new Map();
     this.collapsed = new Set();
     this.selectedRow = null;
+    this.parentMarks = [];
     this.textureState = null;
     const meshesOf = new Map();
     data.meshes.forEach((m, mi) => {
       if (!meshesOf.has(m.transform)) meshesOf.set(m.transform, []);
       meshesOf.get(m.transform).push(mi);
     });
+    const cameraNodes = new Set((data.cameras || []).map((c) => c.transform));
     const frag = document.createDocumentFragment();
     const collapseDeep = data.nodes.length > 400;
     const addRow = (row) => {
@@ -449,9 +512,10 @@ export class UI {
       const n = data.nodes[ni];
       const kids = built.childrenOf[ni];
       const meshKids = meshesOf.get(ni) || [];
+      const icon = n.type === 'joint' ? ICON.joint : cameraNodes.has(ni) ? ICON.camera
+        : n.shape === 'locator' ? ICON.locator : ICON.transform;
       const row = addRow({
-        key: 'n' + ni, node: ni, mesh: -1, depth, label: n.name, title: n.path,
-        icon: n.type === 'joint' ? ICON.joint : ICON.transform,
+        key: 'n' + ni, node: ni, mesh: -1, depth, label: n.name, title: n.path, icon,
         hasChildren: kids.length + meshKids.length > 0, dim: n.visible === false,
       });
       this.rowOfNode.set(ni, row);
@@ -510,11 +574,22 @@ export class UI {
   applyTreeVisibility() {
     const f = this.filter;
     let hideDepth = Infinity;
-    for (const row of this.rows) {
-      if (f) {
-        row.el.hidden = !row.label.toLowerCase().includes(f);
-        continue;
+    if (f) {
+      // Maya のアウトライナーと同じく、名前の合う行とその親の行を出す（親は薄く）
+      const keep = [];
+      for (let i = this.rows.length - 1, need = -1; i >= 0; i--) {      // need: 親を探している行の深さ（なければ -1）
+        const row = this.rows[i];
+        const hit = row.label.toLowerCase().includes(f);
+        const parent = !hit && row.depth < need;
+        keep[i] = hit || parent;
+        if (hit || parent) need = row.depth;
+        row.el.classList.toggle('filter-parent', parent);
       }
+      this.rows.forEach((row, i) => { row.el.hidden = !keep[i]; });
+      return;
+    }
+    for (const row of this.rows) {
+      row.el.classList.remove('filter-parent');
       if (row.depth > hideDepth) { row.el.hidden = true; continue; }
       hideDepth = Infinity;
       row.el.hidden = false;
@@ -532,20 +607,19 @@ export class UI {
       this.selectedRow.el.removeAttribute('aria-selected');
     }
     this.selectedRow = null;
+    for (const r of this.parentMarks || []) r.el.classList.remove('child-selected');
+    this.parentMarks = [];
     const row = (mesh >= 0 && this.rowOfMesh.get(mesh)) || this.rowOfNode.get(ni);
     if (!row) return;
-    // 祖先を開く
-    let p = nodes[ni].parent;
-    let changed = false;
-    while (p >= 0) {
-      if (this.collapsed.delete('n' + p)) changed = true;
-      p = nodes[p].parent;
+    // Maya のアウトライナーと同じく、ビューポートで選んでも階層は開かない・スクロールしない（F で表示）。
+    // 選んだノードの祖先の行に印を付け、閉じた中に選択があることが分かるようにする
+    for (let p = mesh >= 0 ? ni : nodes[ni].parent; p >= 0; p = nodes[p].parent) {
+      const pr = this.rowOfNode.get(p);
+      if (pr && pr !== row) { pr.el.classList.add('child-selected'); this.parentMarks.push(pr); }
     }
-    if (changed) this.applyTreeVisibility();
     row.el.classList.add('selected');
     row.el.setAttribute('aria-selected', 'true');
     this.selectedRow = row;
-    if (!row.el.hidden) row.el.scrollIntoView({ block: 'nearest' });
   }
 
   /** テクスチャの読み込み状況（選択情報のメッシュの欄に出す）を受け取る */

@@ -294,6 +294,7 @@ class ViewerApp {
         e.preventDefault();
         return;
       }
+      if (!e.shiftKey && this.ui.treeKey(e)) { e.preventDefault(); return; }   // マウスが階層の上: アウトライナーの操作
       const set = (key, v) => { this.setSetting(key, v); this.ui.syncSettings(this.settings); };
       if (k === 'f') this.frameSelection();
       else if (k === 'a') this.frameAll();
