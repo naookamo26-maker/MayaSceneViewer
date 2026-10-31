@@ -147,6 +147,8 @@ class HikTest(unittest.TestCase):
         (c,) = analyze_hik(ms)
         (s,) = c.sources
         self.assertEqual((s.kind, s.fk, s.ik, s.pinning), ("control_rig", 2, 2, True))
+        self.assertEqual(s.fk2state.name, "HIKFK2State1")
+        self.assertEqual(s.state2sk.name, "HIKState2SK1")
 
     def test_stance(self):
         body = TARGET + '''createNode HIKSolverNode -n "HIKSolverNode1";
@@ -166,12 +168,37 @@ connectAttr "HIKSolverNode1.OutputCharacterState" "HIKState2SK1.InputCharacterSt
         self.assertFalse([w for w in warnings if "が接続で決まるため" in w], warnings)
         self.assertFalse([w for w in warnings if "HIKState2SK（" in w], warnings)
 
-    def test_control_rig_warning(self):
-        _ms, _scene, warnings = convert(CONTROL_RIG)
+    def test_control_rig_fk(self):
+        ms, _scene, warnings = convert(CONTROL_RIG)
+        (c,) = ms.hik_characters
+        self.assertEqual(c.fk_parts, ["Hips", "Spine"])               # FK のコントローラーのある部位
+        self.assertEqual(c.fk_missing, ["LeftArm"])                    # ない部位は HIKState2SK のまま（評価しない）
+        self.assertEqual([d.name for d in c.driven], ["LeftArm"])
+        hips = next(n for n in ms.nodes if n.name == "Hips")
+        self.assertEqual(hips.inputs["tx"][0].name, "Hips_hikFK_dt")   # 移動・回転は行列ノードから
+        self.assertEqual(hips.inputs["rz"][0].name, "Hips_hikFK_dr")
+        self.assertNotIn("sx", hips.inputs)                            # スケールは HIKState2SK の接続を外す
+        mr = next(n for n in ms.nodes if n.name == "Hips_hikFK_r")
+        self.assertEqual({k: (v[0].name, v[1]) for k, v in mr.inputs.items()},
+                         {"i[1]": ("TargetHik_Ctrl_Hips", "wm"), "i[2]": ("Hips", "pim")})
         hik = [w for w in warnings if w.startswith("HumanIK:")]
-        self.assertEqual(len(hik), 1)
-        self.assertIn("コントロールリグ（FK のコントローラー 2 個・IK エフェクター 2 個・ピン留めあり）で動きます", hik[0])
+        self.assertEqual(len(hik), 2, hik)
+        self.assertIn("キャラクター TargetHik のスケルトン（2 部位）は、コントロールリグの FK のコントローラーから求めて再生します",
+                      hik[0])
+        self.assertIn("キャラクター TargetHik のスケルトン（LeftArm。1 個）は、コントロールリグ（FK のコントローラーのない部位）で"
+                      "動きます", hik[1])
         self.assertFalse([w for w in warnings if "自作ノードの型" in w], warnings)   # hikFKJoint は transform に格上げしない
+
+    def test_ik_reach_warning(self):
+        body = CONTROL_RIG.replace('createNode hikIKEffector -n "TargetHik_Ctrl_LeftWristEffector" -p "TargetHik_Ctrl_Reference";',
+                                   'createNode hikIKEffector -n "TargetHik_Ctrl_LeftWristEffector" -p "TargetHik_Ctrl_Reference";\n'
+                                   '\tsetAttr ".rt" 1;')
+        ms, _scene, warnings = convert(body)
+        self.assertEqual(ms.hik_characters[0].ik_active, ["TargetHik_Ctrl_LeftWristEffector"])
+        self.assertTrue([w for w in warnings if "IK エフェクター TargetHik_Ctrl_LeftWristEffector は Reach が 0 ではない" in w],
+                        warnings)
+        _ms, _scene, warnings = convert(CONTROL_RIG)
+        self.assertFalse([w for w in warnings if "Reach" in w], warnings)
 
     def test_rig_report(self):
         text = report(RETARGET)
@@ -182,6 +209,12 @@ connectAttr "HIKSolverNode1.OutputCharacterState" "HIKState2SK1.InputCharacterSt
         self.assertIn("このキャラクターをソースにするキャラクター: TargetHik（部位のジョイントのうちキーのあるもの 1 個）", text)
         self.assertIn("HIKState2SK: 27 か所（HumanIK。下の「HumanIK」を参照）", text)
         self.assertNotIn("自作ノードの割り当て", text)                   # HIK の型に雛形を出さない
+
+    def test_rig_report_control_rig(self):
+        text = report(CONTROL_RIG)
+        self.assertIn("✓ FK のコントローラーから求める部位: 2 個（Hips、Spine）", text)
+        self.assertIn("★ FK のコントローラーのない部位（評価しません）: LeftArm", text)
+        self.assertIn("★ HumanIK で動くノード（評価しません）: 1 個（LeftArm）", text)
 
     def test_no_hik(self):
         text = report('createNode joint -n "j1";\n')
