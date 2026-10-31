@@ -393,7 +393,7 @@ maya_ma_viewer/
 │  ├─ maya_launcher.py    Maya からの起動
 │  ├─ qt_compat.py        PySide6 の import
 │  └─ web/                ビューア（index.html・style.css・viewer.bundle.js）
-├─ web_src/               ビューアの JS ソース（three.js r160）とビルド・テスト
+├─ web_src/               ビューアの JS ソース（three.js r187）とビルド・テスト
 │                          （main.js 本体・ui.js 画面・rig.js リグの評価・nodeDef.js 自作ノードの定義の評価・trax.js クリップ・sequencer.js カメラシーケンサ・cameraView.js カメラ など）
 ├─ samples/               検証用の .ma と期待値（textured_project/ はテクスチャ確認用、reference_project/ はリファレンス確認用の Maya プロジェクト）
 ├─ tools/                 検証用データの生成（make_*_sample.py。アニメーション・リグ・テクスチャ・表示とカメラ・Trax・カメラシーケンサ・選択の可否・リファレンスなど）
@@ -507,4 +507,4 @@ bundle は ES モジュールではなく、通常の `<script>` で読める形
 
 ## ライセンス
 
-同梱の three.js（r160）は MIT ライセンスです。[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) を参照してください。
+同梱の three.js（r187）は MIT ライセンスです。[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) を参照してください。

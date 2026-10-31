@@ -4,7 +4,7 @@
 // ここでは 2 組目（skinIndex1 / skinWeight1）を追加し、
 //   * GPU: マテリアルのシェーダーを差し替えて 8 本の骨の行列を合成する
 //   * CPU: 頂点ピックや表示範囲の計算に使う applyBoneTransform も 8 本で計算する
-// three.js r160 のシェーダーチャンクを基にしている（バージョンを上げるときは要確認）。
+// three.js r160 のシェーダーチャンクを基にしている（r187 でも同じ内容であることを確認済み。バージョンを上げるときは要確認）。
 import { Matrix4, Vector3, Vector4 } from 'three';
 
 export const MAX_INFLUENCES = 8;
