@@ -183,7 +183,7 @@ class ViewerApp {
       else { this.endPoseEdit(); this.syncGizmo(); }
     });
     this.gizmo.addEventListener('objectChange', () => this.onGizmoChange());
-    this.scene.add(this.gizmo);
+    this.scene.add(this.gizmo.getHelper());               // r169 から、ハンドルの表示はヘルパーとして加える
 
     this.overlay = new JointOverlay();
     this.overlay.setPixelSize((p) => this.pixelSizeAt(p));
