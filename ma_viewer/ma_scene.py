@@ -380,6 +380,10 @@ class MaScene:
         self._pieces: List[str] = []                 # 本文の断片（開いたシーン → リファレンス → 編集の属性）
         self._text_len = 0
         self._placeholders: Dict[Tuple[int, str], str] = {}  # (reference ノード, "phl[n]") → 本当のプラグ
+        # リファレンスの編集で、相手のノードが見つからなかったもの [(reference ノード, 編集の種類, 見つからない名前)]
+        self.ref_edit_missing: List[Tuple[str, str, str]] = []
+        # パスでは見つからず、名前（その名前のノードが 1 つだけ）で相手を決めた編集 [(書かれたパス, 当てたノードのパス)]
+        self.ref_edit_by_name: List[Tuple[str, str]] = []
         self._seg_refnodes: List[List["MaNode"]] = [[]]  # 解析中のファイルごとの reference ノード
         self._progress: ProgressFn = None
         self._progress_detail = False                # _progress が 3 つめの引数を受け取るか
@@ -813,6 +817,8 @@ class MaScene:
                     missing = self._apply_edit(code, args, overlay, nodes_of)
                     if missing is not None and not any(p in missing for p in unloaded):
                         skipped[EDIT_NAMES[code]] = skipped.get(EDIT_NAMES[code], 0) + 1
+                        if len(self.ref_edit_missing) < 500:
+                            self.ref_edit_missing.append((rn.name, EDIT_NAMES[code], missing))
         self.prefix = ""
         self.current = None
         if overlay:
@@ -832,41 +838,71 @@ class MaScene:
                 self.warn("リファレンス「%s」の作業単位（%s）がシーン（%s）と違います。値はファイルに書かれたまま使います。"
                           % (ri.namespace or ri.path, ri.units[0], self.linear_unit), key="#リファレンスの単位")
         if skipped:
-            self.warn("リファレンスの編集のうち、相手のノードがないものを無視しました（%s）。"
+            self.warn("リファレンスの編集のうち、相手のノードがないものを無視しました（%s）。見つからないノードの名前は"
+                      "リグの診断（python -m ma_viewer rig）に出します。"
                       % "、".join("%s %d 件" % kv for kv in sorted(skipped.items())), key="#リファレンスの編集の相手")
+        if self.ref_edit_by_name:
+            self.warn("リファレンスの編集のうち %d 件は、書かれたパスのノードがなかったため、同じ名前のノード（1 つだけのもの）"
+                      "に当てました（例: %s → %s）。" % ((len(self.ref_edit_by_name),) + self.ref_edit_by_name[0]),
+                      key="#リファレンスの編集の名前")
+
+    def _edit_node(self, ref: str) -> Optional[MaNode]:
+        """編集に書かれたノード（名前空間を付ける前の名前・パス）。パスで見つからなければ、同じ名前のノードが
+        1 つだけならそれにする（保存したあとに、リファレンスの元のファイルで階層を変えた場合など）"""
+        q = self.qualify(ref)
+        node = self.resolve(q)
+        if node is not None or "|" not in q:
+            return node
+        cands = self._by_name.get(q.rsplit("|", 1)[-1], [])
+        if len(cands) != 1:
+            return None
+        if len(self.ref_edit_by_name) < 500:
+            self.ref_edit_by_name.append((q, cands[0].path))
+        return cands[0]
+
+    def _edit_plug(self, plug: str) -> Tuple[Optional[MaNode], str]:
+        """編集に書かれたプラグ → (ノード, 名前空間を付けたプラグ（ノードはフルパス）)。ノードがなければ (None, 名前)"""
+        nname, attr = R.split_node_attr(plug)
+        node = self._edit_node(nname)
+        if node is None:
+            return None, self.qualify(nname)
+        return node, node.path + "." + attr if attr else node.path
 
     def _apply_edit(self, code: int, args: List[str], overlay: Dict[int, List[str]],
                     nodes_of: Dict[int, MaNode]) -> Optional[str]:
         """リファレンスの編集を 1 件当てる。相手のノードがなければ、その名前（あれば None）"""
         if code == 2:                                      # setAttr: ノード 属性 値
-            node = self.resolve(self.qualify(args[0]))
+            node = self._edit_node(args[0])
             if node is None:
                 return self.qualify(args[0])
             value = args[2] if args[2][:1].isspace() else " " + args[2]
             self.current = None
-            self.handle("setAttr", '"%s.%s"%s' % (args[0], args[1], value))     # 名前空間は handle で付く
+            prefix, self.prefix = self.prefix, ""          # ノードはフルパスで指す（名前空間は付いている）
+            self.handle("setAttr", '"%s.%s"%s' % (node.path, args[1], value))
+            self.prefix = prefix
             overlay.setdefault(id(node), []).append('setAttr ".%s"%s;' % (args[1], value))
             nodes_of[id(node)] = node
         elif code == 1:                                    # addAttr: ノード 長い名前 短い名前 フラグ
-            node = self.resolve(self.qualify(args[0]))
+            node = self._edit_node(args[0])
             if node is None:
                 return self.qualify(args[0])
             overlay.setdefault(id(node), []).append("addAttr %s;" % args[3])
             nodes_of[id(node)] = node
         elif code in (3, 4):                               # connectAttr / disconnectAttr: 元 先 フラグ
-            src, dst = (self._qualify_plug(p) for p in args[:2])
-            for p in (src, dst):
-                if self.resolve(R.split_node_attr(p)[0]) is None:
-                    return p
+            (sn, src), (dn, dst) = (self._edit_plug(p) for p in args[:2])
+            if sn is None:
+                return src
+            if dn is None:
+                return dst
             prefix, self.prefix = self.prefix, ""          # 名前空間は付け終えた
             self._connect('"%s" "%s"' % (src, dst), connect=code == 3)
             self.prefix = prefix
         elif code == 0:                                    # parent: 子 親 フラグ
-            child = self.resolve(self.qualify(args[0]))
+            child = self._edit_node(args[0])
             if child is None:
                 return self.qualify(args[0])
             world = "-w" in args[2].split() or not args[1]
-            parent = None if world else self.resolve(self.qualify(args[1]))
+            parent = None if world else self._edit_node(args[1])
             if parent is None and not world:
                 return self.qualify(args[1])
             self._reparent(child, parent)
@@ -880,7 +916,10 @@ class MaScene:
             rn = self.resolve(pn)
             if rn is None:
                 return pn
-            self._placeholders[(id(rn), R.normalize_attr(pattr))] = self._qualify_plug(other)
+            node, plug = self._edit_plug(other)
+            if node is None:
+                return plug
+            self._placeholders[(id(rn), R.normalize_attr(pattr))] = plug
         return None
 
     def _reparent(self, node: MaNode, parent: Optional[MaNode]):

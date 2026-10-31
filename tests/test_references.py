@@ -169,6 +169,34 @@ class TestFiles(unittest.TestCase):
         self.assertEqual(md.ns, "c:")
         self.assertEqual(ms.resolve("drv").ns, "")
 
+    def test_edit_with_moved_path(self):
+        """保存したあとに元のファイルで階層を変えた: パスで見つからなければ、同じ名前のノード（1 つだけ）に当てる。
+        見つからない編集は、相手の名前を記録する（リグの診断に出す）"""
+        self.write("model.ma", 'createNode transform -n "geo";\n'
+                               'createNode transform -n "twin";\n'
+                               'createNode transform -n "twin" -p "geo";\n')
+        p = self.write("main.ma", 'createNode transform -n "face:ctrl";\n'
+                                  'createNode reference -n "mRN";\n'
+                                  '\tsetAttr ".ed" -type "dataReferenceEdits" \n'
+                                  '\t\t"mRN" "mRN" 4\n'
+                                  '\t\t5 4 "mRN" "|m:old_grp|m:geo.translateX" "mRN.placeHolderList[1]" ""\n'
+                                  '\t\t2 "|m:old_grp|m:geo" "translateY" " 2"\n'
+                                  '\t\t2 "|m:old_grp|m:twin" "translateY" " 3"\n'
+                                  '\t\t2 "|m:gone" "translateY" " 4";\n'
+                                  'connectAttr "face:ctrl.tx" "mRN.phl[1]";\n',
+                       refs='file -r -ns "m" -rfn "mRN" "model.ma";\n')
+        ms = parse_ma_file(p)
+        geo = ms.resolve("|m:geo")
+        self.assertEqual((geo.inputs["tx"][0].name, geo.inputs["tx"][1]), ("face:ctrl", "tx"))   # プレースホルダー
+        self.assertEqual(parse_attrs(ms.text, geo)["ty"], 2.0)                                     # setAttr
+        self.assertEqual([p for p, _r in ms.ref_edit_by_name], ["|m:old_grp|m:geo"] * 2)
+        missing = sorted(name for _rn, _k, name in ms.ref_edit_missing)
+        self.assertEqual(missing, ["|m:gone", "|m:old_grp|m:twin"])        # twin は同じ名前が 2 つあるので当てない
+        self.assertTrue(any("相手のノードがない" in w for w in ms.warnings))
+        from ma_viewer.rig_report import _ref_edit_section
+        text = "\n".join(_ref_edit_section(ms))
+        self.assertIn("|m:gone（mRN の編集: setAttr 1 件）", text)
+
     def test_rename_prefix_and_default_namespace(self):
         """古い形式の -rpr（名前の前置き）と、名前空間の指定がないとき（ファイル名）"""
         self.write("prop.ma", 'createNode transform -n "p";\n')
