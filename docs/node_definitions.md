@@ -109,6 +109,8 @@ output = total * settings.gain + p.x       # 出力の属性に代入する
 | ベクトル | `vector(x, y, z) dot cross length normalize distance angle(a, b)`（`lerp`・`min`・`max` はリストにも使える） |
 | 行列 | `identity() matrix(16 個の数のリスト) inverse transpose compose(移動, 回転, スケール[, 回転順]) translation(m) rotation(m[, 回転順]) scale(m) xform_point(点, m) xform_vector(向き, m) element(m, 行, 列) set_element(m, 行, 列, 値)`（新しい行列を返す）`matrix_values(m)`（16 個の数。Maya の行の順）`determinant(m) determinant3(m)`（左上の 3×3）`equivalent(a, b[, 許容差])` |
 | 四元数（`[x, y, z, w]`） | `quat_from_euler(回転[, 回転順]) euler_from_quat(q[, 回転順]) quat_from_matrix(m) matrix_from_quat(q) quat_mul(a, b)`（a を先に回す）`quat_slerp(a, b, t) quat_inverse quat_normalize` |
+
+`rotation(m)`・`euler_from_quat(q)` の回転の値は、Maya の API（`MTransformationMatrix.rotation()`・`MQuaternion.asEulerRotation()`）と同じ標準の答え（真ん中の軸が ±90° の範囲。例: Y まわりに 150° は (180, 30, 180)）です。
 | 配列・接続 | `indices(配列の属性) count(配列の属性) connected(属性)`（引数は属性そのもの） |
 | 繰り返し | `range(n)`・`range(a, b[, 刻み])` |
 
