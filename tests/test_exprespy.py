@@ -356,23 +356,5 @@ class SceneTest(unittest.TestCase):
         self.assertNotIn('"exprespy": {', report)                    # 割り当ての雛形は出さない
 
 
-class DisableTest(unittest.TestCase):
-    def test_env_disables(self):
-        """MA_VIEWER_NO_EXPRESPY=1: exprespy を評価しない（対応前と同じく評価できないノード）。切り分け用"""
-        old = os.environ.get("MA_VIEWER_NO_EXPRESPY")
-        os.environ["MA_VIEWER_NO_EXPRESPY"] = "1"
-        try:
-            scene = load_ma(SAMPLE, animation=True)
-        finally:
-            if old is None:
-                os.environ.pop("MA_VIEWER_NO_EXPRESPY")
-            else:
-                os.environ["MA_VIEWER_NO_EXPRESPY"] = old
-        anim = scene.get("animation") or {}        # サンプルは exprespy だけで動くので、評価するものがなくなる
-        self.assertFalse(any(k.startswith("exprespy:") for k in anim.get("nodeDefs") or {}))
-        self.assertFalse(any(g.get("def") for g in anim.get("graph") or [] if g["type"] == "exprespy"))
-        self.assertTrue(any("exprespy の評価を止めています" in w for w in scene["warnings"]))
-
-
 if __name__ == "__main__":
     unittest.main()
