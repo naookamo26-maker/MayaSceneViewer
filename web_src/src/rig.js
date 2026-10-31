@@ -668,6 +668,13 @@ export class RigEvaluator {
   }
 
   /**
+   * 移動の値（ポーズ確認の追加分を含む）。追加分がなければ回転を求めない chan(ni, 't')（IK などの循環を避ける）
+   */
+  posedT(ni) {
+    return this.poseOf(ni) && !this.fallback.has(ni) ? this.posedChan(ni).t : this.chan(ni, 't').t;
+  }
+
+  /**
    * ほかのノードが読む移動・回転・スケールの値（ポーズ確認の追加分を入れ、制限の範囲に収めたもの）。
    * 追加分がなければ chan(ni, 'full') と同じ
    */
@@ -699,7 +706,7 @@ export class RigEvaluator {
 
   /** 回転に依存しない位置（親のワールド行列 · 移動の値）。IK の開始ジョイントなど、循環を避けたい所で使う */
   pivotPosition(ni, target = new Vector3()) {
-    const t = (this.chan(ni, 't') || { t: [0, 0, 0] }).t;
+    const t = this.rest(ni) ? this.posedT(ni) : [0, 0, 0];
     return target.set(t[0], t[1], t[2]).applyMatrix4(this.parentSpace(ni));
   }
 
@@ -1859,7 +1866,7 @@ export class RigEvaluator {
    */
   pivotWorld(ni) {
     if (!this.rest(ni)) return positionOf(this.world(ni));
-    const t = this.chan(ni, 't').t;
+    const t = this.posedT(ni);
     const rp = this.dagPlug(ni, 'rp'), rpt = this.dagPlug(ni, 'rpt');
     return new Vector3(t[0] + rp[0] + rpt[0], t[1] + rp[1] + rpt[1], t[2] + rp[2] + rpt[2]).applyMatrix4(this.parentSpace(ni));
   }
@@ -1871,7 +1878,7 @@ export class RigEvaluator {
   targetMatrix(ni, withScale, withInverseScale) {
     const rest = this.rest(ni);
     if (!rest) return this.world(ni).clone();
-    const c = this.chan(ni, 'full');
+    const c = this.posedChan(ni);                         // ポーズ確認で動かした分も含める（ターゲットを動かすと追従する）
     const m = this.parentSpace(ni).clone().setPosition(this.pivotWorld(ni));
     if (withInverseScale) {
       const is = this.isScaleOf(ni);

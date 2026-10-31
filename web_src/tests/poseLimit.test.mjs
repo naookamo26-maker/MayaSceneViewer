@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { Matrix4, Vector3 } from 'three';
+import { Matrix4, Quaternion, Vector3 } from 'three';
 import { AnimationClip, composeLocalMatrix, poseChannels } from '../src/animation.js';
 import { RigEvaluator } from '../src/rig.js';
 import { limitPose, nodeChannels, poseMatrix } from '../src/pose.js';
@@ -89,4 +89,24 @@ test('exprespy の入力: ポーズ確認で動かしたノードの移動の値
   rig.evaluate(1, (ni) => (ni === src ? d : null), undefined, {});
   assert.ok(pos('posCnst').distanceTo(before) > 1, `${before.toArray()} → ${pos('posCnst').toArray()}`);
   assert.ok(!near(rig.chan(idx('jL')).t[0], jl));
+});
+
+test('コンストレイント: ポーズ確認で動かしたターゲットに追従する（ターゲット自身の移動・回転）', () => {
+  const { rig, idx } = rigOf(load('constraint_space_sample.json'));
+  const D = new Matrix4().compose(new Vector3(0.5, 0.7, 0.3), new Quaternion().setFromAxisAngle(new Vector3(1, 0.3, 0).normalize(), 0.3), new Vector3(1, 1, 1));
+  const rel = (kind, c, t) => {
+    const T = rig.world(idx(t)), C = rig.world(idx(c));
+    if (kind === 'point') return new Vector3().setFromMatrixPosition(C).sub(rig.pivotWorld(idx(t))).toArray();
+    const tq = new Quaternion().setFromRotationMatrix(new Matrix4().extractRotation(T));
+    const cq = new Quaternion().setFromRotationMatrix(new Matrix4().extractRotation(C));
+    if (kind === 'orient') return tq.invert().multiply(cq).toArray();
+    return T.clone().invert().multiply(C).toArray();
+  };
+  for (const [kind, c, t] of [['parent', 'lrJ', 'lrT'], ['orient', 'raJ', 'ctrl'], ['point', 'opmJ', 'tgtA']]) {
+    rig.evaluate(1);
+    const a = rel(kind, c, t);
+    rig.evaluate(1, (ni) => (ni === idx(t) ? D : null), undefined, {});
+    const b = rel(kind, c, t);
+    a.forEach((v, i) => assert.ok(Math.abs(Math.abs(v) - Math.abs(b[i])) < 1e-6, `${kind} ${c} ← ${t}: ${a} / ${b}`));
+  }
 });
