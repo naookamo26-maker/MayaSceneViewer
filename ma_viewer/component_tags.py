@@ -162,37 +162,73 @@ def _source_curve(node: MaNode, key: str) -> Optional[MaNode]:
     return None
 
 
-def group_parts_mask(ms: MaScene, node: MaNode, k: int) -> Optional[List[int]]:
+def group_parts_detail(ms: MaScene, node: MaNode, k: int):
     """コンポーネントタグを使わない古い書き方: デフォーマの入力 k（ip[k].ig）の上流の groupParts のうち、デフォーマと
-    同じ groupId（ip[k].gi ← groupId → groupParts.gi）のものの .inputComponents（cv[1] など）。すべてなら None"""
+    同じ groupId（ip[k].gi ← groupId → groupParts.gi）のものの .inputComponents（cv[1] など）。
+    (CV の番号のリスト（すべてなら None）, 診断の説明) を返す"""
     from .ma_scene import parse_component_list
     gid = node.inputs.get("ip[%d].gi" % k)
-    if gid is None:
-        return None
     x, seen = node.inputs.get("ip[%d].ig" % k, (None, ""))[0], set()
-    parts = None
+    parts, passed = None, []
     while x is not None and id(x) not in seen and x.type != "nurbsCurve":
         seen.add(id(x))
-        if x.type == "groupParts" and x.inputs.get("gi", (None,))[0] is gid[0]:
-            parts = x
-            break
+        if x.type == "groupParts":
+            g = x.inputs.get("gi", (None,))[0]
+            passed.append("%s（groupId %s）" % (x.name, g.name if g is not None else "なし"))
+            if gid is not None and g is gid[0]:
+                parts = x
+                break
         nxt = None
         for key, (src, _sattr) in x.inputs.items():
             if _UPSTREAM_RE.match(key):
                 nxt = src
                 break
         x = nxt
+    if gid is None:
+        return None, "groupId（.ip[%d].gi）がつながっていないので全部の CV。上流の groupParts: %s" % (
+            k, "、".join(passed) or "なし")
     if parts is None:
-        return None
-    ranges = parse_component_list((parts.raw or {}).get("ic") or [], "cv")
-    if not ranges or any(b < 0 for _a, b in ranges):
-        return None                                    # 何も書かれていない・cv[*]（すべて）
+        return None, "groupId %s につながる groupParts が上流にないので全部の CV。上流の groupParts: %s" % (
+            gid[0].name, "、".join(passed) or "なし")
+    ic = (parts.raw or {}).get("ic") or []
+    shown_ic = " ".join(ic[:6]) + (" …" if len(ic) > 6 else "")
+    ranges = parse_component_list(ic, "cv")
+    if not ranges:
+        return None, "%s の .inputComponents（%s）に CV の指定がないので全部の CV" % (parts.name, shown_ic or "値なし")
+    if any(b < 0 for _a, b in ranges):
+        return None, "%s の .inputComponents が cv[*]（全部の CV）" % parts.name
     src = _source_curve(node, "ip[%d].ig" % k)
     ncv = curve_tags(ms, src)[1] if src is not None else 0
     sel = sorted({v for a, b in ranges for v in range(a, b + 1)})
     if ncv and len(sel) >= ncv and sel[-1] < ncv:
-        return None
-    return sel
+        return None, "%s の .inputComponents（%s）が全部の CV（%d 個）" % (parts.name, shown_ic, ncv)
+    return sel, "%s の .inputComponents（%s）" % (parts.name, shown_ic)
+
+
+def group_parts_mask(ms: MaScene, node: MaNode, k: int) -> Optional[List[int]]:
+    """group_parts_detail の CV の番号のリスト（すべてなら None）"""
+    return group_parts_detail(ms, node, k)[0]
+
+
+def mask_notes(ms: MaScene, node: MaNode) -> Dict[str, str]:
+    """診断用: デフォーマの入力ごとに、動かす CV をどう決めたか（タグの式・groupParts・全部の CV とその理由）"""
+    exprs = {}
+    for key, sa in _setattrs(ms, node):
+        m = _EXPR_RE.match(key)
+        if m and sa.type == "string" and sa.values():
+            exprs[int(m.group(1))] = sa.values()[0].strip()
+    out: Dict[str, str] = {}
+    for key in node.inputs:
+        m = re.match(r"^ip\[(\d+)\]\.ig$", key)
+        if not m:
+            continue
+        k = int(m.group(1))
+        expr = exprs.get(k)
+        if expr not in (None, "", "*"):
+            out[str(k)] = "コンポーネントタグの式 %s" % expr
+        else:
+            out[str(k)] = group_parts_detail(ms, node, k)[1]
+    return out
 
 
 def deformer_masks(ms: MaScene, node: MaNode, sources: Optional[Dict[str, str]] = None) -> Dict[str, List[int]]:

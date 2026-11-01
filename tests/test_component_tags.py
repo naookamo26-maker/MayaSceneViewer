@@ -129,7 +129,8 @@ class GroupPartsTest(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(group_parts_variant(self.text))
             report = rig_report_file(path)
-        self.assertIn("groupPartsで動かす CV（入力 0）: 3", report)
+        self.assertIn("groupPartsで動かす CV（入力 0）: 3（fin_k4GroupParts の .inputComponents（1 cv[3]））", report)
+        self.assertIn("fin_wire（wire）.og[0]: 評価できる・動かす CV（入力 0）: 全部（groupId（.ip[0].gi）がつながっていない", report)
 
 
 if __name__ == "__main__":
