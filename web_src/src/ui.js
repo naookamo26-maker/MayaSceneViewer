@@ -319,10 +319,10 @@ export class UI {
     this.checkChoice($('opt-camera'), ci);
     $('menu-camera-state').textContent = ci >= 0 ? name + (edited ? '（視点を移動中）' : '') : '';
     $('viewport').classList.toggle('viewing-camera', ci >= 0);
+    // ビューポートの左下の案内は短くする（詳しい操作は［ヘルプ］→［操作方法］と README）
     $('vp-hint').textContent = ci >= 0
-      ? `カメラ ${name} から表示中${edited ? '（視点を動かしています。フレームを動かすか再生すると戻ります）' : '（停止中は Alt+ドラッグ・ホイールで視点を動かせます）'}`
-        + '　Shift+C: 自由視点に戻す'
-      : 'Alt+左ドラッグ: 回転　Alt+中ドラッグ: 移動　Alt+右ドラッグ・ホイール: ズーム　クリック・ドラッグ: 選択（Shift: 切り替え　Ctrl: 外す　Ctrl+Shift: 加える）';
+      ? `カメラ ${name} から表示中${edited ? '（視点を一時的に移動中）' : ''}　Shift+C: 自由視点`
+      : 'Alt+マウス: 視点の操作　クリック・ドラッグ: 選択';
   }
 
   /** 解像度ゲート（ビューポート上のピクセル）。rect が null なら隠す。mask=false なら枠だけ */
@@ -750,7 +750,7 @@ export class UI {
     const head = $('select-head');
     const body = $('select-info');
     if (!info) {
-      head.innerHTML = '<p class="muted">ジョイント・メッシュ・カメラをクリックすると、ここに情報を表示します。</p>';
+      head.innerHTML = '<p class="muted">ビューポートでクリックするか、階層で選ぶと（カメラは階層から）、ここに情報を表示します。</p>';
       body.innerHTML = '';
       return;
     }
@@ -949,7 +949,14 @@ export class UI {
   // ---------------------------------------------------------------- ポーズ
   bindPose() {
     const AX = ['x', 'y', 'z'];
-    const num = (id, d) => { const v = parseFloat($(id).value); return Number.isFinite(v) ? v : d; };
+    // 読めない欄（空欄など）は、いまの値のまま（既定値にしない）
+    const num = (id, d) => {
+      const v = parseFloat($(id).value);
+      if (Number.isFinite(v)) return v;
+      const p = this.app.selected >= 0 && this.app.pose ? this.app.pose.get(this.app.selected) : null;
+      const m = /^pose-([trs])([xyz])$/.exec(id);
+      return p && m ? p[m[1]]['xyz'.indexOf(m[2])] : d;
+    };
     const read = () => ({
       t: AX.map((a) => num('pose-t' + a, 0)),
       r: AX.map((a) => num('pose-r' + a, 0)),
@@ -961,9 +968,10 @@ export class UI {
         // 確定（Enter・フォーカス移動）までを 1 つの操作として記録する。複数選んでいれば、Maya のチャンネルボックスと
         // 同じく、入力した成分だけを選んだものすべてに同じ値で入れる（ほかの成分はそれぞれの値のまま）
         el.addEventListener('input', () => {
+          // 打ちかけ（「-」や空欄など、まだ数値として読めないとき）は動かさない（既定値に一度戻って形が跳ねないように）
+          const v = parseFloat(el.value);
+          if (!Number.isFinite(v)) return;
           if (this.app.selection.length > 1) {
-            const v = parseFloat(el.value);
-            if (!Number.isFinite(v)) return;
             this.app.beginPoseEdit(this.app.selection.slice(), '数値入力');
             this.app.setPoseChannelForSelection(k, i, v);
           } else {

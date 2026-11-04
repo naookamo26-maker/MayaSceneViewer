@@ -284,9 +284,9 @@ class ViewerApp {
       this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     }
     window.addEventListener('keydown', (e) => {
-      const t = e.target;
-      // 入力欄では文字入力の取り消し（ブラウザ標準）を優先する
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
+      // 文字を入力する欄では、文字入力・取り消し（ブラウザ標準）を優先する。スライダー・チェックボックスなどは
+      // 押したあともフォーカスが残るので、その欄自身の操作（スライダーの矢印キーなど）以外はビューアのキー操作にする
+      if (isTextEntry(e.target, e.key)) return;
       if (this.curveEditor.handleKey(e)) return;          // カーブエディタの上では A・F をそちらで使う
       const k = e.key.toLowerCase();
       if ((e.ctrlKey || e.metaKey) && !e.altKey) {
@@ -329,7 +329,7 @@ class ViewerApp {
       const set = (key, v) => { this.setSetting(key, v); this.ui.syncSettings(this.settings); };
       if (k === 'f') this.frameSelection();
       else if (k === 'a') this.frameAll();
-      else if (k === 'escape') this.clearSelection();
+      else if (k === 'escape') this.clearSelection({ notify: true });
       else if (k === '4') set('shading', 'none');
       else if (k === '5') { set('shading', 'smooth'); set('textures', false); }   // Maya と同じ: 5 = テクスチャなし
       else if (k === '6') { set('shading', 'smooth'); set('textures', true); }    //               6 = テクスチャあり
@@ -1346,7 +1346,7 @@ class ViewerApp {
     const nodes = this.data.nodes;
     const sel = [];
     for (const ni of list) if (ni >= 0 && ni < nodes.length && !sel.includes(ni)) sel.push(ni);
-    if (!sel.length) { this.clearSelection(); return; }
+    if (!sel.length) { this.clearSelection(opts); return; }
     const ni = sel[sel.length - 1];
     this.selection = sel;
     this.selected = ni;
@@ -1368,9 +1368,9 @@ class ViewerApp {
     this.requestRender();
   }
 
-  /** 選択を Maya（Qt）へ知らせる。複数のときはパスを改行で区切る（最後がリード） */
+  /** 選択を Maya（Qt）へ知らせる。複数のときはパスを改行で区切る（最後がリード）。選択なしは空文字（Maya の選択も解除する） */
   notifySelection() {
-    if (!(this.bridge && this.bridge.nodeSelected) || !this.selection.length) return;
+    if (!(this.bridge && this.bridge.nodeSelected) || !this.data) return;
     this.bridge.nodeSelected(this.selection.map((ni) => this.data.nodes[ni].path).join('\n'));
   }
 
@@ -1433,9 +1433,10 @@ class ViewerApp {
     return true;
   }
 
-  /** パスの一覧で選ぶ（Maya の選択に合わせるとき。最後がリード）。見つかった数を返す */
+  /** パスの一覧で選ぶ（Maya の選択に合わせるとき。最後がリード）。見つかった数を返す。空の一覧なら選択を解除する */
   selectByPaths(paths) {
     if (!this.data || !Array.isArray(paths)) return 0;
+    if (!paths.length) { this.clearSelection(); return 0; }
     const nodes = this.data.nodes;
     const list = [];
     let mesh = -1;
@@ -1456,8 +1457,10 @@ class ViewerApp {
     return list.length;
   }
 
-  clearSelection() {
+  /** 選択を解除する。opts.notify: Maya（Qt）へ知らせる（何もないところのクリック・Esc など、ビューアで解除したとき） */
+  clearSelection(opts = {}) {
     if (!this.built) return;
+    const had = this.selection.length > 0;
     this.selected = -1;
     this.selection = [];
     this.selectedMesh = -1;     // 階層のメッシュの行から選んだメッシュ（なければ -1）
@@ -1475,6 +1478,7 @@ class ViewerApp {
     this.updateGizmo();
     if (this.settings.weightMode === 'selected') this.applyWeights();
     this.updateTimelineKeys();
+    if (opts.notify && had) this.notifySelection();
     this.requestRender();
   }
 
@@ -1560,7 +1564,7 @@ class ViewerApp {
       return;
     }
     // 何もないところ: 選び直すときだけ解除する（Maya と同じく、Shift・Ctrl では何もしない）
-    if (!hits.length) { if (mode === 'replace') this.clearSelection(); return; }
+    if (!hits.length) { if (mode === 'replace') this.clearSelection({ notify: true }); return; }
     const h = hits[0];
     const e = this.built.meshes[h.object.userData.meshIndex];
     if (this.settings.pickMode !== 'vertex') {
@@ -1765,7 +1769,8 @@ class ViewerApp {
   /**
    * フレームが変わったとき: ポーズ確認でキーのあるチャンネルを動かしていたら、その成分をカーブの値に戻す
    * （Maya と同じく、キーを打たずに動かした値はフレームを変えると戻る。キーのない成分はそのまま）。
-   * 元に戻す（Ctrl+Z）で取り消せるよう、1 つの操作として記録する。戻したら true
+   * 元に戻す（Ctrl+Z）で取り消せるよう、1 つの操作として記録する。ハンドルのドラッグ・数値入力の途中（再生中に
+   * 動かしているときなど）は、フレームごとに別の操作にせず、記録中の操作にまとめる。戻したら true
    */
   revertKeyedPoses() {
     if (!this.pose || !this.pose.size || !this.clip) return false;
@@ -1779,11 +1784,26 @@ class ViewerApp {
       if (!same) list.push([ni, after]);
     }
     if (!list.length) return false;
-    this.endPoseEdit();
+    if (this.edit) {
+      this.extendPoseEdit(list.map(([ni]) => ni));
+      for (const [ni, p] of list) this.pose.set(ni, p);
+      return true;
+    }
     this.beginPoseEdit(list.map(([ni]) => ni), 'キーのある値をカーブに戻す', list.length > 1);
     for (const [ni, p] of list) this.pose.set(ni, p);
     this.endPoseEdit();
     return true;
+  }
+
+  /** 記録中の操作に、ノードを加える（変える前の姿勢を覚える。すでに入っていれば何もしない） */
+  extendPoseEdit(nodes) {
+    const e = this.edit;
+    if (!e) return;
+    for (const ni of nodes) {
+      if (ni < 0 || e.nodes.includes(ni)) continue;
+      e.nodes.push(ni);
+      e.before.push([ni, this.snapshotPose(ni)]);
+    }
   }
 
   resetPose(ni) {
@@ -1841,7 +1861,15 @@ class ViewerApp {
     if (!sameChanges(e.before, after)) this.history.push({ label: e.label, before: e.before, after });
   }
 
+  /** ハンドルをドラッグ中は、元に戻す・やり直しを受け付けない（ドラッグの記録が途中で切れ、動かした分を戻せなくなるため） */
+  historyBlocked() {
+    if (!this.gizmoDragging) return false;
+    this.ui.setMessage('ハンドルの操作中は、元に戻す・やり直しはできません（ボタンを離してから）');
+    return true;
+  }
+
   undo() {
+    if (this.historyBlocked()) return false;
     this.endPoseEdit();
     const e = this.history.undo();
     this.ui.setMessage(e ? `元に戻しました: ${e.label}` : '元に戻せる操作はありません');
@@ -1849,6 +1877,7 @@ class ViewerApp {
   }
 
   redo() {
+    if (this.historyBlocked()) return false;
     this.endPoseEdit();
     const e = this.history.redo();
     this.ui.setMessage(e ? `やり直しました: ${e.label}` : 'やり直せる操作はありません');
@@ -2344,6 +2373,8 @@ class ViewerApp {
   }
 
   fit(center, radius, resetDirection = false) {
+    // 自分で視点を選び直したので、C キーでカメラを選んだときと同じく「シーケンスで見る」をやめる（再生も止まる）
+    if (this.seqFollow) this.setSequenceFollow(false);
     this.setCamera(-1, { quiet: true });          // カメラから見ているときは自由視点に戻す
     const cam = this.camera;
     const dir = resetDirection ? new Vector3(1, 0.75, 1) : cam.position.clone().sub(this.controls.target);
@@ -2415,6 +2446,19 @@ function makeGrid(size, divisions) {
   const grid = new LineSegments(g, new LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.7 }));
   grid.name = '__grid';
   return grid;
+}
+
+/**
+ * キー操作をその欄に任せるか。文字を入力する欄（数値・文字・検索など）はすべて、スライダーは矢印・Home・End・
+ * PageUp・PageDown（値を動かすキー）だけ。チェックボックス・ラジオ・ボタンは任せない（Space はブラウザ標準のまま）
+ */
+function isTextEntry(t, key) {
+  if (!t || !t.tagName) return false;
+  if (t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) return true;
+  if (t.tagName !== 'INPUT') return false;
+  const type = (t.type || 'text').toLowerCase();
+  if (type === 'range') return /^(Arrow(Left|Right|Up|Down)|Home|End|PageUp|PageDown)$/.test(key);
+  return !['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'color', 'image'].includes(type);
 }
 
 function niceCeil(x) {

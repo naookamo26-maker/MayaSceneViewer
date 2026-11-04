@@ -872,11 +872,12 @@ class ViewerWindow(QtWidgets.QMainWindow):
 
     def _on_viewer_selected(self, path):
         # 複数選んだときはパスが改行で区切られている（最後がリード。Maya の選択の順と同じ）
+        # 空ならビューアで選択を解除した（Maya の選択も解除する）
         paths = [p for p in path.split("\n") if p]
-        if not paths:
-            return
         self._last_viewer_path = paths
-        if len(paths) == 1:
+        if not paths:
+            self.statusBar().showMessage("選択を解除しました", 4000)
+        elif len(paths) == 1:
             self.statusBar().showMessage("選択: %s" % paths[0], 4000)
         else:
             self.statusBar().showMessage("選択: %d 個（リード: %s）" % (len(paths), paths[-1]), 4000)
@@ -884,6 +885,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
             return
         try:
             from maya import cmds
+            if not paths:
+                cmds.select(clear=True)
+                return
             found = [p for p in paths if cmds.objExists(p)]
             for p in paths:
                 if p not in found:
@@ -899,8 +903,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         except ImportError:
             return
         sel = cmds.ls(selection=True, long=True) or []
-        if sel:
-            self.viewer.select_paths(sel)
+        self.viewer.select_paths(sel)          # 空なら、ビューアの選択も解除する
 
     def _on_maya_selection_changed(self):
         try:
@@ -908,8 +911,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
                 return
             from maya import cmds
             sel = cmds.ls(selection=True, long=True) or []
-            if sel and sel != self._last_viewer_path:      # ビューアで選んだ結果の通知なら送り返さない
-                self.viewer.select_paths(sel)
+            if sel != self._last_viewer_path:      # ビューアで選んだ（解除した）結果の通知なら送り返さない
+                self._last_viewer_path = sel
+                self.viewer.select_paths(sel)      # 空なら、ビューアの選択も解除する
         except Exception:  # noqa: BLE001  ウィンドウ破棄中などは無視
             pass
 

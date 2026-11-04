@@ -434,6 +434,7 @@ table.kv td.l { text-align: left; }
 /* ---- ビューポート ---------------------------------------------------- */
 #viewport {
   position: relative;
+  container: viewport / inline-size;   /* タイムラインの折り返し・案内の表示を、ビューポートの幅で決める */
   min-width: 0;
   min-height: 0;
   background: linear-gradient(180deg, var(--vp-top) 0%, var(--vp-bottom) 100%);
@@ -462,7 +463,7 @@ table.kv td.l { text-align: left; }
 #vp-hud[hidden] { display: none; }
 #vp-hud.slow { color: #ff9a8c; }
 #vp-hud.idle { color: rgba(255, 255, 255, 0.55); }
-#viewport.has-timeline #vp-hud { bottom: 48px; }
+#viewport.has-timeline #vp-hud { bottom: calc(var(--tl-h, 40px) + 8px); }
 /* リグの再生キャッシュ（ヘッドアップディスプレイの 1 段上） */
 #vp-cache {
   position: absolute; right: 10px; bottom: 22px;
@@ -472,14 +473,18 @@ table.kv td.l { text-align: left; }
 }
 #vp-cache[hidden] { display: none; }
 #vp-cache.full { color: #f0c36b; }
-#viewport.has-timeline #vp-cache { bottom: 62px; }
+#viewport.has-timeline #vp-cache { bottom: calc(var(--tl-h, 40px) + 22px); }
+/* 左下の操作の案内（短い文。右下の HUD・キャッシュの表示の手前で省略し、狭いビューポートでは出さない） */
 #vp-hint {
   position: absolute; left: 10px; bottom: 8px;
+  max-width: calc(100% - 330px);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: rgba(255, 255, 255, 0.55);
   font-size: 11px;
   pointer-events: none;
 }
-#viewport.has-timeline #vp-hint { bottom: 48px; }
+#viewport.has-timeline #vp-hint { bottom: calc(var(--tl-h, 40px) + 8px); }
+@container viewport (max-width: 560px) { #vp-hint { display: none; } }
 /* 矩形選択の枠（Alt なしの左ドラッグ） */
 #marquee {
   position: absolute; pointer-events: none;
@@ -523,7 +528,8 @@ table.kv td.l { text-align: left; }
 #timeline .tl-status { flex: none; color: var(--text-dim); max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #timeline .tl-status:empty { display: none; }
 #timeline.loading .tl-btns, #timeline.loading #tl-play, #timeline.loading .tl-num, #timeline.loading .tl-track, #timeline.loading .tl-info { opacity: 0.35; }
-@media (max-width: 720px) {
+/* ビューポートが狭いとき（ウィンドウの幅ではなく、左右のパネル・カーブエディタを除いたビューポートの幅）は 2 段にする */
+@container viewport (max-width: 720px) {
   #timeline { flex-wrap: wrap; }
   #timeline .tl-track { flex-basis: 100%; order: 10; }
 }
@@ -671,7 +677,6 @@ body.sequencer-collapsed #sequencer .seq-body { display: none; }
 
 @media (max-width: 980px) {
   #app { --left-w: var(--left-user, 210px); --right-w: 250px; }
-  #vp-hint { display: none; }
 }
 @media (max-width: 720px) {
   #app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 50vh auto auto auto auto; }
