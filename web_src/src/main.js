@@ -50,7 +50,7 @@ const DEFAULTS = {
   cameraIcons: false,            // シーンのカメラの形を描く（初期状態は表示しない）
   cameraGate: true,              // カメラから見るとき、解像度ゲートの外側を暗くする
   hud: true,                     // ヘッドアップディスプレイ（再生のフレームレート）
-  playbackCacheMB: 256,          // リグの再生キャッシュの上限（MB。0 なら使わない。次回の起動でも使う）
+  playbackCacheMB: 512,          // リグの再生キャッシュの上限（MB。0 なら使わない。次回の起動でも使う）
   pickMode: 'object',            // クリックで選ぶもの: 'object'（オブジェクト）・'vertex'（頂点とそのウェイト）
   pickAll: false,                // Maya で選択できないもの（テンプレート・リファレンス）もクリックで選ぶ
 };

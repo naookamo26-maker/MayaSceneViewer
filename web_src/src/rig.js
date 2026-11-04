@@ -400,7 +400,7 @@ export class RigEvaluator {
     this.snapshotBytes = 0;                  // 再生キャッシュの大きさ（全レイヤー。カーブの形・属性の値を含む目安）
     this.frameBytes = this.moving.size * 128 + SNAPSHOT_BASE;   // 1 フレームの大きさの見込み（覚えたフレームの最大）
     this.countedCurves = new WeakSet();      // 大きさを数えたカーブの値（時間で変わらない形は全フレームで同じものを使う）
-    this.playbackLimit = 256 * 1024 * 1024;
+    this.playbackLimit = 512 * 1024 * 1024;
     this.current = null;                     // いまのフレームの再生キャッシュ（覚えないフレームは null）
     this.seeded = 0;                         // いまのフレームの評価で、ほかのレイヤーから写した動くノードの数（確認用）
     this.reset();
