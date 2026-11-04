@@ -718,6 +718,34 @@ class TestStage6(unittest.TestCase):
         self.assertIn("pv", g["ik"]["inputs"])
         self.assertEqual(g["ik"]["ik"]["solver"], "ikRPsolver")
 
+    def test_spline_up_vector_components(self):
+        """スプライン IK の up ベクトルの成分（.dwux など。「dwuv + 軸」ではない）の値・接続も、短い名前・長い名前で読む"""
+        body = ('createNode joint -n "a";\ncreateNode joint -n "b" -p "a";\n\tsetAttr ".t" -type "double3" 2 0 0 ;\n'
+                'createNode joint -n "c" -p "b";\n\tsetAttr ".t" -type "double3" 2 0 0 ;\n'
+                'createNode ikEffector -n "eff" -p "b";\ncreateNode ikHandle -n "ik";\n'
+                '\tsetAttr ".dtce" yes;\n\tsetAttr ".dwut" 6;\n\tsetAttr ".dwux" 0.5;\n'
+                'createNode transform -n "crv";\ncreateNode nurbsCurve -n "crvShape" -p "crv";\n'
+                '\tsetAttr ".cc" -type "nurbsCurve" 3 1 0 no 3 6 0 0 0 1 1 1 4 0 0 0 1 0 0 3 0 0 4 0 0;\n'
+                'createNode transform -n "ctrl";\ncreateNode ikSplineSolver -n "ikSplineSolver";\n'
+                'connectAttr "a.message" "ik.hsj";\nconnectAttr "eff.hp" "ik.hee";\n'
+                'connectAttr "ikSplineSolver.message" "ik.hsv";\nconnectAttr "crvShape.ws" "ik.ic";\n'
+                'connectAttr "c.tx" "eff.tx";\nconnectAttr "c.ty" "eff.ty";\nconnectAttr "c.tz" "eff.tz";\n'
+                'connectAttr "ctrl.ty" "ik.dwuz";\nconnectAttr "ctrl.tz" "ik.dWorldUpVectorEndY";\n')
+        _sc, anim = from_text(body)
+        g = {x["name"]: x for x in anim["graph"]}["ik"]
+        self.assertEqual(g["ik"]["solver"], "ikSplineSolver")
+        self.assertIn("dwuz", g["inputs"])
+        self.assertIn("dwvy", g["inputs"])                  # 長い名前 dWorldUpVectorEndY → dwvy
+        self.assertEqual(g["attrs"]["dwux"], 0.5)
+
+    def test_constraint_rest_long_names(self):
+        """コンストレイントのレストの値の長い名前（restTranslateX → rtx・restRotateZ → rrz。成分は「まとめた名前 + 軸」ではない）"""
+        from ma_viewer.ma_reader import normalize_attr
+        self.assertEqual(normalize_attr("restTranslateX"), "rtx")
+        self.assertEqual(normalize_attr("restRotateZ"), "rrz")
+        self.assertEqual(normalize_attr("restRotate"), "rsrr")
+        self.assertEqual(normalize_attr("enableRestPosition"), "erp")
+
     def test_cli(self):
         import io
         from contextlib import redirect_stdout

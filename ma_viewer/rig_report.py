@@ -133,8 +133,10 @@ def _ik_section(ms: MaScene, entry: dict) -> List[str]:
         parts.append(("極ベクトル", (lambda t, pv=pv: [t.plug(h, k, 0) for k in pv]) if pv else None))
         parts.append(("ひねり（twist）", (lambda t: t.plug(h, "twi", 0)) if "twi" in h.inputs else None))
     if entry["solver"] == "ikSplineSolver":
-        keys = [k for k in sorted(h.inputs) if _base(k) in ("ic", "twi", "rol", "dwum", "dwue", "dwuv", "dwve")]
-        parts.append(("カーブ・ひねり・world up", (lambda t, keys=keys: [t.plug(h, k, 0) for k in keys]) if keys else None))
+        keys = [k for k in sorted(h.inputs) if _base(k) in ("ic", "twi", "rol", "roc", "ikb", "dwum", "dwue", "dwuv", "dwve",
+                                                            "dwux", "dwuy", "dwuz", "dwvx", "dwvy", "dwvz")]
+        parts.append(("カーブ・ひねり・world up・rootOnCurve・ikBlend",
+                      (lambda t, keys=keys: [t.plug(h, k, 0) for k in keys]) if keys else None))
     parts.append(("開始ジョイントの親", lambda t: t.dag(entry["chain"][0], "pm", 0)))
     for title, fn in parts:
         if fn is None:
