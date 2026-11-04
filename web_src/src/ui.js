@@ -320,9 +320,9 @@ export class UI {
     $('menu-camera-state').textContent = ci >= 0 ? name + (edited ? '（視点を移動中）' : '') : '';
     $('viewport').classList.toggle('viewing-camera', ci >= 0);
     $('vp-hint').textContent = ci >= 0
-      ? `カメラ ${name} から表示中${edited ? '（視点を動かしています。フレームを動かすか再生すると戻ります）' : '（停止中はドラッグで視点を動かせます）'}`
+      ? `カメラ ${name} から表示中${edited ? '（視点を動かしています。フレームを動かすか再生すると戻ります）' : '（停止中は Alt+ドラッグ・ホイールで視点を動かせます）'}`
         + '　Shift+C: 自由視点に戻す'
-      : '左ドラッグ: 回転　中ドラッグ: 移動　右ドラッグ・ホイール: ズーム　クリック: 選択';
+      : 'Alt+左ドラッグ: 回転　Alt+中ドラッグ: 移動　Alt+右ドラッグ・ホイール: ズーム　クリック・ドラッグ: 選択（Shift: 切り替え　Ctrl: 外す　Ctrl+Shift: 加える）';
   }
 
   /** 解像度ゲート（ビューポート上のピクセル）。rect が null なら隠す。mask=false なら枠だけ */
@@ -400,8 +400,16 @@ export class UI {
         this.applyTreeVisibility();
         return;
       }
-      if (row.mesh >= 0) this.app.selectMesh(row.mesh);      // メッシュの行はその行を選択状態にする
-      else this.app.select(row.node, { notify: true });
+      // Maya のアウトライナーと同じ: Ctrl+クリックで切り替え、Shift+クリックでリードの行からその行までを選ぶ
+      // （Ctrl+Shift+クリックは加える）。メッシュの行は、その transform を選ぶ
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (e.shiftKey && !ctrl && this.selectedRow && !this.selectedRow.el.hidden) {
+        this.app.setSelection(this.rangeNodes(this.selectedRow, row), { notify: true });
+        return;
+      }
+      const mode = ctrl && e.shiftKey ? 'add' : ctrl ? 'toggle' : 'replace';
+      if (row.mesh >= 0) this.app.selectMesh(row.mesh, { mode });      // メッシュの行はその行を選択状態にする
+      else this.app.select(row.node, { notify: true, mode });
     });
     // Maya のアウトライナーと同じく、キー操作はマウスが上にあるパネルで受ける（treeKey）
     tree.addEventListener('pointerenter', () => { this.treeHover = true; });
@@ -445,6 +453,23 @@ export class UI {
     return true;
   }
 
+  /** 表示している行のうち、from から to までの行のノード（選んだ順。to の行が最後 = リード） */
+  rangeNodes(from, to) {
+    const shown = this.rows.filter((r) => !r.el.hidden);
+    let a = shown.indexOf(from), b = shown.indexOf(to);
+    if (a < 0 || b < 0) return [to.node];
+    const step = a <= b ? 1 : -1;
+    const out = [];
+    for (let i = a; ; i += step) {
+      const n = shown[i].node;
+      const k = out.indexOf(n);
+      if (k >= 0) out.splice(k, 1);
+      out.push(n);
+      if (i === b) break;
+    }
+    return out;
+  }
+
   /** 階層の行を選ぶ（クリックと同じ）。表示の範囲に入れる */
   selectRow(row) {
     if (row.mesh >= 0) this.app.selectMesh(row.mesh);
@@ -478,6 +503,7 @@ export class UI {
     this.rowOfMesh = new Map();
     this.collapsed = new Set();
     this.selectedRow = null;
+    this.selectedRows = [];
     this.parentMarks = [];
     this.textureState = null;
     const meshesOf = new Map();
@@ -600,26 +626,57 @@ export class UI {
     }
   }
 
-  /** 選択中のノードの行を強調する。mesh（メッシュの番号）を渡すと、そのメッシュの行を強調する */
-  highlightNode(ni, nodes, mesh = -1) {
-    if (this.selectedRow) {
-      this.selectedRow.el.classList.remove('selected');
-      this.selectedRow.el.removeAttribute('aria-selected');
+  /**
+   * 選択中のノードの行を強調する。ni はリード、mesh（メッシュの番号）を渡すとリードはそのメッシュの行を強調する。
+   * all は選択中のノードすべて（複数のとき、リード以外の行は淡く強調する）
+   */
+  highlightNode(ni, nodes, mesh = -1, all = null) {
+    for (const r of this.selectedRows || []) {
+      r.el.classList.remove('selected', 'other');
+      r.el.removeAttribute('aria-selected');
     }
+    this.selectedRows = [];
     this.selectedRow = null;
     for (const r of this.parentMarks || []) r.el.classList.remove('child-selected');
     this.parentMarks = [];
     const row = (mesh >= 0 && this.rowOfMesh.get(mesh)) || this.rowOfNode.get(ni);
-    if (!row) return;
+    const rows = [];
+    for (const n of all || []) {
+      const r = this.rowOfNode.get(n);
+      if (r && r !== row && n !== ni) rows.push(r);
+    }
+    if (row) rows.push(row);
+    if (!rows.length) return;
+    const marked = new Set(rows);
     // Maya のアウトライナーと同じく、ビューポートで選んでも階層は開かない・スクロールしない（F で表示）。
     // 選んだノードの祖先の行に印を付け、閉じた中に選択があることが分かるようにする
-    for (let p = mesh >= 0 ? ni : nodes[ni].parent; p >= 0; p = nodes[p].parent) {
-      const pr = this.rowOfNode.get(p);
-      if (pr && pr !== row) { pr.el.classList.add('child-selected'); this.parentMarks.push(pr); }
+    for (const r of rows) {
+      for (let p = r.mesh >= 0 ? r.node : nodes[r.node].parent; p >= 0; p = nodes[p].parent) {
+        const pr = this.rowOfNode.get(p);
+        if (pr && !marked.has(pr)) { pr.el.classList.add('child-selected'); this.parentMarks.push(pr); marked.add(pr); }
+      }
     }
-    row.el.classList.add('selected');
-    row.el.setAttribute('aria-selected', 'true');
-    this.selectedRow = row;
+    for (const r of rows) {
+      r.el.classList.add('selected');
+      if (r !== row) r.el.classList.add('other');
+      r.el.setAttribute('aria-selected', 'true');
+      this.selectedRows.push(r);
+    }
+    this.selectedRow = row || null;
+  }
+
+  /** 矩形選択の枠（rect はキャンバスの中のピクセル。null で消す） */
+  setMarquee(rect) {
+    let el = document.getElementById('marquee');
+    if (!rect) { if (el) el.hidden = true; return; }
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'marquee';
+      document.getElementById('viewport').appendChild(el);
+    }
+    el.hidden = false;
+    Object.assign(el.style, { left: `${rect.left}px`, top: `${rect.top}px`,
+      width: `${Math.max(0, rect.right - rect.left)}px`, height: `${Math.max(0, rect.bottom - rect.top)}px` });
   }
 
   /** テクスチャの読み込み状況（選択情報のメッシュの欄に出す）を受け取る */
@@ -704,7 +761,8 @@ export class UI {
     // 「ポーズ変更中」の印は、出ていないときも場所を取っておく（動かし始め・戻したときに下の行が上下に動かないように）
     head.innerHTML = `<p class="info-title"><span class="info-name">${esc(n.name)}<span class="info-type">${esc(typeLabel)}</span></span>`
       + `<span class="posed-badge${info.posed ? '' : ' off'}"${info.posed ? '' : ' aria-hidden="true"'}>ポーズ変更中</span></p>`
-      + `<p class="info-path">${esc(n.path)}</p>`;
+      + `<p class="info-path">${esc(n.path)}</p>`
+      + this.selectionListHtml(info.selection);
 
     const SRC = { pm: 'skinCluster の .pm', dagPose: 'dagPose', bps: 'ジョイントの .bps' };
     let h = '<table class="kv">';
@@ -789,6 +847,12 @@ export class UI {
     body.querySelectorAll('[data-view-camera]').forEach((el) => {
       el.addEventListener('click', () => this.app.setCamera(+el.dataset.viewCamera));
     });
+    // 複数選択の一覧: 名前をクリックすると、選択はそのままでそのノードをリードにする
+    head.querySelectorAll('.sel-multi li[data-node]').forEach((el) => {
+      el.addEventListener('click', () => this.app.makeLead(+el.dataset.node));
+    });
+    const det = head.querySelector('.sel-multi');
+    if (det) det.addEventListener('toggle', () => { this.selListOpen = det.open; });
   }
 
   /**
@@ -870,6 +934,18 @@ export class UI {
     });
   }
 
+  /** 複数選んでいるときの見出し（選択数とリード）と、選んだものの一覧（折りたたみ）。1 つなら空 */
+  selectionListHtml(sel) {
+    if (!sel || sel.length < 2) return '';
+    const lead = sel[sel.length - 1];
+    const TYPE = { joint: 'ジョイント', transform: 'トランスフォーム' };
+    // 選んだ順（最後がリード）。一覧は新しく選んだものを上に出す
+    const items = sel.slice().reverse().map((s) => `<li${s.lead ? ' class="lead" title="リード（パネル・数値欄はこのノード）"'
+      : ` data-node="${s.node}" title="クリックでリードにする"`}>${esc(s.name)}<span class="t">${esc(TYPE[s.type] || s.type)}${s.lead ? '・リード' : ''}</span></li>`);
+    return `<details class="sel-multi"${this.selListOpen ? ' open' : ''}><summary><b>${sel.length} 個を選択</b>（リード: ${esc(lead.name)}）</summary>`
+      + `<ul>${items.join('')}</ul></details>`;
+  }
+
   // ---------------------------------------------------------------- ポーズ
   bindPose() {
     const AX = ['x', 'y', 'z'];
@@ -879,15 +955,22 @@ export class UI {
       r: AX.map((a) => num('pose-r' + a, 0)),
       s: AX.map((a) => num('pose-s' + a, 1)),
     });
-    const onInput = () => {
-      // 確定（Enter・フォーカス移動）までを 1 つの操作として記録する
-      this.app.beginPoseEdit([this.app.selected], '数値入力');
-      this.app.setPoseForSelected(read());
-    };
     for (const k of ['t', 'r', 's']) {
-      for (const a of AX) {
+      AX.forEach((a, i) => {
         const el = $('pose-' + k + a);
-        el.addEventListener('input', onInput);
+        // 確定（Enter・フォーカス移動）までを 1 つの操作として記録する。複数選んでいれば、Maya のチャンネルボックスと
+        // 同じく、入力した成分だけを選んだものすべてに同じ値で入れる（ほかの成分はそれぞれの値のまま）
+        el.addEventListener('input', () => {
+          if (this.app.selection.length > 1) {
+            const v = parseFloat(el.value);
+            if (!Number.isFinite(v)) return;
+            this.app.beginPoseEdit(this.app.selection.slice(), '数値入力');
+            this.app.setPoseChannelForSelection(k, i, v);
+          } else {
+            this.app.beginPoseEdit([this.app.selected], '数値入力');
+            this.app.setPoseForSelected(read());
+          }
+        });
         // 確定したら、実際の値（Maya でロックしたチャンネルを固定し直した結果）で欄を表示し直す
         const commit = () => {
           this.app.endPoseEdit();
@@ -897,9 +980,10 @@ export class UI {
         el.addEventListener('blur', commit);
         // Enter で確定（次の欄へは Tab）
         el.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.blur(); });
-      }
+      });
     }
-    $('pose-reset').addEventListener('click', () => this.app.resetPose(this.app.selected));
+    // 複数選んでいれば、選んだものすべてを戻す
+    $('pose-reset').addEventListener('click', () => this.app.resetPoses(this.app.selection.length ? this.app.selection.slice() : [this.app.selected]));
     $('pose-reset-all').addEventListener('click', () => this.app.resetAllPoses());
   }
 
@@ -935,6 +1019,21 @@ export class UI {
       put('pose-r' + a, p.r[i]);
       put('pose-s' + a, p.s[i]);
     });
+    // 複数選択: 欄はリードの値。ノードごとに値が違う欄に印を付け、入力すると全部に入ることを示す
+    const multi = this.app.selection.length > 1 ? this.app.selectionPoseInfo() : null;
+    for (const k of ['t', 'r', 's']) {
+      ['x', 'y', 'z'].forEach((a, i) => {
+        const el = $(`pose-${k}${a}`);
+        const mixed = !!(multi && multi.mixed[k][i]);
+        el.classList.toggle('mixed', mixed);
+        el.title = mixed ? 'ノードごとに値が違います（表示はリードの値。入力すると、選んだものすべてがこの値になります）' : '';
+      });
+    }
+    const note = $('pose-multi');
+    note.hidden = !multi;
+    note.textContent = multi ? `数値はリード（${multi.leadName}）の値です。入力した欄の値を、選んだ ${multi.count} 個すべてに入れます（Maya のチャンネルボックスと同じ）。`
+      + (multi.mixed.any ? '斜体の欄はノードごとに値が違います。' : '') : '';
+    $('pose-reset').textContent = multi ? `選択を戻す（${multi.count} 個）` : 'このノードを戻す';
   }
 
   // ---------------------------------------------------------------- 警告・凡例・状態

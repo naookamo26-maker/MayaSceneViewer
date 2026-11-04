@@ -8,7 +8,8 @@ import {
 import { ControlOverlay } from './controlOverlay.js';
 
 export const JOINT_COLOR = new Color(0x5ec8e5);
-export const SELECT_COLOR = new Color(0xf2a93b);
+export const SELECT_COLOR = new Color(0xf2a93b);           // 選択（複数選んだときはリード = 最後に選んだもの）
+export const SELECT_OTHER_COLOR = new Color(0xfff0c8);     // 複数選んだときのリード以外（Maya のリード以外の白にあたる）
 export const ESTIMATED_COLOR = new Color(0xb9a6f2);     // バインドポーズの形で推定したノード
 export const UNKNOWN_COLOR = new Color(0x6b737c);       // 値を求められないノード
 const AXIS_COLORS = [new Color(0xe5675b), new Color(0x7fd16b), new Color(0x5b8ff0)];
@@ -49,6 +50,7 @@ export class JointOverlay {
     this.xray = true;
     this.axesMode = 'selected';
     this.selected = -1;
+    this.selectedSet = new Set();   // 選択中のノード（リードを含む）
     this.hiddenNodes = null;   // nodeIndex → true なら描かない（親を含めて非表示のノード）
     this.joints = [];
     this.links = [];
@@ -80,6 +82,7 @@ export class JointOverlay {
     this.links = [];
     this.slotOf = new Map();
     this.selected = -1;
+    this.selectedSet = new Set();
   }
 
   /** @param built buildScene() の結果  @param nodes data.nodes */
@@ -186,7 +189,17 @@ export class JointOverlay {
   setXray(v) { this.xray = v; this.applyXray(); }
   setSize(v) { this.size = v; this.update(); }
   setAxesMode(v) { this.axesMode = v; this.update(); }
-  setSelected(ni) { this.selected = ni; this.update(); }
+  /** @param ni リード（-1 で選択なし）  @param set 選択中のノードすべて（省略時はリードだけ） */
+  setSelected(ni, set = null) {
+    this.selected = ni;
+    this.selectedSet = set ? new Set(set) : new Set(ni >= 0 ? [ni] : []);
+    this.update();
+  }
+
+  /** 選択の色（リードはオレンジ、ほかの選択は淡い色）。選んでいなければ null */
+  selectColorOf(ni) {
+    return ni === this.selected ? SELECT_COLOR : this.selectedSet.has(ni) ? SELECT_OTHER_COLOR : null;
+  }
   /** ジョイント（球・骨・ローカル軸）の表示 */
   setVisible(v) { this.jointGroup.visible = v; }
   /** コントローラーの目印の表示 */
@@ -202,8 +215,6 @@ export class JointOverlay {
     if (!this.spheres) return;
     const objs = this.built.nodeObjects;
     const r = this.radius();
-    const childOfSelected = new Set();
-    this.links.forEach(([p, c], k) => { if (p === this.selected) childOfSelected.add(k); });
 
     const hidden = this.hiddenNodes;
     const isHidden = (ni) => !!(hidden && hidden[ni]);
@@ -216,7 +227,7 @@ export class JointOverlay {
       const rr = isHidden(ni) ? 0 : r;           // 非表示のジョイントは大きさ 0（ピックもされない）
       _m.compose(_p, _ident, _s.set(rr, rr, rr));
       this.spheres.setMatrixAt(k, _m);
-      this.spheres.setColorAt(k, ni === this.selected ? SELECT_COLOR : baseColor(ni, JOINT_COLOR));
+      this.spheres.setColorAt(k, this.selectColorOf(ni) || baseColor(ni, JOINT_COLOR));
     });
     this.spheres.instanceMatrix.needsUpdate = true;
     if (this.spheres.instanceColor) this.spheres.instanceColor.needsUpdate = true;
@@ -235,7 +246,7 @@ export class JointOverlay {
         _m.compose(_a, _q, _s.set(w, len, w));
       }
       this.bones.setMatrixAt(k, _m);
-      this.bones.setColorAt(k, childOfSelected.has(k) ? SELECT_COLOR : baseColor(c, JOINT_COLOR));
+      this.bones.setColorAt(k, this.selectColorOf(p) || baseColor(c, JOINT_COLOR));   // 選んだジョイントから出る骨
     });
     this.bones.instanceMatrix.needsUpdate = true;
     if (this.bones.instanceColor) this.bones.instanceColor.needsUpdate = true;
@@ -247,7 +258,7 @@ export class JointOverlay {
     let n = 0;
     const axisLen = r * 4;
     const showAll = this.axesMode === 'all';
-    const list = showAll ? this.joints : (this.axesMode === 'selected' && this.selected >= 0 ? [this.selected] : []);
+    const list = showAll ? this.joints : (this.axesMode === 'selected' ? this.joints.filter((ni) => this.selectedSet.has(ni)) : []);
     for (const ni of list) {
       if (isHidden(ni)) continue;
       const e = objs[ni].matrixWorld.elements;
@@ -278,8 +289,7 @@ export class JointOverlay {
     if (!this.spheres || !this.controls.length) return;
     const hidden = this.hiddenNodes;
     this.ctrl.update({
-      selected: this.selected,
-      selectColor: SELECT_COLOR,
+      selectColorOf: (ni) => this.selectColorOf(ni),
       isHidden: (ni) => !!(hidden && hidden[ni]),
       statusColor: (ni) => {
         const st = this.statusOf ? this.statusOf(ni) : null;

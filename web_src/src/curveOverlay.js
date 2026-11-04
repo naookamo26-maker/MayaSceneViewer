@@ -6,7 +6,8 @@ import { parseNurbsCurve, pointAt, domain, withCvs } from './curve.js';
 
 export const CURVE_COLOR = new Color(0xd3d9e0);          // 色の指定がないカーブ（Maya の既定の濃紺は暗い背景で見えにくく、ジョイントの水色とも分ける）
 const TEMPLATE_COLOR = new Color(0x80868d);              // テンプレート表示
-const SELECT_COLOR = new Color(0xf2a93b);
+const SELECT_COLOR = new Color(0xf2a93b);                // 選択（複数のときはリード）
+const SELECT_OTHER_COLOR = new Color(0xfff0c8);          // 複数選んだときのリード以外
 const PER_SPAN = 16;                                     // 1 スパンあたりの折れ線の点の数
 
 /** 共通 JSON の curves の 1 本からカーブ（.cc の形に .cp の調整を足したもの）。読めなければ null */
@@ -45,6 +46,7 @@ export class CurveOverlay {
     this.visible = true;
     this.hiddenNodes = null;
     this.selected = -1;
+    this.selectedSet = new Set();
   }
 
   clear() {
@@ -102,7 +104,12 @@ export class CurveOverlay {
   setVisible(v) { this.visible = v; this.apply(); }
   /** @param hidden 配列（nodeIndex → 非表示なら true）または null */
   setHiddenNodes(hidden) { this.hiddenNodes = hidden; this.apply(); }
-  setSelected(ni) { this.selected = ni; this.apply(); }
+  /** @param ni リード（-1 で選択なし）  @param set 選択中のノードすべて（省略時はリードだけ） */
+  setSelected(ni, set = null) {
+    this.selected = ni;
+    this.selectedSet = set ? new Set(set) : new Set(ni >= 0 ? [ni] : []);
+    this.apply();
+  }
   /** カーブを持つ（表示する）transform か。コントローラーの目印を出さないために使う */
   hasCurve(ni) { return this.byNode.has(ni); }
 
@@ -114,7 +121,7 @@ export class CurveOverlay {
     for (const it of this.items) {
       if (!it) continue;
       it.line.visible = this.isShown(it);
-      it.line.material.color.copy(it.node === this.selected ? SELECT_COLOR : it.color);
+      it.line.material.color.copy(it.node === this.selected ? SELECT_COLOR : this.selectedSet.has(it.node) ? SELECT_OTHER_COLOR : it.color);
     }
   }
 

@@ -71,7 +71,8 @@ def step3():
 
 
 def step4():
-    check(calls["select"] and calls["select"][-1].endswith("|elbow"), "ビューアの選択を Maya へ: %s" % calls["select"])
+    # 複数選択に対応して、cmds.select にはパスの一覧（最後がリード）を渡す
+    check(calls["select"] and calls["select"][-1][-1].endswith("|elbow"), "ビューアの選択を Maya へ: %s" % calls["select"])
     # Maya 側で wrist を選択したことにして scriptJob のコールバックを呼ぶ
     F.SCENE.selection = ["|rig_grp|shoulder|elbow|forearm_twist|wrist"]
     calls["jobs"][1]()

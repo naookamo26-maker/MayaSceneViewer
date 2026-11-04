@@ -152,7 +152,7 @@
     <div id="vp-hud" hidden role="status" aria-live="off" title="再生中に実際に表示できたフレーム数（1 秒あたり）と、シーンのフレームレート"></div>
     <div id="vp-cache" hidden role="status" aria-live="off" title="リグの再生キャッシュ: 覚えたフレーム数 / 再生範囲のフレーム数と、使っているメモリ（目安）。タイムラインの上端の緑の帯が覚えたフレーム"></div>
     <div id="legend" hidden></div>
-    <div id="vp-hint">左ドラッグ: 回転　中ドラッグ: 移動　右ドラッグ・ホイール: ズーム　クリック: 選択</div>
+    <div id="vp-hint">Alt+左ドラッグ: 回転　Alt+中ドラッグ: 移動　Alt+右ドラッグ・ホイール: ズーム　クリック・ドラッグ: 選択（Shift: 切り替え　Ctrl: 外す　Ctrl+Shift: 加える）</div>
     <div id="timeline" role="group" aria-label="タイムライン" hidden>
       <div class="tl-btns" role="group" aria-label="戻る">
         <button class="icon-btn" id="tl-first" aria-label="先頭のフレーム" title="先頭のフレーム（Home）"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor"><rect x="1.5" y="3" width="1.5" height="8"/><path d="M8 3v8L3.5 7Z"/><path d="M12.5 3v8L8 7Z"/></svg></button>
@@ -264,6 +264,7 @@
               <input type="number" id="pose-sz" step="0.05" value="1" aria-label="スケール Z">
             </div>
             <p class="muted small">ローカル軸が基準です（回転は度・回転順 XYZ）。ビューポートでは W・E・R のハンドルでも操作できます。</p>
+            <p class="small pose-multi" id="pose-multi" hidden></p>
             <p class="small pose-lock" id="pose-lock" hidden></p>
             <div class="pose-btns">
               <button class="btn" id="pose-reset">このノードを戻す</button>

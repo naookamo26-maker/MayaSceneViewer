@@ -8,7 +8,7 @@
 // ジョイントの親にスケールの追加分があるときは、Maya と同じく
 //   T · S⁻¹ · (平行移動を除いた残り)
 // として、子の位置だけが伸びて子自身は拡大されないようにする。
-import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
+import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { clampLimits, composeLocalMatrix, composeMaya, decomposeMaya, mayaEuler, poseChannels } from './animation.js';
 
 const D2R = Math.PI / 180;
@@ -59,6 +59,49 @@ export function poseFromTransform(position, quaternion, scale) {
     r: [_e.x / D2R, _e.y / D2R, _e.z / D2R],
     s: scale.toArray(),
   });
+}
+
+/**
+ * 複数選んだノードをハンドルで一緒に動かすとき: リードを動かした分（leadStart → leadNow）を、ほかのノードの姿勢 start に加える。
+ * 姿勢のワールド行列は「基準フレーム · 姿勢の行列」（frameMatrix 参照）。Maya と同じく
+ *   移動 … world: ワールドで同じ向き・同じ量（各ノードのフレームに直す）、local: リードのローカル軸での量を、各ノードの自分の軸で
+ *   回転 … world: ワールドで同じ回転を各ノードのピボットのまわりに、local: リードのローカル軸での回転を、各ノードの自分の軸で
+ *   スケール … 各ノードのローカル軸で同じ倍率
+ * @param mode 'translate' | 'rotate' | 'scale'  @param world ハンドルの向きがワールドか
+ * @param leadFrame リードの基準フレーム（Matrix4）  @param frame このノードの基準フレーム（Matrix4）
+ */
+export function propagatePoseDelta(mode, world, leadStart, leadNow, leadFrame, start, frame) {
+  const out = normalizePose(start);
+  const qs = poseQuaternion(leadStart, new Quaternion());
+  const qn = poseQuaternion(leadNow, new Quaternion());
+  const qi = poseQuaternion(out, new Quaternion());
+  if (mode === 'translate') {
+    const d = new Vector3().fromArray(leadNow.t).sub(new Vector3().fromArray(leadStart.t));
+    if (world) {
+      d.applyMatrix3(new Matrix3().setFromMatrix4(leadFrame));                 // ワールドでの移動量
+      const inv = new Matrix3().setFromMatrix4(frame);
+      if (Math.abs(inv.determinant()) > 1e-12) d.applyMatrix3(inv.invert());   // このノードのフレームでの量
+    } else {
+      d.applyQuaternion(qs.clone().invert()).applyQuaternion(qi);             // リードの軸 → このノードの軸
+    }
+    out.t = out.t.map((v, k) => v + d.getComponent(k));
+  } else if (mode === 'rotate') {
+    let q;
+    if (world) {
+      const fl = new Quaternion(), fi = new Quaternion(), v = new Vector3();
+      leadFrame.decompose(v, fl, new Vector3());
+      frame.decompose(v, fi, new Vector3());
+      // ワールドでの回転 Rw = Fl · qn · qs⁻¹ · Fl⁻¹、このノードは Fi⁻¹ · Rw · Fi · qi
+      const rw = fl.clone().multiply(qn).multiply(qs.clone().invert()).multiply(fl.clone().invert());
+      q = fi.clone().invert().multiply(rw).multiply(fi).multiply(qi);
+    } else {
+      q = qi.clone().multiply(qs.clone().invert().multiply(qn));                  // qi · (qs⁻¹ · qn)
+    }
+    out.r = poseFromTransform(new Vector3(), q.normalize(), new Vector3(1, 1, 1)).r;
+  } else if (mode === 'scale') {
+    out.s = out.s.map((v, k) => (Math.abs(leadStart.s[k]) > 1e-12 ? v * leadNow.s[k] / leadStart.s[k] : v));
+  }
+  return normalizePose(out);
 }
 
 const ROTATE_ORDERS = ['xyz', 'yzx', 'zxy', 'xzy', 'yxz', 'zyx'];

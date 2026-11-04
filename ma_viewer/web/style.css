@@ -182,6 +182,8 @@ body.right-collapsed #right .panel-strip {
 }
 .row:hover { background: var(--panel-2); }
 .row.selected { background: rgba(242, 169, 59, 0.18); box-shadow: inset 2px 0 0 var(--select); }
+/* 複数選んだときのリード以外の行（リードの行より淡く） */
+.row.selected.other { background: rgba(255, 240, 200, 0.10); box-shadow: inset 2px 0 0 rgba(255, 240, 200, 0.75); }
 .row.dim .name { color: var(--text-dim); }
 /* 選んだノードの祖先（閉じた中に選択があることを示す薄い強調） */
 .row.child-selected { background: rgba(242, 169, 59, 0.11); }
@@ -395,6 +397,18 @@ table.kv td.l { text-align: left; }
 .pose-vec .pv-label { color: var(--text-dim); }
 .pose-vec input:disabled { opacity: 0.45; cursor: not-allowed; }
 .pose-lock { color: var(--select); margin: 4px 0; }
+/* 複数選択: 数値欄はリードの値。ノードごとに値が違う欄は薄く・斜体にする（入力すると全部がその値になる） */
+.pose-multi { color: var(--text-dim); margin: 4px 0; }
+.pose-vec input.mixed { color: var(--text-dim); font-style: italic; }
+/* 選択の見出しの、複数選択の一覧（クリックでリードにする） */
+.sel-multi { margin: 0 0 8px; font-size: 12px; }
+.sel-multi summary { cursor: pointer; color: var(--text); }
+.sel-multi summary b { color: var(--select); font-weight: 600; }
+.sel-multi ul { list-style: none; margin: 4px 0 0; padding: 0; max-height: 160px; overflow: auto; }
+.sel-multi li { padding: 1px 6px; border-radius: 3px; cursor: pointer; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sel-multi li:hover { background: var(--panel-2); color: var(--text); }
+.sel-multi li.lead { color: var(--select); cursor: default; }
+.sel-multi li .t { color: var(--text-dim); font-size: 11px; margin-left: 6px; }
 .pose-vec input {
   width: 100%; height: 24px; padding: 0 4px;
   border: 1px solid var(--line); border-radius: var(--radius);
@@ -466,6 +480,14 @@ table.kv td.l { text-align: left; }
   pointer-events: none;
 }
 #viewport.has-timeline #vp-hint { bottom: 48px; }
+/* 矩形選択の枠（Alt なしの左ドラッグ） */
+#marquee {
+  position: absolute; pointer-events: none;
+  border: 1px dashed rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+#marquee[hidden] { display: none; }
 
 /* ---- タイムライン（ビューポートの下端） ------------------------------------ */
 #timeline {

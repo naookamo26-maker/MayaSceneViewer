@@ -262,6 +262,10 @@ class ViewerWidget(QtWidgets.QWidget):
     def select_path(self, path: str):
         self._call("selectByPath", path)
 
+    def select_paths(self, paths):
+        """パスの一覧で選ぶ（最後がリード。Maya の選択に合わせるとき）"""
+        self._call("selectByPaths", list(paths))
+
     def show_loading(self, text: str, frac: float = -1.0, sub_text: str = "", sub_frac: float = -1.0):
         """読み込み中の表示。sub_text・sub_frac はいま読んでいるファイル（リファレンスがあるときの 2 段目）"""
         self._call("showLoading", text, frac, sub_text, sub_frac)
@@ -867,16 +871,25 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.show_scene(scene, "取得 %.2f 秒" % (time.time() - t0))
 
     def _on_viewer_selected(self, path):
-        self._last_viewer_path = path
-        self.statusBar().showMessage("選択: %s" % path, 4000)
+        # 複数選んだときはパスが改行で区切られている（最後がリード。Maya の選択の順と同じ）
+        paths = [p for p in path.split("\n") if p]
+        if not paths:
+            return
+        self._last_viewer_path = paths
+        if len(paths) == 1:
+            self.statusBar().showMessage("選択: %s" % paths[0], 4000)
+        else:
+            self.statusBar().showMessage("選択: %d 個（リード: %s）" % (len(paths), paths[-1]), 4000)
         if self.host != "maya" or not self.a_sync.isChecked():
             return
         try:
             from maya import cmds
-            if cmds.objExists(path):
-                cmds.select(path, replace=True)
-            else:
-                self.log("warn", "Maya のシーンに %s がありません（選択を反映できません）" % path)
+            found = [p for p in paths if cmds.objExists(p)]
+            for p in paths:
+                if p not in found:
+                    self.log("warn", "Maya のシーンに %s がありません（選択を反映できません）" % p)
+            if found:
+                cmds.select(found, replace=True)
         except Exception as exc:  # noqa: BLE001
             self.log("warn", "Maya の選択を変更できませんでした: %s" % exc)
 
@@ -887,7 +900,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
             return
         sel = cmds.ls(selection=True, long=True) or []
         if sel:
-            self.viewer.select_path(sel[0])
+            self.viewer.select_paths(sel)
 
     def _on_maya_selection_changed(self):
         try:
@@ -895,8 +908,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
                 return
             from maya import cmds
             sel = cmds.ls(selection=True, long=True) or []
-            if sel and sel[0] != self._last_viewer_path:
-                self.viewer.select_path(sel[0])
+            if sel and sel != self._last_viewer_path:      # ビューアで選んだ結果の通知なら送り返さない
+                self.viewer.select_paths(sel)
         except Exception:  # noqa: BLE001  ウィンドウ破棄中などは無視
             pass
 

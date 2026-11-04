@@ -138,12 +138,13 @@ def main() -> int:
         js(center % "'.menu-btn[aria-controls=\"menu-camera\"]'", lambda p: (click(*p), QtCore.QTimer.singleShot(300, lambda: opened(None))))
 
     def s_camera_drag(nxt):
-        """カメラから見ているとき: 停止中はドラッグで視点を動かせ、フレームを動かすとカメラの位置に戻る。再生中は動かせない"""
+        """カメラから見ているとき: 停止中は Alt+ドラッグで視点を動かせ、フレームを動かすとカメラの位置に戻る。再生中は動かせない"""
         drag_js = """JSON.stringify((() => {
           const app = window.mayaViewer.debug.app, c = app.canvas, r = c.getBoundingClientRect();
           const cam = app.activeCamera(), before = cam.position.toArray();
           const ev = (type, x, y, buttons) => c.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y,
-            button: type === 'pointermove' ? -1 : 0, buttons, pointerId: 1, pointerType: 'mouse', isPrimary: true, bubbles: true }));
+            button: type === 'pointermove' ? -1 : 0, buttons, pointerId: 1, pointerType: 'mouse', isPrimary: true, bubbles: true,
+            altKey: true }));   // Maya と同じく Alt+ドラッグで視点を動かす
           const x = r.left + r.width / 2, y = r.top + r.height / 2;
           ev('pointerdown', x, y, 1);
           for (let i = 1; i <= 8; i++) ev('pointermove', x + i * 10, y + i * 3, 1);
