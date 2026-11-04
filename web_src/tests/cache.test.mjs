@@ -185,3 +185,157 @@ test('再現チェックのあとも、評価の結果は変わらない', () =>
     for (const f of [10, 21]) assert.deepEqual(state(rig, f), fresh(data, f), `${name} フレーム ${f}`);
   }
 });
+
+// ---------------------------------------------------------------- 追加分ごとのキャッシュ（ノードごとの目印）
+/** ノード番号 → Matrix4 の追加分から、poseOf とノードごとの目印（Map）を作る */
+function posed(entries) {
+  const m = new Map(entries.map(([ni, mat]) => [ni, mat]));
+  const keys = new Map(entries.map(([ni, mat]) => [ni, mat.elements.map((x) => x.toFixed(9)).join(',')]));
+  return [m.size ? (ni) => m.get(ni) || null : undefined, m.size ? keys : undefined];
+}
+
+/** evaluate の中での、動くノードのローカル行列の計算の回数を数える（評価のあとに読む値の分は数えない） */
+function countLocal(rig) {
+  const c = { n: 0, on: false };
+  const orig = rig.localFileUncached.bind(rig);
+  rig.localFileUncached = (ni, rest) => { if (c.on) c.n++; return orig(ni, rest); };
+  const ev = rig.evaluate.bind(rig);
+  rig.evaluate = (...a) => { c.on = true; try { return ev(...a); } finally { c.on = false; } };
+  return c;
+}
+
+test('リグが読まないノードを動かしても、再生キャッシュと keep を捨てない', () => {
+  for (const name of ['ctrl_sample', 'ik_sample', 'rig6_mapped']) {
+    const data = load(name);
+    const rig = makeRig(data);
+    const frames = framesOf(rig);
+    rig.evaluate(frames[0]);
+    rig.bake(frames);
+    const unread = data.nodes.findIndex((_, i) => !rig.poseReads.has(i));
+    assert.ok(unread >= 0, `${name}: リグが読まないノードがある`);
+    const keepSize = rig.keep.local.size + rig.keep.world.size + rig.keep.chan.size;
+    const [of, key] = posed([[unread, new Matrix4().makeTranslation(3, 0, 0)]]);
+    const c = countLocal(rig);
+    for (const f of frames) assert.deepEqual(state(rig, f, of, key), fresh(data, f, of, key), `${name} フレーム ${f}`);
+    assert.equal(c.n, 0, `${name}: 計算し直さない`);
+    assert.equal(rig.snapshots.size, frames.length, name);
+    assert.equal(rig.layers.length, 1, `${name}: 新しいレイヤーを作らない`);
+    assert.ok(rig.keep.local.size + rig.keep.world.size + rig.keep.chan.size >= keepSize, `${name}: keep を残す`);
+  }
+});
+
+test('追加分を前と同じに戻すと、前のレイヤーをそのまま使う（元に戻す・キーのある値をカーブに戻す）', () => {
+  for (const name of ['ctrl_sample', 'ik_sample', 'rig6_mapped', 'camaim_sample']) {
+    const data = load(name);
+    const rig = makeRig(data);
+    const frames = framesOf(rig);
+    rig.bake(frames);
+    // リグが読むコントローラー（読まないものは、動かしても同じレイヤーを使う）
+    const driver = [...rig.directDrivers].sort((a, b) => a - b).find((ni) => rig.poseReads.has(ni));
+    const [ofA, keyA] = posed([[driver, new Matrix4().makeTranslation(0.5, 1, -0.25)]]);
+    assert.deepEqual(state(rig, 5, ofA, keyA), fresh(data, 5, ofA, keyA), name);
+    assert.equal(rig.layers.length, 2, `${name}: 追加分のレイヤーを作る`);
+    const c = countLocal(rig);
+    for (const f of frames) assert.deepEqual(state(rig, f), fresh(data, f), `${name} フレーム ${f}`);
+    assert.equal(c.n, 0, `${name}: 追加分を戻したら、計算し直さない`);
+    // 同じ追加分（別の Map でも中身が同じ）に戻すと、そのフレームも計算し直さない
+    const [ofA2, keyA2] = posed([[driver, new Matrix4().makeTranslation(0.5, 1, -0.25)]]);
+    assert.deepEqual(state(rig, 5, ofA2, keyA2), fresh(data, 5, ofA, keyA), name);
+    assert.equal(c.n, 0, `${name}: 同じ追加分のフレームは計算し直さない`);
+  }
+});
+
+test('新しい追加分のフレームは、影響を受けるノードだけを計算する（ほかのレイヤーから写す）', () => {
+  let seededSome = false;
+  for (const name of ['ctrl_sample', 'ik_sample', 'rig6_mapped', 'rig6_sample', 'camaim_sample', 'hik_sample', 'math_sample']) {
+    const data = load(name);
+    const rig = makeRig(data);
+    const frames = framesOf(rig);
+    rig.bake(frames);
+    const drivers = [...rig.directDrivers].sort((a, b) => a - b);
+    for (const ni of [drivers[0], drivers[drivers.length - 1]]) {
+      const [of, key] = posed([[ni, new Matrix4().makeRotationY(0.3).setPosition(0.2, -0.4, 0.1)]]);
+      rig.setPlaybackPose(of, key);
+      const full = makeRig(data);
+      const cFull = countLocal(full);
+      full.evaluate(frames[0], of, undefined, key);
+      const c = countLocal(rig);
+      rig.evaluate(frames[0], of, undefined, key);
+      assert.ok(c.n <= cFull.n, `${name}: ${c.n} <= ${cFull.n}`);
+      if (rig.seeded > 0) seededSome = true;
+      rig.bake(frames);
+      for (const f of frames) assert.deepEqual(state(rig, f, of, key), fresh(data, f, of, key), `${name} ノード ${ni} フレーム ${f}`);
+      rig.setPlaybackPose(null);
+    }
+  }
+  assert.ok(seededSome, '影響のないノードを写すことがある');
+});
+
+test('追加分を変えると、変えたノードを読んだ keep の値だけを捨てる', () => {
+  const data = load('rig6_mapped');
+  const rig = makeRig(data);
+  rig.evaluate(1);
+  rig.evaluate(2);
+  const before = rig.keep.chan.size + rig.keep.world.size + rig.keep.local.size + rig.keep.posed.size;
+  const drivers = [...rig.directDrivers].sort((a, b) => a - b);
+  const [of, key] = posed([[drivers[0], new Matrix4().makeTranslation(0, 0.5, 0)]]);
+  rig.playbackLimit = 0;
+  rig.evaluate(2, of, undefined, key);
+  const after = rig.keep.chan.size + rig.keep.world.size + rig.keep.local.size + rig.keep.posed.size;
+  assert.ok(before > 0 && after > 0, `${before} → ${after}`);
+  for (const f of [2, 7, 30]) assert.deepEqual(state(rig, f, of, key), fresh(data, f, of, key), `フレーム ${f}`);
+});
+
+test('再生で使う追加分（setPlaybackPose）で作り、タイムラインの帯はそのレイヤーを示す', () => {
+  const data = load('ik_sample');
+  const rig = makeRig(data);
+  const frames = framesOf(rig);
+  rig.evaluate(10);
+  rig.bake(frames);
+  const drivers = [...rig.directDrivers].sort((a, b) => a - b);
+  const [of, key] = posed([[drivers[0], new Matrix4().makeTranslation(0.3, 0, 0)]]);
+  // いまのフレームだけ動かしている（再生すると戻る）: 再生で使うのは追加分なし
+  rig.setPlaybackPose();
+  state(rig, 10, of, key);
+  assert.equal(rig.hasSnapshot(10), true);
+  assert.equal(rig.snapshots.size, frames.length, '追加分なしのレイヤーを示す');
+  const c = countLocal(rig);
+  assert.equal(rig.bake(frames), 0, '作り直さない');
+  assert.equal(c.n, 0);
+  assert.equal(rig.playbackFull, false);
+  // 再生でも残る追加分: そのレイヤーを作る
+  rig.setPlaybackPose(of, key);
+  assert.equal(rig.snapshots.size, 1, 'いまのフレームだけ');
+  rig.bake(frames);
+  assert.equal(rig.snapshots.size, frames.length);
+  for (const f of [1, 24, 48]) assert.deepEqual(state(rig, f, of, key), fresh(data, f, of, key), `フレーム ${f}`);
+});
+
+test('いろいろな追加分を行き来しても、毎回新しく評価した結果と同じ（上限が小さくても）', () => {
+  for (const name of ['ctrl_sample', 'ik_sample', 'rig6_mapped', 'stretch_spline_mapped', 'camaim_sample', 'fallback_sample', 'hik_sample']) {
+    const data = load(name);
+    for (const small of [false, true]) {
+      const rig = makeRig(data);
+      const frames = framesOf(rig);
+      const drivers = [...rig.directDrivers].sort((a, b) => a - b);
+      const moving = [...rig.moving];
+      const cand = [...new Set([drivers[0], drivers[drivers.length - 1], moving[0], moving[moving.length - 1]])].filter((x) => x !== undefined);
+      if (small) { rig.bake(frames.slice(0, 3)); rig.setPlaybackLimit(rig.snapshotBytes * 2); }
+      let seed = 7;
+      const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+      const poses = [[], [[cand[0], new Matrix4().makeTranslation(0.4, 0, 0)]]];
+      for (let i = 0; i < 4; i++) {
+        const ni = cand[Math.floor(rnd() * cand.length)];
+        poses.push([[ni, new Matrix4().makeRotationX(rnd() - 0.5).setPosition(rnd() - 0.5, 0, rnd() - 0.5)]]);
+      }
+      for (let step = 0; step < 14; step++) {
+        const [of, key] = posed(poses[Math.floor(rnd() * poses.length)]);
+        if (rnd() < 0.5) { rig.setPlaybackPose(of, key); rig.bake(frames, (() => { let k = 0; return () => ++k < 6; })()); }
+        const f = frames[Math.floor(rnd() * frames.length)];
+        assert.deepEqual(state(rig, f, of, key), fresh(data, f, of, key), `${name}${small ? '（上限小）' : ''} ステップ ${step} フレーム ${f}`);
+      }
+      assert.ok(rig.layers.length <= 6, name);
+      assert.ok(rig.snapshotBytes <= rig.playbackLimit, name);
+    }
+  }
+});
