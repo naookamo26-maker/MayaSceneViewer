@@ -44,8 +44,9 @@ DEFAULT_COLORS = {"aiStandardSurface": (0.8, 0.8, 0.8), "standardSurface": (0.8,
 # ---------------------------------------------------------------------------
 # 層を重ねるノード（layeredShader・layeredTexture）。層 0 がいちばん上。ビューアは層を重ねて描けないので、
 # 上から見て最初の不透明な層（その下の層は Maya でも見えない）を表示し、それより上の見える層は警告する
-_LAYER_RE = re.compile(r"^(?:cs|inputs)\[(\d+)\]\.(c|color|it|transparency|a|alpha|bm|blendMode|iv|isVisible)$")
-_LAYER_ROLE = {"c": "color", "color": "color", "it": "transparency", "transparency": "transparency",
+# layeredShader の層の透明度の短縮名は t（lambert の透明度の it とは違う）。it も念のため受け付ける
+_LAYER_RE = re.compile(r"^(?:cs|inputs)\[(\d+)\]\.(c|color|t|it|transparency|a|alpha|bm|blendMode|iv|isVisible)$")
+_LAYER_ROLE = {"c": "color", "color": "color", "t": "transparency", "it": "transparency", "transparency": "transparency",
                "a": "alpha", "alpha": "alpha", "bm": "blendMode", "blendMode": "blendMode",
                "iv": "isVisible", "isVisible": "isVisible"}
 LAYERED_TYPES = ("layeredShader", "layeredTexture")
