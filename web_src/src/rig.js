@@ -191,11 +191,12 @@ function isAngleAttr(type, attr) {
   if (mk) return mathAngleInput(mk, attr);                       // 新しい計算ノード（mathNodes.js）
   switch (type) {
     case 'pairBlend': return /^ir[12][xyz]?$/.test(attr);
-    case 'orientConstraint': case 'aimConstraint': return /^o[xyz]?$/.test(attr);
-    case 'lookAt': return /^(o[xyz]?|tws|twist)$/.test(attr);
+    // オフセット・レスト回転（.rsrr。成分は .rrx など）
+    case 'orientConstraint': case 'aimConstraint': return /^(o[xyz]?|rsrr|rr[xyz])$/.test(attr);
+    case 'lookAt': return /^(o[xyz]?|tws|twist|rsrr|rr[xyz])$/.test(attr);
     case 'composeMatrix': return /^ir[xyz]?$/.test(attr);
     case 'eulerToQuat': return /^irt[xyz]?$/.test(attr);
-    case 'parentConstraint': return /^tg\[\d+\]\.tor[xyz]?$/.test(attr);
+    case 'parentConstraint': return /^(tg\[\d+\]\.tor[xyz]?|rsrr|rr[xyz])$/.test(attr);
     case 'ikHandle': return attr === 'twi' || attr === 'rol';         // ツイスト・ロール（.ma は度）
     case 'animBlendNodeAdditiveDA': case 'animBlendNodeAdditiveFA': return /^i[ab]$/.test(attr);
     case 'animBlendNodeAdditiveRotation': return /^i[ab][xyz]?$/.test(attr);
@@ -211,6 +212,38 @@ function suffixesOf(type, base) {
   if (type === 'plusMinusAverage' && /^(o2|i2\[\d+\])$/.test(base)) return XY;
   if (/^(iq|iq1|iq2|oq)$/.test(base)) return XYZW;                // 四元数
   return XYZ;
+}
+
+// 成分の短い名前が「まとめた名前 + 軸」にならない属性（Maya の技術資料）: 型 → まとめた名前 → 成分の名前
+const REST_T = { rst: ['rtx', 'rty', 'rtz'] };                        // restTranslate
+const REST_R = { rsrr: ['rrx', 'rry', 'rrz'] };                       // restRotate
+const IRREGULAR = {
+  ikHandle: { dwuv: ['dwux', 'dwuy', 'dwuz'], dwve: ['dwvx', 'dwvy', 'dwvz'] },   // dWorldUpVector・dWorldUpVectorEnd
+  pointConstraint: REST_T, poleVectorConstraint: REST_T,
+  orientConstraint: REST_R, aimConstraint: REST_R, lookAt: REST_R,
+  parentConstraint: { ...REST_T, ...REST_R },
+};
+
+/** まとめた属性 base の成分の属性の名前（c1 → c1r・c1g・c1b、dwuv → dwux・dwuy・dwuz） */
+function componentsOf(type, base) {
+  const t = IRREGULAR[type];
+  if (t && t[base]) return t[base];
+  return suffixesOf(type, base).map((s) => base + s);
+}
+
+/** 成分の属性の名前 → [まとめた名前, 番号]（ox → ['o', 0]、dwuy → ['dwuv', 1]）。成分でなければ null */
+function componentOf(type, attr) {
+  const t = IRREGULAR[type];
+  if (t) {
+    for (const base in t) {
+      const i = t[base].indexOf(attr);
+      if (i >= 0) return [base, i];
+    }
+  }
+  const m = /^(.*?)([xyzrgb])$/.exec(attr);
+  if (!m || (t && t[m[1]])) return null;
+  const i = suffixesOf(type, m[1]).indexOf(m[2]);
+  return i >= 0 ? [m[1], i] : null;
 }
 
 const _v = new Vector3();
@@ -352,9 +385,10 @@ export class RigEvaluator {
     });
     this.bindCache = new Map();
     this.matrices = new Map();               // evaluate() の結果（動くノードだけ）
-    // スプライン IK で、開始ジョイントの位置もカーブに合わせるもの（rootOnCurve）
+    // スプライン IK で、開始ジョイントの位置もカーブに合わせることがあるもの（rootOnCurve がオン、またはキー・接続で
+    // 決まる）。chan(ni, 't') でも IK を解く（オフのフレームでは IK は移動を変えないので、FK の値のまま）
     this.splineRoots = new Set(this.graph.filter((g) => g.ik && g.ik.solver === 'ikSplineSolver'
-      && ((g.attrs || {}).roc ?? 0) >= 0.5).map((g) => g.ik.chain[0]));
+      && (((g.attrs || {}).roc ?? 0) >= 0.5 || !!(g.inputs && g.inputs.roc))).map((g) => g.ik.chain[0]));
     // 時間で変わる expression（frame・time を使う式）があるか（キーがなくてもタイムラインを出す）
     this.usesTime = this.graph.some((g) => g.type === 'expression' && TIME_RE.test(g.expr || ''));
     this.hasTrax = this.graph.some((g) => g.trax);          // キャラクターセットの Trax のクリップ（時間で変わる）
@@ -1160,8 +1194,8 @@ export class RigEvaluator {
       }
       case PLAN.triple: {                                  // 3 つ組: 成分ごとに接続・値がある
         const def = plan.def;
-        return plan.sfx.map((s, k) => {
-          const v = this.plug(id, attr + s);
+        return plan.names.map((name, k) => {
+          const v = this.plug(id, name);
           return v !== undefined ? v : (Array.isArray(def) ? def[k] : 0);
         });
       }
@@ -1179,14 +1213,13 @@ export class RigEvaluator {
     let plan = plans.get(attr);
     if (plan) return plan;
     const inputs = g.inputs || {};
-    const m = /^(.*?)([xyzrgb])$/.exec(attr);
-    const sfx = suffixesOf(g.type, attr);
+    const comp = componentOf(g.type, attr);                // 成分（ox → o の 0 番目）
+    const names = componentsOf(g.type, attr);              // まとめた属性の成分（o → ox・oy・oz）
     if (g.def) plan = { kind: PLAN.def };
     else if (inputs[attr]) plan = { kind: PLAN.input, src: inputs[attr] };
-    else if (m && inputs[m[1]] && suffixesOf(g.type, m[1]).includes(m[2])) {
-      plan = { kind: PLAN.component, src: inputs[m[1]], index: suffixesOf(g.type, m[1]).indexOf(m[2]) };
-    } else if (outputsOf(g.type) && outputsOf(g.type).test(attr)) plan = { kind: PLAN.output, base: attr.replace(/\[\d+\]$/, '') };
-    else if (sfx.some((x) => inputs[attr + x])) plan = { kind: PLAN.triple, sfx, def: this.staticValue(g, attr) };
+    else if (comp && inputs[comp[0]]) plan = { kind: PLAN.component, src: inputs[comp[0]], index: comp[1] };
+    else if (outputsOf(g.type) && outputsOf(g.type).test(attr)) plan = { kind: PLAN.output, base: attr.replace(/\[\d+\]$/, '') };
+    else if (names.some((x) => inputs[x])) plan = { kind: PLAN.triple, names, def: this.staticValue(g, attr) };
     else plan = { kind: PLAN.static };
     plans.set(attr, plan);
     return plan;
@@ -1198,15 +1231,12 @@ export class RigEvaluator {
     const k = isAngleAttr(g.type, attr) ? D2R : 1;
     const scale = (v) => (Array.isArray(v) ? v.map((x) => x * k) : v * k);
     if (attr in attrs) return scale(attrs[attr]);
-    const m = /^(.*?)([xyzrgb])$/.exec(attr);
-    if (m && Array.isArray(attrs[m[1]])) {
-      const idx = suffixesOf(g.type, m[1]).indexOf(m[2]);
-      if (idx >= 0) return attrs[m[1]][idx] * (isAngleAttr(g.type, m[1]) ? D2R : 1);
-    }
-    const sfx = suffixesOf(g.type, attr);
-    if (sfx.some((s) => (attr + s) in attrs)) {
+    const comp = componentOf(g.type, attr);
+    if (comp && Array.isArray(attrs[comp[0]])) return attrs[comp[0]][comp[1]] * (isAngleAttr(g.type, comp[0]) ? D2R : 1);
+    const names = componentsOf(g.type, attr);
+    if (names.some((x) => x in attrs)) {
       const def = this.defaultValue(g.type, attr);
-      return sfx.map((s, i) => (attr + s in attrs ? attrs[attr + s] : (Array.isArray(def) ? def[i] : 0)) * k);
+      return names.map((x, i) => (x in attrs ? attrs[x] : (Array.isArray(def) ? def[i] : 0)) * k);
     }
     return this.defaultValue(g.type, attr, k);
   }
@@ -1216,8 +1246,8 @@ export class RigEvaluator {
     const table = defaultsOf(type);
     const d = table ? table[attr] : undefined;
     if (d !== undefined) return Array.isArray(d) ? d.map((x) => x * k) : d * k;
-    const m = /^(.*?)([xyzrgb])$/.exec(attr);
-    if (m && table && Array.isArray(table[m[1]])) return table[m[1]][suffixesOf(type, m[1]).indexOf(m[2])] * k;
+    const comp = componentOf(type, attr);
+    if (comp && table && Array.isArray(table[comp[0]])) return table[comp[0]][comp[1]] * k;
     return undefined;
   }
 
@@ -2113,8 +2143,8 @@ export class RigEvaluator {
           else {
             const pr = rotationOf(pw);
             const dl = dir.clone().applyQuaternion(pr.clone().invert());          // 親の空間のターゲットの向き
-            // 'parent': 回転 0 の向き（jointOrient を含む）から、'rest': コンストレイントのレスト回転（.rsrr。度）から
-            const rr = mode === 'rest' ? this.vec(id, 'rsrr', [0, 0, 0]) : [0, 0, 0];
+            // 'parent': 回転 0 の向き（jointOrient を含む）から、'rest': コンストレイントのレスト回転（.rsrr。ラジアン → 度）から
+            const rr = mode === 'rest' ? this.vec(id, 'rsrr', [0, 0, 0]).map((v) => v * R2D) : [0, 0, 0];
             const base = rotationOf(composeLocalMatrix({ ...rest, t: [0, 0, 0], s: [1, 1, 1], r: rr, ra: undefined, opm: undefined }, null, new Matrix4()));
             const qa = new Quaternion().setFromUnitVectors(a.clone().applyQuaternion(base), dl);
             q = pr.multiply(qa.multiply(base));
@@ -2148,11 +2178,14 @@ export class RigEvaluator {
     }
   }
 
-  /** ターゲットのウェイトがすべて 0 のとき: enableRestPosition（.erp）が有効ならレストの値（.rst・.rsrr（度）・.rs）、無効なら出力しない */
+  /**
+   * ターゲットのウェイトがすべて 0 のとき: enableRestPosition（.erp）が有効ならレストの値（.rst・.rsrr・.rs。成分は
+   * .rtx・.rrx・.rsx など）、無効なら出力しない。.rsrr は角度の属性（ファイルの値は度、接続の値はラジアン）
+   */
   constraintRest(g) {
     const id = g.id;
     if (this.num(id, 'erp', 0) < 0.5) return null;
-    const rt = this.vec(id, 'rst', [0, 0, 0]), rr = this.vec(id, 'rsrr', [0, 0, 0]).map((v) => v * D2R);
+    const rt = this.vec(id, 'rst', [0, 0, 0]), rr = this.vec(id, 'rsrr', [0, 0, 0]);
     switch (g.type) {
       case 'pointConstraint': return expand('ct', rt, XYZ);
       case 'orientConstraint': case 'aimConstraint': return expand('cr', rr, XYZ);
@@ -2469,8 +2502,9 @@ export class RigEvaluator {
   }
 
   /**
-   * スプライン IK: ジョイントをカーブに沿って並べる（骨の長さを保ち、次のジョイントはカーブ上で骨の長さだけ離れた点）。
-   * rootOnCurve なら開始ジョイントをカーブの始点（+ オフセット）に置く。
+   * スプライン IK: ジョイントをカーブに沿って並べる（骨の長さを保ち、次のジョイントはカーブ上で骨の長さだけ離れた点。
+   * カーブより長いチェーンは、カーブを終端の接線の向きにまっすぐ延ばした線の上）。
+   * rootOnCurve なら開始ジョイントをカーブの始点（+ オフセット）に置く（ikBlend で FK の位置と混ぜる）。
    * 向きは最小の回転 + ひねり（roll は全体、twist は終端に向けて配分）。上級ツイスト（dtce）なら world up に合わせる
    */
   solveSpline(id) {
@@ -2507,10 +2541,10 @@ export class RigEvaluator {
       shift = new Vector3().subVectors(pos[0], start);
     }
     const q = [start];
-    const endDir = new Vector3().subVectors(poly.pts[poly.pts.length - 1], poly.pts[poly.pts.length - 2]).normalize();
+    const beyond = this.splineBeyond(curve, poly);
     for (let i = 0; i < n - 1; i++) {
       const r = pointAtDistance(poly, q[i], lens[i], seg, curve);
-      if (r) { q.push(r.point); seg = r.seg; } else q.push(q[i].clone().addScaledVector(endDir, lens[i]));
+      if (r) { q.push(r.point); seg = r.seg; } else q.push(beyond(q[i], lens[i]));
     }
     if (shift) for (const p of q) p.add(shift);
     const bones = n - 1;
@@ -2533,10 +2567,35 @@ export class RigEvaluator {
     }
     const out = this.ikLocals(id, chain, fk.P, Qnew);
     if (roc) {
-      const t = start.clone().applyMatrix4(this.parentSpace(chain[0]).clone().invert());
-      out.set(chain[0], { r: out.get(chain[0]), t: t.toArray() });
+      // 開始ジョイントの移動も、回転と同じく ikBlend で FK の値と混ぜる（0 なら FK のまま。カーブに付けない）
+      const t = start.clone().applyMatrix4(this.parentSpace(chain[0]).clone().invert()).toArray();
+      const blend = Math.min(1, Math.max(0, this.num(id, 'ikb', 1)));
+      if (blend < 1 - EPS) {
+        const fkT = this.chan(chain[0], 'fk').t;
+        for (let k = 0; k < 3; k++) t[k] = fkT[k] + (t[k] - fkT[k]) * blend;
+      }
+      out.set(chain[0], { r: out.get(chain[0]), t });
     }
     return out;
+  }
+
+  /**
+   * スプライン IK のチェーンがカーブより長いときの、カーブの先のジョイントの置き方。カーブを終端の接線の向きにまっすぐ
+   * 延ばした線の上で、1 つ前のジョイント from から骨の長さ len だけ離れた点を返す関数（カーブの上と同じく、骨の長さを
+   * 保って線の上に並べる）。終端の接線が求まらなければ（終端の CV が重なるなど）、折れ線の最後の線分の向き
+   */
+  splineBeyond(curve, poly) {
+    const end = poly.pts[poly.pts.length - 1];
+    let dir = derivativeAt(curve, domain(curve)[1]);
+    if (!(dir.lengthSq() > EPS)) dir = new Vector3().subVectors(end, poly.pts[poly.pts.length - 2]);
+    dir.normalize();
+    return (from, len) => {
+      // |end + s · dir − from| = len を s ≥ 0 で解く（from がカーブの上なら end は球の内側なので必ず解がある）
+      const ef = new Vector3().subVectors(end, from);
+      const b = dir.dot(ef), disc = b * b - (ef.lengthSq() - len * len);
+      if (disc < 0) return from.clone().addScaledVector(dir, len);
+      return end.clone().addScaledVector(dir, Math.max(0, -b + Math.sqrt(disc)));
+    };
   }
 
   /**

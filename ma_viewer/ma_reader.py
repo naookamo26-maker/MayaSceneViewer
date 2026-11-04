@@ -80,6 +80,8 @@ ATTR_ALIASES = {
     "twistType": "twt", "rootTwistMode": "rtm", "dTwistValueType": "dtvt", "dTwistStartEnd": "dtse", "dTwistStart": "dtst",
     "dTwistEnd": "dten", "dTwistRampMult": "dtrm",
     "dWorldUpMatrix": "dwum", "dWorldUpMatrixEnd": "dwue", "dWorldUpVector": "dwuv", "dWorldUpVectorEnd": "dwve",
+    "dWorldUpVectorX": "dwux", "dWorldUpVectorY": "dwuy", "dWorldUpVectorZ": "dwuz",
+    "dWorldUpVectorEndX": "dwvx", "dWorldUpVectorEndY": "dwvy", "dWorldUpVectorEndZ": "dwvz",
     "preferredAngle": "pa", "parentMatrix": "pm", "parentInverseMatrix": "pim", "worldInverseMatrix": "wim",
     # コンストレイント
     "target": "tg", "targetTranslate": "tt", "targetRotate": "tr", "targetScale": "ts", "targetParentMatrix": "tpm",
@@ -89,6 +91,10 @@ ATTR_ALIASES = {
     "constraintRotate": "cr", "constraintRotateX": "crx", "constraintRotateY": "cry", "constraintRotateZ": "crz",
     "constraintScale": "cs", "constraintParentInverseMatrix": "cpim", "constraintRotatePivot": "crp",
     "constraintRotateTranslate": "crt", "constraintRotateOrder": "cro", "constraintJointOrient": "cjo", "pivotSpace": "ps",
+    # レストの値（成分の短い名前は「まとめた名前 + 軸」ではない: rst → rtx、rsrr → rrx）
+    "enableRestPosition": "erp", "restTranslate": "rst", "restTranslateX": "rtx", "restTranslateY": "rty",
+    "restTranslateZ": "rtz", "restRotate": "rsrr", "restRotateX": "rrx", "restRotateY": "rry", "restRotateZ": "rrz",
+    "restScale": "rs", "restScaleX": "rsx", "restScaleY": "rsy", "restScaleZ": "rsz",
 }
 
 
