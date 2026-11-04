@@ -761,7 +761,8 @@ export class UI {
     // 「ポーズ変更中」の印は、出ていないときも場所を取っておく（動かし始め・戻したときに下の行が上下に動かないように）
     head.innerHTML = `<p class="info-title"><span class="info-name">${esc(n.name)}<span class="info-type">${esc(typeLabel)}</span></span>`
       + `<span class="posed-badge${info.posed ? '' : ' off'}"${info.posed ? '' : ' aria-hidden="true"'}>ポーズ変更中</span></p>`
-      + `<p class="info-path">${esc(n.path)}</p>`;
+      + `<p class="info-path">${esc(n.path)}</p>`
+      + this.selectionListHtml(info.selection);
 
     const SRC = { pm: 'skinCluster の .pm', dagPose: 'dagPose', bps: 'ジョイントの .bps' };
     let h = '<table class="kv">';
@@ -846,6 +847,12 @@ export class UI {
     body.querySelectorAll('[data-view-camera]').forEach((el) => {
       el.addEventListener('click', () => this.app.setCamera(+el.dataset.viewCamera));
     });
+    // 複数選択の一覧: 名前をクリックすると、選択はそのままでそのノードをリードにする
+    head.querySelectorAll('.sel-multi li[data-node]').forEach((el) => {
+      el.addEventListener('click', () => this.app.makeLead(+el.dataset.node));
+    });
+    const det = head.querySelector('.sel-multi');
+    if (det) det.addEventListener('toggle', () => { this.selListOpen = det.open; });
   }
 
   /**
@@ -927,6 +934,18 @@ export class UI {
     });
   }
 
+  /** 複数選んでいるときの見出し（選択数とリード）と、選んだものの一覧（折りたたみ）。1 つなら空 */
+  selectionListHtml(sel) {
+    if (!sel || sel.length < 2) return '';
+    const lead = sel[sel.length - 1];
+    const TYPE = { joint: 'ジョイント', transform: 'トランスフォーム' };
+    // 選んだ順（最後がリード）。一覧は新しく選んだものを上に出す
+    const items = sel.slice().reverse().map((s) => `<li${s.lead ? ' class="lead" title="リード（パネル・数値欄はこのノード）"'
+      : ` data-node="${s.node}" title="クリックでリードにする"`}>${esc(s.name)}<span class="t">${esc(TYPE[s.type] || s.type)}${s.lead ? '・リード' : ''}</span></li>`);
+    return `<details class="sel-multi"${this.selListOpen ? ' open' : ''}><summary><b>${sel.length} 個を選択</b>（リード: ${esc(lead.name)}）</summary>`
+      + `<ul>${items.join('')}</ul></details>`;
+  }
+
   // ---------------------------------------------------------------- ポーズ
   bindPose() {
     const AX = ['x', 'y', 'z'];
@@ -936,15 +955,22 @@ export class UI {
       r: AX.map((a) => num('pose-r' + a, 0)),
       s: AX.map((a) => num('pose-s' + a, 1)),
     });
-    const onInput = () => {
-      // 確定（Enter・フォーカス移動）までを 1 つの操作として記録する
-      this.app.beginPoseEdit([this.app.selected], '数値入力');
-      this.app.setPoseForSelected(read());
-    };
     for (const k of ['t', 'r', 's']) {
-      for (const a of AX) {
+      AX.forEach((a, i) => {
         const el = $('pose-' + k + a);
-        el.addEventListener('input', onInput);
+        // 確定（Enter・フォーカス移動）までを 1 つの操作として記録する。複数選んでいれば、Maya のチャンネルボックスと
+        // 同じく、入力した成分だけを選んだものすべてに同じ値で入れる（ほかの成分はそれぞれの値のまま）
+        el.addEventListener('input', () => {
+          if (this.app.selection.length > 1) {
+            const v = parseFloat(el.value);
+            if (!Number.isFinite(v)) return;
+            this.app.beginPoseEdit(this.app.selection.slice(), '数値入力');
+            this.app.setPoseChannelForSelection(k, i, v);
+          } else {
+            this.app.beginPoseEdit([this.app.selected], '数値入力');
+            this.app.setPoseForSelected(read());
+          }
+        });
         // 確定したら、実際の値（Maya でロックしたチャンネルを固定し直した結果）で欄を表示し直す
         const commit = () => {
           this.app.endPoseEdit();
@@ -954,9 +980,10 @@ export class UI {
         el.addEventListener('blur', commit);
         // Enter で確定（次の欄へは Tab）
         el.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.blur(); });
-      }
+      });
     }
-    $('pose-reset').addEventListener('click', () => this.app.resetPose(this.app.selected));
+    // 複数選んでいれば、選んだものすべてを戻す
+    $('pose-reset').addEventListener('click', () => this.app.resetPoses(this.app.selection.length ? this.app.selection.slice() : [this.app.selected]));
     $('pose-reset-all').addEventListener('click', () => this.app.resetAllPoses());
   }
 
@@ -992,6 +1019,21 @@ export class UI {
       put('pose-r' + a, p.r[i]);
       put('pose-s' + a, p.s[i]);
     });
+    // 複数選択: 欄はリードの値。ノードごとに値が違う欄に印を付け、入力すると全部に入ることを示す
+    const multi = this.app.selection.length > 1 ? this.app.selectionPoseInfo() : null;
+    for (const k of ['t', 'r', 's']) {
+      ['x', 'y', 'z'].forEach((a, i) => {
+        const el = $(`pose-${k}${a}`);
+        const mixed = !!(multi && multi.mixed[k][i]);
+        el.classList.toggle('mixed', mixed);
+        el.title = mixed ? 'ノードごとに値が違います（表示はリードの値。入力すると、選んだものすべてがこの値になります）' : '';
+      });
+    }
+    const note = $('pose-multi');
+    note.hidden = !multi;
+    note.textContent = multi ? `数値はリード（${multi.leadName}）の値です。入力した欄の値を、選んだ ${multi.count} 個すべてに入れます（Maya のチャンネルボックスと同じ）。`
+      + (multi.mixed.any ? '斜体の欄はノードごとに値が違います。' : '') : '';
+    $('pose-reset').textContent = multi ? `選択を戻す（${multi.count} 個）` : 'このノードを戻す';
   }
 
   // ---------------------------------------------------------------- 警告・凡例・状態

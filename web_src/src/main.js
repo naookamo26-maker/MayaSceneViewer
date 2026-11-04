@@ -1334,6 +1334,42 @@ class ViewerApp {
   /** 選択中か */
   isSelected(ni) { return this.selection.includes(ni); }
 
+  /** 選択はそのままで、ni をリードにする（右パネルの一覧から） */
+  makeLead(ni) {
+    if (!this.selection.includes(ni) || ni === this.selected) return;
+    this.setSelection([...this.selection.filter((n) => n !== ni), ni], { notify: true });
+  }
+
+  /** 複数選択の数値欄の情報: 成分ごとにノードで値が違うか（mixed[t|r|s][0..2]・any）・数・リードの名前 */
+  selectionPoseInfo() {
+    const poses = this.selection.map((ni) => this.pose.get(ni));
+    const lead = this.pose.get(this.selected);
+    const mixed = { any: false };
+    for (const k of ['t', 'r', 's']) {
+      mixed[k] = [0, 1, 2].map((i) => poses.some((p) => Math.abs(p[k][i] - lead[k][i]) > 1e-6));
+      if (mixed[k].some(Boolean)) mixed.any = true;
+    }
+    return { count: this.selection.length, leadName: this.data.nodes[this.selected].name, mixed };
+  }
+
+  /**
+   * 数値欄の 1 つの成分（k = 't' | 'r' | 's'、i = 0..2）を、選んだものすべてに同じ値で入れる（Maya のチャンネルボックスと同じ）。
+   * ほかの成分はそれぞれの値のまま。ロック・制限はノードごとに守る
+   */
+  setPoseChannelForSelection(k, i, value) {
+    if (!this.pose || !this.selection.length) return;
+    for (const ni of this.selection) {
+      const p = this.pose.get(ni);
+      p[k][i] = value;
+      const pose = this.lockedPose(ni, p);
+      this.beforeDriverPose(ni);
+      this.pose.set(ni, pose);
+    }
+    this.afterPoseChange();
+    this.ui.showPoseFor(this.selected, this.pose.get(this.selected));
+    this.syncGizmo();
+  }
+
   selectMesh(mi, opts = {}) {
     if (!this.built) return;
     this.select(this.built.meshes[mi].transform, { notify: true, ...opts, mesh: mi });
@@ -1421,8 +1457,12 @@ class ViewerApp {
       cameras.push({ index: ci, cam, p: cameraParams(cam, over), animated: over ? Object.keys(over) : [],
         viewing: ci === this.viewCamera, render: this.data.render });
     });
+    // 複数選んでいれば、選んだ順の一覧（最後がリード）。右パネルの見出しに出す
+    const selection = this.selection.length > 1 ? this.selection.map((si) => ({ node: si, name: this.data.nodes[si].name,
+      type: this.cameras.some((c) => c.transform === si) ? 'カメラ' : this.data.nodes[si].type, lead: si === this.selected })) : null;
     return {
       node: n,
+      selection,
       worldPos: _v.setFromMatrixPosition(obj.matrixWorld).toArray(),
       worldRot: worldRotationDegrees(obj.matrixWorld, (n.attrs && n.attrs.ro) || 0),
       usage, meshes, cameras, posed: this.pose.has(ni),
@@ -1711,6 +1751,19 @@ class ViewerApp {
     this.endPoseEdit();
     this.afterPoseChange();
     this.ui.showPoseFor(ni, identityPose());
+  }
+
+  /** 複数のノードの動かした分を、まとめて 1 操作で戻す（右パネルの［選択を戻す］） */
+  resetPoses(list) {
+    list = (list || []).filter((ni) => ni >= 0);
+    if (!this.pose || !list.length) return;
+    if (list.length === 1) { this.resetPose(list[0]); return; }
+    this.endPoseEdit();
+    this.beginPoseEdit(list, `選択を戻す（${list.length} 個）`, true);
+    for (const ni of list) this.pose.reset(ni);
+    this.endPoseEdit();
+    this.afterPoseChange();
+    if (this.selected >= 0) this.ui.showPoseFor(this.selected, this.pose.get(this.selected));
   }
 
   resetAllPoses() {
