@@ -181,7 +181,7 @@ export class ControlOverlay {
 
   /**
    * 位置・向き・大きさ・色を合わせる
-   * @param o { selected, isHidden(ni), statusColor(ni) => Color | null }
+   * @param o { selectColorOf(ni) => Color | null, isHidden(ni), statusColor(ni) => Color | null }
    */
   update(o) {
     if (!this.items.length) return;
@@ -205,7 +205,7 @@ export class ControlOverlay {
       it.obj.scale.setScalar(size);
       it.obj.updateMatrix();
       it.obj.updateMatrixWorld();
-      _c.copy(it.ni === o.selected ? o.selectColor : o.statusColor(it.ni) || it.color);
+      _c.copy(o.selectColorOf(it.ni) || o.statusColor(it.ni) || it.color);
       it.obj.material.color.copy(_c);
       if (to && lp) {
         lp.set([_p.x, _p.y, _p.z, to.x, to.y, to.z], nl * 6);

@@ -99,11 +99,13 @@ export class CameraIcons {
   }
 
   /** @param hiddenOf (ノード番号) => 隠れているか  @param viewing いま見ているカメラ（その形は描かない） */
-  update(show, hiddenOf, viewing, selectedNode) {
+  /** @param selected 選択中のノード（Set。数なら 1 つ） */
+  update(show, hiddenOf, viewing, selected) {
+    const isSel = (ni) => (selected instanceof Set ? selected.has(ni) : ni === selected);
     this.items.forEach((it, ci) => {
       if (!it) return;
       it.line.visible = show && ci !== viewing && !hiddenOf(it.node);
-      it.line.material = it.node === selectedNode ? this.selectedMaterial : this.material;
+      it.line.material = isSel(it.node) ? this.selectedMaterial : this.material;
     });
   }
 }

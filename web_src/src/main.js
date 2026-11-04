@@ -1,12 +1,13 @@
 // ビューア本体。window.mayaViewer を通じて Python（Qt）から操作される。
 import {
-  BufferGeometry, Color, DirectionalLight, Float32BufferAttribute, HemisphereLight, LineBasicMaterial, LineSegments, MOUSE,
+  BufferGeometry, Color, DirectionalLight, Float32BufferAttribute, HemisphereLight, LineBasicMaterial, LineSegments,
   Matrix4, Object3D, OrthographicCamera, PerspectiveCamera, Points, PointsMaterial, Quaternion, Raycaster, SRGBColorSpace, Scene,
   Vector2, Vector3, WebGLRenderer, Box3,
 } from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { MayaControls } from './mayaControls.js';
+import { combineSelection, makeProjector, normRect, pointHitsRect, polylineHitsRect, selectionModeOf, trianglesHitRect } from './marquee.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
-import { PoseState, fixChannels, hasFixed, identityPose, limitPose, nodeChannels, poseFromTransform, poseMatrix, poseQuaternion } from './pose.js';
+import { PoseState, fixChannels, hasFixed, identityPose, limitPose, nodeChannels, poseFromTransform, poseMatrix, poseQuaternion, propagatePoseDelta } from './pose.js';
 import {
   applyPoseSource, hasBindPose, poseBaseMatrix, BASE_COLOR, buildScene, characterRadius, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
   vertexWorldPosition, writeVertexColors,
@@ -68,7 +69,8 @@ class ViewerApp {
     this.settings = { ...DEFAULTS };
     this.data = null;
     this.built = null;
-    this.selected = -1;
+    this.selected = -1;         // リード（最後に選んだノード。パネル・ハンドル・カーブエディタはこのノード）
+    this.selection = [];        // 選択中のノード（選んだ順。最後がリード）
     this.selectedMesh = -1;     // 階層のメッシュの行から選んだメッシュ（なければ -1）
     this.picked = null;
     this.pose = null;           // PoseState（シーン読み込み時に作る）
@@ -154,11 +156,9 @@ class ViewerApp {
     this.grid = null;
     this.updateGrid(new Box3(new Vector3(-10, 0, -10), new Vector3(10, 10, 10)));
 
-    this.controls = new OrbitControls(this.camera, canvas);
-    this.controls.mouseButtons = { LEFT: MOUSE.ROTATE, MIDDLE: MOUSE.PAN, RIGHT: MOUSE.DOLLY };
-    this.controls.screenSpacePanning = true;
-    // 慣性なし: ドラッグを離した時点でカメラを止める（three.js の既定値と同じだが明示しておく）
-    this.controls.enableDamping = false;
+    // 視点の操作は Maya と同じ（Alt + 左: タンブル、Alt + 中: トラック、Alt + 右: ドリー、ホイール: ドリー）。
+    // Alt なしの左ドラッグは矩形選択に使う（bindEvents）
+    this.controls = new MayaControls(this.camera, canvas);
     this.controls.zoomSpeed = 1.2;
     this.controls.addEventListener('change', () => { this.beginCameraEdit(); this.requestRender(); });
     this.controls.addEventListener('start', () => this.prepareCameraEdit());   // カメラのビューの操作を始めた
@@ -179,9 +179,12 @@ class ViewerApp {
     this.gizmo.addEventListener('dragging-changed', (e) => {
       this.gizmoDragging = e.value;
       this.controls.enabled = !e.value && this.canNavigate();
-      // 1 回のドラッグを 1 つの操作として記録する
-      if (e.value) this.beginPoseEdit([this.selected], { translate: '移動', rotate: '回転', scale: 'スケール' }[this.gizmo.mode] || '変更');
-      else { this.endPoseEdit(); this.syncGizmo(); }
+      // 1 回のドラッグを 1 つの操作として記録する（複数選んでいれば、一緒に動かすノードもまとめて記録する）
+      if (e.value) {
+        this.gizmoGroup = this.gizmoGroupStart();
+        this.beginPoseEdit(this.gizmoGroup ? [this.selected, ...this.gizmoGroup.others.map((o) => o.ni)] : [this.selected],
+          { translate: '移動', rotate: '回転', scale: 'スケール' }[this.gizmo.mode] || '変更');
+      } else { this.gizmoGroup = null; this.endPoseEdit(); this.syncGizmo(); }
     });
     this.gizmo.addEventListener('objectChange', () => this.onGizmoChange());
     this.scene.add(this.gizmo.getHelper());               // r169 から、ハンドルの表示はヘルパーとして加える
@@ -240,17 +243,43 @@ class ViewerApp {
 
   bindEvents() {
     if (this.canvas) {
+      // Alt を押して始めた操作は視点の操作（MayaControls）。ハンドルの上でも視点を動かす（Maya と同じ）ため、
+      // キャンバスより先（親の要素の捕捉段階）でハンドルを止めておき、離したら戻す
+      const vp = this.canvas.parentElement || this.canvas;
+      vp.addEventListener('pointerdown', (e) => {
+        if (e.altKey && this.gizmo && !this.gizmoDragging) this.gizmo.enabled = false;
+      }, true);
+      const restoreGizmo = () => { if (this.gizmo && !this.gizmo.enabled && !this.controls.dragging) this.gizmo.enabled = true; };
+      window.addEventListener('pointerup', restoreGizmo);
+      this.controls.addEventListener('end', restoreGizmo);
+
+      // Alt なしの左ボタン: クリックで選択、ドラッグで矩形選択（Shift: 切り替え、Ctrl: 外す、Ctrl+Shift: 加える）
       let down = null;
       this.canvas.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || e.altKey || this.controls.dragging) { down = null; return; }
         // ハンドルの上で押したときは選択（ピック）しない
-        const onGizmo = !!(this.gizmo && this.gizmo.object && this.gizmo.axis !== null);
-        down = { x: e.clientX, y: e.clientY, b: e.button, onGizmo };
+        const onGizmo = !!(this.gizmo && this.gizmo.object && this.gizmo.enabled && this.gizmo.axis !== null);
+        down = { x: e.clientX, y: e.clientY, id: e.pointerId, onGizmo, marquee: false };
+        if (!onGizmo) { try { this.canvas.setPointerCapture(e.pointerId); } catch { /* 合成イベントなど */ } }
       });
-      this.canvas.addEventListener('pointerup', (e) => {
-        if (down && !down.onGizmo && !this.gizmoDragging && down.b === 0 && e.button === 0
-          && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 5) this.pick(e);
+      this.canvas.addEventListener('pointermove', (e) => {
+        if (!down || down.onGizmo || e.pointerId !== down.id || this.gizmoDragging) return;
+        if (!(e.buttons & 1)) { down = null; this.ui.setMarquee(null); return; }
+        if (!down.marquee && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 5) return;
+        down.marquee = true;
+        this.ui.setMarquee(this.canvasRect(down.x, down.y, e.clientX, e.clientY));
+      });
+      const finish = (e) => {
+        const d = down;
         down = null;
-      });
+        if (!d || e.pointerId !== d.id) return;
+        this.ui.setMarquee(null);
+        if (d.onGizmo || this.gizmoDragging || e.type !== 'pointerup') return;
+        if (d.marquee) this.marqueeSelect(this.canvasRect(d.x, d.y, e.clientX, e.clientY), selectionModeOf(e));
+        else this.pick(e, selectionModeOf(e));
+      };
+      this.canvas.addEventListener('pointerup', finish);
+      this.canvas.addEventListener('pointercancel', finish);
       this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     }
     window.addEventListener('keydown', (e) => {
@@ -260,7 +289,7 @@ class ViewerApp {
       if (this.curveEditor.handleKey(e)) return;          // カーブエディタの上では A・F をそちらで使う
       const k = e.key.toLowerCase();
       if ((e.ctrlKey || e.metaKey) && !e.altKey) {
-        if (k === 'h' && !e.shiftKey) this.setNodeVisible(this.selected, false);   // Maya と同じ: Ctrl+H = 隠す
+        if (k === 'h' && !e.shiftKey) this.setNodesVisible(this.selection, false);   // Maya と同じ: Ctrl+H = 隠す
         else if (k === 'z' && !e.shiftKey) this.undo();
         else if (k === 'y' || (k === 'z' && e.shiftKey)) this.redo();
         else return;
@@ -285,8 +314,8 @@ class ViewerApp {
         return;
       }
       if (k === 'h') {                                  // Maya と同じ: H = 切り替え、Shift+H = 表示
-        if (e.shiftKey) this.setNodeVisible(this.selected, true);
-        else this.toggleNodeVisible(this.selected);
+        if (e.shiftKey) this.setNodesVisible(this.selection, true);
+        else this.toggleNodesVisible(this.selection);
         e.preventDefault();
         return;
       }
@@ -498,6 +527,7 @@ class ViewerApp {
     this.edit = null;
     this.history.clear();
     this.selected = -1;
+    this.selection = [];
     this.selectedMesh = -1;     // 階層のメッシュの行から選んだメッシュ（なければ -1）
     this.picked = null;
     if (this.marker) this.marker.visible = false;
@@ -644,10 +674,15 @@ class ViewerApp {
   applyShading() {
     const st = this.settings;
     // 選択したノードとその子孫のメッシュは、選択の色のワイヤーを重ねる（Maya の選択の表示）
-    const sel = new Set();
-    if (this.selected >= 0 && this.data) {
-      sel.add(this.selected);
-      this.data.nodes.forEach((n, i) => { if (sel.has(n.parent)) sel.add(i); });
+    // 複数選んだときは、リード（とその子孫）をオレンジ、ほかを淡い色にする
+    const sel = new Set(), lead = new Set();
+    if (this.selection.length && this.data) {
+      for (const ni of this.selection) sel.add(ni);
+      if (this.selected >= 0) lead.add(this.selected);
+      this.data.nodes.forEach((n, i) => {
+        if (lead.has(n.parent)) lead.add(i);
+        if (sel.has(n.parent)) sel.add(i);
+      });
     }
     const weightWire = st.weightMode !== 'off' && st.shading === 'none';
     for (const e of this.built.meshes) {
@@ -661,7 +696,7 @@ class ViewerApp {
       if (e.skinnedWire) e.skinnedWire.visible = wire && useSkin;
       const wireOnly = st.shading === 'none';
       e.wireMaterial.opacity = highlight ? 0.9 : wireOnly ? 0.95 : 0.5;
-      e.wireMaterial.color.set(highlight ? 0xf2a93b : wireOnly ? 0xc8d2da : 0x1d2024);
+      e.wireMaterial.color.set(highlight ? (lead.has(e.transform) ? 0xf2a93b : 0xfff0c8) : wireOnly ? 0xc8d2da : 0x1d2024);
     }
   }
 
@@ -899,6 +934,34 @@ class ViewerApp {
 
   toggleNodeVisible(ni) {
     if (ni >= 0 && this.hidden) this.setNodeVisible(ni, this.isNodeHidden(ni));
+  }
+
+  /** 複数のノードの表示をまとめて変える（H・Ctrl+H・Shift+H） */
+  setNodesVisible(list, visible) {
+    if (!this.built || !list.length) return;
+    if (list.length === 1) { this.setNodeVisible(list[0], visible); return; }
+    for (const ni of list) {
+      if (visible) {
+        this.hidden.delete(ni);
+        if (this.rigHidden.has(ni)) this.rigShown.add(ni);
+      } else {
+        this.hidden.add(ni);
+        this.rigShown.delete(ni);
+      }
+    }
+    this.updateVisibility();
+    this.ui.setMessage(`${visible ? '表示' : '非表示に'}しました: ${list.length} 個`);
+  }
+
+  /** 1 つずつ表示を切り替える（Maya の H と同じ） */
+  toggleNodesVisible(list) {
+    if (!this.built || !this.hidden || !list.length) return;
+    if (list.length === 1) { this.toggleNodeVisible(list[0]); return; }
+    const show = list.filter((ni) => this.isNodeHidden(ni)), hide = list.filter((ni) => !this.isNodeHidden(ni));
+    for (const ni of show) { this.hidden.delete(ni); if (this.rigHidden.has(ni)) this.rigShown.add(ni); }
+    for (const ni of hide) { this.hidden.add(ni); this.rigShown.delete(ni); }
+    this.updateVisibility();
+    this.ui.setMessage(`表示を切り替えました: ${list.length} 個（表示 ${show.length}・非表示 ${hide.length}）`);
   }
 
   setMeshVisible(mi, v) {
@@ -1221,16 +1284,36 @@ class ViewerApp {
       own ? `${this.data.nodes[this.selected].name} のキー` : 'すべてのキー');
   }
 
-  /** ノードを選ぶ。opts.mesh: 階層のメッシュの行から選んだときのメッシュの番号（その行を強調する） */
+  /**
+   * ノードを選ぶ。opts.mode: 'replace'（既定。選び直す）・'toggle'（Shift）・'remove'（Ctrl）・'add'（Ctrl+Shift）。
+   * opts.mesh: 階層のメッシュの行から選んだときのメッシュの番号（その行を強調する）
+   */
   select(ni, opts = {}) {
     if (!this.built || ni < 0 || ni >= this.data.nodes.length) return;
+    const mode = opts.mode || 'replace';
+    this.setSelection(combineSelection(this.selection, [ni], mode), { ...opts, mesh: mode === 'remove' ? -1 : opts.mesh });
+  }
+
+  /**
+   * 選択をまとめて決める（list は選んだ順。最後がリード）。空なら選択を解除する。
+   * opts.notify: Maya（Qt）へ知らせる  opts.mesh: リードを階層のメッシュの行から選んだときのメッシュの番号
+   */
+  setSelection(list, opts = {}) {
+    if (!this.built) return;
+    const nodes = this.data.nodes;
+    const sel = [];
+    for (const ni of list) if (ni >= 0 && ni < nodes.length && !sel.includes(ni)) sel.push(ni);
+    if (!sel.length) { this.clearSelection(); return; }
+    const ni = sel[sel.length - 1];
+    this.selection = sel;
     this.selected = ni;
-    this.selectedMesh = opts.mesh ?? -1;
-    this.overlay.setSelected(ni);
-    this.curves.setSelected(ni);
+    this.selectedMesh = opts.mesh != null && opts.mesh >= 0 && this.built.meshes[opts.mesh] && this.built.meshes[opts.mesh].transform === ni ? opts.mesh : -1;
+    const set = new Set(sel);
+    this.overlay.setSelected(ni, set);
+    this.curves.setSelected(ni, set);
     this.updateCameraIcons();
     this.applyShading();
-    this.ui.highlightNode(ni, this.data.nodes, this.selectedMesh);
+    this.ui.highlightNode(ni, nodes, this.selectedMesh, sel);
     this.ui.showNodeInfo(this.nodeInfo(ni));
     this.ui.showPoseFor(ni, this.pose.get(ni));
     this.ui.setPoseLocks(this.lockedOf(ni));
@@ -1238,13 +1321,22 @@ class ViewerApp {
     if (this.settings.weightMode === 'selected') this.applyWeights();
     this.updateTimelineKeys();
     this.curveEditor.setNode(ni);
-    if (opts.notify && this.bridge && this.bridge.nodeSelected) this.bridge.nodeSelected(this.data.nodes[ni].path);
+    if (opts.notify) this.notifySelection();
     this.requestRender();
   }
 
-  selectMesh(mi) {
+  /** 選択を Maya（Qt）へ知らせる。複数のときはパスを改行で区切る（最後がリード） */
+  notifySelection() {
+    if (!(this.bridge && this.bridge.nodeSelected) || !this.selection.length) return;
+    this.bridge.nodeSelected(this.selection.map((ni) => this.data.nodes[ni].path).join('\n'));
+  }
+
+  /** 選択中か */
+  isSelected(ni) { return this.selection.includes(ni); }
+
+  selectMesh(mi, opts = {}) {
     if (!this.built) return;
-    this.select(this.built.meshes[mi].transform, { notify: true, mesh: mi });
+    this.select(this.built.meshes[mi].transform, { notify: true, ...opts, mesh: mi });
   }
 
   selectByPath(path) {
@@ -1262,9 +1354,33 @@ class ViewerApp {
     return true;
   }
 
+  /** パスの一覧で選ぶ（Maya の選択に合わせるとき。最後がリード）。見つかった数を返す */
+  selectByPaths(paths) {
+    if (!this.data || !Array.isArray(paths)) return 0;
+    const nodes = this.data.nodes;
+    const list = [];
+    let mesh = -1;
+    for (const path of paths) {
+      let ni = nodes.findIndex((n) => n.path === path);
+      if (ni < 0) ni = nodes.findIndex((n) => n.path.endsWith('|' + String(path).replace(/^\|/, '')) || n.name === path);
+      let mi = -1;
+      if (ni < 0) {
+        mi = this.data.meshes.findIndex((m) => m.path === path || m.name === path);
+        if (mi >= 0) ni = this.data.meshes[mi].transform;
+      }
+      if (ni < 0) continue;
+      list.push(ni);
+      mesh = mi;
+    }
+    if (!list.length) return 0;
+    this.setSelection(list, { notify: false, mesh });
+    return list.length;
+  }
+
   clearSelection() {
     if (!this.built) return;
     this.selected = -1;
+    this.selection = [];
     this.selectedMesh = -1;     // 階層のメッシュの行から選んだメッシュ（なければ -1）
     this.picked = null;
     this.marker.visible = false;
@@ -1327,7 +1443,8 @@ class ViewerApp {
     };
   }
 
-  pick(ev) {
+  /** クリックで選ぶ。mode は select() と同じ（修飾キーから selectionModeOf で決める） */
+  pick(ev, mode = 'replace') {
     if (!this.built) return;
     const rect = this.canvas.getBoundingClientRect();
     const ndc = new Vector2(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
@@ -1339,7 +1456,7 @@ class ViewerApp {
     const okNode = (ni) => force || !nodes[ni].unselectable;
     if (this.settings.joints || this.settings.controls) {
       const ni = this.overlay.pick(this.raycaster);
-      if (ni >= 0 && okNode(ni)) { this.select(ni, { notify: true }); return; }
+      if (ni >= 0 && okNode(ni)) { this.select(ni, { notify: true, mode }); return; }
     }
     // カーブ: 画面上で約 5 ピクセル以内を通る線（メッシュより手前なら優先）
     const perPx = this.pixelSize(rect.height);
@@ -1356,17 +1473,18 @@ class ViewerApp {
     }
     const hits = this.raycaster.intersectObjects(targets, false);
     if (curveHit.node >= 0 && (!hits.length || curveHit.distance <= hits[0].distance)) {
-      this.select(curveHit.node, { notify: true });
+      this.select(curveHit.node, { notify: true, mode });
       return;
     }
-    if (!hits.length) { this.clearSelection(); return; }
+    // 何もないところ: 選び直すときだけ解除する（Maya と同じく、Shift・Ctrl では何もしない）
+    if (!hits.length) { if (mode === 'replace') this.clearSelection(); return; }
     const h = hits[0];
     const e = this.built.meshes[h.object.userData.meshIndex];
     if (this.settings.pickMode !== 'vertex') {
       // オブジェクトの選択: メッシュの transform を選ぶ
       this.picked = null;
       this.marker.visible = false;
-      this.select(e.transform, { notify: true });
+      this.select(e.transform, { notify: true, mode });
       return;
     }
     // face の番号は表示用頂点（UV の継ぎ目で分割）なので、元の頂点番号に戻す
@@ -1376,6 +1494,83 @@ class ViewerApp {
       if (d < bestD) { bestD = d; best = originalVertex(e, rv); }
     }
     this.pickVertex(e.index, best);
+  }
+
+  /** 画面上の 2 点（clientX, clientY）から、キャンバスの中の矩形（ピクセル。キャンバスの左上が原点） */
+  canvasRect(x0, y0, x1, y1) {
+    const r = this.canvas.getBoundingClientRect();
+    const cl = (v, max) => Math.min(max, Math.max(0, v));
+    return normRect(cl(x0 - r.left, r.width), cl(y0 - r.top, r.height), cl(x1 - r.left, r.width), cl(y1 - r.top, r.height));
+  }
+
+  /**
+   * 矩形選択（Maya のオブジェクトのマーキー選択）。矩形に一部でもかかるもの（メッシュ・カーブ・表示中のジョイントと
+   * コントローラー）を選ぶ。隠れて見えないもの（手前のメッシュの後ろ）も選ぶ。Maya で選べないもの（テンプレートなど）は除く
+   */
+  marqueeSelect(rect, mode = 'replace') {
+    if (!this.built) return;
+    if (this.settings.pickMode === 'vertex') {
+      this.ui.setMessage('矩形選択はオブジェクトの選択のときに使えます（頂点の選択はクリックで 1 つずつ。F8 で切り替え）');
+      return;
+    }
+    const hits = this.nodesInRect(rect);
+    if (!hits.length && mode !== 'replace') return;
+    this.picked = null;
+    this.marker.visible = false;
+    this.ui.showVertexInfo(null);
+    this.setSelection(combineSelection(this.selection, hits, mode), { notify: true });
+    if (hits.length > 1 || this.selection.length > 1) this.ui.setMessage(`${this.selection.length} 個を選択しています（リード: ${this.data.nodes[this.selected]?.name ?? 'なし'}）`);
+  }
+
+  /** 矩形（canvasRect の形）にかかるノードの番号（ノード番号の順） */
+  nodesInRect(rect) {
+    const rc = this.canvas.getBoundingClientRect();
+    const project = makeProjector(this.activeCamera(), rc.width, rc.height);
+    const force = !!this.settings.pickAll;
+    const nodes = this.data.nodes;
+    const okNode = (ni) => force || !nodes[ni].unselectable;
+    const out = new Set();
+    // ジョイント・コントローラー（表示しているもの）: 中心が矩形の中
+    if (this.settings.joints && this.overlay.jointGroup.visible) {
+      for (const ni of this.overlay.joints) {
+        if (out.has(ni) || !okNode(ni) || (this.hiddenEff && this.hiddenEff[ni])) continue;
+        _v2.setFromMatrixPosition(this.built.nodeObjects[ni].matrixWorld);
+        if (pointHitsRect(_v2.x, _v2.y, _v2.z, project, rect)) out.add(ni);
+      }
+    }
+    if (this.settings.controls && this.overlay.controlGroup.visible) {
+      for (const it of this.overlay.ctrl.items || []) {
+        if (!it.shown || out.has(it.ni) || !okNode(it.ni)) continue;
+        const p = it.obj.position;
+        if (pointHitsRect(p.x, p.y, p.z, project, rect)) out.add(it.ni);
+      }
+    }
+    // カーブ: 線が矩形にかかる
+    for (const it of this.curves.items) {
+      if (!it || !it.line.visible || out.has(it.node)) continue;
+      if (!(force || !(it.entry.unselectable || nodes[it.node].unselectable))) continue;
+      const pos = it.line.geometry.getAttribute('position');
+      const w = new Float32Array(pos.count * 3);
+      for (let k = 0; k < pos.count; k++) {
+        _v2.fromBufferAttribute(pos, k).applyMatrix4(it.line.matrixWorld);
+        w[k * 3] = _v2.x; w[k * 3 + 1] = _v2.y; w[k * 3 + 2] = _v2.z;
+      }
+      if (polylineHitsRect(w, project, rect)) out.add(it.node);
+    }
+    // メッシュ: 頂点か面が矩形にかかる（スキンは変形後の形で）
+    const useSkin = this.settings.skin;
+    for (const e of this.built.meshes) {
+      if (!e.visible || out.has(e.transform) || !(force || !e.data.unselectable)) continue;
+      const geo = e.geometry;
+      const n = geo.attributes.position.count;
+      const w = new Float32Array(n * 3);
+      for (let rv = 0; rv < n; rv++) {
+        renderVertexWorldPosition(e, rv, useSkin, _v2);
+        w[rv * 3] = _v2.x; w[rv * 3 + 1] = _v2.y; w[rv * 3 + 2] = _v2.z;
+      }
+      if (trianglesHitRect(w, geo.index ? geo.index.array : null, project, rect)) out.add(e.transform);
+    }
+    return [...out].sort((a, b) => a - b);
   }
 
   pickVertex(mi, v) {
@@ -1661,8 +1856,36 @@ class ViewerApp {
     pose = this.lockedPose(this.selected, pose);
     this.beforeDriverPose(this.selected);
     this.pose.set(this.selected, pose);
+    if (this.gizmoGroup) this.applyGizmoGroup(pose);
     this.afterPoseChange();
     this.ui.showPoseFor(this.selected, pose);
+  }
+
+  /**
+   * 複数選んでいるときにハンドルで一緒に動かすノード（リード以外。選んだノードの子孫は親と一緒に動くので除く）の、
+   * ドラッグを始めたときの姿勢と基準フレーム。一緒に動かすものがなければ null
+   */
+  gizmoGroupStart() {
+    if (!this.pose || this.selection.length < 2 || this.selected < 0) return null;
+    const nodes = this.data.nodes;
+    const set = new Set(this.selection);
+    const underSelected = (ni) => { for (let p = nodes[ni].parent; p >= 0; p = nodes[p].parent) if (set.has(p)) return true; return false; };
+    this.built.root.updateMatrixWorld(true);
+    const others = this.selection.filter((ni) => ni !== this.selected && !underSelected(ni))
+      .map((ni) => ({ ni, start: this.pose.get(ni), frame: this.pose.frameMatrix(ni, new Matrix4()) }));
+    if (!others.length) return null;
+    return { lead: this.pose.get(this.selected), leadFrame: this.pose.frameMatrix(this.selected, new Matrix4()), others };
+  }
+
+  /** リードをハンドルで動かした分を、一緒に動かすノードに加える（Maya で複数選んで動かすのと同じ） */
+  applyGizmoGroup(leadPose) {
+    const g = this.gizmoGroup;
+    const world = this.settings.space === 'world';
+    for (const o of g.others) {
+      const p = this.lockedPose(o.ni, propagatePoseDelta(this.gizmo.mode, world, g.lead, leadPose, g.leadFrame, o.start, o.frame));
+      this.beforeDriverPose(o.ni);
+      this.pose.set(o.ni, p);
+    }
   }
 
   // ------------------------------------------------------------------ ツールバーの状態
@@ -1954,7 +2177,7 @@ class ViewerApp {
 
   updateCameraIcons() {
     if (!this.cameraIcons || !this.built) return;
-    this.cameraIcons.update(!!this.settings.cameraIcons, (ni) => !!(this.hiddenEff && this.hiddenEff[ni]), this.viewCamera, this.selected);
+    this.cameraIcons.update(!!this.settings.cameraIcons, (ni) => !!(this.hiddenEff && this.hiddenEff[ni]), this.viewCamera, new Set(this.selection));
   }
 
   /** ビューポートの 1 ピクセルが、注視点のあたりでワールドの何単位か（カーブのピックの許容範囲） */
@@ -1994,12 +2217,12 @@ class ViewerApp {
       this.fit(p, this.sceneRadius * 0.12);
       return;
     }
-    if (this.selected < 0) { this.frameAll(); return; }
+    if (!this.selection.length) { this.frameAll(); return; }
     // Maya の「選択をフレーム」と同じく、選択ノード以下の形（メッシュ・カーブ）と、それ自身が形を持つノード
     // （ジョイント・ロケーター・カメラ）の位置を包む。形のない transform（グループ）の原点・ピボットは含めない。
     // 包むものが何もなければ（空のグループなど）、ノードの位置に合わせる
     const nodes = this.data.nodes;
-    const sub = new Set([this.selected]);
+    const sub = new Set(this.selection);
     nodes.forEach((n, i) => { if (sub.has(n.parent)) sub.add(i); });
     const box = new Box3();
     for (const e of this.built.meshes) {
@@ -2058,6 +2281,7 @@ class ViewerApp {
         shot: (activeShot(this.sequence.shots, this.seqFrame) || {}).shotName || null, shots: this.sequence.shots.length } : null,
       hiddenMeshes: this.built.meshes.filter((e) => !e.visible).map((e) => e.name),
       selected: this.selected >= 0 ? this.data.nodes[this.selected].path : null,
+      selection: this.selection.map((ni) => this.data.nodes[ni].path),
       posedNodes: this.pose ? this.pose.size : 0,
       textures: this.textureStatusList().map((t, i) => ({ node: this.data.textures[i].node, status: t.status,
         via: t.via || null, hasAlpha: !!t.hasAlpha, size: t.width ? [t.width, t.height] : null, tiles: t.tiles || 0 })),
@@ -2172,6 +2396,8 @@ window.mayaViewer = {
   showError(text) { app.ui.hideLoading(); app.ui.showError(text); },
   setMessage(text) { app.ui.setMessage(text); },
   selectByPath(path) { return app.selectByPath(path); },
+  /** パスの一覧で選ぶ（最後がリード。Maya の選択に合わせるとき） */
+  selectByPaths(paths) { return app.selectByPaths(paths); },
   clear() { app.clearAll(); return true; },
   getStats() { return app.stats(); },
   /** 保存時のフレームの再現チェック（IK の結果とファイルの値の比較） */

@@ -27,9 +27,9 @@ window.__gz = (() => {
     return [r.left + (q.x + 1) / 2 * r.width, r.top + (1 - q.y) / 2 * r.height];
   };
   // 実際のマウスと同じく、移動イベントの button は -1（押した・離したときだけ 0）
-  const ev = (type, x, y, buttons) => app.canvas.dispatchEvent(new PointerEvent(type, {
+  const ev = (type, x, y, buttons, altKey = false) => app.canvas.dispatchEvent(new PointerEvent(type, {
     clientX: x, clientY: y, button: type === 'pointermove' ? -1 : 0, buttons, pointerId: 1, pointerType: 'mouse',
-    isPrimary: true, bubbles: true, cancelable: true }));
+    isPrimary: true, bubbles: true, cancelable: true, altKey }));
   const key = (k) => window.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
   /** ハンドルの部品（axis）の上にマウスを移動できる画面座標を探す */
   const find = (axis) => {
@@ -61,11 +61,11 @@ window.__gz = (() => {
     }
     return null;
   };
-  /** 押して dx, dy だけドラッグして離す */
-  const drag = (x, y, dx, dy) => {
-    ev('pointerdown', x, y, 1);
-    for (let i = 1; i <= 8; i++) ev('pointermove', x + dx * i / 8, y + dy * i / 8, 1);
-    ev('pointerup', x + dx, y + dy, 0);
+  /** 押して dx, dy だけドラッグして離す（alt: Alt を押したまま = Maya と同じ視点の操作） */
+  const drag = (x, y, dx, dy, alt = false) => {
+    ev('pointerdown', x, y, 1, alt);
+    for (let i = 1; i <= 8; i++) ev('pointermove', x + dx * i / 8, y + dy * i / 8, 1, alt);
+    ev('pointerup', x + dx, y + dy, 0, alt);
   };
   const idx = (name) => app.data.nodes.findIndex((n) => n.name === name);
   const colLen = (m, c) => Math.hypot(m.elements[c * 4], m.elements[c * 4 + 1], m.elements[c * 4 + 2]);
@@ -191,7 +191,7 @@ def main() -> int:
                                       nxt())), 300)
 
     def s_camera_stops(nxt):
-        # 何もない所をドラッグしてカメラを回し、離したあとに動き続けないか
+        # 何もない所を Alt+ドラッグしてカメラを回し（Maya と同じタンブル）、離したあとに動き続けないか
         def got(r):
             print("  カメラ（前・離した直後）:", r["before"], r["atUp"])
             check(r["atUp"] != r["before"], "ドラッグでカメラが回る")
@@ -199,7 +199,7 @@ def main() -> int:
                lambda later: (check(later == r["atUp"], "離したあとカメラが止まる（0.7 秒後も同じ位置）"), nxt()), 0)
         js("""(()=>{const app=window.mayaViewer.debug.app; __gz.key('q'); const v=__gz.vp();
               const cam=()=>app.camera.position.toArray().map(x=>+x.toFixed(6)); const before=cam();
-              __gz.drag(v.left+40, v.top+v.height-80, 160, -30); return JSON.stringify({before, atUp: cam()});})()""",
+              __gz.drag(v.left+40, v.top+v.height-80, 160, -30, true); return JSON.stringify({before, atUp: cam()});})()""",
            got, 700)
 
     def s_panels(nxt):
