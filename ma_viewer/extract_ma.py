@@ -101,12 +101,32 @@ def _hidden_by_layer(n: MaNode) -> bool:
     return "v" in raw and bool(raw["v"]) and not R.to_bool(raw["v"][0])
 
 
+def _inherited(n: Optional[MaNode], key: str, own, root):
+    """祖先から引き継ぐ値（own(ノード) が None なら親の値。根の上は root）。祖先ごとの結果をノードに覚えて、
+    深い階層でも祖先を 1 回ずつしかたどらない（再帰を使わないので、階層の深さに上限はない）"""
+    chain = []
+    x = n
+    v = root
+    while x is not None:
+        m = x.memo
+        if m is not None and key in m:
+            v = m[key]
+            break
+        chain.append(x)
+        x = x.parent
+    for x in reversed(chain):
+        o = own(x)
+        if o is not None:
+            v = o
+        if x.memo is None:
+            x.memo = {}
+        x.memo[key] = v
+    return v
+
+
 def _visible_effective(n: Optional[MaNode]) -> bool:
-    while n is not None:
-        if not _visible_self(n):
-            return False
-        n = n.parent
-    return True
+    """親を含めた表示状態（祖先の結果はノードに覚えて使い回す）"""
+    return _inherited(n, "vis", lambda x: None if _visible_self(x) else False, True)
 
 
 # ---------------------------------------------------------------------------
@@ -185,15 +205,18 @@ def curve_display(shape: MaNode, attrs: dict):
     Maya と同じく、シェイプ → 親 transform → その祖先の順に、ディスプレイレイヤーか描画のオーバーライドを探す
     （レイヤーに入っているノードはレイヤーの設定、そうでなければ自分のオーバーライド）。
     """
-    x: Optional[MaNode] = shape
-    while x is not None:
-        o = _layer_override(x)
-        if o is None:
-            o = _own_override(attrs.get if x is shape else (lambda k, x=x: x.xattrs.get(k)))
-        if o is not None:
-            return o
-        x = x.parent
-    return None, 0
+    o = _layer_override(shape)
+    if o is None:
+        o = _own_override(attrs.get)
+    return o if o is not None else _inherited_display(shape.parent)
+
+
+def _inherited_display(x: Optional[MaNode]):
+    """x から祖先へ探した (色, 表示の種類)（ノードの属性 xattrs で。結果はノードに覚える）"""
+    def own(y):
+        o = _layer_override(y)
+        return o if o is not None else _own_override(y.xattrs.get)
+    return _inherited(x, "display", own, (None, 0))
 
 
 DISPLAY_TYPE_LABELS = {1: "テンプレート", 2: "リファレンス"}
@@ -206,14 +229,19 @@ def selectability(n: MaNode, attrs: Optional[dict] = None) -> Optional[str]:
     （ディスプレイレイヤーか描画のオーバーライド。curve_display と同じく、近い方の設定）は、ビューポートでは
     選べない（アウトライナーからは選べる）。attrs は n 自身の属性（属性を読み飛ばしたシェイプ用。省略時は xattrs）
     """
-    x: Optional[MaNode] = n
-    while x is not None:
-        tmp = attrs.get("tmp") if (x is n and attrs is not None) else x.xattrs.get("tmp")
-        if tmp is not None and _num(tmp) >= 0.5:
-            return "テンプレート"
-        x = x.parent
-    _color, display = curve_display(n, attrs if attrs is not None else {k: v for k, v in n.xattrs.items()})
+    tmp = (attrs if attrs is not None else n.xattrs).get("tmp")
+    if (tmp is not None and _num(tmp) >= 0.5) or _templated(n.parent):
+        return "テンプレート"
+    _color, display = curve_display(n, attrs if attrs is not None else n.xattrs)
     return DISPLAY_TYPE_LABELS.get(display)
+
+
+def _templated(x: Optional[MaNode]) -> bool:
+    """x か祖先がテンプレート（.template）か（結果はノードに覚える）"""
+    def own(y):
+        tmp = y.xattrs.get("tmp")
+        return True if tmp is not None and _num(tmp) >= 0.5 else None
+    return _inherited(x, "tmp", own, False)
 
 
 # シェイプの表示の設定を見るノードの型（形をビューアで描くものは、それぞれのシェイプの判定を使う）

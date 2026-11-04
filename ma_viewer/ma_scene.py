@@ -262,7 +262,7 @@ def _sparse_into(weights: Dict[int, Dict[int, float]], a: int, b: int, vals) -> 
 class MaNode:
     __slots__ = ("name", "type", "parent", "children", "path", "order", "is_dag",
                  "xattrs", "mesh", "skin", "tweak", "inputs", "raw", "skip_attrs", "span", "attr_map", "ns", "espan",
-                 "node_def", "baked", "xspans", "ssc_parent", "locks")
+                 "node_def", "baked", "xspans", "ssc_parent", "locks", "memo")
 
     def __init__(self, name: str, node_type: str, parent: Optional["MaNode"], order: int, ns: str = ""):
         self.name = name
@@ -291,6 +291,8 @@ class MaNode:
         # inverseScale の接続がなくても親のスケールで行う）
         self.ssc_parent = False
         self.locks: Dict[str, bool] = {}   # setAttr -l でロックした移動・回転・スケール（tx・t など → ロックするか）
+        # 変換で求めた、祖先から引き継ぐ値（表示・テンプレート・表示の種類と色）。深い階層で祖先を何度もたどらないため
+        self.memo: Optional[Dict[str, object]] = None
 
     @property
     def is_shape(self) -> bool:
