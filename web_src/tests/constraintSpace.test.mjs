@@ -63,6 +63,29 @@ test('ウェイトがすべて 0 なら、enableRestPosition でレストの値�
   assert.ok(nearVec(chan('restJ').t, [1, 2, 3]) && nearVec(chan('restJ').r, [0, 0, 45], 1e-9));
 });
 
+test('レストの値は成分（.rtx・.rrx など。「rst + 軸」ではない）でも読み、接続の角度はラジアンのまま使う', () => {
+  /** restJ_pc の attrs を edit で書き換えて、フレーム f の restJ のチャンネルの値 */
+  const restAt = (edit, f = 12) => {
+    const d = JSON.parse(JSON.stringify(data));
+    const g = d.animation.graph.find((x) => x.name === 'restJ_pc');
+    edit(g);
+    const rig = new RigEvaluator(new AnimationClip(d.animation), d.nodes, (ni) => new Matrix4().fromArray(d.nodes[ni].matrix));
+    rig.evaluate(f);
+    return rig.chan(idx('restJ'));
+  };
+  const comp = restAt((g) => {
+    delete g.attrs.rst; delete g.attrs.rsrr;
+    Object.assign(g.attrs, { rtx: 1, rty: 2, rtz: 3, rrz: 45 });
+  });
+  assert.ok(nearVec(comp.t, [1, 2, 3]) && nearVec(comp.r, [0, 0, 45], 1e-9), `成分の値: t ${comp.t}・r ${comp.r}`);
+  // .rrz を角度のキー（ctrl_rotateZ。値はラジアンで渡る）につなぐ: 度とみなして二重に換算しない
+  const curve = data.animation.curves.findIndex((c) => c.name === 'ctrl_rotateZ');
+  for (const f of FRAMES) {
+    const keyed = restAt((g) => { delete g.attrs.rsrr; g.inputs.rrz = { curve }; }, f);
+    assert.ok(nearVec(keyed.r, [0, 0, rz(f)], 1e-6), `フレーム ${f}: ${keyed.r}（期待 ${rz(f)}）`);
+  }
+});
+
 test('行列から回転の値: Maya と同じく 0 に近い角度（(180, 30, 180) ではなく (0, 150, 0)）', () => {
   assert.ok(nearVec(at(1).chan('eJ').r, [0, 150, 0], 1e-9), `${at(1).chan('eJ').r}`);
 });
