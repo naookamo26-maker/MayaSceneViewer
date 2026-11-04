@@ -6,6 +6,10 @@
 //     → ポーズ確認でコントローラーを動かすと、コンストレイントや IK が追従する
 //   * 1 回の評価（evaluate）の中では、同じプラグ・行列を一度だけ計算する
 //   * 循環（自分の結果を自分で使う）に当たったら、そこはファイルの値で打ち切る
+//   * 依存の追跡: 覚えた値ごとに、計算中に読んだ「外から変わる入力」（いまはポーズ確認の追加分のノード）を deps に記録し、
+//     読んだ値の deps も引き継ぐ（memo・poseAt）。入力を変えたら、それを読んだ値・動くノードだけを作り直す
+//     （keep の dropKeep、再生キャッシュの seed）。ビューアで編集（キー・属性の値の変更など）を扱うときも、変えるものを
+//     読む所で同じように依存を記録すれば（例: カーブの番号・プラグを入力の印にする）、影響する部分だけを作り直せる
 // 完全な再現は目指さず、Maya と同じ考え方の近似にする（docs/data_format.md「animation.graph」）。
 import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { clampLimits, composeLocalMatrix, composeMaya, decomposeMaya, evaluateCurve, mayaEuler, poseChannels } from './animation.js';
@@ -122,6 +126,38 @@ const NO_POSE = () => null;                // ポーズ確認の追加分なし
 const BUSY = Symbol('busy');               // キャッシュの計算中の印（循環の検出）
 const PLAN = { def: 0, input: 1, component: 2, output: 3, triple: 4, static: 5 };   // plugPlan の種類
 const SNAPSHOT_BASE = 512;                 // 再生キャッシュの 1 フレームの入れ物の大きさ（バイト。目安）
+const OPAQUE = -1;                         // 追加分の目印がノードごとでないとき（版の数など）の印。どの値もこれを読んだことにする
+const NO_KEYS = new Map();                 // 追加分なしの目印
+const NO_FRAMES = new Map();               // 再生キャッシュのないとき（snapshots）
+const MAX_LAYERS = 6;                      // 再生キャッシュのレイヤーの数の上限（追加分なし・再生で使うものは残す）
+
+/**
+ * 追加分の目印（ノード番号 → 文字列の Map）。poseKey が Map ならそのまま、版の数などなら OPAQUE の 1 つだけにする。
+ * 追加分があって目印がなければ null（毎回別物として扱う）
+ */
+function poseKeysOf(poseOf, poseKey) {
+  if (poseOf === NO_POSE) return NO_KEYS;
+  if (poseKey instanceof Map) return poseKey;
+  return poseKey === undefined || poseKey === null ? null : new Map([[OPAQUE, poseKey]]);
+}
+
+const copyKeys = (k) => (k === null || k === NO_KEYS || !k.size ? (k && NO_KEYS) : new Map(k));
+
+/** 2 つの目印で値の違うノード（Set）。どちらかが null・OPAQUE が違うなら null（すべて違うとみなす） */
+function diffKeys(a, b) {
+  if (!a || !b) return null;
+  const out = new Set();
+  if (a === b) return out;
+  for (const [k, v] of a) if (b.get(k) !== v) out.add(k);
+  for (const [k, v] of b) if (a.get(k) !== v) out.add(k);
+  return out.has(OPAQUE) ? null : out;
+}
+
+function intersects(a, b) {
+  if (a.size > b.size) [a, b] = [b, a];
+  for (const x of a) if (b.has(x)) return true;
+  return false;
+}
 /** 型ごとの出力の属性（新しい計算ノードは mathNodes.js。distanceBetweenDL は distanceBetween と同じ） */
 function outputsOf(type) {
   if (OUTPUTS[type]) return OUTPUTS[type];
@@ -332,87 +368,320 @@ export class RigEvaluator {
     this.ikVariant = null;                   // 再現チェックで試す IK の解き方の候補（ふだんは null）
     this.aimMode = null;                     // aim と up が平行な aimConstraint の解き方（再現チェックで試す。null = parent）
     this.frame = 0;
-    this.poseOf = NO_POSE;
-    this.poseKey = null;
+    this.poseOf = NO_POSE;                   // ポーズ確認の追加分（evaluate で受け取る。リグの中では poseAt を通して読む）
+    this.poseKey = null;                     // evaluate で受け取った追加分の目印（そのまま）
+    this.poseKeys = NO_KEYS;                 // 追加分の目印（poseKeysOf。ノード番号 → 文字列。null = 目印なし）
+    // 依存の追跡: 追加分を読んだことのあるノード（poseReads。これまでの評価すべての和）と、計算した値ごとに読んだノード
+    // （キャッシュの Map の deps）。読まれていないノードの追加分を変えても、キャッシュは捨てない。変えたノードを読んだ
+    // 値だけを捨てる・作り直す
+    this.poseReads = new Set([OPAQUE]);
+    this.dcur = null;                        // いま計算中の値が読んだノード（Set。null = まだない）
+    this.dshared = false;                    // dcur がほかの値の deps と同じもの（足す前に複製する）
+    this.nodeDeps = new Map();               // 動くノード → そのローカル行列が読んだノード（再生キャッシュに入れた評価すべての和）
+    this.dependents = new Map();             // ノード → その追加分で値が変わりうる動くノード（nodeDeps の逆引き）
     // 時間で変わらない値（キー・frame・time・Trax のどれも読まずに求めた値）は、フレームをまたいで keep に残す。
-    // ポーズ確認の追加分・再現チェックの候補（ikVariant・aimMode）が変わったら捨てる（keepFor と比べる）
+    // 追加分を変えたら、変えたノードを読んだ値だけを捨てる（keepKeys と比べる）。再現チェックの候補
+    // （ikVariant・aimMode）が変わったらすべて捨てる（keepFor と比べる）
     this.keep = emptyCache();
-    this.keepFor = { pose: null, ikVariant: null, aimMode: null };
+    this.keepKeys = NO_KEYS;
+    this.keepFor = { ikVariant: null, aimMode: null };
     this.keepStatic = true;                  // false なら keep を使わない（毎フレームすべて計算する）
     this.plans = new Map();                  // グラフの id → 属性 → 値の求め方（plugPlan）
     this.chanInputList = new Map();          // ノード番号 → チャンネルの接続（chanInputs）
     this.varying = false;                    // いま計算中の値が、時間で変わる値を読んだか
-    // 再生キャッシュ: 整数のフレーム → { mats（動くノードのローカル行列を並べた Float64Array）, props, curves, bytes }。
-    // 2 周目以降の再生はコピーだけにする。上限（バイト）を超えたら覚えない。0 なら使わない（setPlaybackLimit）
-    this.snapshots = new Map();
-    this.snapshotBytes = 0;                  // 再生キャッシュの大きさ（バイト。カーブの形・属性の値を含む目安）
+    // 再生キャッシュ: 追加分ごとのレイヤー { keys（追加分の目印）, frames（整数のフレーム → { mats（動くノードのローカル
+    // 行列を並べた Float64Array）, props, curves, bytes, layer }）, bytes }。後ろほど新しく使ったもの。
+    // 2 周目以降の再生はコピーだけにする。追加分を前と同じに戻せば（元に戻す・キーのある値をカーブに戻す）前のレイヤーを
+    // そのまま使い、新しい追加分のフレームは、ほかのレイヤーの同じフレームから影響のないノードの行列を写して作る（seed）。
+    // 上限（バイト）を超えたら古いレイヤーから捨てる。0 なら使わない（setPlaybackLimit）
+    this.layers = [];
+    this.layer = null;                       // いまのフレームの評価に使ったレイヤー
+    this.play = null;                        // 再生で使う追加分 { poseOf, key, keys }（setPlaybackPose。null = いまの追加分）
+    this.snapshotBytes = 0;                  // 再生キャッシュの大きさ（全レイヤー。カーブの形・属性の値を含む目安）
     this.frameBytes = this.moving.size * 128 + SNAPSHOT_BASE;   // 1 フレームの大きさの見込み（覚えたフレームの最大）
     this.countedCurves = new WeakSet();      // 大きさを数えたカーブの値（時間で変わらない形は全フレームで同じものを使う）
     this.playbackLimit = 256 * 1024 * 1024;
     this.current = null;                     // いまのフレームの再生キャッシュ（覚えないフレームは null）
+    this.seeded = 0;                         // いまのフレームの評価で、ほかのレイヤーから写した動くノードの数（確認用）
     this.reset();
   }
 
   get hasGraph() { return this.graph.length > 0; }
 
+  /** 1 回の評価の準備。追加分・再現チェックの候補が変わっていたら、それを読んだ keep の値を捨てる */
   reset() {
     const k = this.keepFor;
-    if (k.pose !== this.poseKey || k.ikVariant !== this.ikVariant || k.aimMode !== this.aimMode) {
+    if (k.ikVariant !== this.ikVariant || k.aimMode !== this.aimMode) {
       this.keep = emptyCache();
-      this.clearPlayback();
-      this.keepFor = { pose: this.poseKey, ikVariant: this.ikVariant, aimMode: this.aimMode };
+      this.keepFor = { ikVariant: this.ikVariant, aimMode: this.aimMode };
+      this.keepKeys = copyKeys(this.poseKeys);
+    } else if (this.keepKeys !== this.poseKeys) {
+      const d = diffKeys(this.keepKeys, this.poseKeys);
+      if (d === null || d.size) {
+        const changed = this.readsOf(d);
+        if (changed === null || changed.size) this.dropKeep(changed);
+        this.keepKeys = copyKeys(this.poseKeys);
+      }
     }
     this.cache = emptyCache();
     this.busy = new Set();
     this.varying = false;
     this.current = null;
+    this.dcur = null;
+    this.dshared = false;
   }
 
-  /** 再生キャッシュを捨てる */
+  /** 値の違うノード d（null = すべて）のうち、評価で追加分を読んだことのあるもの（null = すべて） */
+  readsOf(d) {
+    if (d === null) return null;
+    const out = new Set();
+    for (const n of d) if (this.poseReads.has(n)) out.add(n);
+    return out;
+  }
+
+  /** keep のうち、changed（null = どれか）のノードの追加分を読んだ値を捨てる */
+  dropKeep(changed) {
+    const drop = (m) => {
+      if (!m.deps) return;
+      for (const [key, d] of m.deps) {
+        if (changed === null ? d.size > 0 : intersects(d, changed)) { m.delete(key); m.deps.delete(key); }
+      }
+    };
+    for (const [name, m] of Object.entries(this.keep)) {
+      if (name === 'plug') for (const sub of m.values()) drop(sub);
+      else drop(m);
+    }
+  }
+
+  /** ポーズ確認の追加分（ノード ni の。なければ null）。読んだことを依存として覚える */
+  poseAt(ni) {
+    this.poseReads.add(ni);
+    let c = this.dcur;
+    if (!c) {
+      this.dcur = new Set([ni]);
+      this.dshared = false;
+    } else if (!c.has(ni)) {
+      if (this.dshared) { c = this.dcur = new Set(c); this.dshared = false; }
+      c.add(ni);
+    }
+    return this.poseOf(ni);
+  }
+
+  /** いま計算中の値の依存に、読んだ値の依存 d を足す（d は変えない） */
+  addDeps(d) {
+    if (!d) return;
+    let c = this.dcur;
+    if (!c) { this.dcur = d; this.dshared = true; return; }
+    if (c === d) return;
+    for (const x of d) {
+      if (c.has(x)) continue;
+      if (this.dshared) { c = this.dcur = new Set(c); this.dshared = false; }
+      c.add(x);
+    }
+  }
+
+  /** 動くノード ni のローカル行列が読んだノードを覚える（seed で、影響を受けないノードを見分ける） */
+  addNodeDeps(ni, d) {
+    let u = this.nodeDeps.get(ni);
+    if (u === d) return;
+    if (!u) this.nodeDeps.set(ni, u = new Set());
+    for (const x of d) {
+      if (u.has(x)) continue;
+      u.add(x);
+      let s = this.dependents.get(x);
+      if (!s) this.dependents.set(x, s = new Set());
+      s.add(ni);
+    }
+  }
+
+  // ------------------------------------------------------------------ 再生キャッシュ
+  /**
+   * 追加分の目印 keys で使えるレイヤー（評価で読んだノードの追加分がすべて同じもの。新しく使ったものから探す）。
+   * create なら、なければ作り、見つけたものは目印を keys にして一番新しくする
+   */
+  layerFor(keys, create = false) {
+    if (keys === null) return null;
+    for (let i = this.layers.length - 1; i >= 0; i--) {
+      const L = this.layers[i];
+      const d = diffKeys(L.keys, keys);
+      if (d === null) continue;
+      let ok = true;
+      for (const n of d) if (this.poseReads.has(n)) { ok = false; break; }
+      if (!ok) continue;
+      if (create) {
+        // 読んでいないノードの違いは、このレイヤーの値に影響しない。あとから読むようになっても合うよう、目印をいまのものにする
+        if (d.size) L.keys = copyKeys(keys);
+        if (i !== this.layers.length - 1) { this.layers.splice(i, 1); this.layers.push(L); }
+      }
+      return L;
+    }
+    if (!create) return null;
+    const L = { keys: copyKeys(keys), frames: new Map(), bytes: 0 };
+    this.layers.push(L);
+    this.trimLayers(L);
+    return L;
+  }
+
+  /** 再生で使う追加分のレイヤー（なければ null） */
+  playbackLayer() {
+    return this.layerFor(this.play ? this.play.keys : this.poseKeys);
+  }
+
+  /**
+   * 再生で使う追加分（bake で作り、タイムラインの帯・playbackStats で示すもの）。ポーズ確認で、フレームを変えると
+   * 戻る分（キーのある値）を除いたもの。poseOf を省くと追加分なし、null を渡すと「いまの追加分と同じ」
+   */
+  setPlaybackPose(poseOf = NO_POSE, poseKey = undefined) {
+    this.play = poseOf === null ? null : { poseOf, key: poseKey, keys: poseKeysOf(poseOf, poseKey) };
+  }
+
+  /** レイヤーを捨てる */
+  dropLayer(L) {
+    const i = this.layers.indexOf(L);
+    if (i < 0) return;
+    this.layers.splice(i, 1);
+    this.snapshotBytes -= L.bytes;
+    if (this.current && this.current.layer === L) this.current = null;
+    if (this.layer === L) this.layer = null;
+  }
+
+  /** レイヤーが多すぎたら、古いものから捨てる（keep・追加分なし・再生で使うものは残す） */
+  trimLayers(keep) {
+    if (this.layers.length <= MAX_LAYERS) return;
+    const play = this.playbackLayer();
+    for (const L of [...this.layers]) {
+      if (this.layers.length <= MAX_LAYERS) break;
+      if (L !== keep && L !== play && L.keys.size) this.dropLayer(L);
+    }
+  }
+
+  /**
+   * レイヤー L にもう 1 フレーム入るか。L が再生で使うレイヤーなら、ほかのレイヤーを古いものから捨てて場所を空ける
+   * （ポーズ確認の操作中の、一時的な追加分のレイヤーのためには捨てない）
+   */
+  roomFor(L) {
+    const fits = () => this.snapshotBytes + this.frameBytes <= this.playbackLimit;
+    if (fits()) return true;
+    if (L !== this.playbackLayer()) return false;
+    for (const other of [...this.layers]) {
+      if (other === L) continue;
+      this.dropLayer(other);
+      if (fits()) return true;
+    }
+    return false;
+  }
+
+  /** 再生キャッシュをすべて捨てる */
   clearPlayback() {
-    this.snapshots.clear();
+    this.layers = [];
+    this.layer = null;
     this.snapshotBytes = 0;
     this.countedCurves = new WeakSet();
     this.current = null;
   }
 
-  /** 再生キャッシュの上限（バイト。0 なら使わない）。いまの大きさが上限を超えたら、先に覚えたフレームから捨てる */
+  /** 再生キャッシュの上限（バイト。0 なら使わない）。いまの大きさが上限を超えたら、古いレイヤー・先に覚えたフレームから捨てる */
   setPlaybackLimit(bytes) {
     this.playbackLimit = Math.max(0, bytes || 0);
     if (this.playbackLimit === 0) { this.clearPlayback(); return; }
-    for (const [f, snap] of this.snapshots) {
-      if (this.snapshotBytes <= this.playbackLimit) break;
-      if (snap === this.current) continue;
-      this.snapshots.delete(f);
-      this.snapshotBytes -= snap.bytes;
+    const play = this.playbackLayer();
+    const order = [...this.layers.filter((L) => L !== play), ...(play ? [play] : [])];
+    for (const L of order) {
+      for (const [f, snap] of L.frames) {
+        if (this.snapshotBytes <= this.playbackLimit) return;
+        if (snap === this.current) continue;
+        L.frames.delete(f);
+        L.bytes -= snap.bytes;
+        this.snapshotBytes -= snap.bytes;
+      }
+      if (!L.frames.size && L !== this.layer) this.dropLayer(L);
     }
   }
 
-  /** 再生キャッシュの状態 { frames, bytes, limit, full } */
+  /** 再生キャッシュの状態 { frames（再生で使うレイヤーのフレーム数）, bytes（全レイヤー）, limit, full, layers } */
   playbackStats() {
-    return { frames: this.snapshots.size, bytes: this.snapshotBytes, limit: this.playbackLimit, full: this.playbackFull };
+    const L = this.playbackLayer();
+    return { frames: L ? L.frames.size : 0, bytes: this.snapshotBytes, limit: this.playbackLimit, full: this.playbackFull,
+      layers: this.layers.length };
+  }
+
+  /** 再生で使うレイヤーのフレーム（整数のフレーム → 再生キャッシュ。なければ空） */
+  get snapshots() {
+    const L = this.playbackLayer();
+    return L ? L.frames : NO_FRAMES;
   }
 
   /** 再生キャッシュに足した値の大きさを数える */
   addSnapshotBytes(snap, bytes) {
     snap.bytes += bytes;
+    snap.layer.bytes += bytes;
     this.snapshotBytes += bytes;
     if (snap.bytes > this.frameBytes) this.frameBytes = snap.bytes;
+  }
+
+  /**
+   * ほかのレイヤーにある同じフレームの再生キャッシュから、追加分の違いの影響を受けない動くノードのローカル行列を、
+   * このフレームの値として写す（影響を受けるノードだけを計算する）。影響の有無は nodeDeps（そのフレームを覚えたときの
+   * 評価で読んだノード）で決める。写したノードの数を返す
+   */
+  seed(f, layer) {
+    let best = null, bestAffected = null;
+    for (const L of this.layers) {
+      if (L === layer) continue;
+      const snap = L.frames.get(f);
+      if (!snap) continue;
+      const affected = this.affectedBy(this.readsOf(diffKeys(L.keys, this.poseKeys)));
+      if (!best || affected.size < bestAffected.size) { best = snap; bestAffected = affected; }
+    }
+    if (!best || bestAffected.size >= this.moving.size) return 0;
+    const local = this.cache.local;
+    const deps = local.deps || (local.deps = new Map());
+    let n = 0, o = 0;
+    for (const ni of this.moving) {
+      if (!bestAffected.has(ni)) {
+        local.set(ni, new Matrix4().fromArray(best.mats, o));
+        const d = this.nodeDeps.get(ni);
+        if (d && d.size) deps.set(ni, d);
+        n++;
+      }
+      o += 16;
+    }
+    return n;
+  }
+
+  /** changed（null = どれか）のノードの追加分で値が変わりうる動くノード */
+  affectedBy(changed) {
+    const out = new Set();
+    if (changed === null) {
+      for (const [ni, d] of this.nodeDeps) if (d.size) out.add(ni);
+      return out;
+    }
+    for (const c of changed) {
+      const s = this.dependents.get(c);
+      if (s) for (const ni of s) out.add(ni);
+    }
+    return out;
   }
 
   /**
    * フレーム f の、動くノードのローカル行列（ポーズ確認の追加分を含まない）を計算する。
    * @param poseOf (ni) => Matrix4 | null  ポーズ確認の追加分（ノード自身の軸の追加分）。ワールド行列と、ほかのノードが読む
    *   移動・回転・スケールの値（posedChan）に入れ、制限（limit）の範囲に収める
-   * @param poseKey poseOf の中身が同じあいだは同じ値（PoseState.version）。ないときは、フレームをまたぐキャッシュを使わない
+   * @param poseKey poseOf の中身の目印。ノード番号 → 文字列の Map（そのノードの追加分が同じあいだは同じ文字列）なら、
+   *   変えたノードの影響を受ける値だけを作り直す。版の数などなら、変わったら追加分を読んだ値をすべて作り直す。
+   *   ないときは、フレームをまたぐキャッシュを使わない
    */
   evaluate(f, poseOf = NO_POSE, target = this.matrices, poseKey = undefined) {
     this.frame = f;
     this.poseOf = poseOf;
-    this.poseKey = poseOf === NO_POSE ? null : (poseKey ?? {});
+    this.poseKey = poseKey;
+    this.poseKeys = poseKeysOf(poseOf, poseKey);
     this.reset();
-    const playable = Number.isInteger(f) && this.ikVariant === null && this.aimMode === null && this.playbackLimit > 0;
-    const hit = playable ? this.snapshots.get(f) : null;
+    this.seeded = 0;
+    const playable = Number.isInteger(f) && this.ikVariant === null && this.aimMode === null && this.playbackLimit > 0
+      && this.poseKeys !== null;
+    const layer = this.layer = playable ? this.layerFor(this.poseKeys, true) : null;
+    const hit = layer ? layer.frames.get(f) : null;
     if (hit) {
       let o = 0;
       for (const ni of this.moving) {
@@ -424,43 +693,57 @@ export class RigEvaluator {
       this.current = hit;
       return target;
     }
+    if (layer) this.seeded = this.seed(f, layer);
+    const store = !!layer && this.roomFor(layer);
     for (const ni of this.moving) {
+      this.dcur = null;
+      this.dshared = false;
       const m = target.get(ni) || new Matrix4();
       m.copy(this.localFile(ni));
       target.set(ni, m);
+      if (store && this.dcur) this.addNodeDeps(ni, this.dcur);
     }
-    if (playable && !this.playbackFull) {
+    this.dcur = null;
+    this.dshared = false;
+    if (store) {
       const mats = new Float64Array(this.moving.size * 16);
       let o = 0;
       for (const ni of this.moving) { target.get(ni).toArray(mats, o); o += 16; }
-      this.current = { mats, props: null, curves: new Map(), bytes: 0 };
-      this.snapshots.set(f, this.current);
+      this.current = { mats, props: null, curves: new Map(), bytes: 0, layer };
+      layer.frames.set(f, this.current);
       this.addSnapshotBytes(this.current, mats.byteLength + SNAPSHOT_BASE);
     }
     return target;
   }
 
-  /** フレーム f が再生キャッシュにあるか */
+  /** フレーム f が（再生で使うレイヤーの）再生キャッシュにあるか */
   hasSnapshot(f) { return this.snapshots.has(f); }
 
-  /** 再生キャッシュが上限に達したか */
-  get playbackFull() { return this.snapshotBytes + this.frameBytes > this.playbackLimit; }
+  /** 再生で使うレイヤーが、ほかのレイヤーを捨てても上限に達するか */
+  get playbackFull() {
+    const L = this.playbackLayer();
+    return (L ? L.bytes : 0) + this.frameBytes > this.playbackLimit;
+  }
 
   /**
-   * 再生キャッシュを先に作る（空き時間に少しずつ呼ぶ）。いまのフレームの評価の結果（matrices と、あとから求める値）は変えない。
+   * 再生キャッシュを先に作る（空き時間に少しずつ呼ぶ）。再生で使う追加分（setPlaybackPose）で作る。
+   * いまのフレームの評価の結果（matrices と、あとから求める値）は変えない。
    * @param frames 作るフレーム  @param more () => boolean  続けてよいか（1 フレーム目は必ず作る）
    * @returns 作ったフレームの数
    */
   bake(frames, more = () => true) {
-    const todo = frames.filter((f) => Number.isInteger(f) && !this.snapshots.has(f));
-    if (!todo.length || this.playbackLimit <= 0) return 0;
+    if (this.playbackLimit <= 0) return 0;
     const back = { f: this.frame, poseOf: this.poseOf, key: this.poseKey };
+    const play = this.play || back;
+    const L = this.layerFor(this.play ? this.play.keys : this.poseKeys);
+    const todo = frames.filter((f) => Number.isInteger(f) && !(L && L.frames.has(f)));
+    if (!todo.length) return 0;
     const scratch = new Map();
     let n = 0;
     for (const f of todo) {
       if (n > 0 && !more()) break;
-      this.evaluate(f, back.poseOf, scratch, back.key);
-      if (!this.current) break;                          // 上限に達した
+      this.evaluate(f, play.poseOf, scratch, play.key);
+      if (!this.current) break;                          // 上限に達した（目印がなく覚えられないときも）
       if (this.props.length) this.evaluateProps();
       for (const gid of this.curveIds()) this.curveShape(gid);
       n++;
@@ -474,25 +757,42 @@ export class RigEvaluator {
     if (fm.has(key)) {
       const v = fm.get(key);
       this.varying = true;                    // fm に残るのは時間で変わる値（と計算中の印）
-      if (v !== BUSY) return v;
+      if (v !== BUSY) {
+        if (fm.deps) this.addDeps(fm.deps.get(key));
+        return v;
+      }
       // 循環の防止。key の計算中にもう一度 key を求めたら fallback を返す
       this.problems.add(`循環: ${label()}`);
       return fallback();
     }
-    if (km.has(key)) return km.get(key);
-    const outer = this.varying;
+    if (km.has(key)) {
+      if (km.deps) this.addDeps(km.deps.get(key));
+      return km.get(key);
+    }
+    const outer = this.varying, outerDeps = this.dcur, outerShared = this.dshared;
     this.varying = false;
+    this.dcur = null;
+    this.dshared = false;
     if (fallback) fm.set(key, BUSY);
     let done = false, v;
     try {
       v = compute();
       done = true;
     } finally {
-      const varying = this.varying;
+      const varying = this.varying, deps = this.dcur;
       this.varying = outer || varying;
+      this.dcur = outerDeps;
+      this.dshared = outerShared;
+      this.addDeps(deps);
       if (!done) fm.delete(key);
-      else if (varying || !this.keepStatic) fm.set(key, v);
-      else { fm.delete(key); km.set(key, v); }
+      else {
+        // 値と、その値が読んだ追加分のノード（deps。追加分を変えたときに捨てる値を見分ける）を覚える
+        let m = fm;
+        if (!varying && this.keepStatic) { fm.delete(key); m = km; }
+        m.set(key, v);
+        if (deps) (m.deps || (m.deps = new Map())).set(key, deps);
+        else if (m.deps) m.deps.delete(key);
+      }
     }
     return v;
   }
@@ -658,7 +958,7 @@ export class RigEvaluator {
    * 制限（limit）の範囲に収めたもの（ファイルの値 · 組み直した差分。制限にかからなければ ファイルの値 · 追加分）
    */
   posedLocal(ni) {
-    const d = this.poseOf(ni);
+    const d = this.poseAt(ni);
     if (!d) return this.localFile(ni);
     const local = this.localFile(ni).clone();
     if (!this.rest(ni) || this.fallback.has(ni)) return local.multiply(d);
@@ -671,7 +971,7 @@ export class RigEvaluator {
    * 移動の値（ポーズ確認の追加分を含む）。追加分がなければ回転を求めない chan(ni, 't')（IK などの循環を避ける）
    */
   posedT(ni) {
-    return this.poseOf(ni) && !this.fallback.has(ni) ? this.posedChan(ni).t : this.chan(ni, 't').t;
+    return this.poseAt(ni) && !this.fallback.has(ni) ? this.posedChan(ni).t : this.chan(ni, 't').t;
   }
 
   /**
@@ -679,10 +979,11 @@ export class RigEvaluator {
    * 追加分がなければ chan(ni, 'full') と同じ
    */
   posedChan(ni) {
-    const d = this.rest(ni) && !this.fallback.has(ni) ? this.poseOf(ni) : null;
+    const d = this.rest(ni) && !this.fallback.has(ni) ? this.poseAt(ni) : null;
     if (!d) return this.chan(ni, 'full');
+    // 追加分は memo の中でも読む（覚えた値の依存に入れる。追加分を変えたら捨てる）
     return this.memo(this.cache.posed, this.keep.posed, ni,
-      () => clampLimits(poseChannels(this.chan(ni, 'full'), this.isScaleOf(ni), d)),
+      () => clampLimits(poseChannels(this.chan(ni, 'full'), this.isScaleOf(ni), this.poseAt(ni))),
       () => this.chan(ni, 'full'), () => `pose ${ni}`);
   }
 
@@ -718,7 +1019,7 @@ export class RigEvaluator {
     const comp = (arr, k) => (k >= 0 ? arr[k] : arr);
     if (/^[trs][xyz]?$/.test(base)) {
       const axis = base.length === 2 ? XYZ.indexOf(base[1]) : -1;
-      const c = !rest ? null : this.poseOf(ni) ? this.posedChan(ni) : this.chan(ni, base[0] === 't' ? 't' : 'full');
+      const c = !rest ? null : this.poseAt(ni) ? this.posedChan(ni) : this.chan(ni, base[0] === 't' ? 't' : 'full');
       if (!c) return axis >= 0 ? (base[0] === 's' ? 1 : 0) : (base[0] === 's' ? [1, 1, 1] : [0, 0, 0]);
       if (base[0] === 't') return comp(c.t, axis);
       if (base[0] === 'r') return comp(c.r.map((v) => v * D2R), axis);

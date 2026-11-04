@@ -6,9 +6,12 @@
   1. リグのあるアニメーションを開くと、止まっているあいだに全フレームの再生キャッシュを作る（表示は変えない）。
      ヘッドアップディスプレイにフレーム数と大きさ、タイムラインの上端に緑の帯を出す
   2. キャッシュから表示したフレームでも、IK で手首がコントローラーに届く
-  3. ポーズ確認でコントローラーを動かすとキャッシュを捨て、動かしたあとの姿勢で作り直す（手首が追従する）
-  4. 元に戻すと、元の姿勢で作り直す
-  5. ［表示］の上限の設定: 保存した値を起動時に読み戻す・変えると保存する・オフにすると捨てて覚えない
+  3. ポーズ確認でコントローラーのキーのない成分（移動 Z）を動かすと、動かしたあとの姿勢のキャッシュを作る（手首が追従する）。
+     元の姿勢のキャッシュは捨てずに残す
+  4. 元に戻すと、元の姿勢のキャッシュをそのまま使う（作り直さない）
+  5. キーのある成分（移動 X）を動かしても、再生キャッシュは全フレームのまま（フレームを変えるとカーブの値に戻るため）。
+     いまのフレームでは手首が追従し、フレームを変えるとキャッシュから表示する
+  6. ［表示］の上限の設定: 保存した値を起動時に読み戻す・変えると保存する・オフにすると捨てて覚えない
      （テストの最後に、保存してあった値に戻す）
 """
 from __future__ import annotations
@@ -34,7 +37,7 @@ STATE_JS = """JSON.stringify((() => {
   return {
     loaded: !!s.loaded, animation: s.animation || null, frame: app.frame,
     frames: app.clip ? Math.floor(app.clip.end) - Math.ceil(app.clip.start) + 1 : 0,
-    snapshots: rig ? rig.snapshots.size : -1, cached: rig ? !!rig.current : false,
+    snapshots: rig ? rig.snapshots.size : -1, cached: rig ? !!rig.current : false, layers: rig ? rig.layers.length : 0,
     wrist: at('wrist'), hand: at('hand_ctrl'),
     limitMB: rig ? rig.playbackLimit / 1048576 : null, settingMB: app.settings.playbackCacheMB,
     cacheHud: document.getElementById('vp-cache').hidden ? null : document.getElementById('vp-cache').textContent,
@@ -137,9 +140,10 @@ def main() -> int:
         })()"""
 
         def moved(s):
-            check(s["snapshots"] < s["frames"], "コントローラーを動かすとキャッシュを捨てる: %d" % s["snapshots"])
+            check(s["snapshots"] < s["frames"], "コントローラーを動かすと、動かしたあとの姿勢のキャッシュを作り始める: %d" % s["snapshots"])
             check(s["bar"] < 0.2 and bool(s["cacheHud"]) and s["cacheHud"].startswith("キャッシュ 1 / 48 "),
-                  "捨てると帯と表示も減る: %.2f・%s" % (s["bar"], s["cacheHud"]))
+                  "帯と表示は、動かしたあとの姿勢のキャッシュを示す: %.2f・%s" % (s["bar"], s["cacheHud"]))
+            check(s["layers"] == 2, "元の姿勢のキャッシュは残す（レイヤー %s）" % s["layers"])
             check(close(s["wrist"], s["hand"]) and abs(s["hand"][2] - 2) < 1e-3,
                   "動かしたコントローラーに手首が追従する: 手首 %s / コントローラー %s" % (s["wrist"], s["hand"]))
             wait_state(baked, rebaked)
@@ -151,12 +155,38 @@ def main() -> int:
         def back(s):
             check(s["cached"] and close(s["wrist"], s["hand"]) and abs(s["hand"][2] - 2) < 1e-3,
                   "作り直したキャッシュでも手首が追従する: 手首 %s / コントローラー %s" % (s["wrist"], s["hand"]))
+            # 元に戻した直後（作り始めるまでの待ち時間より前）に、もう全フレームそろっている
             js("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true })); 'ok'",
-               lambda _: wait_state(lambda x: baked(x) and close(x["wrist"], [7, 13, 0]), undone))
+               lambda _: js(STATE_JS, undone, 0))
 
         def undone(s):
-            check(close(s["wrist"], [7, 13, 0]) and baked(s), "元に戻すと元の姿勢で作り直す: 手首 %s・%d / %d"
+            check(close(s["wrist"], [7, 13, 0]) and baked(s) and s["cached"],
+                  "元に戻すと、元の姿勢のキャッシュをそのまま使う（作り直さない）: 手首 %s・%d / %d"
                   % (s["wrist"], s["snapshots"], s["frames"]))
+            nxt()
+        js(code, lambda _: js(STATE_JS, moved))
+
+    def s_keyed(nxt):
+        code = """(() => {
+          window.mayaViewer.setFrame(24);
+          window.mayaViewer.selectByPath('|hand_ctrl');
+          const set = (id, v) => { const el = document.getElementById(id); el.focus(); el.value = v;
+            el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.blur(); };
+          set('pose-tx', '1.5');
+          return 'ok';
+        })()"""
+
+        def moved(s):
+            check(not close(s["hand"], [7, 13, 0]) and close(s["wrist"], s["hand"]),
+                  "キーのある移動 X を動かすと、いまのフレームでは手首が追従する: 手首 %s / コントローラー %s" % (s["wrist"], s["hand"]))
+            check(baked(s) and s["bar"] > 0.8, "再生キャッシュは全フレームのまま（再生では戻る値のため作り直さない）: %d / %d・帯 %.2f"
+                  % (s["snapshots"], s["frames"], s["bar"]))
+            js("window.mayaViewer.setFrame(12); 'ok'", lambda _: js(STATE_JS, other))
+
+        def other(s):
+            check(s["cached"] and close(s["wrist"], s["hand"]) and baked(s),
+                  "フレームを変えるとカーブの値に戻り、キャッシュから表示する: 手首 %s / コントローラー %s"
+                  % (s["wrist"], s["hand"]))
             nxt()
         js(code, lambda _: js(STATE_JS, moved))
 
@@ -197,7 +227,7 @@ def main() -> int:
         print("結果:", "OK" if ok["v"] else "NG")
         app.exit(0 if ok["v"] else 1)
 
-    win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(300, lambda: run([s_open, s_frame, s_pose, s_setting, finish])))
+    win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(300, lambda: run([s_open, s_frame, s_pose, s_keyed, s_setting, finish])))
     QtCore.QTimer.singleShot(120000, lambda: (print("タイムアウト"), app.exit(2)))
     return app.exec()
 
