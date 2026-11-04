@@ -38,19 +38,19 @@ connectAttr "base_file.oc" "base_mat.c";
 createNode layeredShader -n "lsA";
 	setAttr -s 2 ".cs";
 connectAttr "decal_mat.oc" "lsA.cs[0].c";
-connectAttr "decal_mat.ot" "lsA.cs[0].it";
+connectAttr "decal_mat.ot" "lsA.cs[0].t";
 connectAttr "base_mat.oc" "lsA.cs[1].c";
-connectAttr "base_mat.ot" "lsA.cs[1].it";
+connectAttr "base_mat.ot" "lsA.cs[1].t";
 createNode file -n "direct_file";
 	setAttr ".ftn" -type "string" "direct.png";
 createNode layeredShader -n "lsB";
-	setAttr ".cs[0].it" -type "float3" 0 0 0 ;
+	setAttr ".cs[0].t" -type "float3" 0 0 0 ;
 connectAttr "direct_file.oc" "lsB.cs[0].c";
 createNode layeredShader -n "lsC";
 	setAttr ".cs[0].c" -type "float3" 1 0 0 ;
-	setAttr ".cs[0].it" -type "float3" 1 1 1 ;
+	setAttr ".cs[0].t" -type "float3" 1 1 1 ;
 	setAttr ".cs[1].c" -type "float3" 0 0 1 ;
-	setAttr ".cs[1].it" -type "float3" 0 0 0 ;
+	setAttr ".cs[1].t" -type "float3" 0 0 0 ;
 createNode file -n "top_file";
 	setAttr ".ftn" -type "string" "top.png";
 createNode file -n "bottom_file";
@@ -115,7 +115,7 @@ class TestMa(unittest.TestCase):
 class GraphCmds:
     """.ma のつながりと値をそのまま持つ偽の cmds（マテリアルまわりだけ）"""
 
-    LONG = {"c": "color", "it": "transparency", "a": "alpha", "oc": "outColor", "ot": "outTransparency",
+    LONG = {"c": "color", "it": "transparency", "t": "transparency", "a": "alpha", "oc": "outColor", "ot": "outTransparency",
             "ftn": "fileTextureName", "cs": "inputs", "bm": "blendMode", "iv": "isVisible", "ss": "surfaceShader"}
     DEFAULTS = {"transparency": (0.0, 0.0, 0.0), "alpha": 1.0, "blendMode": 1, "isVisible": True,
                 "color": (0.5, 0.5, 0.5), "repeatUV": (1.0, 1.0), "offset": (0.0, 0.0), "uvTilingMode": 0,
