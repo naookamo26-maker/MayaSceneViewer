@@ -25,6 +25,7 @@ import { AnimationClip, worldRotationDegrees } from './animation.js';
 import { RigEvaluator, visibleFrom } from './rig.js';
 import { Timeline } from './timeline.js';
 import { CurveOverlay } from './curveOverlay.js';
+import { TEMPLATE_HEX, isTemplated } from './displayType.js';
 import { CameraIcons, cameraFrustum, cameraParams } from './cameraView.js';
 import { SequencerPanel, activeShot, shotStarts, shotTime } from './sequencer.js';
 import { CurveEditor } from './curveEditor.js';
@@ -422,7 +423,7 @@ class ViewerApp {
       mark('範囲');
       this.overlay.build(built, data.nodes, this.sceneRadius);
       this.cameras = data.cameras || [];
-      this.cameraIcons.build(built, this.cameras, Math.max(this.sceneRadius * 0.3, 1));
+      this.cameraIcons.build(built, this.cameras, Math.max(this.sceneRadius * 0.3, 1), this.data.nodes);
       this.ui.setCameras(this.cameras);
       this.updateGrid(bounds);
       mark('ジョイント');
@@ -687,16 +688,18 @@ class ViewerApp {
     const weightWire = st.weightMode !== 'off' && st.shading === 'none';
     for (const e of this.built.meshes) {
       const useSkin = st.skin && !!e.skinned;
-      const shaded = e.visible && st.shading !== 'none';
-      const highlight = e.visible && sel.has(e.transform) && !weightWire;
-      const wire = e.visible && (st.wire || st.shading === 'none' || highlight);
+      // テンプレートのメッシュは、Maya と同じくシェーディングせず、灰色のワイヤーだけで描く
+      const template = isTemplated(e.data);
+      const shaded = e.visible && st.shading !== 'none' && !template;
+      const highlight = e.visible && sel.has(e.transform) && !(weightWire && !template);
+      const wire = e.visible && (st.wire || st.shading === 'none' || highlight || template);
       e.staticMesh.visible = shaded && !useSkin;
       if (e.skinned) e.skinned.visible = shaded && useSkin;
       e.staticWire.visible = wire && !useSkin;
       if (e.skinnedWire) e.skinnedWire.visible = wire && useSkin;
       const wireOnly = st.shading === 'none';
-      e.wireMaterial.opacity = highlight ? 0.9 : wireOnly ? 0.95 : 0.5;
-      e.wireMaterial.color.set(highlight ? (lead.has(e.transform) ? 0xf2a93b : 0xfff0c8) : wireOnly ? 0xc8d2da : 0x1d2024);
+      e.wireMaterial.opacity = highlight ? 0.9 : template ? 0.9 : wireOnly ? 0.95 : 0.5;
+      e.wireMaterial.color.set(highlight ? (lead.has(e.transform) ? 0xf2a93b : 0xfff0c8) : template ? TEMPLATE_HEX : wireOnly ? 0xc8d2da : 0x1d2024);
     }
   }
 
@@ -704,7 +707,7 @@ class ViewerApp {
     const mode = this.settings.weightMode;
     const on = mode !== 'off';
     for (const e of this.built.meshes) {
-      const wireColors = on && this.settings.shading === 'none';
+      const wireColors = on && this.settings.shading === 'none' && !isTemplated(e.data);   // テンプレートは灰色のまま
       if (e.wireMaterial.vertexColors !== wireColors) { e.wireMaterial.vertexColors = wireColors; e.wireMaterial.needsUpdate = true; }
       if (wireColors) e.wireMaterial.color.set(0xffffff);
       if (!on) continue;

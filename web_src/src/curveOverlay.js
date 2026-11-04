@@ -3,9 +3,9 @@
 // リグで形が変わるカーブ（skinCluster・制御点の接続）は setShape() で形を差し替える。
 import { BufferGeometry, Color, Float32BufferAttribute, Line, LineBasicMaterial, Vector3 } from 'three';
 import { parseNurbsCurve, pointAt, domain, withCvs } from './curve.js';
+import { TEMPLATE_COLOR, isTemplated } from './displayType.js';
 
 export const CURVE_COLOR = new Color(0xd3d9e0);          // 色の指定がないカーブ（Maya の既定の濃紺は暗い背景で見えにくく、ジョイントの水色とも分ける）
-const TEMPLATE_COLOR = new Color(0x80868d);              // テンプレート表示
 const SELECT_COLOR = new Color(0xf2a93b);                // 選択（複数のときはリード）
 const SELECT_OTHER_COLOR = new Color(0xfff0c8);          // 複数選んだときのリード以外
 const PER_SPAN = 16;                                     // 1 スパンあたりの折れ線の点の数
@@ -68,7 +68,8 @@ export class CurveOverlay {
       if (!curve || !parent) return;
       const geometry = new BufferGeometry();
       geometry.setAttribute('position', new Float32BufferAttribute(toArray(curvePoints(curve)), 3));
-      const color = c.display === 1 ? TEMPLATE_COLOR : c.color ? new Color().setRGB(c.color[0], c.color[1], c.color[2]) : CURVE_COLOR;
+      // テンプレート（表示の種類か .template。祖先も含む）は、色の指定があっても灰色（Maya と同じ）
+      const color = isTemplated(c) ? TEMPLATE_COLOR : c.color ? new Color().setRGB(c.color[0], c.color[1], c.color[2]) : CURVE_COLOR;
       const line = new Line(geometry, new LineBasicMaterial({ color }));
       line.name = c.name;
       line.userData = { curveIndex: ci, nodeIndex: c.transform };

@@ -8,6 +8,7 @@
 //   * 平行投影（o）のときは、orthographicWidth（ow）がフィルムの幅に当たる
 //   * カメラはローカルの −Z を向き、+Y が上（three.js と同じ）
 import { BufferGeometry, Float32BufferAttribute, LineBasicMaterial, LineSegments } from 'three';
+import { TEMPLATE_HEX, isTemplated } from './displayType.js';
 
 const MM_PER_INCH = 25.4;
 
@@ -72,11 +73,13 @@ export class CameraIcons {
     this.items = [];                                 // カメラの番号 → { line, parent }
     this.material = new LineBasicMaterial({ color: 0xb9c6d2, transparent: true, opacity: 0.9, depthTest: true });
     this.selectedMaterial = new LineBasicMaterial({ color: 0xf2a93b, transparent: true, opacity: 1, depthTest: true });
+    this.templateMaterial = new LineBasicMaterial({ color: TEMPLATE_HEX, transparent: true, opacity: 0.9, depthTest: true });
   }
 
   /** @param size 四角錐の奥行き（シーンの大きさに合わせる） */
-  build(built, cameras, size) {
+  build(built, cameras, size, nodes = null) {
     this.clear();
+    this.nodes = nodes;
     (cameras || []).forEach((cam, ci) => {
       const parent = built.nodeObjects[cam.transform];
       if (!parent) { this.items[ci] = null; return; }
@@ -105,7 +108,8 @@ export class CameraIcons {
     this.items.forEach((it, ci) => {
       if (!it) return;
       it.line.visible = show && ci !== viewing && !hiddenOf(it.node);
-      it.line.material = isSel(it.node) ? this.selectedMaterial : this.material;
+      it.line.material = isSel(it.node) ? this.selectedMaterial
+        : this.nodes && isTemplated(this.nodes[it.node]) ? this.templateMaterial : this.material;   // テンプレートは灰色
     });
   }
 }
