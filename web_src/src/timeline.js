@@ -39,6 +39,14 @@ export class Timeline {
       on(id, 'keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
     }
     new ResizeObserver(() => this.drawKeys()).observe(this.slider);
+    // タイムラインの高さ（狭いビューポートでは 2 段に折り返す）を、上に重ねる表示（HUD・案内）の位置に使う
+    new ResizeObserver(() => this.updateHeight()).observe(this.root);
+  }
+
+  /** ビューポートに、タイムラインの高さ（隠れていれば 0）を --tl-h として伝える */
+  updateHeight() {
+    const vp = document.getElementById('viewport');
+    if (vp) vp.style.setProperty('--tl-h', `${this.root.hidden ? 0 : this.root.offsetHeight}px`);
   }
 
   /** 読み込み状況（アニメーションがまだないときだけ帯に表示する）。空文字で消す */
@@ -69,6 +77,7 @@ export class Timeline {
     const show = !!(this.clip || this.status);
     this.root.hidden = !show;
     document.getElementById('viewport').classList.toggle('has-timeline', show);
+    this.updateHeight();
     if (show) this.drawKeys();
   }
 
