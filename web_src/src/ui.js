@@ -39,10 +39,17 @@ export function referenceOf(data, name) {
 }
 /** パスのファイル名 */
 const fileName = (p) => String(p || '').split(/[\\/]/).pop();
-/** 階層の名前: 名前空間（armA:）は薄く表示する */
-function nameHtml(label) {
+/** 階層の名前: 名前空間（armA:）は薄く表示する（HTML を解析せずに要素へ入れる） */
+function setNameContent(el, label) {
   const k = label.lastIndexOf(':');
-  return k > 0 ? `<span class="ns">${esc(label.slice(0, k + 1))}</span>${esc(label.slice(k + 1))}` : esc(label);
+  if (k > 0) {
+    const ns = document.createElement('span');
+    ns.className = 'ns';
+    ns.textContent = label.slice(0, k + 1);
+    el.append(ns, label.slice(k + 1));
+  } else {
+    el.textContent = label;
+  }
 }
 /** 進捗のバー（i 要素）に割合を反映する。割合が分からなければ止まった帯で表示する */
 function setBar(bar, frac) {
@@ -514,19 +521,34 @@ export class UI {
     const cameraNodes = new Set((data.cameras || []).map((c) => c.transform));
     const frag = document.createDocumentFragment();
     const collapseDeep = data.nodes.length > 400;
+    // 行の要素は、アイコンとリファレンスの印の組み合わせごとのひな形を複製して作る（行ごとに HTML を解析すると、
+    // ノードの多いシーンで遅いため）
+    const templates = new Map();
+    const templateOf = (icon, ref) => {
+      const key = icon + (ref ? '\u0001' : '');
+      let t = templates.get(key);
+      if (!t) {
+        t = document.createElement('div');
+        t.setAttribute('role', 'treeitem');
+        t.innerHTML = '<button class="twisty" tabindex="-1" aria-label="開閉" title="クリック: 開閉　Shift+クリック: 下の階層もまとめて開閉">▾</button>'
+          + `<span class="icon">${icon}${ref ? '<i class="ref-badge" aria-label="リファレンス"></i>' : ''}</span>`
+          + '<span class="name"></span>'
+          + `<button class="eye" tabindex="-1" aria-pressed="true" aria-label="表示" title="表示・非表示（H: 切り替え / Ctrl+H: 隠す / Shift+H: 表示）">${EYE}</button>`;
+        templates.set(key, t);
+      }
+      return t;
+    };
     const addRow = (row) => {
-      const el = document.createElement('div');
       // リファレンスから読み込んだノード（名前空間から判定）は、アイコンに印を付けて名前の色を変える
       const ref = referenceOf(data, row.label);
+      const el = templateOf(row.icon, !!ref).cloneNode(true);
       el.className = 'row' + (row.dim ? ' dim' : '') + (ref ? ' referenced' : '');
-      el.setAttribute('role', 'treeitem');
       el.dataset.row = String(this.rows.length);
       el.style.setProperty('--depth', row.depth);
-      const title = row.title + (ref ? `\nリファレンス: ${ref.namespace}（${fileName(ref.resolved || ref.path)}）` : '');
-      el.innerHTML = `<button class="twisty${row.hasChildren ? '' : ' leaf'}" tabindex="-1" aria-label="開閉" title="クリック: 開閉　Shift+クリック: 下の階層もまとめて開閉">▾</button>`
-        + `<span class="icon">${row.icon}${ref ? '<i class="ref-badge" aria-label="リファレンス"></i>' : ''}</span>`
-        + `<span class="name" title="${esc(title)}">${nameHtml(row.label)}</span>`
-        + `<button class="eye" tabindex="-1" aria-pressed="true" aria-label="表示" title="表示・非表示（H: 切り替え / Ctrl+H: 隠す / Shift+H: 表示）">${EYE}</button>`;
+      if (!row.hasChildren) el.firstChild.classList.add('leaf');
+      const name = el.childNodes[2];
+      name.title = row.title + (ref ? `\nリファレンス: ${ref.namespace}（${fileName(ref.resolved || ref.path)}）` : '');
+      setNameContent(name, row.label);
       row.eye = el.lastChild;
       row.el = el;
       row.twisty = el.firstChild;
