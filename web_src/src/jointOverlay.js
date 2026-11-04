@@ -6,6 +6,7 @@ import {
   LineBasicMaterial, LineSegments, Matrix4, MeshBasicMaterial, Quaternion, SphereGeometry, Vector3,
 } from 'three';
 import { ControlOverlay } from './controlOverlay.js';
+import { TEMPLATE_COLOR, isTemplated } from './displayType.js';
 
 export const JOINT_COLOR = new Color(0x5ec8e5);
 export const SELECT_COLOR = new Color(0xf2a93b);           // 選択（複数選んだときはリード = 最後に選んだもの）
@@ -211,6 +212,9 @@ export class JointOverlay {
 
   radius() { return this.baseSize * this.size; }
 
+  /** テンプレート表示のノードか（Maya で灰色に描くもの） */
+  isTemplate(ni) { return !!(this.nodes && isTemplated(this.nodes[ni])); }
+
   update() {
     if (!this.spheres) return;
     const objs = this.built.nodeObjects;
@@ -219,6 +223,7 @@ export class JointOverlay {
     const hidden = this.hiddenNodes;
     const isHidden = (ni) => !!(hidden && hidden[ni]);
     const baseColor = (ni, normal) => {
+      if (this.isTemplate(ni)) return TEMPLATE_COLOR;    // テンプレートのジョイントは灰色（Maya と同じ）
       const st = this.statusOf ? this.statusOf(ni) : null;
       return st === 'estimated' ? ESTIMATED_COLOR : st === 'unknown' ? UNKNOWN_COLOR : normal;
     };
@@ -292,6 +297,7 @@ export class JointOverlay {
       selectColorOf: (ni) => this.selectColorOf(ni),
       isHidden: (ni) => !!(hidden && hidden[ni]),
       statusColor: (ni) => {
+        if (this.isTemplate(ni)) return TEMPLATE_COLOR;  // テンプレートのロケーターなどは灰色
         const st = this.statusOf ? this.statusOf(ni) : null;
         return st === 'estimated' ? ESTIMATED_COLOR : st === 'unknown' ? UNKNOWN_COLOR : null;
       },
