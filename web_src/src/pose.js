@@ -188,13 +188,21 @@ export function nodeChannels(n) {
 
 let poseVersion = 0;                       // 追加分を変えるたびに増やす（ほかの PoseState とも重ならない）
 
+/** 追加分の目印（同じ追加分なら同じ文字列。わずかな誤差は丸める） */
+export function poseKey(p) {
+  const r = (v) => (Math.round(v * 1e9) / 1e9 + 0).toString();
+  return [...p.t, ...p.r, ...p.s].map(r).join(',');
+}
+
 export class PoseState {
   /** @param built buildScene() の結果  @param data 共通 JSON */
   constructor(built, data) {
     this.built = built;
     this.data = data;
     this.poses = new Map();
-    this.version = ++poseVersion;           // 追加分の版（リグの評価のキャッシュを捨てる目安）
+    this.version = ++poseVersion;           // 追加分の版
+    // ノード番号 → 追加分の目印（poseKey）。リグの評価は、変わったノードの影響を受ける値だけを作り直す
+    this.keys = new Map();
   }
 
   has(ni) { return this.poses.has(ni); }
@@ -242,8 +250,8 @@ export class PoseState {
   /** 追加分を設定する。単位姿勢なら削除。直下の子（スケール補正の対象）も計算し直す */
   set(ni, pose) {
     const p = normalizePose(pose);
-    if (isIdentityPose(p)) this.poses.delete(ni);
-    else this.poses.set(ni, p);
+    if (isIdentityPose(p)) { this.poses.delete(ni); this.keys.delete(ni); }
+    else { this.poses.set(ni, p); this.keys.set(ni, poseKey(p)); }
     this.version = ++poseVersion;
     this.apply(ni);
     for (const c of this.built.childrenOf[ni]) this.apply(c);
@@ -258,6 +266,7 @@ export class PoseState {
 
   resetAll() {
     this.poses.clear();
+    this.keys.clear();
     this.version = ++poseVersion;
     this.built.nodeObjects.forEach((o) => o.matrix.copy(o.userData.baseMatrix));
   }

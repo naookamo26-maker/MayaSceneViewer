@@ -7,7 +7,7 @@ import {
 import { MayaControls } from './mayaControls.js';
 import { combineSelection, makeProjector, normRect, pointHitsRect, polylineHitsRect, selectionModeOf, trianglesHitRect } from './marquee.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
-import { PoseState, fixChannels, hasFixed, identityPose, limitPose, nodeChannels, poseFromTransform, poseMatrix, poseQuaternion, propagatePoseDelta } from './pose.js';
+import { PoseState, fixChannels, hasFixed, identityPose, isIdentityPose, limitPose, nodeChannels, poseFromTransform, poseKey, poseMatrix, poseQuaternion, propagatePoseDelta } from './pose.js';
 import {
   applyPoseSource, hasBindPose, poseBaseMatrix, BASE_COLOR, buildScene, characterRadius, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
   vertexWorldPosition, writeVertexColors,
@@ -50,7 +50,7 @@ const DEFAULTS = {
   cameraIcons: false,            // シーンのカメラの形を描く（初期状態は表示しない）
   cameraGate: true,              // カメラから見るとき、解像度ゲートの外側を暗くする
   hud: true,                     // ヘッドアップディスプレイ（再生のフレームレート）
-  playbackCacheMB: 256,          // リグの再生キャッシュの上限（MB。0 なら使わない。次回の起動でも使う）
+  playbackCacheMB: 512,          // リグの再生キャッシュの上限（MB。0 なら使わない。次回の起動でも使う）
   pickMode: 'object',            // クリックで選ぶもの: 'object'（オブジェクト）・'vertex'（頂点とそのウェイト）
   pickAll: false,                // Maya で選択できないもの（テンプレート・リファレンス）もクリックで選ぶ
 };
@@ -1081,10 +1081,11 @@ class ViewerApp {
     if (this.camEdit && f !== this.camEdit.frame) this.endCameraEdit();   // 動かしたカメラの視点は、フレームが変わると戻す
     const frameChanged = f !== this.frame;
     this.frame = f;
-    // ポーズ確認の追加分（なければ渡さない。追加分の版が同じあいだは、リグの評価のキャッシュを使い続ける）
+    // ポーズ確認の追加分（なければ渡さない）。ノードごとの目印を渡し、リグの評価は変わったノードの影響を受ける値だけを
+    // 作り直す（リグが読まないノード・前と同じ追加分に戻したときは、キャッシュをそのまま使う）
     const posed = this.pose && this.pose.size > 0;
     const poseOf = posed ? (ni) => (this.pose.has(ni) ? poseMatrix(this.pose.get(ni), new Matrix4()) : null) : undefined;
-    const mats = this.rig.evaluate(f, poseOf, undefined, posed ? this.pose.version : undefined);
+    const mats = this.rig.evaluate(f, poseOf, undefined, posed ? this.pose.keys : undefined);
     const mode = this.settings.poseSource;
     const sceneHasBind = hasBindPose(this.built);
     for (const [ni, m] of mats) {
@@ -1115,8 +1116,44 @@ class ViewerApp {
     this.curveEditor.setFrame(f);
     this.rigBusy = true;
     try { this.afterPoseChange(light); } finally { this.rigBusy = false; }
+    this.updatePlaybackPose();
     this.updateCacheView();
     this.scheduleBake();
+  }
+
+  /**
+   * 再生で使う追加分をリグに伝える。フレームを変えると、キーのあるチャンネルを動かした分はカーブの値に戻る
+   * （revertKeyedPoses）ので、それを除いたもの。再生キャッシュはこの追加分で作り、タイムラインの帯もこれを示す
+   * （いまのフレームだけで見える値のために、全フレームを作り直さない。戻した姿勢のキャッシュはそのまま使う）
+   */
+  updatePlaybackPose() {
+    if (!this.rig) return;
+    const reverts = this.clip && !(this.settings.poseSource === 'bind' && hasBindPose(this.built));
+    if (!this.pose || !this.pose.size || !reverts) { this.rig.setPlaybackPose(null); return; }
+    const poses = new Map(), keys = new Map();
+    let changed = false;
+    for (const ni of this.pose.poses.keys()) {
+      let p = this.pose.get(ni);
+      const keyed = this.keyedOf(ni);
+      if (keyed) {
+        const after = fixChannels(this.pose.restLocal(ni), p, keyed, this.channelFrame(ni));
+        const k = poseKey(after);
+        if (k !== this.pose.keys.get(ni)) { changed = true; p = after; }
+      }
+      if (isIdentityPose(p)) continue;
+      poses.set(ni, p);
+      keys.set(ni, poseKey(p));
+    }
+    if (!changed) { this.rig.setPlaybackPose(null); return; }          // 戻る分はない（いまの追加分のまま再生する）
+    if (!poses.size) { this.rig.setPlaybackPose(); return; }            // すべて戻る（追加分なし）
+    const mats = new Map();
+    this.rig.setPlaybackPose((ni) => {
+      const p = poses.get(ni);
+      if (!p) return null;
+      let m = mats.get(ni);
+      if (!m) mats.set(ni, m = poseMatrix(p, new Matrix4()));
+      return m;
+    }, keys);
   }
 
   /**
@@ -1125,15 +1162,17 @@ class ViewerApp {
   updateCacheView() {
     const rig = this.hasTimeline ? this.rig : null;
     const st = rig ? rig.playbackStats() : null;
+    const frames = rig ? rig.snapshots : null;               // 再生で使うレイヤーのフレーム
     const key = st ? `${st.frames}|${st.bytes}|${st.limit}|${this.clip.start}|${this.clip.end}|${this.settings.hud}` : '';
-    if (key === this.cacheViewKey && rig === this.cacheViewRig) return;
+    if (key === this.cacheViewKey && rig === this.cacheViewRig && frames === this.cacheViewFrames) return;
     this.cacheViewKey = key;
     this.cacheViewRig = rig;
-    this.timeline.setCached(st && st.frames ? (f) => rig.hasSnapshot(f) : null);
+    this.cacheViewFrames = frames;
+    this.timeline.setCached(st && st.frames ? (f) => frames.has(f) : null);
     if (!st || !this.settings.hud || !rig.moving.size) { this.ui.setCacheHud(null); return; }
     if (!st.limit) { this.ui.setCacheHud('キャッシュ オフ', ''); return; }
     let total = 0, have = 0;
-    for (let f = Math.ceil(this.clip.start); f <= this.clip.end; f++) { total++; if (rig.hasSnapshot(f)) have++; }
+    for (let f = Math.ceil(this.clip.start); f <= this.clip.end; f++) { total++; if (frames.has(f)) have++; }
     const size = (b) => (b < MB ? `${Math.max(1, Math.ceil(b / 1024))} KB` : `${(b / MB).toFixed(b >= 100 * MB ? 0 : 1)} MB`);
     const full = st.full && have < total;
     this.ui.setCacheHud(`キャッシュ ${num(have)} / ${num(total)} フレーム・${size(st.bytes)}${full ? `（上限 ${size(st.limit)}）` : ''}`,
@@ -1142,7 +1181,8 @@ class ViewerApp {
 
   /**
    * 再生キャッシュ（RigEvaluator.bake）を空き時間に少しずつ作る。2 周目を待たずに、再生が実時間で進むようにする。
-   * ポーズ確認で追加分を変えるとキャッシュは捨てられるので、そのあとの applyFrame からまた作り始める
+   * 再生で使う追加分（updatePlaybackPose）のレイヤーを作る。ポーズ確認でリグに効く追加分を変えると、新しいレイヤーを
+   * 影響を受けるノードだけ計算して作る（前と同じ追加分に戻せば、前のレイヤーをそのまま使う）
    */
   scheduleBake() {
     clearTimeout(this.bakeTimer);
@@ -1153,8 +1193,8 @@ class ViewerApp {
     const step = (deadline) => {
       this.bakeHandle = null;
       if (rig !== this.rig || !this.clip || rig.playbackFull) return;
-      const todo = [];
-      for (let f = Math.ceil(this.clip.start); f <= this.clip.end; f++) if (!rig.hasSnapshot(f)) todo.push(f);
+      const todo = [], have = rig.snapshots;
+      for (let f = Math.ceil(this.clip.start); f <= this.clip.end; f++) if (!have.has(f)) todo.push(f);
       if (!todo.length) return;
       // 空き時間が残っているあいだ続ける（作り終えたら、いまのフレームの状態に戻す）
       const made = rig.bake(todo, () => deadline.timeRemaining() > 4);
