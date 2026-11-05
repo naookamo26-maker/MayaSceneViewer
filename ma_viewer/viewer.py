@@ -38,6 +38,8 @@ class Bridge(QtCore.QObject):
     historySignal = Signal(bool, bool, str, str)
     warningsSignal = Signal(str)
     showWarningsSignal = Signal()
+    statusSignal = Signal(str, int)
+    loadEventSignal = Signal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -67,6 +69,16 @@ class Bridge(QtCore.QObject):
     @Slot()
     def showWarnings(self):
         self.showWarningsSignal.emit()
+
+    @Slot(str, int)
+    def statusMessage(self, text, ms):
+        """ビューアの操作のメッセージ（Qt ではウィンドウのステータスバーに出す。ms = 0 なら消さない）"""
+        self.statusSignal.emit(text, ms)
+
+    @Slot(str, str)
+    def loadEvent(self, name, detail):
+        """読み込みの段階がビューアで終わった（scene: 最初の描画・animation: アニメーションの準備・cache: 再生キャッシュ）"""
+        self.loadEventSignal.emit(name, detail)
 
     # JS から保存・読み戻しできる設定（キー → QSettings のキー）
     SAVED_SETTINGS = {"playbackCacheMB": "viewer/playbackCacheMB"}
@@ -144,6 +156,8 @@ class ViewerWidget(QtWidgets.QWidget):
     historyChanged = Signal(bool, bool, str, str)   # 元に戻せるか, やり直せるか, それぞれの操作名
     warningsChanged = Signal(list)                  # 警告の一覧
     showWarningsRequested = Signal()                # ビューアの警告アイコンが押された
+    statusMessage = Signal(str, int)                # ビューアの操作のメッセージ（ステータスバーへ）
+    loadEvent = Signal(str, str)                    # 読み込みの段階がビューアで終わった
 
     def __init__(self, parent=None):
         require_webengine()
@@ -176,6 +190,8 @@ class ViewerWidget(QtWidgets.QWidget):
         self.bridge.warningsSignal.connect(self._on_warnings)
         self.bridge.showWarningsSignal.connect(self.showWarningsRequested)
         self.bridge.logSignal.connect(self.logMessage)
+        self.bridge.statusSignal.connect(self.statusMessage)
+        self.bridge.loadEventSignal.connect(self.loadEvent)
         self.page.consoleMessage.connect(lambda lv, t: self.logMessage.emit(lv, "JS: " + t))
         self.page.fileDropped.connect(self.fileDropped)
         self.view.loadFinished.connect(self._on_load_finished)
@@ -516,6 +532,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.viewer = ViewerWidget(self)
         self.setCentralWidget(self.viewer)
         self.viewer.logMessage.connect(self.log)
+        self.viewer.statusMessage.connect(lambda text, ms: self.statusBar().showMessage(text, ms))
+        self.viewer.loadEvent.connect(self._on_load_event)
+        self.load_clock = None
         self.viewer.nodeSelected.connect(self._on_viewer_selected)
         self.viewer.fileDropped.connect(self.open_file)
 
@@ -606,12 +625,13 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.a_cache_usage.setEnabled(False)
         self.cache_limit_actions = {}
         limit_group = QtGui.QActionGroup(self)
-        for mb in (128, 256, 512, 1024, 2048):
-            a = QtGui.QAction("上限 %s" % ("%d GB" % (mb // 1024) if mb >= 1024 else "%d MB" % mb), self, checkable=True)
-            a.setChecked(mb == limit_mb)
-            a.triggered.connect(lambda _c=False, v=mb: self.set_scene_cache_limit(v))
+        for size_mb in (128, 256, 512, 1024, 2048):
+            a = QtGui.QAction("上限 %s" % ("%d GB" % (size_mb // 1024) if size_mb >= 1024 else "%d MB" % size_mb), self,
+                              checkable=True)
+            a.setChecked(size_mb == limit_mb)
+            a.triggered.connect(lambda _c=False, v=size_mb: self.set_scene_cache_limit(v))
             limit_group.addAction(a)
-            self.cache_limit_actions[mb] = a
+            self.cache_limit_actions[size_mb] = a
         m = mb.addMenu("ファイル")
         for a in (a_open, a_reload, a_export):
             m.addAction(a)
@@ -794,6 +814,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.viewer.show_loading("%s を読み込み中" % name)
         self.statusBar().showMessage("読み込み中: %s" % path)
         self.log("info", "読み込み開始: %s" % path)
+        from .load_clock import LoadClock
+        self.load_clock = LoadClock(path)
+        self.load_clock.expect_animation = self.a_anim.isChecked() and not path.lower().endswith(".json")
 
         self._thread = QtCore.QThread(self)
         self._worker = _LoadWorker(path, animation=self.a_anim.isChecked(), references=self.a_refs.isChecked(),
@@ -818,6 +841,12 @@ class ViewerWindow(QtWidgets.QMainWindow):
     @Slot(object, float, object)
     def _on_loaded(self, scene, seconds, payload=None):
         cached = payload is not None and payload.cached
+        clock = getattr(self, "load_clock", None)
+        if clock is not None and not clock.finished:
+            clock.mark("変換結果のキャッシュから読み込み" if cached else
+                       ("JSON の読み込み" if clock.path.lower().endswith(".json") else "解析・変換"))
+            if scene.get("animation"):
+                clock.expect_animation = True              # JSON にアニメーションが入っている
         self.show_scene(scene, ("キャッシュから読み込み %.2f 秒" if cached else "解析 %.2f 秒") % seconds, payload)
         if cached:
             self.log("info", "変換結果のキャッシュから読み込みました（.ma・リファレンス・テクスチャ・設定が前回と同じため、"
@@ -835,9 +864,15 @@ class ViewerWindow(QtWidgets.QMainWindow):
     def _on_animation_ready(self, anim, seconds, payload=None):
         if self._pending_open is not None or self.current_scene is None or self.current_scene is not self._anim_scene:
             return
+        clock = getattr(self, "load_clock", None)
         if anim is None:
             self.viewer.set_animation_status("")
+            if clock is not None:
+                clock.expect_animation = False
+                self._finish_load_clock()
             return
+        if clock is not None and not clock.finished:
+            clock.mark("アニメーションの解析と転送")
         self.current_scene["animation"] = anim
         size = self.viewer.set_animation(anim, payload)
         st = anim.get("stats", {})
@@ -856,6 +891,45 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.log("error", detail)
         self.viewer.set_animation_status("アニメーションを読み込めませんでした: %s" % message)
         self.log("warn", "アニメーションを読み込めませんでした（シーンはそのまま表示します）: %s" % message)
+        clock = getattr(self, "load_clock", None)
+        if clock is not None:
+            clock.expect_animation = False
+            self._finish_load_clock()
+
+    @Slot(str, str)
+    def _on_load_event(self, name, detail):
+        """ビューアでの読み込みの段階の終わり（scene: 最初の描画・animation: アニメーションの準備・cache: 再生キャッシュ）"""
+        clock = getattr(self, "load_clock", None)
+        if clock is None:
+            return
+        if name == "cache":
+            if clock.finished:
+                from .load_clock import fmt_seconds
+                msg = "再生キャッシュを作り終えました（開き始めてから %s・作成 %s）" % (
+                    fmt_seconds(clock.elapsed()), fmt_seconds(float(detail or 0)))
+                self.log("info", msg)
+                self.statusBar().showMessage(msg, 6000)
+            return
+        if clock.finished:
+            return
+        if name == "scene" and not clock.scene_done:
+            clock.mark("ビューアでの組み立てと最初の描画")
+            clock.scene_done = True
+        elif name == "animation" and not clock.animation_done:
+            clock.mark("アニメーションの準備（リグの評価の準備）" if detail != "failed" else "アニメーションの準備（失敗）")
+            clock.animation_done = True
+        self._finish_load_clock()
+
+    def _finish_load_clock(self):
+        """シーンの表示（と、読むならアニメーションの準備）が終わったら、経過と合計をログに出す"""
+        clock = getattr(self, "load_clock", None)
+        if clock is None or clock.finished or not clock.ready():
+            return
+        clock.finish()
+        self.log("info", clock.summary())
+        msg = clock.total_message()
+        self.log("info", msg)
+        self.statusBar().showMessage(msg, 10000)
 
     def _toggle_cache(self, on):
         _settings_set("sceneCache", bool(on))
@@ -954,7 +1028,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if note:
             msg += " ・ " + note
         self.statusBar().showMessage(msg)
-        self.log("info", msg)
+        # シーンの数（三角形・カメラを含む）はビューアがログに出すので、ここでは転送の大きさだけ
+        self.log("info", "ビューアへの転送: %s%s" % (amount, "（%s）" % note if note else ""))
 
     def _error(self, text):
         self.viewer.show_error(text)

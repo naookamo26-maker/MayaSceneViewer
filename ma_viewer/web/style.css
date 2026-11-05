@@ -55,6 +55,8 @@ code { font-family: Consolas, "SF Mono", monospace; font-size: 11px; color: var(
 .tb-right { margin-left: auto; }
 .tb-label { color: var(--text-dim); margin-right: 2px; }
 body[data-host="qt"] #tb-file { display: none; }
+/* Qt ではウィンドウのステータスバー 1 列にまとめる（ファイル名・シーンの数はログ、メッセージはステータスバー） */
+body[data-host="qt"] #status { display: none; }
 
 .btn, .toggle, select {
   height: 24px;

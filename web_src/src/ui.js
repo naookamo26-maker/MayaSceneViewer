@@ -1228,6 +1228,9 @@ export class UI {
   setFile(text) { $('status-file').textContent = text; }
   setStats(text) { $('status-stats').textContent = text; }
   setMessage(text, ms = 4000) {
+    // Qt ではウィンドウのステータスバーに出す（ビューアの下の欄は表示しない）
+    const b = this.app && this.app.bridge;
+    if (b && b.statusMessage) b.statusMessage(text || '', text ? ms || 0 : 0);
     $('status-msg').textContent = text || '';
     clearTimeout(this.msgTimer);
     if (text && ms) this.msgTimer = setTimeout(() => { $('status-msg').textContent = ''; }, ms);
