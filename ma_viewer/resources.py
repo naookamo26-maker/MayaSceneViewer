@@ -13,6 +13,8 @@ import os
 import sys
 from typing import List
 
+APP_NAME = "Maya Scene Viewer"          # ソフト名（ウィンドウのタイトル・アプリ名など。英語表記）
+
 WEB_FILES = ("index.html", "style.css", "viewer.bundle.js")
 
 

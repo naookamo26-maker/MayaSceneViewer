@@ -17,7 +17,8 @@ from .qt_compat import (QAction, QWebChannel, QWebEnginePage, QWebEngineScript, 
                         QWebEngineView, QtCore, QtGui, QtWidgets, Qt, Signal, Slot, require_webengine,
                         run_javascript)
 
-from .resources import index_html  # noqa: E402  web 一式の場所（exe 化しても見つかるように探す）
+from .resources import index_html  # noqa: E402
+from .resources import APP_NAME  # noqa: E402  ソフト名（ウィンドウのタイトルなど。英語表記）  web 一式の場所（exe 化しても見つかるように探す）
 CHUNK_SIZE = 4 * 1024 * 1024          # runJavaScript 1 回あたりの文字数
 OPENABLE_EXT = (".ma", ".json", ".mb")
 
@@ -335,7 +336,7 @@ class ViewerWidget(QtWidgets.QWidget):
         """Chromium の開発者ツールを別ウィンドウで開く（表示の不具合調査用）。"""
         if self._dev_view is None:
             self._dev_view = QWebEngineView()
-            self._dev_view.setWindowTitle("開発者ツール - Maya シーンビューア")
+            self._dev_view.setWindowTitle("開発者ツール - %s" % APP_NAME)
             self._dev_view.resize(1000, 700)
             self.page.setDevToolsPage(self._dev_view.page())
         self._dev_view.show()
@@ -531,7 +532,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self._sel_job = None
         self._last_viewer_path = None
 
-        self.setWindowTitle("Maya シーンビューア")
+        self.setWindowTitle(APP_NAME)
         self.setObjectName("MayaSceneViewerWindow")
         self.resize(1440, 880)
         self.setAcceptDrops(True)
@@ -606,6 +607,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         mb = self.menuBar()
         # 上部の Qt のツールバーは置かない（開く・再読み込みなどはすべて［ファイル］［Maya］メニューにある）
 
+        a_new = self._act("新規シーン", self.new_scene, "Ctrl+N", tip="表示中のシーンを閉じて、何も開いていない状態にする")
         a_open = self._act("開く…", self.open_dialog, "Ctrl+O", tip=".ma または共通 JSON を開く")
         a_reload = self._act("再読み込み", self.reload, "F5", tip="同じファイルを読み直す")
         a_export = self._act("JSON として書き出し…", self.export_json, "Ctrl+Shift+E")
@@ -641,6 +643,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
             limit_group.addAction(a)
             self.cache_limit_actions[size_mb] = a
         m = mb.addMenu("ファイル")
+        m.addAction(a_new)
+        m.addSeparator()
         for a in (a_open, a_reload, a_export):
             m.addAction(a)
         m.addSeparator()
@@ -774,6 +778,25 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if path:
             self.open_file(path)
 
+    def new_scene(self):
+        """［ファイル］→［新規シーン］（Ctrl+N）: 表示中のシーンを閉じて、何も開いていない状態にする"""
+        if self._thread is not None:
+            if self._worker is not None and self._worker.in_animation:
+                self._pending_open = None
+                self._worker.cancel()                  # アニメーションの読み込みは中止する（シーンは消す）
+            else:
+                self.statusBar().showMessage("読み込み中です。完了してから新規シーンにしてください。", 5000)
+                return
+        self.current_path = None
+        self.current_scene = None
+        self._anim_scene = None
+        self.load_clock = None
+        self.viewer.set_animation_status("")
+        self.viewer.clear()
+        self.setWindowTitle(APP_NAME)
+        self.statusBar().showMessage("新規シーン", 4000)
+        self.log("info", "新規シーン（表示していたシーンを閉じました）")
+
     def reload(self):
         if self.current_path:
             self.open_file(self.current_path)
@@ -802,7 +825,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
             return
         self.current_path = path
         name = os.path.basename(path)
-        self.setWindowTitle("%s - Maya シーンビューア" % name)
+        self.setWindowTitle("%s - %s" % (name, APP_NAME))
         self.viewer.show_loading("%s を読み込み中" % name)
         self.statusBar().showMessage("読み込み中: %s" % path)
         self.log("info", "読み込み開始: %s" % path)
@@ -1089,7 +1112,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
         name = scene.get("source", {}).get("name") or "Maya シーン"
-        self.setWindowTitle("%s - Maya シーンビューア" % name)
+        self.setWindowTitle("%s - %s" % (name, APP_NAME))
         self.show_scene(scene, "取得 %.2f 秒" % (time.time() - t0))
 
     def _on_viewer_selected(self, path):

@@ -10,6 +10,8 @@
   4. 警告の一覧は分類ごとに見出し・仕切り線で分け、お知らせ（解析した・定義で評価した）は警告に入れずログに出す。
      ログには警告を 1 件ずつ流さない
   5. リグの診断は、項目の一覧から選んで表示する（操作方法のウィンドウと同じ形）
+  6. ［ファイル］→［新規シーン］（Ctrl+N。ビューアにキーの焦点があっても効く）で、シーンを閉じて何も開いていない
+     状態に戻る。ソフト名（ウィンドウのタイトル）は英語表記
 """
 from __future__ import annotations
 
@@ -171,12 +173,32 @@ def main() -> int:
             nxt()
         wait(lambda: "かかりました。" in log_text(), opened)
 
+    # 6 ---------------------------------------------------------------------
+    def s_new_scene(nxt):
+        check(win.windowTitle() == "rig6_sample.ma - Maya Scene Viewer", "タイトルは英語のソフト名: %s" % win.windowTitle())
+        target = win.viewer.view.focusProxy() or win.viewer.view
+        target.setFocus()
+        app.processEvents()
+        from PySide6.QtTest import QTest                   # 実際のキー入力と同じく、ショートカットの仕組みを通る
+        win.activateWindow()
+        QTest.keyClick(target, QtCore.Qt.Key.Key_N, QtCore.Qt.KeyboardModifier.ControlModifier)
+
+        def done(r):
+            check(not r["loaded"] and r["empty"], "Ctrl+N でシーンが空になる: %s" % r)
+            check(win.windowTitle() == "Maya Scene Viewer" and win.current_path is None and win.current_scene is None,
+                  "新規シーンのタイトルは「Maya Scene Viewer」: %s" % win.windowTitle())
+            check(not win.viewer.warnings, "警告も消える")
+            check("新規シーン" in log_text(), "ログに新規シーン")
+            nxt()
+        QtCore.QTimer.singleShot(800, lambda: js(
+            "JSON.stringify({ loaded: !!window.mayaViewer.getStats().loaded, empty: !document.getElementById('empty').hidden })", done))
+
     def s_end(_nxt):
         win.a_anim.setChecked(anim_setting)
         print("結果:", "OK" if ok["v"] else "NG")
         app.exit(0 if ok["v"] else 1)
 
-    steps = [s_open, s_cache_menu, s_warnings, s_rig_report]
+    steps = [s_open, s_cache_menu, s_warnings, s_rig_report, s_new_scene]
     steps += getattr(sys.modules[__name__], "EXTRA_STEPS", lambda *_: [])(win, check, js, wait, log_text, run)
     steps.append(s_end)
     win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(300, lambda: run(steps)))
