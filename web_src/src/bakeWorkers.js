@@ -6,7 +6,7 @@ import { decodeBaked } from './rigBakeCore.js';
 
 /* global __RIG_WORKER_SOURCE__ */
 const SOURCE = typeof __RIG_WORKER_SOURCE__ === 'string' ? __RIG_WORKER_SOURCE__ : null;
-const CHUNK = 4;                 // 1 回に頼むフレームの数（小さいほど早く届き、取り込みも細かくなる）
+const CHUNK = 8;                 // 1 回に頼むフレームの数（小さいほど早く届き、取り込みも細かくなる）
 const START_DELAY = 300;         // 追加分が変わってから作り始めるまでの待ち（ms。ポーズ確認の操作中に作り直し続けないため）
 
 export class BakeWorkers {
