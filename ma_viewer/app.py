@@ -28,10 +28,10 @@ def main(argv=None) -> int:
 
     # QtWebEngine は QApplication より先に import する必要がある
     from .qt_compat import QtCore, QtGui, QtWidgets, require_webengine
-    from .resources import icon_path
+    from .resources import APP_NAME, icon_path
     QtCore.QCoreApplication.setAttribute(QtCore.Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv[:1])
-    app.setApplicationName("Maya シーンビューア")
+    app.setApplicationName(APP_NAME)
     icon = icon_path()
     if icon:                            # タイトルバー・タスクバーのアイコン（exe のアイコンは spec で指定）
         app.setWindowIcon(QtGui.QIcon(icon))
@@ -46,7 +46,7 @@ def main(argv=None) -> int:
         if args.selftest:
             _selftest_result({"ok": False, "error": str(exc)}, args.selftest_out)
             return 1
-        QtWidgets.QMessageBox.critical(None, "Maya シーンビューア - 起動できません", str(exc))
+        QtWidgets.QMessageBox.critical(None, "%s - 起動できません" % APP_NAME, str(exc))
         sys.stderr.write(detail)
         return 1
 

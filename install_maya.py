@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Maya のビューポートにこのファイルをドラッグ＆ドロップすると、
-現在のシェルフに「Maya シーンビューア」のボタンを追加します。"""
+現在のシェルフに「Maya Scene Viewer」のボタンを追加します。"""
 import os
 
-SHELF_COMMAND = u'''# Maya シーンビューア
+SHELF_COMMAND = u'''# Maya Scene Viewer
 import sys
 _root = r"{root}"
 if _root not in sys.path:
@@ -23,13 +23,13 @@ def onMayaDroppedPythonFile(*args):
             return
         root = picked[0]
     if not os.path.isdir(os.path.join(root, "ma_viewer")):
-        cmds.confirmDialog(title="Maya シーンビューア", message="ma_viewer フォルダが見つかりません:\n" + root,
+        cmds.confirmDialog(title="Maya Scene Viewer", message="ma_viewer フォルダが見つかりません:\n" + root,
                            button=["OK"])
         return
     top = mel.eval("$tmp = $gShelfTopLevel")
     shelf = cmds.tabLayout(top, query=True, selectTab=True)
-    cmds.shelfButton(parent=shelf, label="SceneViewer", annotation="Maya シーンビューア（現在のシーンを表示）",
+    cmds.shelfButton(parent=shelf, label="SceneViewer", annotation="Maya Scene Viewer（現在のシーンを表示）",
                      imageOverlayLabel="View", image1="pythonFamily.png", sourceType="python",
                      command=SHELF_COMMAND.format(root=root.replace("\\", "/")))
-    cmds.confirmDialog(title="Maya シーンビューア",
+    cmds.confirmDialog(title="Maya Scene Viewer",
                        message="シェルフ「%s」にボタンを追加しました。" % shelf, button=["OK"])
