@@ -22,7 +22,7 @@ import { connectBridge, isQtHost } from './bridge.js';
 import { History, sameChanges } from './history.js';
 import { compareGpuCpuSkinning } from './skinCheck.js';
 import { AnimationClip, worldRotationDegrees } from './animation.js';
-import { RigEvaluator, visibleFrom } from './rig.js';
+import { RigEvaluator, hiddenByProps } from './rig.js';
 import { Timeline } from './timeline.js';
 import { CurveOverlay } from './curveOverlay.js';
 import { TEMPLATE_HEX, isTemplated } from './displayType.js';
@@ -874,13 +874,33 @@ class ViewerApp {
     this.hidden = new Set();
     this.rigHidden = new Set();     // リグ（接続・カーブ）で決まる表示が、いまのフレームで非表示のノード
     this.rigShown = new Set();      // そのうち、目のアイコンなどで表示し直したノード（リグより優先）
-    this.data.nodes.forEach((n, i) => { if (n.visible === false) this.hidden.add(i); });
+    // ファイルで非表示のノードのうち、まだ目のアイコンなどで変えていないもの。表示がリグで決まるもの（animation.props）は、
+    // アニメーションを読み込んだら hidden から外してリグの評価に任せる（保存時に隠れていた IK のコントローラーなどを、
+    // 切り替えのコントローラーを動かしたら表示する）
+    this.fileHidden = new Set();
+    this.data.nodes.forEach((n, i) => { if (n.visible === false) { this.hidden.add(i); this.fileHidden.add(i); } });
     for (const e of this.built.meshes) {
       e.selfVisible = e.data.visibleSelf !== undefined ? e.data.visibleSelf !== false : e.data.visible !== false;
+      e.fileHidden = !e.selfVisible;
       e.rigHidden = false;
       e.rigShown = false;
     }
     this.computeVisibility();
+  }
+
+  /**
+   * アニメーションの読み込み: 表示がリグで決まるノード・メッシュ・カーブ（props）は、ファイルで非表示でも隠したままにせず、
+   * リグの評価（applyRigVisibility）で決める。目のアイコンなどで変えたものは、その状態のまま
+   */
+  releaseFileHidden(props) {
+    for (const ni of this.fileHidden) this.hidden.add(ni);           // 前のアニメーションで外したものを戻す
+    for (const e of this.built.meshes) if (e.fileHidden) e.selfVisible = false;
+    this.curves.resetRig();
+    for (const p of props || []) {
+      if (p.kind === 'node') { if (this.fileHidden.has(p.index)) this.hidden.delete(p.index); }
+      else if (p.kind === 'mesh') { const e = this.built.meshes[p.index]; if (e && e.fileHidden) e.selfVisible = true; }
+      else if (p.kind === 'curve') this.curves.setRigDriven(p.index);
+    }
   }
 
   /** ノード自身が非表示か（目のアイコンの状態。リグで隠れている場合も含む） */
@@ -907,10 +927,11 @@ class ViewerApp {
   applyRigVisibility(props) {
     let changed = false;
     for (const p of props) {
-      if (p.kind !== 'node' && p.kind !== 'mesh') continue;
-      const st = p.static || {};
-      const hide = !!st.layerHidden || !visibleFrom({ ...st, ...p.values });
-      if (p.kind === 'node') {
+      if (p.kind !== 'node' && p.kind !== 'mesh' && p.kind !== 'curve') continue;
+      const hide = hiddenByProps(p.static, p.values);
+      if (p.kind === 'curve') {
+        if (this.curves.setRigHidden(p.index, hide)) changed = true;
+      } else if (p.kind === 'node') {
         if (hide !== this.rigHidden.has(p.index)) { changed = true; if (hide) this.rigHidden.add(p.index); else this.rigHidden.delete(p.index); }
       } else {
         const e = this.built.meshes[p.index];
@@ -940,6 +961,7 @@ class ViewerApp {
 
   setNodeVisible(ni, visible) {
     if (!this.built || ni < 0) return;
+    this.fileHidden.delete(ni);                             // 自分で決めた表示は、アニメーションを読み込んでも変えない
     if (visible) {
       this.hidden.delete(ni);
       if (this.rigHidden.has(ni)) this.rigShown.add(ni);    // リグで隠れていても表示する
@@ -960,6 +982,7 @@ class ViewerApp {
     if (!this.built || !list.length) return;
     if (list.length === 1) { this.setNodeVisible(list[0], visible); return; }
     for (const ni of list) {
+      this.fileHidden.delete(ni);
       if (visible) {
         this.hidden.delete(ni);
         if (this.rigHidden.has(ni)) this.rigShown.add(ni);
@@ -977,6 +1000,7 @@ class ViewerApp {
     if (!this.built || !this.hidden || !list.length) return;
     if (list.length === 1) { this.toggleNodeVisible(list[0]); return; }
     const show = list.filter((ni) => this.isNodeHidden(ni)), hide = list.filter((ni) => !this.isNodeHidden(ni));
+    for (const ni of list) this.fileHidden.delete(ni);
     for (const ni of show) { this.hidden.delete(ni); if (this.rigHidden.has(ni)) this.rigShown.add(ni); }
     for (const ni of hide) { this.hidden.add(ni); this.rigShown.delete(ni); }
     this.updateVisibility();
@@ -987,6 +1011,7 @@ class ViewerApp {
     if (!this.built) return;
     const e = this.built.meshes[mi];
     e.selfVisible = v;
+    e.fileHidden = false;
     e.rigShown = v && e.rigHidden;                          // リグで隠れていても表示する
     this.updateVisibility();
   }
@@ -1017,6 +1042,7 @@ class ViewerApp {
     this.rigHidden.clear();
     this.rigShown.clear();
     for (const e of this.built.meshes) { e.rigHidden = false; e.rigShown = false; }
+    this.releaseFileHidden(anim.props);
     this.cameraProps = new Map();
     this.updateVisibility();
     // リグ（コンストレイント・IK・計算ノード）を含めて評価する（上で作成）。動かないノードはファイルの値

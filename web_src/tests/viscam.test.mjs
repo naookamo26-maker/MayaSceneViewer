@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { Matrix4 } from 'three';
 import { AnimationClip } from '../src/animation.js';
-import { RigEvaluator, visibleFrom } from '../src/rig.js';
+import { RigEvaluator, hiddenByProps, visibleFrom } from '../src/rig.js';
+import { poseMatrix } from '../src/pose.js';
 import { cameraFrustum, cameraParams } from '../src/cameraView.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -21,7 +22,8 @@ function visibilityAt(f) {
   rig.evaluate(f);
   const out = {};
   for (const p of rig.evaluateProps()) {
-    const name = p.kind === 'node' ? names[p.index] : p.kind === 'mesh' ? data.meshes[p.index].name : data.cameras[p.index].name;
+    const name = p.kind === 'node' ? names[p.index] : p.kind === 'mesh' ? data.meshes[p.index].name
+      : p.kind === 'curve' ? data.curves[p.index].name : data.cameras[p.index].name;
     out[name] = p.kind === 'camera' ? p.values : visibleFrom({ ...p.static, ...p.values });
   }
   return out;
@@ -47,6 +49,37 @@ test('コントローラーの独自の属性で決まる表示を、フレー�
   assert.equal(visibilityAt(11).arm_geo, true);
   assert.equal(f12.arm_geo, false);
   assert.equal(f24.arm_geo, false);
+});
+
+test('ディスプレイレイヤーの表示（lv・le）: 接続の値があればそれで、なければファイルの値（layerHidden）で決める', () => {
+  assert.equal(hiddenByProps({ layerHidden: true }, {}), true);
+  assert.equal(hiddenByProps({ layerHidden: true, le: 1, lv: 0 }, { lv: 1 }), false);
+  assert.equal(hiddenByProps({ layerHidden: false, le: 1, lv: 1 }, { lv: 0 }), true);
+  assert.equal(hiddenByProps({ le: 0, lv: 0 }, { lv: 0 }), false);         // 無効なレイヤーは表示に影響しない
+  assert.equal(hiddenByProps({ v: 0 }, { lv: 1 }), true);                   // 自分の .v（ファイルの値）は別に効く
+});
+
+test('コントローラーを動かして切り替える表示（ポーズ確認の追加分で、保存時に隠れていたものも表示する）', () => {
+  const rig = new RigEvaluator(new AnimationClip(data.animation), data.nodes, (ni) => new Matrix4().fromArray(data.nodes[ni].matrix));
+  rig.setPlaybackLimit(64 * 1024 * 1024);              // ビューアと同じく再生キャッシュを使う
+  const sw = names.indexOf('switch_ctrl');
+  const curveNames = data.curves.map((c) => c.name);
+  const shown = (tx) => {
+    const pose = { t: [tx, 0, 0], r: [0, 0, 0], s: [1, 1, 1] };
+    rig.evaluate(1, (ni) => (ni === sw && tx ? poseMatrix(pose) : null), undefined, new Map(tx ? [[sw, `tx${tx}`]] : []));
+    const out = {};
+    for (const p of rig.evaluateProps()) {
+      if (p.kind !== 'node' && p.kind !== 'curve') continue;
+      out[p.kind === 'node' ? names[p.index] : curveNames[p.index]] = !hiddenByProps(p.static, p.values);
+    }
+    return out;
+  };
+  const fk = { ik_ctrl: false, ik_extra: false, fk_ctrlShape: true };
+  const ik = { ik_ctrl: true, ik_extra: true, fk_ctrlShape: false };
+  const pick = (o) => ({ ik_ctrl: o.ik_ctrl, ik_extra: o.ik_extra, fk_ctrlShape: o.fk_ctrlShape });
+  assert.deepEqual(pick(shown(0)), fk);                // 保存時（FK）
+  assert.deepEqual(pick(shown(1)), ik);                // switch_ctrl.tx を 1 動かす → IK 側を表示
+  assert.deepEqual(pick(shown(0)), fk);                // 戻す
 });
 
 test('カメラの焦点距離のキーを評価する', () => {

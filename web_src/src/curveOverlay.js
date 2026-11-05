@@ -114,8 +114,28 @@ export class CurveOverlay {
   /** カーブを持つ（表示する）transform か。コントローラーの目印を出さないために使う */
   hasCurve(ni) { return this.byNode.has(ni); }
 
+  /** リグで表示が決まるカーブの印をすべて外す（アニメーションの読み込み直し） */
+  resetRig() {
+    for (const it of this.items) if (it) { it.rigDriven = false; it.rigHidden = false; }
+  }
+
+  /** ci 番目のカーブ（シェイプ）の表示はリグで決まる（ファイルの値ではなく setRigHidden の値を使う） */
+  setRigDriven(ci) {
+    const it = this.items[ci];
+    if (it) it.rigDriven = true;
+  }
+
+  /** リグで決まる表示（いまのフレームの値）。変わったら true（apply はしない） */
+  setRigHidden(ci, hide) {
+    const it = this.items[ci];
+    if (!it || !!it.rigHidden === hide) return false;
+    it.rigHidden = hide;
+    return true;
+  }
+
   isShown(it) {
-    return this.visible && it.selfVisible && !(this.hiddenNodes && this.hiddenNodes[it.node]);
+    const self = it.rigDriven ? !it.rigHidden : it.selfVisible;
+    return this.visible && self && !(this.hiddenNodes && this.hiddenNodes[it.node]);
   }
 
   apply() {

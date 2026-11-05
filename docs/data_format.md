@@ -270,11 +270,11 @@ graph で使っている自作ノードの定義（型 → `{"type", "attributes
 
 | キー | 内容 |
 |---|---|
-| `kind` / `index` | 対象。`node`（nodes の番号）・`mesh`（meshes の番号）・`camera`（cameras の番号）・`place2d`（textures の `uv.place2d` の番号。その place2dTexture を使うテクスチャすべて） |
-| `inputs` | 属性への接続（graph の `inputs` と同じ形）。node・mesh は表示の属性（`v`・`lodv`・`ove`・`ovv`）、camera は `fl`・`hfa`・`vfa`・`ncp`・`fcp`・`ow`・`hfo`・`vfo`・`lsr`・`cs`、place2d は `ofu`・`ofv`・`reu`・`rev` と 2 つ組の `of`・`re`（長い名前 offsetU などの接続もこの名前） |
-| `static` | node・mesh のみ。接続されていない表示の属性のファイルの値と、ディスプレイレイヤーで隠れているか（`layerHidden`） |
+| `kind` / `index` | 対象。`node`（nodes の番号）・`mesh`（meshes の番号）・`curve`（curves の番号。nurbsCurve のシェイプ）・`camera`（cameras の番号）・`place2d`（textures の `uv.place2d` の番号。その place2dTexture を使うテクスチャすべて） |
+| `inputs` | 属性への接続（graph の `inputs` と同じ形）。node・mesh・curve は表示の属性（`v`・`lodv`・`ove`・`ovv`）と、入っているディスプレイレイヤーの表示 `lv`・有効 `le`（レイヤーの `.v`・`.e` が接続で決まるとき）、camera は `fl`・`hfa`・`vfa`・`ncp`・`fcp`・`ow`・`hfo`・`vfo`・`lsr`・`cs`、place2d は `ofu`・`ofv`・`reu`・`rev` と 2 つ組の `of`・`re`（長い名前 offsetU などの接続もこの名前） |
+| `static` | node・mesh・curve のみ。接続されていない表示の属性のファイルの値と、ディスプレイレイヤーで隠れているか（`layerHidden`）。ディスプレイレイヤーに入っていれば、その `.e`・`.v` のファイルの値（`le`・`lv`） |
 
-表示されるのは `v` と `lodv` が 0.5 以上で、`ove` が有効なら `ovv` も 0.5 以上のとき（ディスプレイレイヤーで隠れていないこと）。接続元が評価できない（未対応のノード）属性は入れず、ファイルの値のまま表示します。graph の DAG ノードは、表示の属性が既定と違う値（`v` = 0 など）なら `attrs` に持ちます（別のノードの表示の入力になるとき用）。
+表示されるのは `v` と `lodv` が 0.5 以上で、`ove` が有効なら `ovv` も 0.5 以上のとき（ディスプレイレイヤーで隠れていないこと。`lv`・`le` の接続があれば、`le` が 0.5 以上で `lv` が 0.5 未満なら隠れる。なければ `layerHidden`）。ファイルで非表示のもの（nodes・meshes・curves の `visible` が false）も、props にあればリグの値で表示を決めます。接続元が評価できない（未対応のノード）属性は入れず、ファイルの値のまま表示します。graph の DAG ノードは、表示の属性が既定と違う値（`v` = 0 など）なら `attrs` に持ちます（別のノードの表示の入力になるとき用）。
 
 ### animation.fallback・animation.tainted
 
