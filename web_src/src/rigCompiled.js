@@ -16,6 +16,7 @@
 import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { clampLimits, composeLocalMatrix, decomposeMaya, evaluateCurve, mayaEuler } from './animation.js';
 import { solveIKCore } from './rig.js';
+import { mathKind } from './mathNodes.js';
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -31,6 +32,19 @@ const CON_TYPES = {
   parentConstraint: new Set([...T_OUT, ...R_OUT]), pointConstraint: new Set(T_OUT), orientConstraint: new Set(R_OUT),
   scaleConstraint: new Set(S_OUT), aimConstraint: new Set(R_OUT), lookAt: new Set(R_OUT),
 };
+// 専用の評価で値を読む計算ノード（入力だけで出力が決まるもの。ほかに mathNodes.js の新しい計算ノード・自作ノードの定義）。
+// 計算は RigEvaluator.outputsUncached をそのまま使う
+const MATH_TYPES = new Set(['unitConversion', 'multiplyDivide', 'plusMinusAverage', 'reverse', 'condition', 'blendColors',
+  'pairBlend', 'multMatrix', 'decomposeMatrix', 'composeMatrix', 'inverseMatrix', 'fourByFourMatrix', 'quatToEuler',
+  'eulerToQuat', 'quatProd', 'quatInvert', 'quatNormalize', 'quatSlerp', 'addDoubleLinear', 'multDoubleLinear', 'clamp',
+  'setRange', 'remapValue', 'distanceBetween', 'distanceBetweenDL', 'vectorProduct', 'blendTwoAttr', 'blendWeighted', 'choice',
+  'animBlendNodeAdditiveDL', 'animBlendNodeAdditiveDA', 'animBlendNodeAdditive', 'animBlendNodeAdditiveF',
+  'animBlendNodeAdditiveFL', 'animBlendNodeAdditiveFA', 'animBlendNodeAdditiveI16', 'animBlendNodeAdditiveI32',
+  'animBlendNodeAdditiveScale', 'animBlendNodeBoolean', 'animBlendNodeEnum', 'animBlendNodeAdditiveRotation',
+  'animCurveUA', 'animCurveUL', 'animCurveUU']);
+const TRS_RE = /^[trs][xyz]?$/;
+const MATRIX_PLUGS = new Set(['wm', 'worldMatrix', 'wim', 'worldInverseMatrix', 'm', 'matrix', 'xm', 'xformMatrix', 'im', 'inverseMatrix']);
+const PM_PLUGS = new Set(['pm', 'parentMatrix', 'pim', 'parentInverseMatrix']);
 const IDENTITY = new Matrix4();
 const STATIC = 0, SIMPLE = 1, DRIVEN = 2, DELEGATED = 3;
 
@@ -52,7 +66,13 @@ function xformKey(key) {
  * @returns { plan } か、扱えないなら { reason }
  */
 export function buildPlan(rig, deps) {
-  const fail = (reason) => ({ reason });
+  const r = build(rig, deps, true);
+  // 数式ノードの読むノードで計算の順番が決まらないときは、数式ノードを任せて作り直す
+  return r.cycle ? build(rig, deps, false) : r;
+}
+
+function build(rig, deps, useMath) {
+  const fail = (reason, cycle = false) => ({ reason, cycle: cycle && useMath });
   if (!rig.keepStatic) return fail('時間で変わらない値を使い回さない設定');
   if (rig.problems.size) return fail('評価の打ち切り（循環など。計算の順番で結果が変わりうる）');
   const nodes = rig.sceneNodes;
@@ -162,7 +182,7 @@ export function buildPlan(rig, deps) {
     const rest = rig.rest(ni);
     if (!e || !rest) return '材料のない動くノード';
     const fromCurve = new Set(e.channels.map((ch) => ch.attr));
-    const inputs = [];
+    const inputs = [], rawReads = [];
     for (const [key2, src] of rig.chanInputs(ni)) {
       if (key2 === 'opm') return '接続された offsetParentMatrix';
       if (fromCurve.has(key2)) continue;                               // カーブの値を使う（接続は読まない）
@@ -174,6 +194,15 @@ export function buildPlan(rig, deps) {
         continue;
       }
       const g = rig.byId.get(src.node);
+      if (g && useMath && !CON_TYPES[g.type]) {
+        // 計算ノード・DAG ノードからの接続: 上流をたどって、扱える種類か・読む DAG ノードを調べる
+        const reads = [];
+        const why = walkSource(src, reads, new Set());
+        if (why) return why;
+        inputs.push({ base, axis, src });
+        rawReads.push(...reads);
+        continue;
+      }
       if (!g || g.dag >= 0 || !CON_TYPES[g.type] || g.def) return `チャンネルの入力（${g ? g.type : '不明'}）`;
       const attr = String(src.attr).replace(/\[\d+\]$/, '');
       if (!CON_TYPES[g.type].has(attr)) return `${g.type} の出力 ${src.attr}`;
@@ -184,12 +213,79 @@ export function buildPlan(rig, deps) {
     const opm = opmOf(ni);
     if (opm === undefined) return '接続された offsetParentMatrix';
     steps.set(ni, {
-      ni, kind: inputs.some((x) => x.con) ? DRIVEN : SIMPLE, e, rest, inputs, opm,
+      ni, kind: inputs.some((x) => x.con || x.src) ? DRIVEN : SIMPLE, e, rest, inputs, opm, rawReads, reads: [], done: -1,
       fromCurve, cur: null, local: new Matrix4(), world: new Matrix4(),
       isNode: (rest.isNode ?? -1) >= 0 && rig.rest(rest.isNode) ? rest.isNode : -1,
       deps: deps.get(ni) || null, ik: null, fk: null, fkStamp: -1,
     });
     return null;
+  }
+
+  // ---- 計算ノードの上流（RigEvaluator.source → plug → outputs と同じ形をたどる）。扱えなければ理由
+  function walkSource(src, reads, seen) {
+    if (src.curve !== undefined) return null;
+    const g = rig.byId.get(src.node);
+    if (!g) return 'チャンネルの入力（不明）';
+    const attr = String(src.attr);
+    if (g.dag >= 0) {
+      const base = attr.replace(/\[\d+\]$/, '');
+      reads.push({ ni: g.dag, base });
+      if (TRS_RE.test(base) || PM_PLUGS.has(base) || MATRIX_PLUGS.has(base)) return null;
+      if (base === 'opm' || base === 'offsetParentMatrix') return null;     // RigEvaluator が求める
+      // それ以外（ピボット・カスタム属性など）: その属性への接続をたどる
+      const key = g.id + '.' + base;
+      if (seen.has(key)) return null;
+      seen.add(key);
+      for (const [k, s2] of Object.entries(g.inputs || {})) {
+        if (k === base || k.startsWith(base)) { const w = walkSource(s2, reads, seen); if (w) return w; }
+      }
+      return null;
+    }
+    if (!(g.def || MATH_TYPES.has(g.type) || mathKind(g.type))) return `チャンネルの入力（${g.type}）`;
+    if (seen.has(g.id)) return null;
+    seen.add(g.id);
+    for (const s2 of Object.values(g.inputs || {})) { const w = walkSource(s2, reads, seen); if (w) return w; }
+    return null;
+  }
+  // 読む DAG ノードから、先に計算しておくノード（reads）を決める。扱えなければ任せる
+  const constChan = new Map();         // 動かないノード → チャンネルの値（レストの値に制限を当てたもの）
+  const pmOpm = new Map();             // 手順のないノード → offsetParentMatrix
+  const under = (x, ni) => { for (let p = x; p >= 0; p = nodes[p].parent) if (p === ni) return true; return false; };
+  for (const st of [...steps.values()]) {
+    if (!st.rawReads || !st.rawReads.length || st.kind === DELEGATED) continue;
+    const why = (() => {
+      const reads = new Set();
+      for (const { ni: x, base } of st.rawReads) {
+        if (TRS_RE.test(base)) {
+          if (!rig.rest(x)) continue;
+          const xs = steps.get(x);
+          if (!rig.moving.has(x) || !xs) {
+            if ((rig.clip.byNode.get(x) || { channels: [] }).channels.length || rig.chanInputs(x).length) return '動かないノードのチャンネルの入力を読む';
+            if (!constChan.has(x)) {
+              const r = rig.rest(x), c = { ...r };
+              for (const k of VEC_KEYS) if (r[k]) c[k] = r[k].slice();
+              constChan.set(x, clampLimits(c));
+            }
+            continue;
+          }
+          if (xs.kind === DELEGATED) continue;                           // RigEvaluator が求める
+          if (base[0] === 't' && !xs.inputs.some((y) => (y.con || y.src) && y.base === 't')) continue;   // 移動はその場で求める
+          reads.add(x);
+        } else if (PM_PLUGS.has(base)) {
+          const p = nodes[x].parent;
+          if (p >= 0) reads.add(p);
+          if (!steps.get(x)) {
+            const o = opmOf(x);
+            if (o === undefined) return '接続された offsetParentMatrix を読む';
+            pmOpm.set(x, o);
+          }
+        } else if (MATRIX_PLUGS.has(base)) reads.add(x);
+      }
+      for (const x of reads) if (under(x, st.ni)) return '自分（とその下）の値を読む入力';
+      st.reads = [...reads];
+      return null;
+    })();
+    if (why) delegate(st.ni, why);
   }
 
   // ---- poleVectorConstraint（RigEvaluator.constraint の poleVectorConstraint と pvcTargetPosition・pvcStartPosition）。
@@ -240,7 +336,7 @@ export function buildPlan(rig, deps) {
       if (chain.includes(r.ni) && !(r.ni === chain[0] && (r.attr === 'pm' || r.attr === 't'))) return null;
       if (!chain.includes(r.ni)) reads.push(r.ni);
       if (r.attr === 't' && rig.moving.has(r.ni) && steps.get(r.ni) && steps.get(r.ni).kind === DRIVEN
-        && steps.get(r.ni).inputs.some((x) => x.con && x.base === 't')) return null;   // コンストレイントで移動するノード
+        && steps.get(r.ni).inputs.some((x) => (x.con || x.src) && x.base === 't')) return null;   // コンストレイントで移動するノード
     }
     return { id, targets, total, crp, crt: crt.value, ps, reads };
   }
@@ -262,7 +358,7 @@ export function buildPlan(rig, deps) {
       if (rig.moving.has(end)) {
         const st = steps.get(end);
         // IK が読むのは終端の移動の値だけ。移動に入るコンストレイントがあれば任せる（回転だけなら読まない）
-        if (st && st.kind === DRIVEN && st.inputs.some((x) => x.con && x.base === 't')) return 'コンストレイントで移動する IK の終端';
+        if (st && st.kind === DRIVEN && st.inputs.some((x) => (x.con || x.src) && x.base === 't')) return '入力で移動する IK の終端';
       } else if (rig.rest(end) && ((rig.clip.byNode.get(end) || { channels: [] }).channels.length || rig.chanInputs(end).length)) {
         return 'IK の終端のチャンネルの入力';
       }
@@ -316,6 +412,7 @@ export function buildPlan(rig, deps) {
     if (s && s.kind !== DELEGATED) {
       if (s.isNode >= 0 && !(s.ik && s.ik.chain.includes(s.isNode)) && !visit(s.isNode)) return false;
       for (const x of s.inputs) if (x.con) for (const t of x.con.targets) if (!visit(t.ni)) return false;
+      if (s.reads) for (const x of s.reads) if (!visit(x)) return false;
       if (s.ik && s.ik.chain[0] === ni) {
         // 開始ジョイントで IK を解く: ハンドル・チェーンのジョイントのコンストレイントのターゲット・親のスケールの打ち消しの元が先
         const ik = s.ik;
@@ -326,6 +423,7 @@ export function buildPlan(rig, deps) {
           const isn = ms ? ms.isNode : ((rig.rest(m) || {}).isNode ?? -1);
           if (isn >= 0 && rig.rest(isn) && !ik.chain.includes(isn) && !visit(isn)) return false;
           if (ms && ms.inputs && m !== ni) for (const x of ms.inputs) if (x.con) for (const t of x.con.targets) if (!visit(t.ni)) return false;
+          if (ms && ms.reads && m !== ni) for (const x of ms.reads) if (!visit(x)) return false;
         }
       }
     }
@@ -351,10 +449,10 @@ export function buildPlan(rig, deps) {
     return true;
   };
   const why = () => (restFail ? '動かないノードのチャンネルの入力' : '計算の順番が決まらない（循環）');
-  for (const ni of rig.moving) if (!visit(ni)) return fail(why());
+  for (const ni of rig.moving) if (!visit(ni)) return fail(why(), !restFail);
   for (const c of cons.values()) {
-    for (const t of c.targets) if (!visit(t.ni)) return fail(why());
-    if (c.driven >= 0 && !visit(c.driven)) return fail(why());
+    for (const t of c.targets) if (!visit(t.ni)) return fail(why(), !restFail);
+    if (c.driven >= 0 && !visit(c.driven)) return fail(why(), !restFail);
   }
   for (const s of order) {
     if (s.kind === STATIC || s.kind === DELEGATED) continue;
@@ -378,6 +476,8 @@ export function buildPlan(rig, deps) {
     depsAdded: false, f: 0,
   };
   for (const ik of iks.values()) ik.ev = ikReader(plan, ik);
+  plan.ad = useMath ? mathReader(plan, constChan, pmOpm) : null;
+  plan.counts.math = order.filter((s) => s.inputs && s.inputs.some((x) => x.src)).length;
   return { plan };
 }
 
@@ -404,6 +504,83 @@ function fkOf(plan, s) {
 function solveOf(plan, ik) {
   if (ik.stamp !== plan.stamp) { ik.sol = solveIKCore(ik.ev, ik.id); ik.stamp = plan.stamp; }
   return ik.sol;
+}
+
+/**
+ * 計算ノードの値の読み方: RigEvaluator を土台に、plug・outputs・dagPlug だけを差し替えたもの。計算ノードの種類ごとの
+ * 計算（outputsUncached）・属性の求め方（plugUncached）は RigEvaluator のものをそのまま使う。
+ * 時間で変わらない値は RigEvaluator が覚えた値（keep）、時間で変わる値はフレームごとに 1 回計算し、
+ * DAG ノードの移動・回転・スケール・行列は計画の値を返す
+ */
+function mathReader(plan, constChan, pmOpm) {
+  const rig = plan.rig;
+  const proto = Object.getPrototypeOf(rig);
+  const ad = Object.create(rig);
+  // ノードごとの記録: 時間で変わらない値（RigEvaluator の keep）と、このフレームの値（stamp が違えば捨てる）
+  const recs = new Map();
+  const recOf = (id) => {
+    let r = recs.get(id);
+    if (!r) recs.set(id, r = { km: rig.keep.plug.get(id) || null, fm: new Map(), stamp: -1, out: undefined, outStamp: -1 });
+    return r;
+  };
+  ad.plug = function plug(id, attr) {
+    const r = recOf(id);
+    if (r.km) { const v = r.km.get(attr); if (v !== undefined || r.km.has(attr)) return v; }
+    if (r.stamp !== plan.stamp) { r.fm.clear(); r.stamp = plan.stamp; }
+    let v = r.fm.get(attr);
+    if (v !== undefined || r.fm.has(attr)) return v;
+    v = proto.plugUncached.call(ad, id, attr);
+    r.fm.set(attr, v);
+    return v;
+  };
+  ad.outputs = function outputs(id) {
+    const ko = rig.keep.out.get(id);
+    if (ko !== undefined || rig.keep.out.has(id)) return ko;
+    const r = recOf(id);
+    if (r.outStamp !== plan.stamp) { r.out = proto.outputsUncached.call(ad, id); r.outStamp = plan.stamp; }
+    return r.out;
+  };
+  ad.dagPlug = function dagPlug(ni, attr) {
+    const base = attr.replace(/\[\d+\]$/, '');
+    const s = plan.steps.get(ni);
+    if (TRS_RE.test(base)) {
+      const axis = base.length === 2 ? XYZ.indexOf(base[1]) : -1;
+      const comp = (arr, k) => (k >= 0 ? arr[k] : arr);
+      if (!rig.rest(ni)) return axis >= 0 ? (base[0] === 's' ? 1 : 0) : (base[0] === 's' ? [1, 1, 1] : [0, 0, 0]);
+      let c;
+      if (!s) c = constChan.get(ni);
+      else if (s.kind === DELEGATED) c = rig.chan(ni, base[0] === 't' ? 't' : 'full');
+      else if (s.kind === STATIC) c = s.cur;
+      else if (base[0] === 't' && s.done !== plan.stamp) c = chanTObj(plan, ni, plan.f);
+      else c = s.cur;
+      if (!c) return proto.dagPlug.call(rig, ni, attr);
+      if (base[0] === 't') return comp(c.t, axis);
+      if (base[0] === 'r') return comp(c.r.map((v) => v * D2R), axis);
+      return comp(c.s, axis);
+    }
+    if (PM_PLUGS.has(base)) {
+      let m;
+      if (s && s.kind === DELEGATED) m = rig.parentSpace(ni);
+      else {
+        const P = parentWorld(plan, ni), o = s ? s.opm : pmOpm.get(ni);
+        m = o ? new Matrix4().copy(P).multiply(o) : P;
+      }
+      return base === 'pm' || base === 'parentMatrix' ? m : m.clone().invert();
+    }
+    if (MATRIX_PLUGS.has(base) && s && s.kind !== DELEGATED) {
+      const world = base === 'wm' || base === 'worldMatrix' || base === 'wim' || base === 'worldInverseMatrix';
+      let m = s.world;
+      if (!world) {
+        // ローカル行列は offsetParentMatrix を含まない（RigEvaluator.localMatrix と同じ）
+        const L = s.kind === STATIC ? rig.staticLocal(ni) : s.local;
+        m = s.opm ? s.opm.clone().invert().multiply(L) : L;
+      }
+      const inv = base === 'wim' || base === 'worldInverseMatrix' || base === 'im' || base === 'inverseMatrix';
+      return inv ? m.clone().invert() : m;
+    }
+    return proto.dagPlug.call(ad, ni, attr);
+  };
+  return ad;
 }
 
 /** 極ベクトル（ハンドルの親の空間。RigEvaluator の poleVectorConstraint の出力 ct → ハンドルの pv と同じ） */
@@ -515,9 +692,12 @@ function channelValues(plan, s, f, cur) {
       v = evaluateCurve(x.curve, f);
       v = x.curve.type === 'TA' ? v * D2R : v;
     } else {
-      const c = x.con;
-      if (c.stamp !== plan.stamp) evalConstraint(plan, c, f);
-      v = c.out[x.attr];
+      if (x.src) v = plan.ad.source(x.src);
+      else {
+        const c = x.con;
+        if (c.stamp !== plan.stamp) evalConstraint(plan, c, f);
+        v = c.out[x.attr];
+      }
     }
     if (v === undefined) continue;
     const k = ANGLE_KEYS.has(x.base) ? R2D : 1;
@@ -628,6 +808,7 @@ function chanTObj(plan, ni, f) {
     if (x.base !== 't') continue;
     let v;
     if (x.curve) { v = evaluateCurve(x.curve, f); v = x.curve.type === 'TA' ? v * D2R : v; }
+    else if (x.src) v = plan.ad.source(x.src);
     else { if (x.con.stamp !== plan.stamp) evalConstraint(plan, x.con, f); v = x.con.out[x.attr]; }
     if (v === undefined) continue;
     if (!out.t) out.t = [0, 0, 0];
@@ -741,6 +922,7 @@ export function runPlan(plan, f, target) {
     } else {
       evalChannels(plan, s, f);
       s.world.multiplyMatrices(parentWorld(plan, ni), s.local);
+      s.done = plan.stamp;
       // RigEvaluator が読む値を、そのフレームのキャッシュに入れる（chan の 'full'・'fk'。IK がないので同じ値。
       // 't' は回転を求めない別の値なので入れない）
       if (plan.share) {
