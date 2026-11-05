@@ -3,7 +3,7 @@
 
   python tools/make_compiled_sample.py   → samples/compiled_sample.ma, samples/compiled_sample.json
 
-段階 1 で扱う要素（キーで動くノード・parentConstraint）を詰め込み、専用の評価の計画が作られることと、
+専用に扱う要素（キーで動くノード・parent/point/orient/scale/aim コンストレイント・lookAt）を詰め込み、専用の評価の計画が作られることと、
 従来の評価器（RigEvaluator）と全フレームでビット単位で同じ結果になることを web_src/tests/compiled.test.mjs で確かめる。
 再生範囲 1〜30。
   * grp（動かない）→ c0（回転順 zxy・ピボット (1, 0, 0)・(0, 0.5, 0)・移動と回転のキー）
@@ -14,6 +14,13 @@
   * j2（j1 の子）← jt への parentConstraint（ターゲットの親のスケールの打ち消し tsc）
   * j3（offsetParentMatrix あり）← j1（コンストレイントで動くノード）への parentConstraint
   * jm（tx にキー）← c0 への parentConstraint（回転だけ）
+  * jp ← c2（0.4）と jt（0.6）への pointConstraint（オフセット）
+  * jo（c2 の子。c2 のスケールを .is で打ち消す）← c1 と jt への orientConstraint（オフセット）
+  * js ← c2 と s3 への scaleConstraint（オフセット）
+  * ja（tx にキー・回転ピボット）← c1 への aimConstraint（world up はベクトル。オフセット）
+  * jb（c2 の子・.is）← jp（コンストレイントで動くノード）への aimConstraint（world up はシーンの上）
+  * jc ← c0 への aimConstraint（world up なし）
+  * la ← c2 への lookAt（twist）
 """
 from __future__ import annotations
 
@@ -53,8 +60,8 @@ def main():
     PARENT = (("t", "tt"), ("rp", "trp"), ("rpt", "trt"), ("r", "tr"), ("ro", "tro"), ("s", "ts"), ("pm", "tpm"))
     JOINT = (("jo", "tjo"), ("ssc", "tsc"), ("is", "tis"))
 
-    def parent_constraint(name, driven, targets, attrs=(), outputs="tr"):
-        A('createNode parentConstraint -n "%s" -p "%s";' % (name, driven))
+    def constraint(kind, name, driven, targets, attrs=(), outputs="tr"):
+        A('createNode %s -n "%s" -p "%s";' % (kind, name, driven))
         for i, (t, _w, _off, _joint) in enumerate(targets):
             A('\taddAttr -dcb 0 -ci true -k true -sn "w%d" -ln "%sW%d" -dv 1 -min 0 -at "double";' % (i, t, i))
         for i, (_t, w, off, _joint) in enumerate(targets):
@@ -72,11 +79,14 @@ def main():
         con(driven + ".rp", name + ".crp")
         con(driven + ".rpt", name + ".crt")
         con(driven + ".ro", name + ".cro")
+        if kind in ("aimConstraint", "lookAt"):
+            con(driven + ".t", name + ".ct")
         for a in "xyz":
-            if "t" in outputs:
-                con("%s.ct%s" % (name, a), "%s.t%s" % (driven, a))
-            if "r" in outputs:
-                con("%s.cr%s" % (name, a), "%s.r%s" % (driven, a))
+            for o in outputs:
+                con("%s.c%s%s" % (name, o, a), "%s.%s%s" % (driven, o, a))
+
+    def parent_constraint(name, driven, targets, attrs=(), outputs="tr"):
+        constraint("parentConstraint", name, driven, targets, attrs, outputs)
 
     frames = range(1, 31, 3)
     node("transform", "grp", None, '".t" -type "double3" 0 1 0 ', '".r" -type "double3" 0 20 0 ')
@@ -108,6 +118,32 @@ def main():
     node("joint", "jm", None)
     keys("jm", "tx", "animCurveTL", [(f, -0.1 * f) for f in frames])
     parent_constraint("jm_pc", "jm", [("c0", 1, None, False)], outputs="r")
+
+
+    # 段階 2: parentConstraint 以外のコンストレイント
+    node("transform", "jp", None)
+    constraint("pointConstraint", "jp_pc", "jp", [("c2", 0.4, None, False), ("jt", 0.6, None, True)],
+               ('".o" -type "double3" 0.5 0 -0.25 ',), outputs="t")
+    node("joint", "jo", "c2", '".t" -type "double3" 0 -1 0 ', '".ro" 3', '".jo" -type "double3" 5 0 10 ')
+    con("c2.s", "jo.is")
+    constraint("orientConstraint", "jo_oc", "jo", [("c1", 1, None, True), ("jt", 2, None, True)],
+               ('".o" -type "double3" 10 0 -20 ',), outputs="r")
+    node("joint", "js", None, '".t" -type "double3" 0 0 3 ')
+    constraint("scaleConstraint", "js_sc", "js", [("c2", 1, None, False), ("s3", 1, None, False)],
+               ('".o" -type "double3" 1 2 1 ',), outputs="s")
+    node("joint", "ja", None, '".rp" -type "double3" 0 0.2 0 ', '".jo" -type "double3" 0 0 30 ')
+    keys("ja", "tx", "animCurveTL", [(f, -2 + 0.15 * f) for f in frames])
+    constraint("aimConstraint", "ja_ac", "ja", [("c1", 1, None, True)],
+               ('".a" -type "double3" 0 1 0 ', '".u" -type "double3" 1 0 0 ', '".wut" 3',
+                '".wu" -type "double3" 0 0 1 ', '".o" -type "double3" 0 15 0 '), outputs="r")
+    node("joint", "jb", "c2", '".t" -type "double3" 0 0 -2 ')
+    con("c2.s", "jb.is")
+    constraint("aimConstraint", "jb_ac", "jb", [("jp", 1, None, False)], ('".wut" 0',), outputs="r")
+    node("joint", "jc", None, '".t" -type "double3" 0 -2 0 ', '".ro" 4')
+    constraint("aimConstraint", "jc_ac", "jc", [("c0", 1, None, False)], ('".wut" 4',), outputs="r")
+    node("joint", "la", None, '".t" -type "double3" 3 3 3 ')
+    constraint("lookAt", "la_la", "la", [("c2", 1, None, False)], ('".a" -type "double3" 0 0 -1 ', '".wut" 0', '".tws" 0.3'),
+               outputs="r")
 
     A('createNode script -n "sceneConfigurationScriptNode";')
     A('\tsetAttr ".b" -type "string" "playbackOptions -min 1 -max 30 -ast 1 -aet 30 ";')

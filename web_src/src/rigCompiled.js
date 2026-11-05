@@ -5,10 +5,12 @@
 // 「計画」（計算の順番・ノードごとの手順・時間で変わらない値）を作り、2 回目からは計画どおりに計算する。
 // 計算は RigEvaluator と同じ数式を同じ順番で行い、結果はビット単位で同じになる（tests/compiled.test.mjs）。
 //
-// 扱えるもの（段階 1）: 動かないノード・カーブだけで動くノード・parentConstraint の出力（と、チャンネルと同じ
-// 属性のカーブ）で動くノード。コンストレイントの重み・オフセットなどは時間で変わらないもの、ターゲットは DAG ノード。
-// それ以外（IK・ほかのコンストレイント・計算ノードの入力・props・形の変わるカーブ・推定のノードなど）を含むリグは
-// 計画を作らず、RigEvaluator がこれまでどおり評価する。ポーズ確認の追加分があるあいだも RigEvaluator が評価する。
+// 専用に計算するもの: 動かないノード・カーブだけで動くノード・コンストレイントの出力（と、チャンネルと同じ属性の
+// カーブ）で動くノード。コンストレイントの重み・オフセットなどは時間で変わらないもの、ターゲットは DAG ノード。
+// それ以外の動くノード（IK・計算ノードの入力・推定のノードなど）は「任せるノード」として、計算の順番の中で
+// RigEvaluator に計算させる。専用に計算した値（ワールド行列・ローカル行列・チャンネルの値）は RigEvaluator の
+// フレームのキャッシュに入れるので、RigEvaluator はそれを読み、結果は同じになる（props・形の変わるカーブも、
+// 評価のあとで RigEvaluator がキャッシュから求める）。ポーズ確認の追加分があるあいだは RigEvaluator が評価する。
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { clampLimits, composeLocalMatrix, decomposeMaya, evaluateCurve, mayaEuler } from './animation.js';
 
@@ -20,9 +22,14 @@ const THREE_ORDER = ['xyz', 'yzx', 'zxy', 'xzy', 'yxz', 'zyx'].map((o) => o.spli
 const VEC_KEYS = ['t', 'r', 's', 'jo', 'ra', 'rp', 'sp', 'rpt', 'spt', 'sh'];
 const ANGLE_KEYS = new Set(['r', 'jo', 'ra']);
 const SHEAR_AXIS = { shxy: 0, shxz: 1, shyz: 2 };
-const CONSTRAINT_OUT = new Set(['ct', 'ctx', 'cty', 'ctz', 'cr', 'crx', 'cry', 'crz']);
+// 専用に計算するコンストレイントの種類 → 出力の属性（チャンネルにつながるもの）
+const T_OUT = ['ct', 'ctx', 'cty', 'ctz'], R_OUT = ['cr', 'crx', 'cry', 'crz'], S_OUT = ['cs', 'csx', 'csy', 'csz'];
+const CON_TYPES = {
+  parentConstraint: new Set([...T_OUT, ...R_OUT]), pointConstraint: new Set(T_OUT), orientConstraint: new Set(R_OUT),
+  scaleConstraint: new Set(S_OUT), aimConstraint: new Set(R_OUT), lookAt: new Set(R_OUT),
+};
 const IDENTITY = new Matrix4();
-const STATIC = 0, SIMPLE = 1, DRIVEN = 2;
+const STATIC = 0, SIMPLE = 1, DRIVEN = 2, DELEGATED = 3;
 
 const _e = new Euler(), _v = new Vector3(), _s = new Vector3(), _m = new Matrix4(), _q = new Quaternion();
 const eulerQuat = (deg, order, target) => target.setFromEuler(_e.set(deg[0] * D2R, deg[1] * D2R, deg[2] * D2R, THREE_ORDER[order] || 'ZYX'));
@@ -44,10 +51,7 @@ function xformKey(key) {
 export function buildPlan(rig, deps) {
   const fail = (reason) => ({ reason });
   if (!rig.keepStatic) return fail('時間で変わらない値を使い回さない設定');
-  if (rig.props.length) return fail('接続で決まる表示・カメラなどの値（props）');
-  if (rig.curveIds().length) return fail('リグで形が変わるカーブ');
-  if (rig.problems.size) return fail('評価の打ち切り（循環など）');
-  if (rig.fallback.size || rig.tainted.size) return fail('推定・不明のノード');
+  if (rig.problems.size) return fail('評価の打ち切り（循環など。計算の順番で結果が変わりうる）');
   const nodes = rig.sceneNodes;
   const staticPlug = (id, attr) => {
     const km = rig.keep.plug.get(id);
@@ -63,79 +67,132 @@ export function buildPlan(rig, deps) {
     return Array.isArray(v) && v.length === 16 ? new Matrix4().fromArray(v) : null;
   };
 
-  // ---- コンストレイント
+  // ---- コンストレイント（RigEvaluator.constraint と同じ。入力の属性は時間で変わらないものだけ）
+  // 戻り値はコンストレイントの手順か、扱えない理由（文字列）
   const constraintOf = (g) => {
     if (cons.has(g.id)) return cons.get(g.id);
-    const id = g.id;
+    const id = g.id, type = g.type;
+    const usesOrientation = type === 'orientConstraint' || type === 'parentConstraint' || type === 'scaleConstraint';
+    const need = (attr) => staticPlug(id, attr);
     const targets = [];
     for (const t of g.targets || []) {
       const tg = rig.byId.get(t.node);
-      if (!tg || tg.dag < 0) continue;                                  // parentConstraint は DAG ノードのターゲットだけ使う
+      if (!tg || (tg.dag < 0 && usesOrientation)) continue;
+      if (tg.dag < 0) return `${type} の DAG ノードでないターゲット`;
       const b = `tg[${t.index}]`;
-      if (!staticPlug(id, `${b}.tw`)) return null;
+      if (!need(`${b}.tw`)) return `${type} の時間で変わるウェイト`;
       const w = rig.num(id, `${b}.tw`, 1);
       if (!(w > 0)) continue;                                           // 重み 0 のターゲットは読まない（RigEvaluator と同じ）
-      for (const a of ['tot', 'tor', 'tsc']) if (!staticPlug(id, `${b}.${a}`)) return null;
-      const tot = rig.vec(id, `${b}.tot`), tor = rig.vec(id, `${b}.tor`);
-      targets.push({ ni: tg.dag, w, tsc: rig.num(id, `${b}.tsc`, 1) >= 0.5,
-        tot: new Matrix4().makeTranslation(tot[0], tot[1], tot[2]),
-        tor: new Matrix4().makeRotationFromQuaternion(radQuat(tor, new Quaternion())),
-        m: new Matrix4(), q: new Quaternion() });
+      const t2 = { ni: tg.dag, w, m: new Matrix4(), q: new Quaternion() };
+      if (type === 'parentConstraint') {
+        for (const a of ['tot', 'tor', 'tsc']) if (!need(`${b}.${a}`)) return `${type} の時間で変わるオフセット`;
+        const tot = rig.vec(id, `${b}.tot`), tor = rig.vec(id, `${b}.tor`);
+        t2.tsc = rig.num(id, `${b}.tsc`, 1) >= 0.5;
+        t2.tot = new Matrix4().makeTranslation(tot[0], tot[1], tot[2]);
+        t2.tor = new Matrix4().makeRotationFromQuaternion(radQuat(tor, new Quaternion()));
+      }
+      targets.push(t2);
     }
-    const total = targets.reduce((s, t) => s + t.w, 0);
-    if (total <= EPS) return null;                                      // レストの値（扱えない）
-    if (!staticPlug(id, 'crp') || !staticPlug(id, 'crt')) return null;
+    const total = targets.reduce((x, t) => x + t.w, 0);
+    if (total <= EPS) return `${type} のウェイトが 0（レストの値）`;
     const driven = g.driven;
     const rest = (driven >= 0 && rig.rest(driven)) || { joint: false, ro: 0 };
     const c = {
-      id, driven, targets, total, crp: rig.vec(id, 'crp'), crt: rig.vec(id, 'crt'),
-      ref: g.attrs && Array.isArray(g.attrs.lr) ? g.attrs.lr.map((v) => v * D2R) : null,
+      id, type, driven, targets, total, rest,
       joInv: rest.joint && rest.jo ? eulerQuat(rest.jo, 0, new Quaternion()).invert() : null, ro: rest.ro || 0,
-      stamp: -1, ct: [0, 0, 0], cr: [0, 0, 0], out: {},
+      ref: null, stamp: -1, ct: [0, 0, 0], cr: [0, 0, 0], cs: [0, 0, 0], out: {},
     };
+    const vecOf = (attr, def) => (need(attr) ? rig.vec(id, attr, def) : undefined);
+    if (type === 'parentConstraint' || type === 'pointConstraint') {
+      c.crp = vecOf('crp'); c.crt = vecOf('crt');
+      if (!c.crp || !c.crt) return `${type} の時間で変わる回転ピボット`;
+      c.o = type === 'pointConstraint' ? vecOf('o') : [0, 0, 0];
+      if (!c.o) return `${type} の時間で変わるオフセット`;
+    }
+    if (type === 'parentConstraint') c.ref = g.attrs && Array.isArray(g.attrs.lr) ? g.attrs.lr.map((v) => v * D2R) : null;
+    if (type === 'orientConstraint' || type === 'aimConstraint' || type === 'lookAt' || type === 'scaleConstraint') {
+      c.o = vecOf('o', type === 'scaleConstraint' ? [1, 1, 1] : [0, 0, 0]);
+      if (!c.o) return `${type} の時間で変わるオフセット`;
+    }
+    if (type === 'orientConstraint' || type === 'aimConstraint') {   // 親のスケールの打ち消し（compensate）
+      if (!need('ssc')) return `${type} の時間で変わる scaleCompensate`;
+      c.ssc = rig.num(id, 'ssc', 1) >= 0.5;
+      c.isNode = (rest.isNode ?? -1) >= 0 && rig.rest(rest.isNode) ? rest.isNode : -1;
+      c.isScale = rest.isScale || null;
+    }
+    if (type === 'aimConstraint' || type === 'lookAt') {
+      for (const a of ['a', 'u', 'wut', 'wu']) if (!need(a)) return `${type} の時間で変わる ${a}`;
+      c.a = new Vector3(...rig.vec(id, 'a', [1, 0, 0])).normalize();
+      c.u = new Vector3(...rig.vec(id, 'u', [0, 1, 0]));
+      c.wut = Math.round(rig.num(id, 'wut', 3));
+      c.wu = new Vector3(...rig.vec(id, 'wu', [0, 1, 0]));
+      if (c.wut === 1 || c.wut === 2) return `${type} のオブジェクトの world up`;
+      c.upScene = (rig.clip.raw.upAxis || 'y') === 'z' ? new Vector3(0, 0, 1) : new Vector3(0, 1, 0);
+      c.tw = 0;
+      if (type === 'lookAt' && (c.wut === 0 || c.wut === 3)) {
+        const tn = rig.attrName(g, ['tws', 'twist']);
+        if (!need(tn)) return `${type} の時間で変わる twist`;
+        c.tw = rig.num(id, tn, 0);
+      }
+      // 動かされるノードの移動（chan 't'）・aim と up が平行なときの回転 0 の向き（jointOrient を含む）
+      c.restRot = rotationOf(composeLocalMatrix({ ...rest, t: [0, 0, 0], s: [1, 1, 1], r: [0, 0, 0], ra: undefined, opm: undefined },
+        null, new Matrix4()), new Quaternion());
+    }
     cons.set(g.id, c);
     return c;
   };
 
   // ---- 動くノード
+  const delegated = new Map();         // 任せた理由 → 数
+  const delegate = (ni, why) => {
+    delegated.set(why, (delegated.get(why) || 0) + 1);
+    steps.set(ni, { ni, kind: DELEGATED, world: new Matrix4(), local: null, deps: deps.get(ni) || null });
+  };
   for (const ni of rig.moving) {
-    if (rig.ikJoint.has(ni)) return fail('IK で動くジョイント');
+    const why = movingStep(ni);
+    if (why) delegate(ni, why);
+  }
+  function movingStep(ni) {
+    if (rig.ikJoint.has(ni)) return 'IK で動くジョイント';
+    if (rig.fallback.has(ni)) return '推定のノード';
     const e = rig.clip.byNode.get(ni);
     const rest = rig.rest(ni);
-    if (!e || !rest) return fail('材料のない動くノード');
+    if (!e || !rest) return '材料のない動くノード';
     const fromCurve = new Set(e.channels.map((ch) => ch.attr));
     const inputs = [];
     for (const [key2, src] of rig.chanInputs(ni)) {
-      if (key2 === 'opm') return fail('接続された offsetParentMatrix');
+      if (key2 === 'opm') return '接続された offsetParentMatrix';
       if (fromCurve.has(key2)) continue;                               // カーブの値を使う（接続は読まない）
       const [base, axis] = xformKey(key2);
-      if (base === 'ro') return fail('接続された回転順');
+      if (base === 'ro') return '接続された回転順';
       if (src.curve !== undefined) {
         const curve = rig.clip.curves[src.curve];
         if (curve) inputs.push({ base, axis, curve });
         continue;
       }
       const g = rig.byId.get(src.node);
-      if (!g || g.dag >= 0 || g.type !== 'parentConstraint' || g.def) return fail(`チャンネルの入力（${g ? g.type : '不明'}）`);
+      if (!g || g.dag >= 0 || !CON_TYPES[g.type] || g.def) return `チャンネルの入力（${g ? g.type : '不明'}）`;
       const attr = String(src.attr).replace(/\[\d+\]$/, '');
-      if (!CONSTRAINT_OUT.has(attr)) return fail(`parentConstraint の出力 ${src.attr}`);
+      if (!CON_TYPES[g.type].has(attr)) return `${g.type} の出力 ${src.attr}`;
       const con = constraintOf(g);
-      if (!con) return fail('parentConstraint の時間で変わる入力・レストの値');
+      if (typeof con === 'string') return con;
       inputs.push({ base, axis, con, attr });
     }
     const opm = opmOf(ni);
-    if (opm === undefined) return fail('接続された offsetParentMatrix');
+    if (opm === undefined) return '接続された offsetParentMatrix';
     steps.set(ni, {
       ni, kind: inputs.some((x) => x.con) ? DRIVEN : SIMPLE, e, rest, inputs, opm,
       fromCurve, cur: null, local: new Matrix4(), world: new Matrix4(),
       isNode: (rest.isNode ?? -1) >= 0 && rig.rest(rest.isNode) ? rest.isNode : -1,
       deps: deps.get(ni) || null,
     });
+    return null;
   }
-  // コンストレイントのターゲットは、ピボットの接続がないこと
-  for (const c of cons.values()) {
-    for (const t of c.targets) {
-      if (rig.rest(t.ni) && rig.chanInputs(t.ni).some(([k]) => /^(rp|rpt)[xyz]?$/.test(k))) return fail('ターゲットの接続されたピボット');
+  // コンストレイントのターゲットは、ピボットの接続がないこと（あれば、そのコンストレイントで動くノードを任せる）
+  for (const c of [...cons.values()]) {
+    if (c.targets.some((t) => rig.rest(t.ni) && rig.chanInputs(t.ni).some(([k]) => /^(rp|rpt)[xyz]?$/.test(k)))) {
+      cons.delete(c.id);
+      for (const st of [...steps.values()]) if (st.inputs && st.inputs.some((x) => x.con === c)) delegate(st.ni, 'ターゲットの接続されたピボット');
     }
   }
 
@@ -151,7 +208,7 @@ export function buildPlan(rig, deps) {
     const p = nodes[ni].parent;
     if (p >= 0 && !visit(p)) return false;
     const s = steps.get(ni);
-    if (s) {
+    if (s && s.kind !== DELEGATED) {
       if (s.isNode >= 0 && !visit(s.isNode)) return false;
       for (const x of s.inputs) if (x.con) for (const t of x.con.targets) if (!visit(t.ni)) return false;
     }
@@ -183,23 +240,34 @@ export function buildPlan(rig, deps) {
     if (c.driven >= 0 && !visit(c.driven)) return fail(why());
   }
   for (const s of order) {
-    if (s.kind === STATIC) continue;
+    if (s.kind === STATIC || s.kind === DELEGATED) continue;
     s.cur = { ...s.rest };
     for (const k of VEC_KEYS) if (s.rest[k]) s.cur[k] = s.rest[k].slice();
     // 入力で値を入れる、ファイルに値のない属性（ピボットなど。毎フレーム 0 から）
     s.zeroBases = [...new Set(s.inputs.map((x) => x.base))].filter((b) => !s.rest[b]);
   }
+  if (!order.some((s) => s.kind === SIMPLE || s.kind === DRIVEN)) return fail(`専用に計算できる動くノードがない（${[...delegated.keys()].join('・')}）`);
   const plan = {
     rig, order, steps, cons: [...cons.values()],
     moving: [...rig.moving].map((ni) => steps.get(ni)),
     counts: { simple: order.filter((s) => s.kind === SIMPLE).length, driven: order.filter((s) => s.kind === DRIVEN).length,
-      constraints: cons.size },
+      delegated: order.filter((s) => s.kind === DELEGATED).length, constraints: cons.size },
+    delegated: Object.fromEntries(delegated),
+    // RigEvaluator のフレームのキャッシュに値を入れるか: 任せたノード・props・形の変わるカーブがあるとき（RigEvaluator が
+    // 読むので）。なければ入れない（評価のあとで RigEvaluator が値を求めても、計算し直すので同じ値）
+    share: delegated.size > 0 || rig.props.length > 0 || rig.curveIds().length > 0,
     depsAdded: false,
   };
   return { plan };
 }
 
 // ---------------------------------------------------------------------------- 1 フレームの計算
+
+/** チャンネルの値（mode: 'full' | 'fk' | 't'）。専用に計算したノードは計算した値、任せたノードは RigEvaluator から */
+function chanOf(plan, ni, mode) {
+  const s = plan.steps.get(ni);
+  return s && s.cur && s.kind !== DELEGATED ? s.cur : plan.rig.chan(ni, mode);
+}
 
 function parentWorld(plan, ni) {
   const n = plan.rig.sceneNodes[ni];
@@ -208,8 +276,10 @@ function parentWorld(plan, ni) {
 
 /** 親の空間（RigEvaluator.parentSpace と同じ: 親のワールド行列 · offsetParentMatrix） */
 function parentSpace(plan, ni, target) {
+  const st = plan.steps.get(ni);
+  if (st.kind === DELEGATED) return plan.rig.parentSpace(ni);       // 任せたノード（offsetParentMatrix の接続も含めて）
   const P = parentWorld(plan, ni);
-  const o = plan.steps.get(ni).opm;
+  const o = st.opm;
   return o ? target.copy(P).multiply(o) : P;
 }
 
@@ -227,7 +297,7 @@ function evalChannels(plan, s, f) {
       v = x.curve.type === 'TA' ? v * D2R : v;
     } else {
       const c = x.con;
-      if (c.stamp !== plan.stamp) evalConstraint(plan, c);
+      if (c.stamp !== plan.stamp) evalConstraint(plan, c, f);
       v = c.out[x.attr];
     }
     if (v === undefined) continue;
@@ -238,64 +308,198 @@ function evalChannels(plan, s, f) {
   }
   clampLimits(cur);
   let isScale = null;
-  if (rest.isScale || (rest.isNode ?? -1) >= 0) isScale = s.isNode >= 0 ? plan.steps.get(s.isNode).cur.s : rest.isScale;
+  if (rest.isScale || (rest.isNode ?? -1) >= 0) isScale = s.isNode >= 0 ? chanOf(plan, s.isNode, 'full').s : rest.isScale;
   composeLocalMatrix(cur, isScale, s.local);
 }
 
-const _ps = new Matrix4(), _pw = new Matrix4(), _pwInv = new Matrix4(), _piv = new Vector3(), _pos = new Vector3();
-const _qa = new Quaternion(), _qs = new Quaternion();
+const _ps = new Matrix4(), _pw = new Matrix4(), _pwInv = new Matrix4(), _P = new Matrix4(), _piv = new Vector3(), _pos = new Vector3();
+const _qa = new Quaternion(), _qs = new Quaternion(), _dt = new Vector3(), _dq = new Quaternion(), _ds = new Vector3(), _dsh = new Vector3();
 
-/** parentConstraint の出力（RigEvaluator.constraint の parentConstraint と同じ） */
-function evalConstraint(plan, c) {
-  c.stamp = plan.stamp;
+/** ピボットの位置（RigEvaluator.pivotWorld と同じ） */
+function pivotWorld(plan, ni, out) {
   const rig = plan.rig;
+  if (!rig.rest(ni)) return out.setFromMatrixPosition(plan.steps.get(ni).world);
+  const s = plan.steps.get(ni), trest = rig.rest(ni);
+  const tt = s.kind === DELEGATED ? rig.chan(ni, 't').t : chanOf(plan, ni, 'full').t;
+  const rp = trest.rp || [0, 0, 0], rpt = trest.rpt || [0, 0, 0];
+  return out.set(tt[0] + rp[0] + rpt[0], tt[1] + rp[1] + rpt[1], tt[2] + rp[2] + rpt[2]).applyMatrix4(parentSpace(plan, ni, _ps));
+}
+
+/** 親のスケールの打ち消しのスケール（RigEvaluator.isScaleOf と同じ） */
+function isScaleOf(plan, ni) {
+  const rest = plan.rig.rest(ni);
+  if (!rest) return null;
+  const isn = rest.isNode ?? -1;
+  if (isn >= 0 && plan.rig.rest(isn)) return chanOf(plan, isn, 'fk').s;
+  return rest.isScale || null;
+}
+
+/** ターゲットの行列（RigEvaluator.targetMatrix と同じ）。m に入れる */
+function targetMatrix(plan, ni, withScale, withInverseScale, m) {
+  const rig = plan.rig;
+  if (!rig.rest(ni)) return m.copy(plan.steps.get(ni).world);        // レストの値のないノード: ワールド行列そのもの
+  const tc = chanOf(plan, ni, 'full');
+  pivotWorld(plan, ni, _piv);
+  m.copy(parentSpace(plan, ni, _ps)).setPosition(_piv);
+  if (withInverseScale) {
+    const is = isScaleOf(plan, ni);
+    if (is) m.multiply(_m.makeScale(is[0] ? 1 / is[0] : 1, is[1] ? 1 / is[1] : 1, is[2] ? 1 / is[2] : 1));
+  }
+  if (rig.rest(ni).joint && tc.jo) m.multiply(_m.makeRotationFromQuaternion(eulerQuat(tc.jo, 0, _q)));
+  m.multiply(_m.makeRotationFromQuaternion(eulerQuat(tc.r, tc.ro || 0, _q)));
+  if (withScale) m.multiply(_m.makeScale(tc.s[0], tc.s[1], tc.s[2]));
+  return m;
+}
+
+/** 重み付きの回転の平均（RigEvaluator の averageQuat と同じ）。targets の q を使う */
+function averageQuat(c, out) {
+  const ref = c.targets[0].q;
+  out.set(0, 0, 0, 0);
+  for (const t of c.targets) {
+    const q = t.q, sgn = q.dot(ref) < 0 ? -t.w : t.w;
+    out.x += q.x * sgn; out.y += q.y * sgn; out.z += q.z * sgn; out.w += q.w * sgn;
+  }
+  return out.normalize();
+}
+
+/** ワールドの回転 → 動かされるノードの回転の値（ラジアン。RigEvaluator の toRotate と同じ） */
+function toRotate(plan, c, pw, qWorld, compensate, ref) {
+  let P = pw;
+  if (compensate && c.ssc) {
+    const is = isScaleOf(plan, c.driven);
+    if (is) P = _P.copy(pw).multiply(_m.makeScale(is[0] ? 1 / is[0] : 1, is[1] ? 1 / is[1] : 1, is[2] ? 1 / is[2] : 1));
+  }
+  rotationOf(P, _qs).invert().multiply(qWorld);
+  if (c.joInv) _qs.premultiply(c.joInv);
+  const er = mayaEuler(_qs, c.ro, ref);
+  const cr = c.cr;
+  for (let a = 0; a < 3; a++) cr[a] = er[a] * R2D * D2R;
+  return cr;
+}
+
+/** 位置 → 動かされるノードの移動の値（RigEvaluator の toTranslate と同じ） */
+function toTranslate(c, pWorld) {
+  pWorld.applyMatrix4(_pwInv);
+  const ct = c.ct, o = c.o;
+  ct[0] = pWorld.x + o[0] - c.crp[0] - c.crt[0];
+  ct[1] = pWorld.y + o[1] - c.crp[1] - c.crt[1];
+  ct[2] = pWorld.z + o[2] - c.crp[2] - c.crt[2];
+  return ct;
+}
+
+const _weighted = new Vector3();
+/** ターゲットのピボットの重み付きの平均 */
+function weightedPivot(plan, c, out) {
+  out.set(0, 0, 0);
+  for (const t of c.targets) out.addScaledVector(pivotWorld(plan, t.ni, _weighted), t.w / c.total);
+  return out;
+}
+
+/** 動かされるノードの移動の値（RigEvaluator の chan(ni, 't').t と同じ: 移動のカーブと移動の入力だけ） */
+function chanT(plan, ni, f) {
+  const s = plan.steps.get(ni);
+  if (s.kind === DELEGATED) return plan.rig.chan(ni, 't').t;
+  const rest = s.rest;
+  const out = { ...rest };
+  for (const k of VEC_KEYS) if (rest[k]) out[k] = rest[k].slice();
+  for (const ch of s.e.channels) if (ch.base === 't') out.t[ch.axis] = evaluateCurve(ch.curve, f);
+  for (const x of s.inputs) {
+    if (x.base !== 't') continue;
+    let v;
+    if (x.curve) { v = evaluateCurve(x.curve, f); v = x.curve.type === 'TA' ? v * D2R : v; }
+    else { if (x.con.stamp !== plan.stamp) evalConstraint(plan, x.con, f); v = x.con.out[x.attr]; }
+    if (v === undefined) continue;
+    if (!out.t) out.t = [0, 0, 0];
+    if (x.axis < 0) { if (Array.isArray(v)) for (let a = 0; a < 3; a++) if (!s.fromCurve.has('t' + XYZ[a])) out.t[a] = v[a]; }
+    else if (typeof v === 'number') out.t[x.axis] = v;
+  }
+  return clampLimits(out).t;
+}
+
+/** コンストレイントの出力（RigEvaluator.constraint と同じ）。c.out に入れる（求められなければ空） */
+function evalConstraint(plan, c, f) {
+  c.stamp = plan.stamp;
   const pw = c.driven >= 0 ? parentSpace(plan, c.driven, _pw) : IDENTITY;
   _pwInv.copy(pw).invert();
-  for (const t of c.targets) {
-    const ts = plan.steps.get(t.ni), m = t.m;
-    if (!ts.cur) {                                   // レストの値のないノード: ワールド行列そのもの
-      m.copy(ts.world);
-    } else {
-      // ターゲットの行列: 親の空間 · 回転ピボットの位置 · [親のスケールの打ち消し] · jointOrient · rotate · scale
-      const tc = ts.cur, trest = ts.rest;
-      const ps = parentSpace(plan, t.ni, _ps);
-      const rp = trest.rp || [0, 0, 0], rpt = trest.rpt || [0, 0, 0];
-      _piv.set(tc.t[0] + rp[0] + rpt[0], tc.t[1] + rp[1] + rpt[1], tc.t[2] + rp[2] + rpt[2]).applyMatrix4(ps);
-      m.copy(ps).setPosition(_piv);
-      if (t.tsc) {
-        const is = ts.isNode >= 0 ? plan.steps.get(ts.isNode).cur.s : (trest.isScale || null);
-        if (is) m.multiply(_m.makeScale(is[0] ? 1 / is[0] : 1, is[1] ? 1 / is[1] : 1, is[2] ? 1 / is[2] : 1));
-      }
-      if (trest.joint && tc.jo) m.multiply(_m.makeRotationFromQuaternion(eulerQuat(tc.jo, 0, _q)));
-      m.multiply(_m.makeRotationFromQuaternion(eulerQuat(tc.r, tc.ro || 0, _q)));
-      m.multiply(_m.makeScale(tc.s[0], tc.s[1], tc.s[2]));
+  const o = c.out;                                                   // 種類ごとに同じ鍵を上書きする（aim は出力しないことがある）
+  switch (c.type) {
+    case 'pointConstraint': {
+      const ct = toTranslate(c, weightedPivot(plan, c, _pos));
+      o.ct = ct; o.ctx = ct[0]; o.cty = ct[1]; o.ctz = ct[2];
+      return;
     }
-    m.multiply(t.tot).multiply(t.tor);
+    case 'orientConstraint': {
+      for (const t of c.targets) rotationOf(targetMatrix(plan, t.ni, false, true, t.m), t.q);
+      const q = averageQuat(c, _qa).multiply(radQuat(c.o, _q));
+      const cr = toRotate(plan, c, pw, q, true, null);
+      o.cr = cr; o.crx = cr[0]; o.cry = cr[1]; o.crz = cr[2];
+      return;
+    }
+    case 'parentConstraint': {
+      for (const t of c.targets) targetMatrix(plan, t.ni, true, t.tsc, t.m).multiply(t.tot).multiply(t.tor);
+      _pos.set(0, 0, 0);
+      for (const t of c.targets) _pos.addScaledVector(_v.setFromMatrixPosition(t.m), t.w / c.total);
+      for (const t of c.targets) rotationOf(t.m, t.q);
+      const q = averageQuat(c, _qa);
+      const ct = toTranslate(c, _pos);
+      const cr = toRotate(plan, c, pw, q, false, c.ref);
+      o.ct = ct; o.ctx = ct[0]; o.cty = ct[1]; o.ctz = ct[2];
+      o.cr = cr; o.crx = cr[0]; o.cry = cr[1]; o.crz = cr[2];
+      return;
+    }
+    case 'scaleConstraint': {
+      const logs = [0, 0, 0], sign = [0, 0, 0];
+      for (const t of c.targets) {
+        decomposeMaya(plan.steps.get(t.ni).world, _dt, _dq, _ds, _dsh);
+        const v = [_ds.x, _ds.y, _ds.z];
+        for (let k = 0; k < 3; k++) {
+          logs[k] += (t.w / c.total) * Math.log(Math.max(Math.abs(v[k]), 1e-12));
+          sign[k] += t.w * Math.sign(v[k]);
+        }
+      }
+      decomposeMaya(pw, _dt, _dq, _ds, _dsh);
+      const ps = [_ds.x, _ds.y, _ds.z];
+      const cs = c.cs;
+      for (let k = 0; k < 3; k++) cs[k] = (sign[k] < 0 ? -1 : 1) * Math.exp(logs[k]) / (ps[k] || 1) * c.o[k];
+      o.cs = cs; o.csx = cs[0]; o.csy = cs[1]; o.csz = cs[2];
+      return;
+    }
+    case 'aimConstraint': case 'lookAt': {
+      const rest = c.rest;
+      const tt = c.driven >= 0 ? chanT(plan, c.driven, f) : [0, 0, 0];
+      const add = (a, b) => (b ? [a[0] + b[0], a[1] + b[1], a[2] + b[2]] : a);
+      const pd = new Vector3(...add(add(tt, rest.rp), rest.rpt)).applyMatrix4(pw);
+      const dir = weightedPivot(plan, c, new Vector3()).sub(pd);
+      if (dir.lengthSq() < EPS) { delete o.cr; delete o.crx; delete o.cry; delete o.crz; return; }                                 // 向きが決まらない（出力しない）
+      dir.normalize();
+      const a = c.a, u = c.u, wu = c.wu;
+      let up = null;
+      if (c.wut === 0) up = c.upScene;
+      else if (c.wut === 3) up = wu;
+      let q;
+      const uPerp = u.clone().addScaledVector(a, -u.dot(a));
+      const upPerp = up ? up.clone().addScaledVector(dir, -up.dot(dir)) : null;
+      if (!up || uPerp.lengthSq() < EPS || upPerp.lengthSq() < EPS) {
+        // up を決められない: 親の空間で、回転 0 の向きから測った最短の回転（RigEvaluator の aimMode 'parent'）
+        const pr = rotationOf(pw, new Quaternion());
+        const dl = dir.clone().applyQuaternion(pr.clone().invert());
+        const base = c.restRot.clone();
+        const qa = new Quaternion().setFromUnitVectors(a.clone().applyQuaternion(base), dl);
+        q = pr.multiply(qa.multiply(base));
+      } else {
+        const frame = (x, y) => new Matrix4().makeBasis(x, y, x.clone().cross(y));
+        uPerp.normalize(); upPerp.normalize();
+        q = new Quaternion().setFromRotationMatrix(frame(dir, upPerp).multiply(frame(a, uPerp).transpose()));
+      }
+      if (c.type === 'lookAt' && (c.wut === 0 || c.wut === 3) && Math.abs(c.tw) > 1e-12) {
+        q = new Quaternion().setFromAxisAngle(dir, -c.tw).multiply(q);
+      }
+      const cr = toRotate(plan, c, pw, q.multiply(radQuat(c.o, _q)), c.type === 'aimConstraint', null);
+      o.cr = cr; o.crx = cr[0]; o.cry = cr[1]; o.crz = cr[2];
+      return;
+    }
+    default:
   }
-  // 位置と向き（重み付きの平均）
-  _pos.set(0, 0, 0);
-  for (const t of c.targets) _pos.addScaledVector(_v.setFromMatrixPosition(t.m), t.w / c.total);
-  const ref = rotationOf(c.targets[0].m, c.targets[0].q);
-  _qa.set(0, 0, 0, 0);
-  for (const t of c.targets) {
-    const q = t === c.targets[0] ? ref : rotationOf(t.m, t.q);
-    const sgn = q.dot(ref) < 0 ? -t.w : t.w;
-    _qa.x += q.x * sgn; _qa.y += q.y * sgn; _qa.z += q.z * sgn; _qa.w += q.w * sgn;
-  }
-  _qa.normalize();
-  // 動かされるノードの親の空間へ
-  _pos.applyMatrix4(_pwInv);
-  const ct = c.ct, cr = c.cr;
-  ct[0] = _pos.x + 0 - c.crp[0] - c.crt[0];
-  ct[1] = _pos.y + 0 - c.crp[1] - c.crt[1];
-  ct[2] = _pos.z + 0 - c.crp[2] - c.crt[2];
-  rotationOf(pw, _qs).invert().multiply(_qa);
-  if (c.joInv) _qs.premultiply(c.joInv);
-  const er = mayaEuler(_qs, c.ro, c.ref);
-  for (let a = 0; a < 3; a++) cr[a] = er[a] * R2D * D2R;
-  const o = c.out;
-  o.ct = ct; o.ctx = ct[0]; o.cty = ct[1]; o.ctz = ct[2];
-  o.cr = cr; o.crx = cr[0]; o.cry = cr[1]; o.crz = cr[2];
 }
 
 /**
@@ -304,13 +508,26 @@ function evalConstraint(plan, c) {
 export function runPlan(plan, f, target) {
   plan.stamp = (plan.stamp || 0) + 1;
   const rig = plan.rig;
+  const cache = rig.cache;
   for (const s of plan.order) {
+    const ni = s.ni;
     if (s.kind === STATIC) {
-      s.world.multiplyMatrices(parentWorld(plan, s.ni), rig.staticLocal(s.ni));
-      continue;
+      s.world.multiplyMatrices(parentWorld(plan, ni), rig.staticLocal(ni));
+    } else if (s.kind === DELEGATED) {
+      s.local = rig.localFile(ni);                  // RigEvaluator が計算する（専用に計算した値はキャッシュから読む）
+      s.world.multiplyMatrices(parentWorld(plan, ni), s.local);
+    } else {
+      evalChannels(plan, s, f);
+      s.world.multiplyMatrices(parentWorld(plan, ni), s.local);
+      // RigEvaluator が読む値を、そのフレームのキャッシュに入れる（chan の 'full'・'fk'。IK がないので同じ値。
+      // 't' は回転を求めない別の値なので入れない）
+      if (plan.share) {
+        cache.local.set(ni, s.local);
+        cache.chan.set(ni * 3, s.cur);
+        cache.chan.set(ni * 3 + 1, s.cur);
+      }
     }
-    evalChannels(plan, s, f);
-    s.world.multiplyMatrices(parentWorld(plan, s.ni), s.local);
+    if (plan.share) cache.world.set(ni, s.world);
   }
   for (const s of plan.moving) {
     const m = target.get(s.ni) || new Matrix4();

@@ -30,7 +30,7 @@ test('サンプルのリグは専用の評価になり、全フレームで従�
   const frames = framesOf(a);
   b.evaluate(frames[0]);
   assert.ok(b.compiledPlan, `計画を作る（${b.compiledReason}）`);
-  assert.deepEqual(b.compiledPlan.counts, { simple: 4, driven: 5, constraints: 5 });
+  assert.deepEqual(b.compiledPlan.counts, { simple: 4, driven: 12, delegated: 0, constraints: 12 });
   // 逆順・整数でないフレームも
   for (const f of [...frames, ...frames.slice().reverse(), 1.5, 7.25, 29.9, 0, 40]) {
     assert.equal(valuesOf(b, f), valuesOf(a, f), `フレーム ${f}`);
@@ -50,7 +50,7 @@ test('再生キャッシュに入れたものも同じ。ポーズ確認で動�
   }
   // c1・jt（コンストレイントのターゲット）と j0（コンストレイントで動く）を動かす: 従来の評価器が、専用の評価で覚えた
   // フレームから影響のないノードを写し、影響のあるノード（依存の記録で見分ける）だけ計算する
-  for (const name of ['c1', 'jt', 'j0', 'grp']) {
+  for (const name of ['c1', 'jt', 'j0', 'jp', 'grp']) {
     const ni = nodeIndex(name);
     const m = new Matrix4().compose(new Vector3(0.1, 0.2, 0), new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), 0.4), new Vector3(1, 1, 1));
     const poseOf = (n) => (n === ni ? m : null), keys = new Map([[ni, name]]);
@@ -60,8 +60,22 @@ test('再生キャッシュに入れたものも同じ。ポーズ確認で動�
   for (const f of frames) assert.equal(valuesOf(b, f), valuesOf(fresh, f), `追加分を戻したとき ${f}`);
 });
 
-test('扱えない種類のノードを含むリグは、計画を作らず従来の評価器で評価する（理由を残す）', () => {
-  for (const [name, why] of [['ik_sample.json', /カーブ|IK/], ['math_sample.json', /チャンネルの入力/], ['sequencer_sample.json', /props/]]) {
+test('扱えない種類のノードは従来の評価器に任せて混ぜて計算し、全フレームでビット単位で同じ（任せる理由を残す）', () => {
+  for (const [name, why] of [['ik_sample.json', /IK/], ['math_sample.json', /チャンネルの入力/], ['camaim_sample.json', null],
+    ['constraint_space_sample.json', null], ['rig_sample.json', null]]) {
+    const d = load(name);
+    const a = makeRig(d, false), b = makeRig(d, true);
+    const frames = framesOf(a);
+    b.evaluate(frames[0]);
+    assert.ok(b.compiledPlan, `${name}: ${b.compiledReason}`);
+    assert.ok(b.compiledPlan.counts.simple + b.compiledPlan.counts.driven > 0, name);
+    if (why) assert.ok(Object.keys(b.compiledPlan.delegated).some((r) => why.test(r)), `${name}: ${Object.keys(b.compiledPlan.delegated)}`);
+    for (const f of [...frames, 1.5, frames[frames.length - 1] + 3]) assert.equal(valuesOf(b, f), valuesOf(a, f), `${name} フレーム ${f}`);
+  }
+});
+
+test('専用に計算できるノードのないリグは、計画を作らず従来の評価器で評価する（理由を残す）', () => {
+  for (const [name, why] of [['sequencer_sample.json', /動くノードがない/], ['trax_sample.json', /character/]]) {
     const d = load(name);
     const b = makeRig(d, true);
     b.evaluate(Math.ceil(b.clip.start));
