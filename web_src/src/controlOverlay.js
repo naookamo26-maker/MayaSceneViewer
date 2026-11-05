@@ -2,7 +2,8 @@
 // 大きさは、近くの骨の長さに合わせるか、画面上で一定にする。
 import {
   BoxGeometry, BufferGeometry, Color, ConeGeometry, DynamicDrawUsage, EdgesGeometry, Float32BufferAttribute, Group,
-  LineBasicMaterial, LineDashedMaterial, LineSegments, OctahedronGeometry, Quaternion, TetrahedronGeometry, Vector3,
+  LineBasicMaterial, LineDashedMaterial, LineSegments, Object3D, OctahedronGeometry, Quaternion, TetrahedronGeometry,
+  Vector3,
 } from 'three';
 import { CONTROL_ROLES, sideFromName } from './controlRoles.js';
 
@@ -64,14 +65,13 @@ export class ControlOverlay {
   constructor() {
     this.group = new Group();
     this.group.name = '__controlOverlay';
-    this.geos = {};
-    for (const r of CONTROL_ROLES) {
-      const g = new BufferGeometry();
-      g.setAttribute('position', new Float32BufferAttribute(shapePoints(r), 3));
-      g.computeBoundingSphere();
-      this.geos[r] = g;
-    }
+    this.shapes = {};                 // 役割 → 形の線分の頂点（Float32Array）
+    for (const r of CONTROL_ROLES) this.shapes[r] = Float32Array.from(shapePoints(r));
+    // 目印はすべて 1 つの線分の集まり（頂点色）にまとめて描く（1 個ずつ描くと、目印の多いリグで描画の呼び出しが増えるため）。
+    // items の obj は位置・向き・大きさを求めるためのもの（シーンには入れない）
     this.items = [];                  // { ni, role, info, obj, side, color, ref, size }
+    this.markerMat = new LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.95 });
+    this.markers = null;
     this.colorMode = 'role';
     this.sizeMode = 'bone';
     this.scale = 1;
@@ -83,8 +83,8 @@ export class ControlOverlay {
   }
 
   clear() {
-    for (const it of this.items) { this.group.remove(it.obj); it.obj.material.dispose(); }
     this.items = [];
+    if (this.markers) { this.group.remove(this.markers); this.markers.geometry.dispose(); this.markers = null; }
     if (this.lines) { this.group.remove(this.lines); this.lines.geometry.dispose(); this.lines = null; }
   }
 
@@ -101,12 +101,19 @@ export class ControlOverlay {
       const info = roles.get(ni) || { role: 'other' };
       this.markerPos(ni, _p);
       const side = sideFromName(ctx.nodes[ni].name) || (_p.x > eps ? 'L' : _p.x < -eps ? 'R' : 'C');   // キャラクターの左は +X
-      const mat = new LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95 });
-      const obj = new LineSegments(this.geos[info.role], mat);
-      obj.frustumCulled = false;
+      const obj = new Object3D();
       obj.matrixAutoUpdate = false;
-      this.group.add(obj);
       this.items.push({ ni, role: info.role, info, obj, side, ref: this.refLength(info, _p), size: 0 });
+    }
+    const nv = this.items.reduce((a, it) => a + this.shapes[it.role].length / 3, 0);
+    if (nv) {
+      const g = new BufferGeometry();
+      g.setAttribute('position', new Float32BufferAttribute(new Float32Array(nv * 3), 3).setUsage(DynamicDrawUsage));
+      g.setAttribute('color', new Float32BufferAttribute(new Float32Array(nv * 3), 3).setUsage(DynamicDrawUsage));
+      g.setDrawRange(0, 0);
+      this.markers = new LineSegments(g, this.markerMat);
+      this.markers.frustumCulled = false;
+      this.group.add(this.markers);
     }
     // 破線（ポールベクター → 肘・膝、エイム → 向くノード）
     const n = this.items.filter((it) => it.info.lineTo >= 0).length;
@@ -158,9 +165,8 @@ export class ControlOverlay {
   setXray(v) { this.xray = v; this.applyXray(); }
 
   applyXray() {
-    const mats = this.items.map((it) => it.obj.material).concat(this.lineMat);
-    for (const m of mats) { m.depthTest = !this.xray; m.depthWrite = !this.xray; m.needsUpdate = true; }
-    for (const it of this.items) it.obj.renderOrder = this.xray ? 10 : 0;
+    for (const m of [this.markerMat, this.lineMat]) { m.depthTest = !this.xray; m.depthWrite = !this.xray; m.needsUpdate = true; }
+    if (this.markers) this.markers.renderOrder = this.xray ? 10 : 0;
     if (this.lines) this.lines.renderOrder = this.xray ? 10 : 0;
   }
 
@@ -189,6 +195,9 @@ export class ControlOverlay {
     let nl = 0;
     const lp = this.lines ? this.lines.geometry.attributes.position.array : null;
     const lc = this.lines ? this.lines.geometry.attributes.color.array : null;
+    const mp = this.markers ? this.markers.geometry.attributes.position.array : null;
+    const mc = this.markers ? this.markers.geometry.attributes.color.array : null;
+    let nv = 0;                                   // 書いた目印の頂点の数（表示するものだけを前から詰める）
     for (const it of this.items) {
       const show = !this.hiddenRoles.has(it.role) && !o.isHidden(it.ni);
       it.obj.visible = show;
@@ -206,12 +215,28 @@ export class ControlOverlay {
       it.obj.updateMatrix();
       it.obj.updateMatrixWorld();
       _c.copy(o.selectColorOf(it.ni) || o.statusColor(it.ni) || it.color);
-      it.obj.material.color.copy(_c);
+      if (mp) {                                    // 形の頂点を目印の行列で動かして、まとめた線分に書く
+        const sh = this.shapes[it.role], e = it.obj.matrixWorld.elements;
+        for (let k = 0; k < sh.length; k += 3, nv++) {
+          const x = sh[k], y = sh[k + 1], z = sh[k + 2], d = nv * 3;
+          mp[d] = e[0] * x + e[4] * y + e[8] * z + e[12];
+          mp[d + 1] = e[1] * x + e[5] * y + e[9] * z + e[13];
+          mp[d + 2] = e[2] * x + e[6] * y + e[10] * z + e[14];
+          mc[d] = _c.r; mc[d + 1] = _c.g; mc[d + 2] = _c.b;
+        }
+      }
       if (to && lp) {
         lp.set([_p.x, _p.y, _p.z, to.x, to.y, to.z], nl * 6);
         lc.set([_c.r, _c.g, _c.b, _c.r, _c.g, _c.b], nl * 6);
         nl++;
       }
+    }
+    if (this.markers) {
+      const g = this.markers.geometry;
+      g.setDrawRange(0, nv);
+      g.attributes.position.needsUpdate = true;
+      g.attributes.color.needsUpdate = true;
+      this.markers.visible = nv > 0;              // 描くものがなければ隠す（描画数 0 の警告を避ける）
     }
     if (this.lines) {
       const g = this.lines.geometry;

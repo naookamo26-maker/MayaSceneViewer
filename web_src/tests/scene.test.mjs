@@ -641,3 +641,32 @@ test('メッシュの数値の配列をバイナリ（base64）で渡しても�
     assert.deepEqual(Array.from(eb.wireGeometry.index.array), Array.from(ea.wireGeometry.index.array), `${ea.name} wire`);
   });
 });
+
+import { ControlOverlay, shapePoints } from '../src/controlOverlay.js';
+import { Color } from 'three';
+
+test('コントローラーの目印は 1 つの線分の集まりに、目印の行列で動かした形と色で書く（隠したものは書かない）', () => {
+  const built = buildScene(data);
+  built.root.updateMatrixWorld(true);
+  const list = built.jointIndices.slice(0, 3);
+  const roles = new Map([[list[0], { role: 'ik' }], [list[1], { role: 'locator' }], [list[2], { role: 'other' }]]);
+  const ov = new ControlOverlay();
+  ov.build(list, roles, { nodes: data.nodes, objs: built.nodeObjects, boneLen: () => 1, nearestJoint: () => -1, medianBone: 1, charRadius: 1 });
+  const red = new Color(1, 0, 0);
+  const opts = (hidden) => ({ selectColorOf: (ni) => (ni === list[1] ? red : null), isHidden: (ni) => ni === hidden, statusColor: () => null });
+  ov.update(opts(-1));
+  assert.equal(ov.group.children.filter((o) => o.isLineSegments && o !== ov.lines).length, 1, '目印は 1 つのオブジェクト');
+  const g = ov.markers.geometry, pos = g.attributes.position.array, col = g.attributes.color.array;
+  const counts = list.map((ni) => shapePoints(roles.get(ni).role).length / 3);
+  assert.equal(g.drawRange.count, counts[0] + counts[1] + counts[2]);
+  // 2 つ目の目印（選択の色）の最初の頂点 = 形の最初の点を目印の行列で動かした位置
+  const it = ov.items[1], sh = shapePoints('locator');
+  const p = new Vector3(sh[0], sh[1], sh[2]).applyMatrix4(it.obj.matrixWorld);
+  const d = counts[0] * 3;
+  assert.ok(Math.abs(pos[d] - p.x) < 1e-5 && Math.abs(pos[d + 1] - p.y) < 1e-5 && Math.abs(pos[d + 2] - p.z) < 1e-5);
+  assert.deepEqual([col[d], col[d + 1], col[d + 2]], [1, 0, 0]);
+  ov.update(opts(list[0]));                                  // 1 つ目を隠すと、残りを前から詰めて書く
+  assert.equal(g.drawRange.count, counts[1] + counts[2]);
+  assert.ok(Math.abs(pos[0] - p.x) < 1e-5, '隠したものは書かない');
+  assert.equal(ov.items[0].shown, false);
+});
