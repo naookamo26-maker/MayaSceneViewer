@@ -8,6 +8,7 @@ import {
 import { triangulatePolygons, buildWireIndex } from './geometry.js';
 import { assignWeights, decodeSkin, effectiveWeight, listedSlots } from './weights.js';
 import { cornerNormals } from './normals.js';
+import { unpackMeshArrays } from './arrays.js';
 import { enableEightInfluences, useEightInfluencesOnCpu } from './skinning8.js';
 
 export const SCHEMA_NAME = 'maya-scene-lite';
@@ -25,6 +26,8 @@ export function validateScene(data) {
  */
 export function buildScene(data, options = {}) {
   validateScene(data);
+  // バイナリの数値の配列（Python が pack_array で詰めたもの）を型付き配列に戻す
+  for (const m of data.meshes) unpackMeshArrays(m);
   const root = new Group();
   root.name = '__mayaRoot';
   root.matrixAutoUpdate = false;

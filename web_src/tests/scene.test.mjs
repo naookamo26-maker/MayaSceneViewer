@@ -606,3 +606,38 @@ test('ジョイントの表示を隠しているあいだは更新を飛ばし�
   ov.setVisible(true);
   assert.ok(pos().distanceTo(world()) < 1e-6, '表示したときに更新する');
 });
+
+test('メッシュの数値の配列をバイナリ（base64）で渡しても、リストと同じシーンを組み立てる', () => {
+  const pack = (list, dtype) => {
+    const T = { float32: Float32Array, int32: Int32Array, uint16: Uint16Array }[dtype];
+    const a = T.from(list);
+    return { dtype, count: a.length, data: Buffer.from(a.buffer, a.byteOffset, a.byteLength).toString('base64') };
+  };
+  const listData = JSON.parse(JSON.stringify(data));
+  const binData = JSON.parse(JSON.stringify(data));
+  for (const m of binData.meshes) {
+    m.positions = pack(m.positions, 'float32');
+    m.counts = pack(m.counts, 'int32');
+    m.indices = pack(m.indices, 'int32');
+    m.hardEdges = pack(m.hardEdges || [], 'int32');
+    if (m.uv) { m.uv.values = pack(m.uv.values, 'float32'); m.uv.indices = pack(m.uv.indices, 'int32'); }
+    if (m.skin) {
+      m.skin.counts = pack(m.skin.counts, 'int32');
+      m.skin.indices = pack(m.skin.indices, 'uint16');
+      m.skin.weights = pack(m.skin.weights, 'float32');
+    }
+  }
+  const a = buildScene(listData), b = buildScene(binData);
+  assert.ok(binData.meshes.some((m) => m.skin && m.uv), 'スキンと UV のあるメッシュを含む');
+  assert.equal(a.meshes.length, b.meshes.length);
+  a.meshes.forEach((ea, i) => {
+    const eb = b.meshes[i];
+    for (const name of ['position', 'normal', 'uv', 'skinIndex', 'skinWeight', 'skinIndex1', 'skinWeight1']) {
+      const x = ea.geometry.attributes[name], y = eb.geometry.attributes[name];
+      assert.equal(!!x, !!y, `${ea.name}.${name}`);
+      if (x) assert.deepEqual(Array.from(y.array), Array.from(x.array), `${ea.name}.${name}`);
+    }
+    assert.deepEqual(Array.from(eb.geometry.index.array), Array.from(ea.geometry.index.array), `${ea.name} index`);
+    assert.deepEqual(Array.from(eb.wireGeometry.index.array), Array.from(ea.wireGeometry.index.array), `${ea.name} wire`);
+  });
+});

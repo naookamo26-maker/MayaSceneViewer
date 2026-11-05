@@ -10,6 +10,7 @@
 //   * スプライン・クランプ・プラトーの傾き（docs/animation_curves.md）
 // ローカル行列は Maya の式（docs/data_format.md「行列の規約」）で組み立てる。
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
+import { decodeArray as decodeArrayAny } from './arrays.js';
 
 // 接線の種類（.ma の kit / kot / .tan の値）
 export const TANGENT = {
@@ -24,16 +25,9 @@ const EPS = 1e-9;
 const STEP_HOLD = 1;        // この区間はキーの値を保つ（ステップ）
 const STEP_NEXT = 2;        // この区間は次のキーの値（ステップ（次））
 
-/** 数値の配列（リスト、または {dtype, count, data: base64}）を型付き配列にする */
+/** 数値の配列（リスト、または {dtype, count, data: base64}）を型付き配列にする（Ctor の型。既定は Float32Array） */
 export function decodeArray(entry, Ctor = Float32Array) {
-  if (entry == null) return new Ctor(0);
-  if (Array.isArray(entry)) return Ctor.from(entry);
-  const bin = atob(entry.data || '');
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  if (entry.dtype === 'uint8') return Ctor === Uint8Array ? bytes : Ctor.from(bytes);
-  const f = new Float32Array(bytes.buffer, 0, Math.floor(bytes.length / 4));
-  return Ctor === Float32Array ? f : Ctor.from(f);
+  return decodeArrayAny(entry, Ctor);
 }
 
 function resolveType(k, fallback) {

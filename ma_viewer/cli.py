@@ -18,6 +18,7 @@ import json
 import os
 import sys
 import time
+from . import schema
 
 
 def _progress(frac, msg):
@@ -59,9 +60,11 @@ def cmd_info(args) -> int:
         sk = m["skin"]
         extra = ""
         if sk:
+            sc = schema.array_values(sk["counts"])
             extra = "  スキン: %s（インフルエンス %d, 最大 %d/頂点）" % (
-                sk["cluster"], len(sk["influences"]), max(sk["counts"]) if sk["counts"] else 0)
-        print("  - %s: 頂点 %d, 面 %d%s%s" % (m["name"], len(m["positions"]) // 3, len(m["counts"]),
+                sk["cluster"], len(sk["influences"]), max(sc) if sc else 0)
+        print("  - %s: 頂点 %d, 面 %d%s%s" % (m["name"], schema.array_len(m["positions"]) // 3,
+                                          schema.array_len(m["counts"]),
                                           "" if m["visible"] else "（非表示）", extra))
         # UV とマテリアル（テクスチャが貼られない原因を調べるため）
         uv = m.get("uv")
@@ -72,7 +75,7 @@ def cmd_info(args) -> int:
             print("      UV: なし")
         mats = scene.get("materials") or []
         texs = scene.get("textures") or []
-        per = m.get("faceMaterials") or [m.get("material", -1)] * len(m["counts"])
+        per = m.get("faceMaterials") or [m.get("material", -1)] * schema.array_len(m["counts"])
         for mi in sorted(set(per)):
             n = per.count(mi)
             if mi < 0:
@@ -99,9 +102,9 @@ def cmd_info(args) -> int:
 
 
 def _faces_without_uv(m) -> int:
-    idx = m["uv"]["indices"]
+    idx = schema.array_values(m["uv"]["indices"])
     off = bad = 0
-    for c in m["counts"]:
+    for c in schema.array_values(m["counts"]):
         if any(i < 0 for i in idx[off:off + c]):
             bad += 1
         off += c

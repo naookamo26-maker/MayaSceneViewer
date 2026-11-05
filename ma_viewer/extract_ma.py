@@ -543,9 +543,10 @@ def _fast(key: str) -> None:
     FAST[key] = FAST.get(key, 0) + 1
 
 
-def _materialize(chunks) -> None:
+def _materialize(chunks, keep_array: bool = False) -> None:
     """値の文字列のままの断片（RawNumbers）を数値のリストにする。すべての断片をつなげて一度に数値化し、
-    要素数で切り分ける（要素数が合わなければ、断片ごとに従来の処理）。結果は chunks に書き戻す。"""
+    要素数で切り分ける（要素数が合わなければ、断片ごとに従来の処理）。結果は chunks に書き戻す。
+    keep_array なら numpy の配列のまま書き戻す（リストに戻す時間を省く）"""
     raw = [i for i, (_s, v) in enumerate(chunks) if isinstance(v, RawNumbers)]
     if not raw:
         return
@@ -556,7 +557,7 @@ def _materialize(chunks) -> None:
         off = 0
         for i in raw:
             c = chunks[i][1].count
-            chunks[i] = (chunks[i][0], arr[off:off + c].tolist())
+            chunks[i] = (chunks[i][0], arr[off:off + c] if keep_array else arr[off:off + c].tolist())
             off += c
         return
     _fast("数値: 従来の処理（要素数が合わない）" if arr is not None else "数値: 従来の処理（数値以外の記述）")
@@ -574,6 +575,24 @@ def _assemble_flat(chunks, stride: int) -> List[float]:
     for start, vals in chunks:
         n = max(n, start + len(vals) // stride)
     out = [0.0] * (n * stride)
+    for start, vals in chunks:
+        a = start * stride
+        out[a:a + len(vals)] = vals
+    return out
+
+
+def _assemble_array(chunks, stride: int):
+    """_assemble_flat の numpy の経路: (開始番号, 値) のチャンク列を 1 本の float64 の配列にまとめる（後勝ち）。
+    値をリストに戻さない。numpy がなければ _assemble_flat と同じリスト"""
+    if not numpy_enabled():
+        return _assemble_flat(chunks, stride)
+    if not chunks:
+        return np.zeros(0)
+    _materialize(chunks, keep_array=True)
+    n = 0
+    for start, vals in chunks:
+        n = max(n, start + len(vals) // stride)
+    out = np.zeros(n * stride)
     for start, vals in chunks:
         a = start * stride
         out[a:a + len(vals)] = vals
@@ -640,8 +659,8 @@ def _geometry_np(n: MaNode, ms: MaScene, md, edges, nv: int, uv_set: Optional[in
         uv_all[(uv_all < 0) | (uv_all >= n_uv)] = -1
         uv_idx = uv_all[corner_ok]
         missing = int((face_ok & ~has_uv).sum())
-    return (out_counts.tolist(), out_indices.tolist(), kept.tolist(),
-            None if uv_idx is None else uv_idx.tolist(), missing, int((~face_ok).sum()))
+    # 面の定義は numpy の配列のまま返す（出力でバイナリにする）。kept は面ごとのマテリアルを引くのでリスト
+    return (out_counts, out_indices, kept.tolist(), uv_idx, missing, int((~face_ok).sum()))
 
 
 def build_mesh_geometry(n: MaNode, ms: MaScene, tweaks=None, uv_set: Optional[int] = None, uv_md=None):
@@ -650,21 +669,21 @@ def build_mesh_geometry(n: MaNode, ms: MaScene, tweaks=None, uv_set: Optional[in
     UV は {"set": 名前, "values": [u, v, ...], "indices": [面の頂点ごとの UV 番号 or -1]} か None。
     """
     md = n.mesh
-    pos = _assemble_flat(md.vt, 3)
+    pos = _assemble_array(md.vt, 3)
     nv = len(pos) // 3
-    if md.pt:
-        pt = _assemble_flat(md.pt, 3)
-        for i in range(min(len(pt), len(pos))):
-            pos[i] += pt[i]
-    for chunks in (tweaks or []):
-        off = _assemble_flat(chunks, 3)
-        for i in range(min(len(off), len(pos))):
-            pos[i] += off[i]
-    edges = _assemble_flat(md.ed, 3)
+    for chunks in ([md.pt] if md.pt else []) + list(tweaks or []):
+        off = _assemble_array(chunks, 3)
+        k = min(len(off), len(pos))
+        if numpy_enabled():
+            pos[:k] += off[:k]
+        else:
+            for i in range(k):
+                pos[i] += off[i]
+    edges = _assemble_array(md.ed, 3)
     ne = len(edges) // 3
     if (uv_md is None and numpy_enabled() and md.fc
             and all(isinstance(c[1], FlatFaces) for c in md.fc)):
-        uv_values = _assemble_flat(md.uvsp.get(uv_set, []), 2) if uv_set is not None else []
+        uv_values = _assemble_array(md.uvsp.get(uv_set, []), 2) if uv_set is not None else []
         n_uv = len(uv_values) // 2
         counts, indices, kept, uv_idx, missing, bad = _geometry_np(n, ms, md, edges, nv, uv_set, n_uv)
         return _finish_geometry(n, ms, md, md, pos, counts, indices, kept, uv_set, uv_values, uv_idx, missing,
@@ -678,7 +697,7 @@ def build_mesh_geometry(n: MaNode, ms: MaScene, tweaks=None, uv_set: Optional[in
         for st, faces_, uvs_ in _list_chunks(umd.fc):
             for fi_, x in enumerate((uvs_ or {}).get(uv_set, [])):
                 uv_faces[st + fi_] = x
-    uv_values = _assemble_flat(umd.uvsp.get(uv_set, []), 2) if uv_set is not None else []
+    uv_values = _assemble_array(umd.uvsp.get(uv_set, []), 2) if uv_set is not None else []
     n_uv = len(uv_values) // 2
     uv_idx: List[int] = []
     uv_faces_missing = 0
@@ -731,14 +750,14 @@ def _finish_geometry(n, ms, md, umd, pos, counts, indices, kept, uv_set, uv_valu
         ms.warn("%s: 穴付きの面 %d 個は穴を無視して表示します" % (n.name, md.holes))
     uv = None
     if uv_idx is not None:
-        uv = {"set": uv_set_name(umd, uv_set), "values": schema.round_list(uv_values),
-              "indices": uv_idx}
+        uv = {"set": uv_set_name(umd, uv_set), "values": schema.pack_array(uv_values, "float32"),
+              "indices": schema.pack_array(uv_idx, "int32")}
         if uv_faces_missing:
             ms.warn("%s: UV のない面が %d 個あります" % (n.name, uv_faces_missing))
     # ハードエッジ: .ed の 3 つ目の値が 0（1 = スムーズ）の辺を、頂点の組で返す
     if numpy_enabled() and ne:
         e = np.asarray(edges, dtype=np.float64).reshape(-1, 3)
-        hard = e[e[:, 2] == 0, :2].astype(np.int64).ravel().tolist()
+        hard = e[e[:, 2] == 0, :2].astype(np.int64).ravel()
     else:
         hard = []
         for i in range(ne):
@@ -1573,7 +1592,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         face_mats = [mats_all[f] if 0 <= f < len(mats_all) else -1 for f in kept]
         if uv is None and any(m >= 0 and mb.materials[m]["texture"] >= 0 for m in set(face_mats)):
             ms.warn("%s: テクスチャのあるマテリアルが割り当てられていますが、UV がありません" % n.name)
-        if not counts:
+        if not len(counts):
             ms.warn("%s: 有効な面がないため除外しました" % n.name)
             continue
         t_idx = index_of.get(id(n.parent))
@@ -1585,11 +1604,12 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             "transform": t_idx,
             "visible": _visible_effective(n),
             "visibleSelf": _visible_self(n),
-            "positions": schema.round_list(pos),
-            "counts": counts,
-            "indices": indices,
+            # 数値の配列はバイナリにする（ビューアは Float32Array などに直接戻す。JSON の数値より小さく速い）
+            "positions": schema.pack_array(pos, "float32"),
+            "counts": schema.pack_array(counts, "int32"),
+            "indices": schema.pack_array(indices, "int32"),
             "uv": uv,
-            "hardEdges": hard,
+            "hardEdges": schema.pack_array(hard, "int32"),
             "material": face_mats[0] if face_mats and len(set(face_mats)) == 1 else -1,
             "faceMaterials": face_mats if len(set(face_mats)) > 1 else None,
             "skin": None,
@@ -1626,8 +1646,8 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     ms.camera_index = camera_index
 
     ms.finalize_warnings()
-    nverts = sum(len(m["positions"]) // 3 for m in out_meshes)
-    npolys = sum(len(m["counts"]) for m in out_meshes)
+    nverts = sum(schema.array_len(m["positions"]) // 3 for m in out_meshes)
+    npolys = sum(schema.array_len(m["counts"]) for m in out_meshes)
     scene = {
         "schema": schema.SCHEMA_NAME,
         "version": schema.SCHEMA_VERSION,
@@ -1781,7 +1801,8 @@ def _skin_arrays_np(sk, nverts: int, slot_of: Dict[int, int]):
     keep = w_ok & (slots >= 0)
     counts = np.bincount(V[keep], minlength=nverts)[:nverts]
     weights = np.round(np.maximum(W[keep], 0.0), 6)
-    return (counts.tolist(), slots[keep].tolist(), weights.tolist(), int((~has_row).sum()), unknown, extra)
+    # リストに戻さず numpy の配列のまま返す（出力でバイナリにする）
+    return (counts, slots[keep], weights, int((~has_row).sum()), unknown, extra)
 
 
 def _build_skin(ms: MaScene, ctx: _Ctx, shape: MaNode, sk_node: MaNode, nverts: int,
@@ -1838,9 +1859,10 @@ def _build_skin(ms: MaScene, ctx: _Ctx, shape: MaNode, sk_node: MaNode, nverts: 
         "influences": influences,
         "bindPreMatrices": pms,
         "geomMatrix": schema.matrix_list(sk.gm if sk.gm else M.identity()),
-        "counts": counts,
-        "indices": indices,
-        "weights": weights,
+        # 数値の配列はバイナリにする（スロット番号は 65,535 まで uint16）
+        "counts": schema.pack_array(counts, "int32"),
+        "indices": schema.pack_array(indices, "uint16" if len(influences) <= 65535 else "int32"),
+        "weights": schema.pack_array(weights, "float32"),
     }
 
 

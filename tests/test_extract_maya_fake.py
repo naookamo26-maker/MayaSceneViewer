@@ -17,7 +17,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from ma_viewer import mathutil as M  # noqa: E402
-from ma_viewer.extract_ma import load_ma  # noqa: E402
+from ma_viewer.extract_ma import load_ma as _load_ma  # noqa: E402
+from ma_viewer.schema import unpack_meshes  # noqa: E402
+
+
+def load_ma(*a, **k):
+    """メッシュの数値の配列をリストに戻した変換結果（偽の Maya はこの値から作る）"""
+    return unpack_meshes(_load_ma(*a, **k))
 
 SAMPLE = os.path.join(ROOT, "samples", "sample_arm.ma")
 LOGICAL = {"shoulder": 0, "elbow": 1, "forearm_twist": 3, "wrist": 4, "wrist_end": 5}
@@ -471,7 +477,7 @@ class TestExtractMayaFake(unittest.TestCase):
             sys.modules.pop(k, None)
 
     def test_whole_scene_matches_ma_parser(self):
-        out = self.em.extract_scene()
+        out = unpack_meshes(self.em.extract_scene())
         ref = self.ref
         ref_nodes = {n["path"]: n for n in ref["nodes"]}
         out_nodes = {n["path"]: n for n in out["nodes"]}
@@ -519,7 +525,7 @@ class TestExtractMayaFake(unittest.TestCase):
 
     def test_selection_only(self):
         SCENE.selection = ["|rig_grp"]
-        out = self.em.extract_scene(selection_only=True)
+        out = unpack_meshes(self.em.extract_scene(selection_only=True))
         self.assertEqual(out["meshes"], [])
         self.assertEqual(out["stats"]["joints"], 5)
         SCENE.selection = []
@@ -544,7 +550,7 @@ class TestExtractMayaFakeTextured(unittest.TestCase):
         install_fake_maya()
         sys.modules.pop("ma_viewer.extract_maya", None)
         from ma_viewer import extract_maya
-        cls.out = extract_maya.extract_scene()
+        cls.out = unpack_meshes(extract_maya.extract_scene())
 
     @classmethod
     def tearDownClass(cls):

@@ -14,7 +14,18 @@ sys.path.insert(0, ROOT)
 
 from ma_viewer import ma_scene  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, "tests"))
-from ma_viewer.extract_ma import load_ma, scene_to_dict  # noqa: E402
+from ma_viewer.extract_ma import load_ma as _load_ma, scene_to_dict as _scene_to_dict  # noqa: E402
+from ma_viewer.schema import unpack_meshes  # noqa: E402
+
+
+def load_ma(*a, **k):
+    """メッシュの数値の配列をリストに戻した変換結果（中身を数値のリストとして調べるため）"""
+    return unpack_meshes(_load_ma(*a, **k))
+
+
+def scene_to_dict(*a, **k):
+    return unpack_meshes(_scene_to_dict(*a, **k))
+
 
 SAMPLES = [os.path.join(ROOT, "samples", "sample_arm.ma"),
            os.path.join(ROOT, "samples", "textured_project", "scenes", "textured_sample.ma")]
