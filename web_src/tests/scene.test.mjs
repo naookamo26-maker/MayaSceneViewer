@@ -585,3 +585,24 @@ test('合計 0 の頂点: 「ウェイトの分配」が近傍なら、隣の頂
   const got = Object.fromEntries(vertexWeights(e.skin, 2).filter((x) => x.effective > 0).map((x) => [x.slot, +x.effective.toFixed(4)]));
   assert.deepEqual(got, { 0: 0.6667, 2: 0.3333 });
 });
+
+import { JointOverlay } from '../src/jointOverlay.js';
+
+test('ジョイントの表示を隠しているあいだは更新を飛ばし、表示したときにいまの位置にする', () => {
+  const built = buildScene(data);
+  built.root.updateMatrixWorld(true);
+  const ov = new JointOverlay();
+  ov.build(built, data.nodes, 10);
+  const k = 1, ni = ov.joints[k];
+  const pos = () => { const m = new Matrix4(); ov.spheres.getMatrixAt(k, m); return new Vector3().setFromMatrixPosition(m); };
+  const world = () => new Vector3().setFromMatrixPosition(built.nodeObjects[ni].matrixWorld);
+  assert.ok(pos().distanceTo(world()) < 1e-6);
+  ov.setVisible(false);
+  built.nodeObjects[ni].position.x += 5;                // 隠しているあいだに動かす
+  built.nodeObjects[ni].updateMatrix();
+  built.root.updateMatrixWorld(true);
+  ov.update();
+  assert.ok(pos().distanceTo(world()) > 1, '隠しているあいだは更新しない');
+  ov.setVisible(true);
+  assert.ok(pos().distanceTo(world()) < 1e-6, '表示したときに更新する');
+});

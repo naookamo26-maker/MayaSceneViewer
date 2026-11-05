@@ -69,6 +69,8 @@ export class JointOverlay {
     this.controlGroup.add(this.ctrl.group);
     this.medianBone = 0;
     this.statusOf = null;      // (nodeIndex) => 'estimated' | 'unknown' | null
+    this.jointsStale = false;  // 隠しているあいだに更新を飛ばした（表示したときに更新する）
+    this.controlsStale = false;
   }
 
   clear() {
@@ -202,9 +204,15 @@ export class JointOverlay {
     return ni === this.selected ? SELECT_COLOR : this.selectedSet.has(ni) ? SELECT_OTHER_COLOR : null;
   }
   /** ジョイント（球・骨・ローカル軸）の表示 */
-  setVisible(v) { this.jointGroup.visible = v; }
+  setVisible(v) {
+    this.jointGroup.visible = v;
+    if (v && this.jointsStale) this.update();          // 隠しているあいだに飛ばした更新
+  }
   /** コントローラーの目印の表示 */
-  setControlsVisible(v) { this.controlGroup.visible = v; }
+  setControlsVisible(v) {
+    this.controlGroup.visible = v;
+    if (v && this.controlsStale) this.updateControls();
+  }
   /** 推定・不明のノードの色分け（null で解除） */
   setStatus(fn) { this.statusOf = fn; this.update(); }
   /** @param hidden 配列（nodeIndex → 非表示なら true）または null */
@@ -217,6 +225,13 @@ export class JointOverlay {
 
   update() {
     if (!this.spheres) return;
+    // 隠しているあいだは計算しない（再生中も毎フレーム呼ばれるため）。表示したときに更新する
+    if (!this.jointGroup.visible) {
+      this.jointsStale = true;
+      this.updateControls();
+      return;
+    }
+    this.jointsStale = false;
     const objs = this.built.nodeObjects;
     const r = this.radius();
 
@@ -292,6 +307,8 @@ export class JointOverlay {
   /** コントローラーの目印だけを合わせる（画面上で一定の大きさのときは、視点が変わるたびに呼ぶ） */
   updateControls() {
     if (!this.spheres || !this.controls.length) return;
+    if (!this.controlGroup.visible) { this.controlsStale = true; return; }
+    this.controlsStale = false;
     const hidden = this.hiddenNodes;
     this.ctrl.update({
       selectColorOf: (ni) => this.selectColorOf(ni),
