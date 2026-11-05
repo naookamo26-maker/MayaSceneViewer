@@ -9,6 +9,8 @@
   4. ［アニメーションを読み込む］をオフにすると読み込まない
   5. 書き出した JSON にはアニメーションが含まれ、開くと再生できる
   6. アニメーションのあるシーンを開き直すと、古いアニメーションを消して読み込み中の表示を出す
+  7. 変換結果のキャッシュをオンにして開き直すと、キャッシュからシーンとアニメーションを読む
+  （1〜6 は読み込みの途中を確かめるので、変換結果のキャッシュを使わない）
 """
 from __future__ import annotations
 
@@ -63,6 +65,8 @@ def main() -> int:
     win.show()
     load_setting = win.a_anim.isChecked()
     win.a_anim.setChecked(True)
+    cache_setting = win.a_cache.isChecked()
+    win.a_cache.setChecked(False)             # 読み込みの途中（2 段階目）を確かめるので、キャッシュは 7 でだけ使う
     ok = {"v": True}
     tmp = tempfile.mkdtemp(prefix="anim_test_")
 
@@ -281,13 +285,38 @@ def main() -> int:
             wait_state(lambda s2: s2["animation"], done)
         wait_state(lambda s: s["loaded"] and s["name"] == "anim_sample.ma" and "読み込み中" in s["status"], loading)
 
+    # 7 ---------------------------------------------------------------------
+    def s_cache(nxt):
+        """変換結果のキャッシュ: 1 回目に保存し、開き直すとキャッシュからシーンとアニメーションを読む"""
+        os.environ["MA_VIEWER_CACHE_DIR"] = tempfile.mkdtemp(prefix="anim_cache_")
+        win.a_cache.setChecked(True)
+        win.open_file(ANIM)
+
+        def first(s):
+            check(bool(s["animation"]), "キャッシュをオンにして開く（1 回目は変換して保存）")
+            wait_idle(second)
+
+        def second():
+            before = win.log_view.toPlainText().count("変換結果のキャッシュから読み込みました")
+            win.open_file(ANIM)
+
+            def got(s):
+                n = win.log_view.toPlainText().count("変換結果のキャッシュから読み込みました")
+                check(s["loaded"] and bool(s["animation"]) and s["animation"]["curves"] == 7,
+                      "開き直すと、キャッシュからシーンとアニメーションを読む: %s" % s["animation"])
+                check(n == before + 1, "キャッシュから読んだことをログに出す: %d → %d" % (before, n))
+                wait_idle(nxt)
+            wait_idle(lambda: wait_state(lambda s: s["loaded"] and s["animation"], got))
+        wait_idle(lambda: wait_state(lambda s: s["loaded"] and s["animation"], first))
+
     def finish(_=None):
         win.a_anim.setChecked(load_setting)
+        win.a_cache.setChecked(cache_setting)
         print("結果:", "OK" if ok["v"] else "NG")
         app.exit(0 if ok["v"] else 1)
 
     def start():
-        run([s_open, s_scrub, s_bind, s_keys, s_play, s_cancel, s_disabled, s_json, s_reopen, finish])
+        run([s_open, s_scrub, s_bind, s_keys, s_play, s_cancel, s_disabled, s_json, s_reopen, s_cache, finish])
 
     win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(300, start))
     QtCore.QTimer.singleShot(120000, lambda: (print("タイムアウト"), app.exit(2)))

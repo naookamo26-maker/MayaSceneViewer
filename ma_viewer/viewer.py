@@ -325,11 +325,12 @@ class ViewerWidget(QtWidgets.QWidget):
 class Payload:
     """ビューアに送る JSON の文字列と、文字列にかかった秒数。大きなシーンでは文字列にするのに時間がかかるので、
     読み込みスレッドで作っておき、画面のスレッドを止めない"""
-    __slots__ = ("text", "seconds")
+    __slots__ = ("text", "seconds", "cached")
 
-    def __init__(self, text: str, seconds: float):
+    def __init__(self, text: str, seconds: float, cached: bool = False):
         self.text = text
         self.seconds = seconds
+        self.cached = cached          # 変換結果のキャッシュから読んだもの
 
     @classmethod
     def of(cls, data) -> "Payload":
@@ -348,11 +349,12 @@ class _LoadWorker(QtCore.QObject):
     animationFailed = Signal(str, str)
     done = Signal()
 
-    def __init__(self, path: str, animation: bool = True, references: bool = True):
+    def __init__(self, path: str, animation: bool = True, references: bool = True, cache: bool = True):
         super().__init__()
         self.path = path
         self.animation = animation
         self.references = references
+        self.cache = cache            # 変換結果のディスクキャッシュを使う・保存する（scene_cache）
         self.in_animation = False
         self._cancel = False
         self._last = 0.0
@@ -384,11 +386,17 @@ class _LoadWorker(QtCore.QObject):
                 schema.validate(scene)
                 scene.setdefault("source", {}).setdefault("name", os.path.basename(self.path))
             else:
+                if self._load_cached(t0):
+                    self.done.emit()
+                    return
                 from .extract_ma import load_ma_staged
                 scene, load_animation = load_ma_staged(self.path, progress=self._progress,
                                                        references=self.references)
             seconds = time.time() - t0
-            self.finished.emit(scene, seconds, Payload.of(scene))
+            payload = Payload.of(scene)
+            self.finished.emit(scene, seconds, payload)
+            if load_animation is not None:
+                self._store_scene(load_animation, payload)
         except _Cancelled:
             self.failed.emit("中止しました", "")
             load_animation = None
@@ -403,12 +411,60 @@ class _LoadWorker(QtCore.QObject):
                 anim = load_animation(self._progress)
                 seconds = time.time() - t1
                 if not self._cancel:
-                    self.animationReady.emit(anim, seconds, Payload.of(anim) if anim is not None else None)
+                    apayload = Payload.of(anim) if anim is not None else None
+                    self.animationReady.emit(anim, seconds, apayload)
+                    self._store_animation(apayload)
             except _Cancelled:
                 pass
             except Exception as exc:  # noqa: BLE001  アニメーションが読めなくてもシーンは表示したままにする
                 self.animationFailed.emit(str(exc), traceback.format_exc())
         self.done.emit()
+
+    # ---- 変換結果のディスクキャッシュ（scene_cache）
+    def _load_cached(self, t0: float) -> bool:
+        """保存した変換結果が使えれば、それをシーン・アニメーションとして渡して True"""
+        if not self.cache:
+            return False
+        try:
+            from . import scene_cache
+            hit = scene_cache.lookup(self.path, self.references, self.animation)
+            if hit is None:
+                return False
+            scene = json.loads(hit.scene_text)
+            anim = json.loads(hit.anim_text) if self.animation and hit.anim_text else None
+        except Exception:  # noqa: BLE001  キャッシュが読めなければ、ふつうに読み込む
+            return False
+        from .extract_ma import LAST_TIMING
+        LAST_TIMING.clear()
+        self.finished.emit(scene, time.time() - t0, Payload(hit.scene_text, 0.0, cached=True))
+        if self.animation and not self._cancel:
+            self.in_animation = True
+            self.animationReady.emit(anim, 0.0, Payload(hit.anim_text, 0.0, cached=True) if anim is not None else None)
+        return True
+
+    def _store_scene(self, load_animation, payload: "Payload") -> None:
+        self._cache_ok = False
+        if not self.cache:
+            return
+        try:
+            from . import scene_cache
+            from .extract_ma import LAST_TIMING
+            ms = getattr(load_animation, "scene", None)
+            if ms is not None:
+                timing = {k: LAST_TIMING.get(k) for k in ("parse", "convert") if k in LAST_TIMING}
+                self._cache_ok = scene_cache.store_scene(self.path, self.references, scene_cache.record(ms, self.path),
+                                                         payload.text, timing)
+        except Exception:  # noqa: BLE001  保存の失敗で読み込みを止めない
+            self._cache_ok = False
+
+    def _store_animation(self, payload: "Optional[Payload]") -> None:
+        if not self.cache or not getattr(self, "_cache_ok", False):
+            return
+        try:
+            from . import scene_cache
+            scene_cache.store_animation(self.path, self.references, payload.text if payload is not None else None)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -533,12 +589,20 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.a_refs = self._act("リファレンスを読み込む", self._toggle_references, checkable=True,
                                 checked=_settings_bool("loadReferences", True),
                                 tip=".ma のリファレンス（file -r）の中身も読み込む（次に開くファイルから有効。F5 で読み直し）")
+        self.a_cache = self._act("変換結果をキャッシュする", self._toggle_cache, checkable=True,
+                                 checked=_settings_bool("sceneCache", True),
+                                 tip="変換した結果を保存し、同じ .ma（リファレンス・テクスチャも同じ）を開き直すときは解析を省く"
+                                     "（次に開くファイルから有効）")
+        a_clear_cache = self._act("変換結果のキャッシュを消去", self.clear_scene_cache,
+                                  tip="保存した変換結果をすべて消す")
         m = mb.addMenu("ファイル")
         for a in (a_open, a_reload, a_export):
             m.addAction(a)
         m.addSeparator()
         m.addAction(self.a_anim)
         m.addAction(self.a_refs)
+        m.addAction(self.a_cache)
+        m.addAction(a_clear_cache)
         m.addSeparator()
         m.addAction(a_close)
 
@@ -707,7 +771,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.log("info", "読み込み開始: %s" % path)
 
         self._thread = QtCore.QThread(self)
-        self._worker = _LoadWorker(path, animation=self.a_anim.isChecked(), references=self.a_refs.isChecked())
+        self._worker = _LoadWorker(path, animation=self.a_anim.isChecked(), references=self.a_refs.isChecked(),
+                                   cache=self.a_cache.isChecked())
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._on_progress)
@@ -727,7 +792,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
 
     @Slot(object, float, object)
     def _on_loaded(self, scene, seconds, payload=None):
-        self.show_scene(scene, "解析 %.2f 秒" % seconds, payload)
+        cached = payload is not None and payload.cached
+        self.show_scene(scene, ("キャッシュから読み込み %.2f 秒" if cached else "解析 %.2f 秒") % seconds, payload)
+        if cached:
+            self.log("info", "変換結果のキャッシュから読み込みました（.ma・リファレンス・テクスチャ・設定が前回と同じため、"
+                             "解析を省きました。［ファイル］→［変換結果をキャッシュする］で切り替え）")
         self._anim_scene = scene           # このシーンのアニメーションだけを受け取る
         if self._worker is not None and self._worker.animation and not self.current_path.lower().endswith(".json"):
             self.viewer.set_animation_status("アニメーションを読み込み中")
@@ -762,6 +831,17 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.log("error", detail)
         self.viewer.set_animation_status("アニメーションを読み込めませんでした: %s" % message)
         self.log("warn", "アニメーションを読み込めませんでした（シーンはそのまま表示します）: %s" % message)
+
+    def _toggle_cache(self, on):
+        _settings_set("sceneCache", bool(on))
+        self.statusBar().showMessage("変換結果を%s（次に開くファイルから）" % ("キャッシュします" if on else "キャッシュしません"), 5000)
+
+    def clear_scene_cache(self):
+        from . import scene_cache
+        n = scene_cache.clear()
+        msg = "変換結果のキャッシュを消去しました（%d 件。%s）" % (n, scene_cache.cache_dir())
+        self.statusBar().showMessage(msg, 6000)
+        self.log("info", msg)
 
     def _toggle_references(self, on):
         _settings_set("loadReferences", bool(on))
