@@ -7,12 +7,15 @@
 //
 // 専用に計算するもの: 動かないノード・カーブだけで動くノード・コンストレイントの出力（と、チャンネルと同じ属性の
 // カーブ）で動くノード。コンストレイントの重み・オフセットなどは時間で変わらないもの、ターゲットは DAG ノード。
-// それ以外の動くノード（IK・計算ノードの入力・推定のノードなど）は「任せるノード」として、計算の順番の中で
+// IK（スプライン以外）で動くジョイントは、RigEvaluator と同じ解き方の関数（rig.js の solveIKCore）に、計画の値を
+// 読ませて解く（極ベクトル・ひねり・ブレンドの属性は RigEvaluator の読み方のまま）。
+// それ以外の動くノード（スプライン IK・計算ノードの入力・推定のノードなど）は「任せるノード」として、計算の順番の中で
 // RigEvaluator に計算させる。専用に計算した値（ワールド行列・ローカル行列・チャンネルの値）は RigEvaluator の
 // フレームのキャッシュに入れるので、RigEvaluator はそれを読み、結果は同じになる（props・形の変わるカーブも、
 // 評価のあとで RigEvaluator がキャッシュから求める）。ポーズ確認の追加分があるあいだは RigEvaluator が評価する。
-import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
+import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { clampLimits, composeLocalMatrix, decomposeMaya, evaluateCurve, mayaEuler } from './animation.js';
+import { solveIKCore } from './rig.js';
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -153,7 +156,7 @@ export function buildPlan(rig, deps) {
     if (why) delegate(ni, why);
   }
   function movingStep(ni) {
-    if (rig.ikJoint.has(ni)) return 'IK で動くジョイント';
+    if (rig.ikJoint.has(ni) && rig.byId.get(rig.ikJoint.get(ni)).ik.solver === 'ikSplineSolver') return 'スプライン IK で動くジョイント';
     if (rig.fallback.has(ni)) return '推定のノード';
     const e = rig.clip.byNode.get(ni);
     const rest = rig.rest(ni);
@@ -184,9 +187,111 @@ export function buildPlan(rig, deps) {
       ni, kind: inputs.some((x) => x.con) ? DRIVEN : SIMPLE, e, rest, inputs, opm,
       fromCurve, cur: null, local: new Matrix4(), world: new Matrix4(),
       isNode: (rest.isNode ?? -1) >= 0 && rig.rest(rest.isNode) ? rest.isNode : -1,
-      deps: deps.get(ni) || null,
+      deps: deps.get(ni) || null, ik: null, fk: null, fkStamp: -1,
     });
     return null;
+  }
+
+  // ---- poleVectorConstraint（RigEvaluator.constraint の poleVectorConstraint と pvcTargetPosition・pvcStartPosition）。
+  // ハンドルの pv がそのコンストレイントの ct だけにつながり、属性が時間で変わらない値か DAG ノードの t・rp・rpt・pm の
+  // 直接の接続のときだけ。戻り値は手順か null（RigEvaluator が読む）
+  function poleVectorOf(h, chain) {
+    const ins = h.inputs || {};
+    const srcs = ['pvx', 'pvy', 'pvz'].map((k) => ins[k]);
+    if (ins.pv || srcs.some((x) => !x || x.curve !== undefined)) return null;
+    const pg = rig.byId.get(srcs[0].node);
+    if (!pg || pg.type !== 'poleVectorConstraint' || pg.def || pg.dag >= 0 || pg.driven !== h.dag) return null;
+    if (srcs.some((x, a) => x.node !== pg.id || x.attr !== 'ct' + XYZ[a])) return null;
+    const id = pg.id, pins = pg.inputs || {};
+    // 属性の読み方: 時間で変わらない値（定数）か、DAG ノードからの接続（{ ni, attr }）
+    const reader = (attr, kind) => {
+      if (staticPlug(id, attr)) return { value: kind === 'mat' ? rig.mat(id, attr) : rig.vec(id, attr) };
+      const src = pins[attr];
+      if (!src || src.curve !== undefined) return null;
+      const sg = rig.byId.get(src.node);
+      if (!sg || sg.dag < 0) return null;
+      const a = String(src.attr).replace(/\[\d+\]$/, '');
+      if (kind === 'mat' ? a !== 'pm' : a !== 't') return null;
+      return { ni: sg.dag, attr: a };
+    };
+    const targets = [];
+    for (const t of pg.targets || []) {
+      const tg = rig.byId.get(t.node);
+      if (!tg) continue;
+      const b = `tg[${t.index}]`;
+      if (!staticPlug(id, `${b}.tw`)) return null;
+      const w = rig.num(id, `${b}.tw`, 1);
+      if (!(w > 0)) continue;
+      if (!(pins[`${b}.tt`] || pins[`${b}.tpm`] || pins[`${b}.ttx`])) return null;      // ターゲットのワールド行列から（扱わない）
+      const tt = reader(`${b}.tt`, 'vec'), trp = reader(`${b}.trp`, 'vec'), trt = reader(`${b}.trt`, 'vec'), tpm = reader(`${b}.tpm`, 'mat');
+      if (!tt || !trp || !trt || !tpm || trp.ni !== undefined || trt.ni !== undefined) return null;
+      targets.push({ w, tt, trp: trp.value, trt: trt.value, tpm });
+    }
+    const total = targets.reduce((x, t) => x + t.w, 0);
+    if (total <= EPS) return null;
+    const has = (k) => Object.keys(pins).some((x) => x === k || x.startsWith(k)) || Object.keys(pg.attrs || {}).some((x) => x === k || x.startsWith(k));
+    if (!(has('crp') || has('ps') || has('crt'))) return null;
+    const crp = reader('crp', 'vec'), crt = reader('crt', 'vec'), ps = reader('ps', 'mat');
+    if (!crp || !crt || !ps || crt.ni !== undefined) return null;
+    // 計算の順番: 読むノード（ターゲット・開始ジョイント）。開始ジョイントの pm はチェーンの開始ジョイントか、チェーンの外
+    const reads = [];
+    for (const r of [...targets.flatMap((t) => [t.tt, t.tpm]), crp, ps]) {
+      if (r.ni === undefined) continue;
+      if (chain.includes(r.ni) && !(r.ni === chain[0] && (r.attr === 'pm' || r.attr === 't'))) return null;
+      if (!chain.includes(r.ni)) reads.push(r.ni);
+      if (r.attr === 't' && rig.moving.has(r.ni) && steps.get(r.ni) && steps.get(r.ni).kind === DRIVEN
+        && steps.get(r.ni).inputs.some((x) => x.con && x.base === 't')) return null;   // コンストレイントで移動するノード
+    }
+    return { id, targets, total, crp, crt: crt.value, ps, reads };
+  }
+
+  // ---- IK（スプライン以外）。チェーンのジョイント（終端を除く）がすべて専用に計算できるときだけ。扱えなければ任せる
+  const iks = new Map();               // ハンドル（グラフの id）→ IK の手順
+  for (const id of new Set(rig.ikJoint.values())) {
+    const g = rig.byId.get(id);
+    if (g.ik.solver === 'ikSplineSolver') continue;
+    const chain = g.ik.chain, joints = chain.slice(0, -1), end = chain[chain.length - 1];
+    const why = (() => {
+      if (g.dag < 0) return 'IK のハンドルがない';
+      for (const ni of joints) {
+        const st = steps.get(ni);
+        if (!st || st.kind === DELEGATED) return 'IK のチェーンに任せたジョイント';
+        if (rig.ikJoint.get(ni) !== id) return '複数の IK のチェーン';
+      }
+      for (let p = g.dag; p >= 0; p = nodes[p].parent) if (chain.includes(p)) return 'IK のチェーンの下のハンドル';
+      if (rig.moving.has(end)) {
+        const st = steps.get(end);
+        // IK が読むのは終端の移動の値だけ。移動に入るコンストレイントがあれば任せる（回転だけなら読まない）
+        if (st && st.kind === DRIVEN && st.inputs.some((x) => x.con && x.base === 't')) return 'コンストレイントで移動する IK の終端';
+      } else if (rig.rest(end) && ((rig.clip.byNode.get(end) || { channels: [] }).channels.length || rig.chanInputs(end).length)) {
+        return 'IK の終端のチャンネルの入力';
+      }
+      return null;
+    })();
+    if (why) {
+      for (const ni of joints) if (steps.get(ni) && steps.get(ni).kind !== DELEGATED) delegate(ni, why);
+      continue;
+    }
+    // 動かない終端の移動の値（RigEvaluator の chan(end, 't'): レストの値に制限を当てたもの）
+    let endChan = null;
+    if (!rig.moving.has(end) && rig.rest(end)) {
+      const r = rig.rest(end);
+      endChan = { ...r };
+      for (const k of VEC_KEYS) if (r[k]) endChan[k] = r[k].slice();
+      clampLimits(endChan);
+    }
+    const ik = { id, chain, joints, end, endMoving: rig.moving.has(end), endChan, handle: g.dag, stamp: -1, sol: null, ev: null,
+      pvc: g.ik.solver === 'ikRPsolver' && chain.length >= 3 ? poleVectorOf(g, chain) : null, nums: new Map(), pvStamp: -1, pv: null };
+    // 極ベクトル・ひねり・ブレンドで、時間で変わるのに専用に計算しないものがあれば、RigEvaluator が読む（キャッシュに値を入れる）
+    // （解き方が読む属性: ブレンドはすべて、ひねり・極ベクトルは 3 本以上のジョイントの回転プレーンだけ）
+    const rp = g.ik.solver === 'ikRPsolver' && chain.length >= 3;
+    ik.reads = !staticPlug(id, 'ikb') || (rp && (!staticPlug(id, 'twi') || (!ik.pvc && !staticPlug(id, 'pv'))));
+    iks.set(id, ik);
+    for (const ni of joints) {
+      const st = steps.get(ni);
+      st.ik = ik;
+      st.kind = DRIVEN;
+    }
   }
   // コンストレイントのターゲットは、ピボットの接続がないこと（あれば、そのコンストレイントで動くノードを任せる）
   for (const c of [...cons.values()]) {
@@ -209,8 +314,20 @@ export function buildPlan(rig, deps) {
     if (p >= 0 && !visit(p)) return false;
     const s = steps.get(ni);
     if (s && s.kind !== DELEGATED) {
-      if (s.isNode >= 0 && !visit(s.isNode)) return false;
+      if (s.isNode >= 0 && !(s.ik && s.ik.chain.includes(s.isNode)) && !visit(s.isNode)) return false;
       for (const x of s.inputs) if (x.con) for (const t of x.con.targets) if (!visit(t.ni)) return false;
+      if (s.ik && s.ik.chain[0] === ni) {
+        // 開始ジョイントで IK を解く: ハンドル・チェーンのジョイントのコンストレイントのターゲット・親のスケールの打ち消しの元が先
+        const ik = s.ik;
+        if (!visit(ik.handle)) return false;
+        if (ik.pvc) for (const r of ik.pvc.reads) if (!visit(r)) return false;
+        for (const m of ik.chain) {
+          const ms = steps.get(m);
+          const isn = ms ? ms.isNode : ((rig.rest(m) || {}).isNode ?? -1);
+          if (isn >= 0 && rig.rest(isn) && !ik.chain.includes(isn) && !visit(isn)) return false;
+          if (ms && ms.inputs && m !== ni) for (const x of ms.inputs) if (x.con) for (const t of x.con.targets) if (!visit(t.ni)) return false;
+        }
+      }
     }
     state.set(ni, 1);
     if (!s) {
@@ -251,13 +368,16 @@ export function buildPlan(rig, deps) {
     rig, order, steps, cons: [...cons.values()],
     moving: [...rig.moving].map((ni) => steps.get(ni)),
     counts: { simple: order.filter((s) => s.kind === SIMPLE).length, driven: order.filter((s) => s.kind === DRIVEN).length,
-      delegated: order.filter((s) => s.kind === DELEGATED).length, constraints: cons.size },
+      delegated: order.filter((s) => s.kind === DELEGATED).length, constraints: cons.size, ik: iks.size },
     delegated: Object.fromEntries(delegated),
+    iks: [...iks.values()],
     // RigEvaluator のフレームのキャッシュに値を入れるか: 任せたノード・props・形の変わるカーブがあるとき（RigEvaluator が
     // 読むので）。なければ入れない（評価のあとで RigEvaluator が値を求めても、計算し直すので同じ値）
-    share: delegated.size > 0 || rig.props.length > 0 || rig.curveIds().length > 0,
-    depsAdded: false,
+    // IK の極ベクトル・ひねりなどの属性は RigEvaluator が読む（poleVectorConstraint などはキャッシュの値を使う）ので入れる
+    share: delegated.size > 0 || [...iks.values()].some((ik) => ik.reads) || rig.props.length > 0 || rig.curveIds().length > 0,
+    depsAdded: false, f: 0,
   };
+  for (const ik of iks.values()) ik.ev = ikReader(plan, ik);
   return { plan };
 }
 
@@ -266,7 +386,88 @@ export function buildPlan(rig, deps) {
 /** チャンネルの値（mode: 'full' | 'fk' | 't'）。専用に計算したノードは計算した値、任せたノードは RigEvaluator から */
 function chanOf(plan, ni, mode) {
   const s = plan.steps.get(ni);
+  if (s && s.ik && mode === 'fk') return fkOf(plan, s);
   return s && s.cur && s.kind !== DELEGATED ? s.cur : plan.rig.chan(ni, mode);
+}
+
+/** IK で動くジョイントの FK の値（IK を除いたチャンネルの値。RigEvaluator.chan(ni, 'fk')）。フレームごとに 1 回 */
+function fkOf(plan, s) {
+  if (s.fkStamp !== plan.stamp) {
+    if (!s.fk) { s.fk = { ...s.rest }; for (const k of VEC_KEYS) if (s.rest[k]) s.fk[k] = s.rest[k].slice(); }
+    channelValues(plan, s, plan.f, s.fk);
+    s.fkStamp = plan.stamp;
+  }
+  return s.fk;
+}
+
+/** IK を解く（フレームごとに 1 回）。開始ジョイント・中間ジョイントなど → 回転（度）の Map か null */
+function solveOf(plan, ik) {
+  if (ik.stamp !== plan.stamp) { ik.sol = solveIKCore(ik.ev, ik.id); ik.stamp = plan.stamp; }
+  return ik.sol;
+}
+
+/** 極ベクトル（ハンドルの親の空間。RigEvaluator の poleVectorConstraint の出力 ct → ハンドルの pv と同じ） */
+function poleVector(plan, ik, def) {
+  const c = ik.pvc;
+  const vecOf = (r) => {
+    if (r.value) return r.value;
+    const ch = chanTOf(plan, r.ni);
+    return ch ? ch.t : [0, 0, 0];
+  };
+  const matOf = (r) => (r.value ? r.value : parentSpace(plan, r.ni, new Matrix4()));
+  const acc = new Vector3();
+  for (const t of c.targets) {
+    const tt = vecOf(t.tt), trp = t.trp, trt = t.trt;
+    acc.addScaledVector(new Vector3(tt[0] + trp[0] + trt[0], tt[1] + trp[1] + trt[1], tt[2] + trp[2] + trt[2]).applyMatrix4(matOf(t.tpm)), t.w / c.total);
+  }
+  const crp = vecOf(c.crp), crt = c.crt;
+  const start = new Vector3(crp[0] + crt[0], crp[1] + crt[1], crp[2] + crt[2]).applyMatrix4(matOf(c.ps));
+  const pwInv = parentSpace(plan, ik.handle, new Matrix4()).clone().invert();
+  const ct = acc.sub(start).applyMatrix3(new Matrix3().setFromMatrix4(pwInv)).toArray();
+  return def.map((d, i) => (Number.isFinite(ct[i]) ? ct[i] : d));
+}
+
+/** ノードの chan(ni, 't')（専用に計算するノード・任せたノード・動かないノード）。レストの値がなければ null */
+function chanTOf(plan, ni) {
+  const s = plan.steps.get(ni);
+  if (!plan.rig.rest(ni)) return null;
+  if (s.kind === STATIC) return s.cur;
+  return chanTObj(plan, ni, plan.f);
+}
+
+/** IK の解き方（rig.js の solveIKCore）に渡す値の読み方。RigEvaluator の同じ名前のメソッドの値を、計画の値で返す */
+function ikReader(plan, ik) {
+  const rig = plan.rig;
+  const ev = {
+    byId: rig.byId, dagGraph: rig.dagGraph, ikVariant: null,
+    rest: (ni) => rig.rest(ni),
+    chan: (ni, mode) => {
+      if (mode === 't') {
+        if (ni !== ik.end) return rig.chan(ni, 't');
+        return ik.endMoving ? chanTObj(plan, ni, plan.f) : ik.endChan;
+      }
+      return chanOf(plan, ni, mode);
+    },
+    isScaleOf: (ni) => isScaleOf(plan, ni),
+    world: (ni) => plan.steps.get(ni).world,
+    parentWorld: (ni) => parentWorld(plan, ni),
+    parentSpace: (ni) => parentSpace(plan, ni, new Matrix4()),
+    // 極ベクトル（ハンドルの親の空間）→ ワールド（RigEvaluator.pvWorld。ikVariant なし）
+    pvWorld: (pv, handleNi) => new Vector3(pv[0], pv[1], pv[2]).applyMatrix3(new Matrix3().setFromMatrix4(ev.parentSpace(handleNi))),
+    twistSign: () => 1,
+    // ハンドルの属性: 時間で変わらないものは最初に読んだ値を使い回す。極ベクトルは専用に計算できれば計算する
+    num: (id, attr, def) => {
+      if (id !== ik.id) return rig.num(id, attr, def);
+      const key = attr + ':' + def;
+      if (ik.nums.has(key)) return ik.nums.get(key);
+      const v = rig.num(id, attr, def);
+      if (plan.rig.keep.plug.get(id) && plan.rig.keep.plug.get(id).has(attr)) ik.nums.set(key, v);
+      return v;
+    },
+    vec: (id, attr, def) => (id === ik.id && attr === 'pv' && ik.pvc ? poleVector(plan, ik, def) : rig.vec(id, attr, def)),
+    localEuler: (ni, q, opts) => rig.localEuler(ni, q, opts),
+  };
+  return ev;
 }
 
 function parentWorld(plan, ni) {
@@ -285,7 +486,25 @@ function parentSpace(plan, ni, target) {
 
 /** チャンネルの値とローカル行列（RigEvaluator.chan('full') → localFileUncached と同じ） */
 function evalChannels(plan, s, f) {
-  const { rest, cur, e } = s;
+  const { rest, cur } = s;
+  if (s.ik) {
+    // IK を除いた値に、IK の回転を入れて制限を当てる（RigEvaluator.chan('full') と同じ順番）
+    const fk = fkOf(plan, s);
+    for (const k of VEC_KEYS) { const a = fk[k]; if (a) { if (!cur[k]) cur[k] = [0, 0, 0]; const c = cur[k]; c[0] = a[0]; c[1] = a[1]; c[2] = a[2]; } }
+    cur.ro = fk.ro;
+    const sol = solveOf(plan, s.ik);
+    const v = sol && sol.get(s.ni);
+    if (Array.isArray(v)) { cur.r[0] = v[0]; cur.r[1] = v[1]; cur.r[2] = v[2]; }
+    clampLimits(cur);
+  } else channelValues(plan, s, f, cur);
+  let isScale = null;
+  if (rest.isScale || (rest.isNode ?? -1) >= 0) isScale = s.isNode >= 0 ? chanOf(plan, s.isNode, 'fk').s : rest.isScale;
+  composeLocalMatrix(cur, isScale, s.local);
+}
+
+/** チャンネルの値（IK を除く。RigEvaluator.chan('fk') と同じ）を cur に入れる */
+function channelValues(plan, s, f, cur) {
+  const { rest, e } = s;
   for (const k of VEC_KEYS) if (rest[k]) { const a = cur[k], b = rest[k]; a[0] = b[0]; a[1] = b[1]; a[2] = b[2]; }
   for (const b of s.zeroBases) cur[b] = [0, 0, 0];
   cur.ro = rest.ro;
@@ -307,9 +526,6 @@ function evalChannels(plan, s, f) {
     } else if (typeof v === 'number') cur[x.base][x.axis] = v * k;
   }
   clampLimits(cur);
-  let isScale = null;
-  if (rest.isScale || (rest.isNode ?? -1) >= 0) isScale = s.isNode >= 0 ? chanOf(plan, s.isNode, 'full').s : rest.isScale;
-  composeLocalMatrix(cur, isScale, s.local);
 }
 
 const _ps = new Matrix4(), _pw = new Matrix4(), _pwInv = new Matrix4(), _P = new Matrix4(), _piv = new Vector3(), _pos = new Vector3();
@@ -397,8 +613,13 @@ function weightedPivot(plan, c, out) {
 
 /** 動かされるノードの移動の値（RigEvaluator の chan(ni, 't').t と同じ: 移動のカーブと移動の入力だけ） */
 function chanT(plan, ni, f) {
+  return chanTObj(plan, ni, f).t;
+}
+
+/** RigEvaluator の chan(ni, 't') と同じ値（移動のカーブと移動の入力だけ。ほかはレストの値） */
+function chanTObj(plan, ni, f) {
   const s = plan.steps.get(ni);
-  if (s.kind === DELEGATED) return plan.rig.chan(ni, 't').t;
+  if (s.kind === DELEGATED) return plan.rig.chan(ni, 't');
   const rest = s.rest;
   const out = { ...rest };
   for (const k of VEC_KEYS) if (rest[k]) out[k] = rest[k].slice();
@@ -413,7 +634,7 @@ function chanT(plan, ni, f) {
     if (x.axis < 0) { if (Array.isArray(v)) for (let a = 0; a < 3; a++) if (!s.fromCurve.has('t' + XYZ[a])) out.t[a] = v[a]; }
     else if (typeof v === 'number') out.t[x.axis] = v;
   }
-  return clampLimits(out).t;
+  return clampLimits(out);
 }
 
 /** コンストレイントの出力（RigEvaluator.constraint と同じ）。c.out に入れる（求められなければ空） */
@@ -507,6 +728,7 @@ function evalConstraint(plan, c, f) {
  */
 export function runPlan(plan, f, target) {
   plan.stamp = (plan.stamp || 0) + 1;
+  plan.f = f;
   const rig = plan.rig;
   const cache = rig.cache;
   for (const s of plan.order) {
@@ -524,7 +746,7 @@ export function runPlan(plan, f, target) {
       if (plan.share) {
         cache.local.set(ni, s.local);
         cache.chan.set(ni * 3, s.cur);
-        cache.chan.set(ni * 3 + 1, s.cur);
+        cache.chan.set(ni * 3 + 1, s.ik ? fkOf(plan, s) : s.cur);
       }
     }
     if (plan.share) cache.world.set(ni, s.world);

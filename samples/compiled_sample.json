@@ -579,6 +579,470 @@
    ]
   },
   {
+   "name":"ik_b",
+   "path":"|grp|c0|c1|c2|ik_b",
+   "type":"ikHandle",
+   "parent":3,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    0.6477418975,
+    0.4698463104,
+    -0.5997290045,
+    0.0,
+    -0.3585664405,
+    0.8825641193,
+    0.304155689,
+    0.0,
+    0.6722057289,
+    0.0180283112,
+    0.7401448764,
+    0.0,
+    2.8509980879,
+    2.2047694656,
+    -1.5836337933,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   }
+  },
+  {
+   "name":"ik_a",
+   "path":"|grp|c0|ik_a",
+   "type":"ikHandle",
+   "parent":1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    0.9396926208,
+    0.0,
+    -0.3420201433,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.3420201433,
+    0.0,
+    0.9396926208,
+    0.0,
+    0.0,
+    1.5,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   }
+  },
+  {
+   "name":"m0",
+   "path":"|grp|m0",
+   "type":"joint",
+   "parent":0,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    -3.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    0.9396926208,
+    0.0,
+    -0.3420201433,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.3420201433,
+    0.0,
+    0.9396926208,
+    0.0,
+    0.0,
+    -2.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     -3.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true
+  },
+  {
+   "name":"m1",
+   "path":"|grp|m0|m1",
+   "type":"joint",
+   "parent":10,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    2.0,
+    0.0,
+    0.3,
+    1.0
+   ],
+   "worldMatrix":[
+    0.9396926208,
+    0.0,
+    -0.3420201433,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.3420201433,
+    0.0,
+    0.9396926208,
+    0.0,
+    1.9819912846,
+    -2.0,
+    -0.4021325004,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     2.0,
+     0.0,
+     0.3
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true
+  },
+  {
+   "name":"m2",
+   "path":"|grp|m0|m1|m2",
+   "type":"joint",
+   "parent":11,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    2.0,
+    0.0,
+    -0.3,
+    1.0
+   ],
+   "worldMatrix":[
+    0.9396926208,
+    0.0,
+    -0.3420201433,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.3420201433,
+    0.0,
+    0.9396926208,
+    0.0,
+    3.7587704831,
+    -2.0,
+    -1.3680805733,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     2.0,
+     0.0,
+     -0.3
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true
+  },
+  {
+   "name":"m3",
+   "path":"|grp|m0|m1|m2|m3",
+   "type":"joint",
+   "parent":12,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    2.0,
+    0.0,
+    0.2,
+    1.0
+   ],
+   "worldMatrix":[
+    0.9396926208,
+    0.0,
+    -0.3420201433,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.3420201433,
+    0.0,
+    0.9396926208,
+    0.0,
+    5.7065597534,
+    -2.0,
+    -1.8641823358,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     2.0,
+     0.0,
+     0.2
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true
+  },
+  {
+   "name":"m4",
+   "path":"|grp|m0|m1|m2|m3|m4",
+   "type":"joint",
+   "parent":13,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    0.9396926208,
+    0.0,
+    -0.3420201433,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.3420201433,
+    0.0,
+    0.9396926208,
+    0.0,
+    6.6462523742,
+    -2.0,
+    -2.2062024791,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     1.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true
+  },
+  {
    "name":"j0",
    "path":"|j0",
    "type":"joint",
@@ -663,7 +1127,7 @@
    "name":"j1",
    "path":"|j0|j1",
    "type":"joint",
-   "parent":8,
+   "parent":15,
    "matrix":[
     1.0,
     0.0,
@@ -739,7 +1203,7 @@
    "name":"j2",
    "path":"|j0|j1|j2",
    "type":"joint",
-   "parent":9,
+   "parent":16,
    "matrix":[
     1.0,
     0.0,
@@ -1343,6 +1807,552 @@
     "ry ← la_la（lookAt）",
     "rz ← la_la（lookAt）"
    ]
+  },
+  {
+   "name":"k0",
+   "path":"|k0",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    4.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    4.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     4.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "rx ← k0_rx（animCurveTA）"
+   ]
+  },
+  {
+   "name":"k1",
+   "path":"|k0|k1",
+   "type":"joint",
+   "parent":25,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    0.0,
+    -0.5,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    4.0,
+    -0.5,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     3.0,
+     0.0,
+     -0.5
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true
+  },
+  {
+   "name":"k2",
+   "path":"|k0|k1|k2",
+   "type":"joint",
+   "parent":26,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    0.0,
+    0.5,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    6.0,
+    4.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     3.0,
+     0.0,
+     0.5
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "rx ← k2_oc（orientConstraint）",
+    "ry ← k2_oc（orientConstraint）",
+    "rz ← k2_oc（orientConstraint）"
+   ]
+  },
+  {
+   "name":"k3",
+   "path":"|k0|k1|k2|k3",
+   "type":"joint",
+   "parent":27,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    7.0,
+    4.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     1.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true
+  },
+  {
+   "name":"pv_a",
+   "path":"|pv_a",
+   "type":"transform",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    4.0,
+    5.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    4.0,
+    5.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     3.0,
+     4.0,
+     5.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   },
+   "drivenBy":[
+    "tz ← pv_a_tz（animCurveTL）"
+   ]
+  },
+  {
+   "name":"n0",
+   "path":"|n0",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -2.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -2.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     -2.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true
+  },
+  {
+   "name":"n1",
+   "path":"|n0|n1",
+   "type":"joint",
+   "parent":30,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    3.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -2.0,
+    3.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     3.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true
+  },
+  {
+   "name":"ik_c",
+   "path":"|ik_c",
+   "type":"ikHandle",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -1.0,
+    2.0,
+    1.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -1.0,
+    2.0,
+    1.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     -1.0,
+     2.0,
+     1.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   },
+   "drivenBy":[
+    "tz ← ik_c_tz（animCurveTL）"
+   ]
   }
  ],
  "meshes":[],
@@ -1359,8 +2369,8 @@
  "textures":[],
  "warnings":[],
  "stats":{
-  "nodes":18,
-  "joints":13,
+  "nodes":33,
+  "joints":24,
   "meshes":0,
   "curves":0,
   "cameras":0,
@@ -1371,7 +2381,7 @@
   "textures":0,
   "texturesMissing":0,
   "bindPoseNodes":0,
-  "drivenNodes":16
+  "drivenNodes":20
  },
  "animation":{
   "fps":24.0,
@@ -1492,6 +2502,46 @@
     "weighted":false,
     "pre":0,
     "post":0
+   },
+   {
+    "name":"k0_rx",
+    "type":"TA",
+    "offset":110,
+    "count":10,
+    "tangent":18,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
+    "name":"pv_a_tz",
+    "type":"TL",
+    "offset":120,
+    "count":10,
+    "tangent":18,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
+    "name":"ik_b_twi",
+    "type":"TA",
+    "offset":130,
+    "count":10,
+    "tangent":18,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
+    "name":"ik_c_tz",
+    "type":"TL",
+    "offset":140,
+    "count":10,
+    "tangent":18,
+    "weighted":false,
+    "pre":0,
+    "post":0
    }
   ],
   "channels":[
@@ -1541,14 +2591,29 @@
     "curve":8
    },
    {
-    "node":12,
+    "node":19,
     "attr":"tx",
     "curve":9
    },
    {
-    "node":15,
+    "node":22,
     "attr":"tx",
     "curve":10
+   },
+   {
+    "node":25,
+    "attr":"rx",
+    "curve":11
+   },
+   {
+    "node":29,
+    "attr":"tz",
+    "curve":12
+   },
+   {
+    "node":32,
+    "attr":"tz",
+    "curve":14
    }
   ],
   "nodes":[
@@ -1821,6 +2886,176 @@
    },
    {
     "node":8,
+    "joint":false,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":9,
+    "joint":false,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":10,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     -3.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":11,
+    "joint":true,
+    "ro":0,
+    "t":[
+     2.0,
+     0.0,
+     0.3
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":12,
+    "joint":true,
+    "ro":0,
+    "t":[
+     2.0,
+     0.0,
+     -0.3
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":13,
+    "joint":true,
+    "ro":0,
+    "t":[
+     2.0,
+     0.0,
+     0.2
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":15,
     "joint":true,
     "ro":1,
     "t":[
@@ -1850,7 +3085,7 @@
     ]
    },
    {
-    "node":9,
+    "node":16,
     "joint":true,
     "ro":0,
     "t":[
@@ -1873,7 +3108,7 @@
      0.0,
      0.0
     ],
-    "isNode":8,
+    "isNode":15,
     "isScale":[
      1.0,
      1.0,
@@ -1886,7 +3121,7 @@
     ]
    },
    {
-    "node":10,
+    "node":17,
     "joint":true,
     "ro":0,
     "t":[
@@ -1916,7 +3151,7 @@
     ]
    },
    {
-    "node":11,
+    "node":18,
     "joint":true,
     "ro":0,
     "t":[
@@ -1964,7 +3199,7 @@
     ]
    },
    {
-    "node":12,
+    "node":19,
     "joint":true,
     "ro":0,
     "t":[
@@ -1994,7 +3229,7 @@
     ]
    },
    {
-    "node":13,
+    "node":20,
     "joint":false,
     "ro":0,
     "t":[
@@ -2019,7 +3254,7 @@
     ]
    },
    {
-    "node":14,
+    "node":21,
     "joint":true,
     "ro":0,
     "t":[
@@ -2049,7 +3284,7 @@
     ]
    },
    {
-    "node":15,
+    "node":22,
     "joint":true,
     "ro":0,
     "t":[
@@ -2079,7 +3314,7 @@
     ]
    },
    {
-    "node":16,
+    "node":23,
     "joint":true,
     "ro":4,
     "t":[
@@ -2109,7 +3344,7 @@
     ]
    },
    {
-    "node":17,
+    "node":24,
     "joint":true,
     "ro":0,
     "t":[
@@ -2133,6 +3368,212 @@
      0.0
     ],
     "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":25,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     4.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":26,
+    "joint":true,
+    "ro":0,
+    "t":[
+     3.0,
+     0.0,
+     -0.5
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "isNode":25,
+    "isScale":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":27,
+    "joint":true,
+    "ro":0,
+    "t":[
+     3.0,
+     0.0,
+     0.5
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":29,
+    "joint":false,
+    "ro":0,
+    "t":[
+     3.0,
+     4.0,
+     5.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":30,
+    "joint":true,
+    "ro":0,
+    "t":[
+     -2.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":31,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     3.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":32,
+    "joint":false,
+    "ro":0,
+    "t":[
+     -1.0,
+     2.0,
+     1.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
      0.0,
      0.0,
      0.0
@@ -2219,7 +3660,7 @@
     "id":6,
     "name":"j0",
     "type":"joint",
-    "dag":8,
+    "dag":15,
     "inputs":{
      "tx":{
       "node":7,
@@ -2316,7 +3757,7 @@
       "attr":"ro"
      }
     },
-    "driven":8,
+    "driven":15,
     "targets":[
      {
       "index":0,
@@ -2328,7 +3769,7 @@
     "id":8,
     "name":"j1",
     "type":"joint",
-    "dag":9,
+    "dag":16,
     "inputs":{
      "tx":{
       "node":9,
@@ -2470,7 +3911,7 @@
       "attr":"ro"
      }
     },
-    "driven":9,
+    "driven":16,
     "targets":[
      {
       "index":0,
@@ -2486,7 +3927,7 @@
     "id":10,
     "name":"j2",
     "type":"joint",
-    "dag":10,
+    "dag":17,
     "inputs":{
      "tx":{
       "node":11,
@@ -2585,7 +4026,7 @@
       "attr":"ro"
      }
     },
-    "driven":10,
+    "driven":17,
     "targets":[
      {
       "index":0,
@@ -2597,7 +4038,7 @@
     "id":12,
     "name":"j3",
     "type":"joint",
-    "dag":11,
+    "dag":18,
     "inputs":{
      "tx":{
       "node":13,
@@ -2696,7 +4137,7 @@
       "attr":"ro"
      }
     },
-    "driven":11,
+    "driven":18,
     "targets":[
      {
       "index":0,
@@ -2708,7 +4149,7 @@
     "id":14,
     "name":"jm",
     "type":"joint",
-    "dag":12,
+    "dag":19,
     "inputs":{
      "tx":{
       "curve":9
@@ -2786,7 +4227,7 @@
       "attr":"ro"
      }
     },
-    "driven":12,
+    "driven":19,
     "targets":[
      {
       "index":0,
@@ -2798,7 +4239,7 @@
     "id":16,
     "name":"jp",
     "type":"transform",
-    "dag":13,
+    "dag":20,
     "inputs":{
      "tx":{
       "node":17,
@@ -2924,7 +4365,7 @@
       "attr":"ro"
      }
     },
-    "driven":13,
+    "driven":20,
     "targets":[
      {
       "index":0,
@@ -3094,7 +4535,7 @@
     "id":20,
     "name":"js",
     "type":"joint",
-    "dag":14,
+    "dag":21,
     "inputs":{
      "sx":{
       "node":21,
@@ -3208,7 +4649,7 @@
       "attr":"ro"
      }
     },
-    "driven":14,
+    "driven":21,
     "targets":[
      {
       "index":0,
@@ -3224,7 +4665,7 @@
     "id":22,
     "name":"ja",
     "type":"joint",
-    "dag":15,
+    "dag":22,
     "inputs":{
      "tx":{
       "curve":10
@@ -3339,7 +4780,7 @@
       "attr":"t"
      }
     },
-    "driven":15,
+    "driven":22,
     "targets":[
      {
       "index":0,
@@ -3443,7 +4884,7 @@
     "id":26,
     "name":"jc",
     "type":"joint",
-    "dag":16,
+    "dag":23,
     "inputs":{
      "rx":{
       "node":27,
@@ -3523,7 +4964,7 @@
       "attr":"t"
      }
     },
-    "driven":16,
+    "driven":23,
     "targets":[
      {
       "index":0,
@@ -3535,7 +4976,7 @@
     "id":28,
     "name":"la",
     "type":"joint",
-    "dag":17,
+    "dag":24,
     "inputs":{
      "rx":{
       "node":29,
@@ -3621,13 +5062,304 @@
       "attr":"t"
      }
     },
-    "driven":17,
+    "driven":24,
     "targets":[
      {
       "index":0,
       "node":3
      }
     ]
+   },
+   {
+    "id":30,
+    "name":"k0",
+    "type":"joint",
+    "dag":25,
+    "inputs":{
+     "rx":{
+      "curve":11
+     }
+    }
+   },
+   {
+    "id":31,
+    "name":"k1",
+    "type":"joint",
+    "dag":26,
+    "attrs":{
+     "pa":[
+      0.0,
+      -15.0,
+      0.0
+     ]
+    }
+   },
+   {
+    "id":32,
+    "name":"k2",
+    "type":"joint",
+    "dag":27,
+    "inputs":{
+     "rx":{
+      "node":36,
+      "attr":"crx"
+     },
+     "ry":{
+      "node":36,
+      "attr":"cry"
+     },
+     "rz":{
+      "node":36,
+      "attr":"crz"
+     }
+    }
+   },
+   {
+    "id":33,
+    "name":"ik_a",
+    "type":"ikHandle",
+    "dag":9,
+    "inputs":{
+     "pvx":{
+      "node":35,
+      "attr":"ctx"
+     },
+     "pvy":{
+      "node":35,
+      "attr":"cty"
+     },
+     "pvz":{
+      "node":35,
+      "attr":"ctz"
+     }
+    },
+    "ik":{
+     "solver":"ikRPsolver",
+     "chain":[
+      25,
+      26,
+      27
+     ]
+    }
+   },
+   {
+    "id":34,
+    "name":"pv_a",
+    "type":"transform",
+    "dag":29,
+    "inputs":{
+     "tz":{
+      "curve":12
+     }
+    }
+   },
+   {
+    "id":35,
+    "name":"ik_a_pvc",
+    "type":"poleVectorConstraint",
+    "dag":-1,
+    "attrs":{
+     "w0":1.0,
+     "pv_aW0":1.0
+    },
+    "inputs":{
+     "cpim":{
+      "node":33,
+      "attr":"pim"
+     },
+     "ps":{
+      "node":30,
+      "attr":"pm"
+     },
+     "crp":{
+      "node":30,
+      "attr":"t"
+     },
+     "tg[0].tt":{
+      "node":34,
+      "attr":"t"
+     },
+     "tg[0].trp":{
+      "node":34,
+      "attr":"rp"
+     },
+     "tg[0].trt":{
+      "node":34,
+      "attr":"rpt"
+     },
+     "tg[0].tpm":{
+      "node":34,
+      "attr":"pm"
+     },
+     "tg[0].tw":{
+      "node":35,
+      "attr":"w0"
+     }
+    },
+    "pivot":25,
+    "driven":9,
+    "targets":[
+     {
+      "index":0,
+      "node":34
+     }
+    ]
+   },
+   {
+    "id":36,
+    "name":"k2_oc",
+    "type":"orientConstraint",
+    "dag":-1,
+    "attrs":{
+     "w0":1.0,
+     "c1W0":1.0
+    },
+    "inputs":{
+     "tg[0].tw":{
+      "node":36,
+      "attr":"w0"
+     },
+     "tg[0].tt":{
+      "node":2,
+      "attr":"t"
+     },
+     "tg[0].trp":{
+      "node":2,
+      "attr":"rp"
+     },
+     "tg[0].trt":{
+      "node":2,
+      "attr":"rpt"
+     },
+     "tg[0].tr":{
+      "node":2,
+      "attr":"r"
+     },
+     "tg[0].tro":{
+      "node":2,
+      "attr":"ro"
+     },
+     "tg[0].ts":{
+      "node":2,
+      "attr":"s"
+     },
+     "tg[0].tpm":{
+      "node":2,
+      "attr":"pm"
+     },
+     "tg[0].tjo":{
+      "node":2,
+      "attr":"jo"
+     },
+     "tg[0].tsc":{
+      "node":2,
+      "attr":"ssc"
+     },
+     "tg[0].tis":{
+      "node":2,
+      "attr":"is"
+     },
+     "cpim":{
+      "node":32,
+      "attr":"pim"
+     },
+     "crp":{
+      "node":32,
+      "attr":"rp"
+     },
+     "crt":{
+      "node":32,
+      "attr":"rpt"
+     },
+     "cro":{
+      "node":32,
+      "attr":"ro"
+     }
+    },
+    "driven":27,
+    "targets":[
+     {
+      "index":0,
+      "node":2
+     }
+    ]
+   },
+   {
+    "id":37,
+    "name":"m0",
+    "type":"joint",
+    "dag":10
+   },
+   {
+    "id":38,
+    "name":"m1",
+    "type":"joint",
+    "dag":11
+   },
+   {
+    "id":39,
+    "name":"m2",
+    "type":"joint",
+    "dag":12
+   },
+   {
+    "id":40,
+    "name":"m3",
+    "type":"joint",
+    "dag":13
+   },
+   {
+    "id":41,
+    "name":"ik_b",
+    "type":"ikHandle",
+    "dag":8,
+    "attrs":{
+     "ikb":0.5
+    },
+    "inputs":{
+     "twi":{
+      "curve":13
+     }
+    },
+    "ik":{
+     "solver":"ikRPsolver",
+     "chain":[
+      10,
+      11,
+      12,
+      13
+     ]
+    }
+   },
+   {
+    "id":42,
+    "name":"n0",
+    "type":"joint",
+    "dag":30
+   },
+   {
+    "id":43,
+    "name":"n1",
+    "type":"joint",
+    "dag":31
+   },
+   {
+    "id":44,
+    "name":"ik_c",
+    "type":"ikHandle",
+    "dag":32,
+    "inputs":{
+     "tz":{
+      "curve":14
+     }
+    },
+    "ik":{
+     "solver":"ikSCsolver",
+     "chain":[
+      30,
+      31
+     ]
+    }
    }
   ],
   "nodeDefs":{},
@@ -3636,18 +5368,18 @@
   "props":[],
   "times":{
    "dtype":"float32",
-   "count":110,
-   "data":"AACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EE="
+   "count":150,
+   "data":"AACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBB"
   },
   "values":{
    "dtype":"float32",
-   "count":110,
-   "data":"zcxMPs3MTD8zM7M/AAAAQGZmJkDNzExAMzNzQM3MjEAAAKBAMzOzQAAA4EAAAOBBAABEQgAAjEIAAIA/AACwQQAALEIAAIBCAACqQgAAgEEAAIDAAACAwQAA4MEAACDCAABQwgAAgMIAAJjCAACwwgAAyMIAAODCAABQQQAAsEEAAPhBAAAgQgAAREIAAGhCAACGQgAAmEIAAKpCAAC8QgAAXMIAACDCAADIwQAAIMEAAKBAAACgQQAADEIAAEhCAACCQgAAoEJcj4I/cT2KP4XrkT+amZk/rkehP8P1qD/Xo7A/7FG4PwAAwD8Ursc/uB6FP+F6lD8K16M/MzOzP1yPwj+F69E/rkfhP9ej8D8AAABAFK4HQBSuhz9SuJ4/j8K1P83MzD8K1+M/SOH6P8P1CEDhehRAAAAgQB+FK0AAAABAAAAAQQAAYEEAAKBBAADQQQAAAEIAABhCAAAwQgAASEIAAGBCzczMvc3MzL4zMzO/AACAv2Zmpr/NzMy/MzPzv83MDMAAACDAMzMzwM3M7L8zM7O/MzNzvwAAAL/NzEy9zczMPpqZWT9mZqY/AADgP83MDEA="
+   "count":150,
+   "data":"zcxMPs3MTD8zM7M/AAAAQGZmJkDNzExAMzNzQM3MjEAAAKBAMzOzQAAA4EAAAOBBAABEQgAAjEIAAIA/AACwQQAALEIAAIBCAACqQgAAgEEAAIDAAACAwQAA4MEAACDCAABQwgAAgMIAAJjCAACwwgAAyMIAAODCAABQQQAAsEEAAPhBAAAgQgAAREIAAGhCAACGQgAAmEIAAKpCAAC8QgAAXMIAACDCAADIwQAAIMEAAKBAAACgQQAADEIAAEhCAACCQgAAoEJcj4I/cT2KP4XrkT+amZk/rkehP8P1qD/Xo7A/7FG4PwAAwD8Ursc/uB6FP+F6lD8K16M/MzOzP1yPwj+F69E/rkfhP9ej8D8AAABAFK4HQBSuhz9SuJ4/j8K1P83MzD8K1+M/SOH6P8P1CEDhehRAAAAgQB+FK0AAAABAAAAAQQAAYEEAAKBBAADQQQAAAEIAABhCAAAwQgAASEIAAGBCzczMvc3MzL4zMzO/AACAv2Zmpr/NzMy/MzPzv83MDMAAACDAMzMzwM3M7L8zM7O/MzNzvwAAAL/NzEy9zczMPpqZWT9mZqY/AADgP83MDEAAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAAAAQAAAoEAAAABBZmaWQDMzc0CamTlAAAAAQM3MjD/NzEw+MzMzv83MzL8AACDAmplZwAAAAEAAAABBAABgQQAAoEEAANBBAAAAQgAAGEIAADBCAABIQgAAYEJmZma/mpkZv5qZmb4AAAAAmpmZPpqZGT9mZmY/mpmZPwAAwD9mZuY/"
   },
   "tangentTypes":{
    "dtype":"uint8",
-   "count":220,
-   "data":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+   "count":300,
+   "data":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
   },
   "fixedTangents":{
    "dtype":"float32",
@@ -3656,12 +5388,12 @@
   },
   "warnings":[],
   "stats":{
-   "curves":11,
-   "keys":110,
-   "channels":11,
-   "nodes":16,
-   "graphNodes":30,
-   "seconds":0.003
+   "curves":15,
+   "keys":150,
+   "channels":14,
+   "nodes":25,
+   "graphNodes":45,
+   "seconds":0.0033
   }
  }
 }

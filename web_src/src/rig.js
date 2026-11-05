@@ -2377,249 +2377,12 @@ export class RigEvaluator {
     return this.memo(this.cache.ik, this.keep.ik, id, () => this.solveIKUncached(id), NULL, () => `ik ${id}`);
   }
 
-  solveIKUncached(id) {
-    const g = this.byId.get(id);
-    if (g.ik.solver === 'ikSplineSolver') return this.solveSpline(id);
-    if (g.ik.chain.length === 2) return this.solveOneBone(id);
-    if (g.ik.chain.length > 3) return this.solveChain(id);
-    const [s, mid, end] = g.ik.chain;
-    const sc = g.ik.solver === 'ikSCsolver';
-    if (!this.rest(s) || !this.rest(mid)) return null;
-    const P = this.parentWorld(s);
-    const fkS = this.chan(s, 'fk'), fkM = this.chan(mid, 'fk');
-    const Ls = composeLocalMatrix(fkS, this.isScaleOf(s), new Matrix4());
-    let Lm = composeLocalMatrix(fkM, this.isScaleOf(mid), new Matrix4());
-    const tEnd = (this.chan(end, 't') || { t: [0, 0, 0] }).t;
-    const Ws = new Matrix4().multiplyMatrices(P, Ls);
-    let Wm = new Matrix4().multiplyMatrices(Ws, Lm);
-    const A = positionOf(Ws), B = positionOf(Wm);
-    let C = new Vector3(tEnd[0], tEnd[1], tEnd[2]).applyMatrix4(Wm);
-    const l1 = B.distanceTo(A), l2 = C.distanceTo(B);
-    if (l1 < EPS || l2 < EPS) return null;
-    // まっすぐなチェーンは曲げる向きが決まらないので、優先角（.pa）で曲げた形を基準にする
-    let n0 = new Vector3().subVectors(B, A).cross(new Vector3().subVectors(C, B));
-    const pa = this.dagGraph.get(mid) && this.dagGraph.get(mid).attrs && this.dagGraph.get(mid).attrs.pa;
-    if (n0.lengthSq() < EPS * l1 * l2 && Array.isArray(pa)) {
-      Lm = composeLocalMatrix({ ...fkM, r: pa }, this.isScaleOf(mid), new Matrix4());
-      Wm = new Matrix4().multiplyMatrices(Ws, Lm);
-      C = new Vector3(tEnd[0], tEnd[1], tEnd[2]).applyMatrix4(Wm);
-      n0 = new Vector3().subVectors(B, A).cross(new Vector3().subVectors(C, B));
-    }
-    const hni = g.dag;
-    const H = positionOf(this.world(hni));
-    const u = new Vector3().subVectors(H, A);
-    const d = u.length();
-    if (d < EPS) return null;
-    u.divideScalar(d);
-    // 極ベクトル（ハンドルの親の空間）→ ワールド。ひねり（twist）で u のまわりに回す。
-    // シングルチェーン（SC）は極ベクトルを持たないので、FK の形の中間ジョイントの側に曲げる（面を保つ）
-    const pvLocal = sc ? [0, 0, 0] : this.vec(id, 'pv', [0, 0, 1]);
-    const pv = this.pvWorld(pvLocal, hni, s);
-    let v = pv.clone().addScaledVector(u, -pv.dot(u));
-    if (v.lengthSq() < EPS) v = new Vector3().subVectors(B, A).addScaledVector(u, -new Vector3().subVectors(B, A).dot(u));
-    if (v.lengthSq() < EPS) v = new Vector3(0, 1, 0).cross(u).lengthSq() > EPS ? new Vector3(0, 1, 0).cross(u) : new Vector3(1, 0, 0).cross(u);
-    v.normalize();
-    if (!sc && this.ikVariant && this.ikVariant.side === -1) v.negate();
-    const twist = sc ? 0 : this.num(id, 'twi', 0) * this.twistSign();
-    if (Math.abs(twist) > EPS) v.applyQuaternion(new Quaternion().setFromAxisAngle(u, twist));
-    // 余弦定理で中間ジョイントの位置
-    const dc = Math.min(Math.max(d, Math.abs(l1 - l2)), l1 + l2);
-    const cosA = Math.min(1, Math.max(-1, (l1 * l1 + dc * dc - l2 * l2) / (2 * l1 * dc)));
-    const sinA = Math.sqrt(Math.max(0, 1 - cosA * cosA));
-    const B1 = A.clone().addScaledVector(u, l1 * cosA).addScaledVector(v, l1 * sinA);
-    const H1 = A.clone().addScaledVector(u, dc);
-    // 開始ジョイント: （骨の向き, 面の法線）の組を、FK の形から IK の形へ回す
-    const d0 = new Vector3().subVectors(B, A).normalize();
-    const d1 = new Vector3().subVectors(B1, A).normalize();
-    let n1 = new Vector3().subVectors(B1, A).cross(new Vector3().subVectors(H1, B1));
-    if (n1.lengthSq() < EPS) n1 = v.clone().cross(u);
-    n1.normalize();
-    if (n0.lengthSq() < EPS) n0 = n1.clone(); else n0.normalize();
-    const frame = (dd, nn) => new Matrix4().makeBasis(dd, nn, dd.clone().cross(nn));
-    const R1 = new Quaternion().setFromRotationMatrix(frame(d1, n1).multiply(frame(d0, n0).transpose()));
-    const qs0 = rotationOf(Ws);
-    let qs1 = R1.clone().multiply(qs0);
-    // 中間ジョイント: 面の法線のまわりに回して、終端をハンドルに向ける
-    const a = new Vector3().subVectors(C, B).normalize().applyQuaternion(R1);
-    const b = new Vector3().subVectors(H1, B1).normalize();
-    const ang = Math.atan2(n1.dot(a.clone().cross(b)), a.dot(b));
-    const R2 = new Quaternion().setFromAxisAngle(n1, ang);
-    let qm1 = R2.multiply(R1).multiply(rotationOf(Wm));
-    if (!sc && this.ikVariant && this.ikVariant.plane === 'axis') {
-      // （再現チェックの候補）3 点の面ではなく、開始ジョイントの軸（FK の形で面の法線に一番近い軸＝肘の回転軸）を
-      // 基準面の法線にそろえる: チェーン全体を、開始 → ハンドルの軸のまわりに回す（終端はハンドルに残る）
-      const axes = [0, 1, 2].map((k) => new Vector3().setFromMatrixColumn(Ws, k).normalize());
-      let bi = 0;
-      axes.forEach((ax, k) => { if (Math.abs(ax.dot(n0)) > Math.abs(axes[bi].dot(n0))) bi = k; });
-      const sgn = Math.sign(axes[bi].dot(n0)) || 1;
-      const ax = axes[bi].clone().applyQuaternion(R1);
-      const want = n1.clone().multiplyScalar(sgn);
-      ax.addScaledVector(u, -ax.dot(u));
-      want.addScaledVector(u, -want.dot(u));
-      if (ax.lengthSq() > EPS && want.lengthSq() > EPS) {
-        const phi = Math.atan2(u.dot(ax.clone().cross(want)), ax.dot(want));
-        const Rq = new Quaternion().setFromAxisAngle(u, phi);
-        qs1 = Rq.clone().multiply(qs1);
-        qm1 = Rq.clone().multiply(qm1);
-      }
-    }
-    // ワールドの回転 → ジョイントの回転の値
-    const pq = rotationOf(this.parentSpace(s));
-    let rs = this.localEuler(s, pq.clone().invert().multiply(qs1));
-    let rm = this.localEuler(mid, qs1.clone().invert().multiply(qm1));
-    const blend = this.num(id, 'ikb', 1);
-    if (blend < 1 - EPS) {                                    // IK と FK を混ぜる（ikBlend）
-      const mix = (fk, ik, ni) => {
-        const ro = THREE_ORDER[(this.rest(ni) || {}).ro || 0];
-        const q = eulerQuat(fk, (this.rest(ni) || {}).ro || 0).slerp(eulerQuat(ik, (this.rest(ni) || {}).ro || 0), Math.max(0, blend));
-        const e = new Euler().setFromQuaternion(q, ro);
-        return [e.x * R2D, e.y * R2D, e.z * R2D];
-      };
-      rs = mix(fkS.r, rs, s);
-      rm = mix(fkM.r, rm, mid);
-    }
-    return new Map([[s, rs], [mid, rm]]);
-  }
-
-  /** 1 ボーン（ikSCsolver）: 開始ジョイントを最短の回転で回して、終端をハンドルの方へ向ける */
-  solveOneBone(id) {
-    const g = this.byId.get(id);
-    const [s, end] = g.ik.chain;
-    if (!this.rest(s)) return null;
-    const P = this.parentWorld(s);
-    const fkS = this.chan(s, 'fk');
-    const Ws = new Matrix4().multiplyMatrices(P, composeLocalMatrix(fkS, this.isScaleOf(s), new Matrix4()));
-    const tEnd = (this.chan(end, 't') || { t: [0, 0, 0] }).t;
-    const A = positionOf(Ws);
-    const C = new Vector3(tEnd[0], tEnd[1], tEnd[2]).applyMatrix4(Ws);
-    const H = positionOf(this.world(g.dag));
-    const from = C.sub(A), to = H.sub(A);
-    if (from.lengthSq() < EPS || to.lengthSq() < EPS) return null;
-    const R = new Quaternion().setFromUnitVectors(from.normalize(), to.normalize());
-    let rs = this.localEuler(s, rotationOf(this.parentSpace(s)).invert().multiply(R.multiply(rotationOf(Ws))));
-    const blend = this.num(id, 'ikb', 1);
-    if (blend < 1 - EPS) {
-      const ro = (this.rest(s) || {}).ro || 0;
-      const e = new Euler().setFromQuaternion(eulerQuat(fkS.r, ro).slerp(eulerQuat(rs, ro), Math.max(0, blend)), THREE_ORDER[ro]);
-      rs = [e.x * R2D, e.y * R2D, e.z * R2D];
-    }
-    return new Map([[s, rs]]);
-  }
-
-  /** IK のチェーンの FK の形: 親のワールド行列 P、各ジョイントのワールド行列 W と位置（終端は移動の値だけ使う） */
-  fkChain(chain) {
-    const P = this.parentWorld(chain[0]);
-    const W = [];
-    let prev = P;
-    chain.forEach((ni, i) => {
-      const c = i === chain.length - 1 ? this.chan(ni, 't') : this.chan(ni, 'fk');
-      prev = new Matrix4().multiplyMatrices(prev, composeLocalMatrix(c, this.isScaleOf(ni), new Matrix4()));
-      W.push(prev);
-    });
-    return { P, W, pos: W.map((m) => positionOf(m)) };
-  }
-
-  /** 新しいワールドの回転（開始から終端の手前まで）→ ジョイントの回転の値。ikBlend で FK と混ぜる */
-  ikLocals(id, chain, P, Qnew) {
-    const blend = this.num(id, 'ikb', 1);
-    const out = new Map();
-    let parentQ = rotationOf(this.parentSpace(chain[0]));     // offsetParentMatrix も親の空間に入れる
-    Qnew.forEach((q, i) => {
-      const ni = chain[i];
-      let r = this.localEuler(ni, parentQ.clone().invert().multiply(q));
-      if (blend < 1 - EPS) {
-        const ro = (this.rest(ni) || {}).ro || 0;
-        const e = new Euler().setFromQuaternion(eulerQuat(this.chan(ni, 'fk').r, ro)
-          .slerp(eulerQuat(r, ro), Math.max(0, blend)), THREE_ORDER[ro]);
-        r = [e.x * R2D, e.y * R2D, e.z * R2D];
-      }
-      out.set(ni, r);
-      parentQ = q;
-    });
-    return out;
-  }
-
-  /** 位置の列 q（開始から終端）に合うよう、FK の形の各ジョイントを順に最小の回転で回す（delta は最初に全体へ掛ける回転） */
-  rotateAlong(fk, q, delta, twistOf = null) {
-    const { W, pos } = fk;
-    const out = [];
-    let d = delta.clone();
-    for (let i = 0; i < q.length - 1; i++) {
-      const qW = rotationOf(W[i]);
-      const cur = d.clone().multiply(qW);
-      const a = new Vector3().subVectors(pos[i + 1], pos[i]).normalize().applyQuaternion(d);
-      const b = new Vector3().subVectors(q[i + 1], q[i]).normalize();
-      let qi = new Quaternion().setFromUnitVectors(a, b).multiply(cur);
-      const tw = twistOf ? twistOf(i) : 0;
-      if (Math.abs(tw) > EPS) qi = new Quaternion().setFromAxisAngle(b, tw).multiply(qi);
-      out.push(qi);
-      d = qi.clone().multiply(qW.clone().invert());
-    }
-    return out;
-  }
-
-  /** 3 本以上のジョイントの IK（回転プレーン・シングルチェーン）: 面の上で FABRIK を解く */
-  solveChain(id) {
-    const g = this.byId.get(id);
-    const chain = g.ik.chain;
-    if (chain.some((ni) => !this.rest(ni))) return null;
-    const fk = this.fkChain(chain);
-    const { pos } = fk;
-    const n = pos.length;
-    const lens = [];
-    for (let i = 0; i < n - 1; i++) lens.push(pos[i + 1].distanceTo(pos[i]));
-    if (lens.some((l) => l < EPS)) return null;
-    const total = lens.reduce((s, l) => s + l, 0);
-    const A = pos[0];
-    const H = positionOf(this.world(g.dag));
-    const u = new Vector3().subVectors(H, A);
-    const dist = u.length();
-    if (dist < EPS) return null;
-    u.divideScalar(dist);
-    // FK の形の軸（開始 → 終端）と、曲がっている側（途中のジョイントの、軸からのずれの平均）
-    const axis0 = new Vector3().subVectors(pos[n - 1], A).normalize();
-    const side0 = new Vector3();
-    for (let i = 1; i < n - 1; i++) {
-      const v = new Vector3().subVectors(pos[i], A);
-      side0.add(v.addScaledVector(axis0, -v.dot(axis0)));
-    }
-    // 目標の面: 回転プレーンは極ベクトルの側、シングルチェーンは FK の形の側
-    let v = null;
-    if (g.ik.solver === 'ikRPsolver') {
-      const pvL = this.vec(id, 'pv', [0, 0, 1]);
-      const pv = this.pvWorld(pvL, g.dag, chain[0]);
-      v = pv.addScaledVector(u, -pv.dot(u));
-      if (this.ikVariant && this.ikVariant.side === -1) v.negate();
-    }
-    if (!v || v.lengthSq() < EPS) v = side0.clone().addScaledVector(u, -side0.dot(u));
-    if (v.lengthSq() < EPS) v = new Vector3(0, 1, 0).cross(u).lengthSq() > EPS ? new Vector3(0, 1, 0).cross(u) : new Vector3(1, 0, 0).cross(u);
-    v.normalize();
-    if (g.ik.solver === 'ikRPsolver') {
-      const twist = this.num(id, 'twi', 0) * this.twistSign();
-      if (Math.abs(twist) > EPS) v.applyQuaternion(new Quaternion().setFromAxisAngle(u, twist));
-    }
-    // FK の形を、軸がハンドルへ、曲がる側が v へ向くように丸ごと回す
-    let n0 = side0.lengthSq() > EPS ? side0.clone().normalize().cross(axis0) : null;
-    const n1 = v.clone().cross(u).normalize();
-    if (!n0 || n0.lengthSq() < EPS) n0 = n1.clone();
-    n0.normalize();
-    const frame = (dd, nn) => new Matrix4().makeBasis(dd, nn, dd.clone().cross(nn));
-    const R1 = new Quaternion().setFromRotationMatrix(frame(u, n1).multiply(frame(axis0, n0).transpose()));
-    const q = pos.map((p) => p.clone().sub(A).applyQuaternion(R1).add(A));
-    if (dist >= total) {                                     // 届かない: まっすぐ伸ばす
-      let s = 0;
-      for (let i = 1; i < n; i++) { s += lens[i - 1]; q[i] = A.clone().addScaledVector(u, s); }
-    } else {
-      for (let it = 0; it < 64; it++) {
-        q[n - 1].copy(H);
-        for (let i = n - 2; i >= 0; i--) q[i] = q[i + 1].clone().add(q[i].clone().sub(q[i + 1]).normalize().multiplyScalar(lens[i]));
-        q[0].copy(A);
-        for (let i = 1; i < n; i++) q[i] = q[i - 1].clone().add(q[i].clone().sub(q[i - 1]).normalize().multiplyScalar(lens[i - 1]));
-        if (q[n - 1].distanceTo(H) < total * 1e-7) break;
-      }
-    }
-    return this.ikLocals(id, chain, fk.P, this.rotateAlong(fk, q, R1));
-  }
+  solveIKUncached(id) { return solveIKCore(this, id); }
+  solveOneBone(id) { return solveOneBone(this, id); }
+  fkChain(chain) { return fkChain(this, chain); }
+  ikLocals(id, chain, P, Qnew) { return ikLocals(this, id, chain, P, Qnew); }
+  rotateAlong(fk, q, delta, twistOf = null) { return rotateAlong(this, fk, q, delta, twistOf); }
+  solveChain(id) { return solveChain(this, id); }
 
   /**
    * スプライン IK: ジョイントをカーブに沿って並べる（骨の長さを保ち、次のジョイントはカーブ上で骨の長さだけ離れた点。
@@ -3446,4 +3209,250 @@ function expand(base, values, suffixes) {
   const o = { [base]: values };
   suffixes.forEach((s, i) => { o[base + s] = values[i]; });
   return o;
+}
+
+// ------------------------------------------------------------------ IK の解き方（スプライン以外）
+// ev は値の読み方（RigEvaluator そのもの、または専用の評価の読み方。rigCompiled.js）。どちらも同じ数式を通る
+export function solveIKCore(ev, id) {
+  const g = ev.byId.get(id);
+  if (g.ik.solver === 'ikSplineSolver') return ev.solveSpline(id);
+  if (g.ik.chain.length === 2) return solveOneBone(ev, id);
+  if (g.ik.chain.length > 3) return solveChain(ev, id);
+  const [s, mid, end] = g.ik.chain;
+  const sc = g.ik.solver === 'ikSCsolver';
+  if (!ev.rest(s) || !ev.rest(mid)) return null;
+  const P = ev.parentWorld(s);
+  const fkS = ev.chan(s, 'fk'), fkM = ev.chan(mid, 'fk');
+  const Ls = composeLocalMatrix(fkS, ev.isScaleOf(s), new Matrix4());
+  let Lm = composeLocalMatrix(fkM, ev.isScaleOf(mid), new Matrix4());
+  const tEnd = (ev.chan(end, 't') || { t: [0, 0, 0] }).t;
+  const Ws = new Matrix4().multiplyMatrices(P, Ls);
+  let Wm = new Matrix4().multiplyMatrices(Ws, Lm);
+  const A = positionOf(Ws), B = positionOf(Wm);
+  let C = new Vector3(tEnd[0], tEnd[1], tEnd[2]).applyMatrix4(Wm);
+  const l1 = B.distanceTo(A), l2 = C.distanceTo(B);
+  if (l1 < EPS || l2 < EPS) return null;
+  // まっすぐなチェーンは曲げる向きが決まらないので、優先角（.pa）で曲げた形を基準にする
+  let n0 = new Vector3().subVectors(B, A).cross(new Vector3().subVectors(C, B));
+  const pa = ev.dagGraph.get(mid) && ev.dagGraph.get(mid).attrs && ev.dagGraph.get(mid).attrs.pa;
+  if (n0.lengthSq() < EPS * l1 * l2 && Array.isArray(pa)) {
+    Lm = composeLocalMatrix({ ...fkM, r: pa }, ev.isScaleOf(mid), new Matrix4());
+    Wm = new Matrix4().multiplyMatrices(Ws, Lm);
+    C = new Vector3(tEnd[0], tEnd[1], tEnd[2]).applyMatrix4(Wm);
+    n0 = new Vector3().subVectors(B, A).cross(new Vector3().subVectors(C, B));
+  }
+  const hni = g.dag;
+  const H = positionOf(ev.world(hni));
+  const u = new Vector3().subVectors(H, A);
+  const d = u.length();
+  if (d < EPS) return null;
+  u.divideScalar(d);
+  // 極ベクトル（ハンドルの親の空間）→ ワールド。ひねり（twist）で u のまわりに回す。
+  // シングルチェーン（SC）は極ベクトルを持たないので、FK の形の中間ジョイントの側に曲げる（面を保つ）
+  const pvLocal = sc ? [0, 0, 0] : ev.vec(id, 'pv', [0, 0, 1]);
+  const pv = ev.pvWorld(pvLocal, hni, s);
+  let v = pv.clone().addScaledVector(u, -pv.dot(u));
+  if (v.lengthSq() < EPS) v = new Vector3().subVectors(B, A).addScaledVector(u, -new Vector3().subVectors(B, A).dot(u));
+  if (v.lengthSq() < EPS) v = new Vector3(0, 1, 0).cross(u).lengthSq() > EPS ? new Vector3(0, 1, 0).cross(u) : new Vector3(1, 0, 0).cross(u);
+  v.normalize();
+  if (!sc && ev.ikVariant && ev.ikVariant.side === -1) v.negate();
+  const twist = sc ? 0 : ev.num(id, 'twi', 0) * ev.twistSign();
+  if (Math.abs(twist) > EPS) v.applyQuaternion(new Quaternion().setFromAxisAngle(u, twist));
+  // 余弦定理で中間ジョイントの位置
+  const dc = Math.min(Math.max(d, Math.abs(l1 - l2)), l1 + l2);
+  const cosA = Math.min(1, Math.max(-1, (l1 * l1 + dc * dc - l2 * l2) / (2 * l1 * dc)));
+  const sinA = Math.sqrt(Math.max(0, 1 - cosA * cosA));
+  const B1 = A.clone().addScaledVector(u, l1 * cosA).addScaledVector(v, l1 * sinA);
+  const H1 = A.clone().addScaledVector(u, dc);
+  // 開始ジョイント: （骨の向き, 面の法線）の組を、FK の形から IK の形へ回す
+  const d0 = new Vector3().subVectors(B, A).normalize();
+  const d1 = new Vector3().subVectors(B1, A).normalize();
+  let n1 = new Vector3().subVectors(B1, A).cross(new Vector3().subVectors(H1, B1));
+  if (n1.lengthSq() < EPS) n1 = v.clone().cross(u);
+  n1.normalize();
+  if (n0.lengthSq() < EPS) n0 = n1.clone(); else n0.normalize();
+  const frame = (dd, nn) => new Matrix4().makeBasis(dd, nn, dd.clone().cross(nn));
+  const R1 = new Quaternion().setFromRotationMatrix(frame(d1, n1).multiply(frame(d0, n0).transpose()));
+  const qs0 = rotationOf(Ws);
+  let qs1 = R1.clone().multiply(qs0);
+  // 中間ジョイント: 面の法線のまわりに回して、終端をハンドルに向ける
+  const a = new Vector3().subVectors(C, B).normalize().applyQuaternion(R1);
+  const b = new Vector3().subVectors(H1, B1).normalize();
+  const ang = Math.atan2(n1.dot(a.clone().cross(b)), a.dot(b));
+  const R2 = new Quaternion().setFromAxisAngle(n1, ang);
+  let qm1 = R2.multiply(R1).multiply(rotationOf(Wm));
+  if (!sc && ev.ikVariant && ev.ikVariant.plane === 'axis') {
+    // （再現チェックの候補）3 点の面ではなく、開始ジョイントの軸（FK の形で面の法線に一番近い軸＝肘の回転軸）を
+    // 基準面の法線にそろえる: チェーン全体を、開始 → ハンドルの軸のまわりに回す（終端はハンドルに残る）
+    const axes = [0, 1, 2].map((k) => new Vector3().setFromMatrixColumn(Ws, k).normalize());
+    let bi = 0;
+    axes.forEach((ax, k) => { if (Math.abs(ax.dot(n0)) > Math.abs(axes[bi].dot(n0))) bi = k; });
+    const sgn = Math.sign(axes[bi].dot(n0)) || 1;
+    const ax = axes[bi].clone().applyQuaternion(R1);
+    const want = n1.clone().multiplyScalar(sgn);
+    ax.addScaledVector(u, -ax.dot(u));
+    want.addScaledVector(u, -want.dot(u));
+    if (ax.lengthSq() > EPS && want.lengthSq() > EPS) {
+      const phi = Math.atan2(u.dot(ax.clone().cross(want)), ax.dot(want));
+      const Rq = new Quaternion().setFromAxisAngle(u, phi);
+      qs1 = Rq.clone().multiply(qs1);
+      qm1 = Rq.clone().multiply(qm1);
+    }
+  }
+  // ワールドの回転 → ジョイントの回転の値
+  const pq = rotationOf(ev.parentSpace(s));
+  let rs = ev.localEuler(s, pq.clone().invert().multiply(qs1));
+  let rm = ev.localEuler(mid, qs1.clone().invert().multiply(qm1));
+  const blend = ev.num(id, 'ikb', 1);
+  if (blend < 1 - EPS) {                                    // IK と FK を混ぜる（ikBlend）
+    const mix = (fk, ik, ni) => {
+      const ro = THREE_ORDER[(ev.rest(ni) || {}).ro || 0];
+      const q = eulerQuat(fk, (ev.rest(ni) || {}).ro || 0).slerp(eulerQuat(ik, (ev.rest(ni) || {}).ro || 0), Math.max(0, blend));
+      const e = new Euler().setFromQuaternion(q, ro);
+      return [e.x * R2D, e.y * R2D, e.z * R2D];
+    };
+    rs = mix(fkS.r, rs, s);
+    rm = mix(fkM.r, rm, mid);
+  }
+  return new Map([[s, rs], [mid, rm]]);
+}
+
+/** 1 ボーン（ikSCsolver）: 開始ジョイントを最短の回転で回して、終端をハンドルの方へ向ける */
+export function solveOneBone(ev, id) {
+  const g = ev.byId.get(id);
+  const [s, end] = g.ik.chain;
+  if (!ev.rest(s)) return null;
+  const P = ev.parentWorld(s);
+  const fkS = ev.chan(s, 'fk');
+  const Ws = new Matrix4().multiplyMatrices(P, composeLocalMatrix(fkS, ev.isScaleOf(s), new Matrix4()));
+  const tEnd = (ev.chan(end, 't') || { t: [0, 0, 0] }).t;
+  const A = positionOf(Ws);
+  const C = new Vector3(tEnd[0], tEnd[1], tEnd[2]).applyMatrix4(Ws);
+  const H = positionOf(ev.world(g.dag));
+  const from = C.sub(A), to = H.sub(A);
+  if (from.lengthSq() < EPS || to.lengthSq() < EPS) return null;
+  const R = new Quaternion().setFromUnitVectors(from.normalize(), to.normalize());
+  let rs = ev.localEuler(s, rotationOf(ev.parentSpace(s)).invert().multiply(R.multiply(rotationOf(Ws))));
+  const blend = ev.num(id, 'ikb', 1);
+  if (blend < 1 - EPS) {
+    const ro = (ev.rest(s) || {}).ro || 0;
+    const e = new Euler().setFromQuaternion(eulerQuat(fkS.r, ro).slerp(eulerQuat(rs, ro), Math.max(0, blend)), THREE_ORDER[ro]);
+    rs = [e.x * R2D, e.y * R2D, e.z * R2D];
+  }
+  return new Map([[s, rs]]);
+}
+
+/** IK のチェーンの FK の形: 親のワールド行列 P、各ジョイントのワールド行列 W と位置（終端は移動の値だけ使う） */
+export function fkChain(ev, chain) {
+  const P = ev.parentWorld(chain[0]);
+  const W = [];
+  let prev = P;
+  chain.forEach((ni, i) => {
+    const c = i === chain.length - 1 ? ev.chan(ni, 't') : ev.chan(ni, 'fk');
+    prev = new Matrix4().multiplyMatrices(prev, composeLocalMatrix(c, ev.isScaleOf(ni), new Matrix4()));
+    W.push(prev);
+  });
+  return { P, W, pos: W.map((m) => positionOf(m)) };
+}
+
+/** 新しいワールドの回転（開始から終端の手前まで）→ ジョイントの回転の値。ikBlend で FK と混ぜる */
+export function ikLocals(ev, id, chain, P, Qnew) {
+  const blend = ev.num(id, 'ikb', 1);
+  const out = new Map();
+  let parentQ = rotationOf(ev.parentSpace(chain[0]));     // offsetParentMatrix も親の空間に入れる
+  Qnew.forEach((q, i) => {
+    const ni = chain[i];
+    let r = ev.localEuler(ni, parentQ.clone().invert().multiply(q));
+    if (blend < 1 - EPS) {
+      const ro = (ev.rest(ni) || {}).ro || 0;
+      const e = new Euler().setFromQuaternion(eulerQuat(ev.chan(ni, 'fk').r, ro)
+        .slerp(eulerQuat(r, ro), Math.max(0, blend)), THREE_ORDER[ro]);
+      r = [e.x * R2D, e.y * R2D, e.z * R2D];
+    }
+    out.set(ni, r);
+    parentQ = q;
+  });
+  return out;
+}
+
+/** 位置の列 q（開始から終端）に合うよう、FK の形の各ジョイントを順に最小の回転で回す（delta は最初に全体へ掛ける回転） */
+export function rotateAlong(ev, fk, q, delta, twistOf = null) {
+  const { W, pos } = fk;
+  const out = [];
+  let d = delta.clone();
+  for (let i = 0; i < q.length - 1; i++) {
+    const qW = rotationOf(W[i]);
+    const cur = d.clone().multiply(qW);
+    const a = new Vector3().subVectors(pos[i + 1], pos[i]).normalize().applyQuaternion(d);
+    const b = new Vector3().subVectors(q[i + 1], q[i]).normalize();
+    let qi = new Quaternion().setFromUnitVectors(a, b).multiply(cur);
+    const tw = twistOf ? twistOf(i) : 0;
+    if (Math.abs(tw) > EPS) qi = new Quaternion().setFromAxisAngle(b, tw).multiply(qi);
+    out.push(qi);
+    d = qi.clone().multiply(qW.clone().invert());
+  }
+  return out;
+}
+
+/** 3 本以上のジョイントの IK（回転プレーン・シングルチェーン）: 面の上で FABRIK を解く */
+export function solveChain(ev, id) {
+  const g = ev.byId.get(id);
+  const chain = g.ik.chain;
+  if (chain.some((ni) => !ev.rest(ni))) return null;
+  const fk = fkChain(ev, chain);
+  const { pos } = fk;
+  const n = pos.length;
+  const lens = [];
+  for (let i = 0; i < n - 1; i++) lens.push(pos[i + 1].distanceTo(pos[i]));
+  if (lens.some((l) => l < EPS)) return null;
+  const total = lens.reduce((s, l) => s + l, 0);
+  const A = pos[0];
+  const H = positionOf(ev.world(g.dag));
+  const u = new Vector3().subVectors(H, A);
+  const dist = u.length();
+  if (dist < EPS) return null;
+  u.divideScalar(dist);
+  // FK の形の軸（開始 → 終端）と、曲がっている側（途中のジョイントの、軸からのずれの平均）
+  const axis0 = new Vector3().subVectors(pos[n - 1], A).normalize();
+  const side0 = new Vector3();
+  for (let i = 1; i < n - 1; i++) {
+    const v = new Vector3().subVectors(pos[i], A);
+    side0.add(v.addScaledVector(axis0, -v.dot(axis0)));
+  }
+  // 目標の面: 回転プレーンは極ベクトルの側、シングルチェーンは FK の形の側
+  let v = null;
+  if (g.ik.solver === 'ikRPsolver') {
+    const pvL = ev.vec(id, 'pv', [0, 0, 1]);
+    const pv = ev.pvWorld(pvL, g.dag, chain[0]);
+    v = pv.addScaledVector(u, -pv.dot(u));
+    if (ev.ikVariant && ev.ikVariant.side === -1) v.negate();
+  }
+  if (!v || v.lengthSq() < EPS) v = side0.clone().addScaledVector(u, -side0.dot(u));
+  if (v.lengthSq() < EPS) v = new Vector3(0, 1, 0).cross(u).lengthSq() > EPS ? new Vector3(0, 1, 0).cross(u) : new Vector3(1, 0, 0).cross(u);
+  v.normalize();
+  if (g.ik.solver === 'ikRPsolver') {
+    const twist = ev.num(id, 'twi', 0) * ev.twistSign();
+    if (Math.abs(twist) > EPS) v.applyQuaternion(new Quaternion().setFromAxisAngle(u, twist));
+  }
+  // FK の形を、軸がハンドルへ、曲がる側が v へ向くように丸ごと回す
+  let n0 = side0.lengthSq() > EPS ? side0.clone().normalize().cross(axis0) : null;
+  const n1 = v.clone().cross(u).normalize();
+  if (!n0 || n0.lengthSq() < EPS) n0 = n1.clone();
+  n0.normalize();
+  const frame = (dd, nn) => new Matrix4().makeBasis(dd, nn, dd.clone().cross(nn));
+  const R1 = new Quaternion().setFromRotationMatrix(frame(u, n1).multiply(frame(axis0, n0).transpose()));
+  const q = pos.map((p) => p.clone().sub(A).applyQuaternion(R1).add(A));
+  if (dist >= total) {                                     // 届かない: まっすぐ伸ばす
+    let s = 0;
+    for (let i = 1; i < n; i++) { s += lens[i - 1]; q[i] = A.clone().addScaledVector(u, s); }
+  } else {
+    for (let it = 0; it < 64; it++) {
+      q[n - 1].copy(H);
+      for (let i = n - 2; i >= 0; i--) q[i] = q[i + 1].clone().add(q[i].clone().sub(q[i + 1]).normalize().multiplyScalar(lens[i]));
+      q[0].copy(A);
+      for (let i = 1; i < n; i++) q[i] = q[i - 1].clone().add(q[i].clone().sub(q[i - 1]).normalize().multiplyScalar(lens[i - 1]));
+      if (q[n - 1].distanceTo(H) < total * 1e-7) break;
+    }
+  }
+  return ikLocals(ev, id, chain, fk.P, rotateAlong(ev, fk, q, R1));
 }

@@ -3,7 +3,7 @@
 
   python tools/make_compiled_sample.py   → samples/compiled_sample.ma, samples/compiled_sample.json
 
-専用に扱う要素（キーで動くノード・parent/point/orient/scale/aim コンストレイント・lookAt）を詰め込み、専用の評価の計画が作られることと、
+専用に扱う要素（キーで動くノード・parent/point/orient/scale/aim コンストレイント・lookAt・IK と poleVectorConstraint）を詰め込み、専用の評価の計画が作られることと、
 従来の評価器（RigEvaluator）と全フレームでビット単位で同じ結果になることを web_src/tests/compiled.test.mjs で確かめる。
 再生範囲 1〜30。
   * grp（動かない）→ c0（回転順 zxy・ピボット (1, 0, 0)・(0, 0.5, 0)・移動と回転のキー）
@@ -21,6 +21,10 @@
   * jb（c2 の子・.is）← jp（コンストレイントで動くノード）への aimConstraint（world up はシーンの上）
   * jc ← c0 への aimConstraint（world up なし）
   * la ← c2 への lookAt（twist）
+  * k0 → k1 → k2 → k3（ジョイント。k1 は k0 のスケールを .is で打ち消す・k0 に rx のキー）を ikRPsolver の ik_a で動かす。
+    ik_a は c0 の子。極ベクトルは pv_a（tz にキー）への poleVectorConstraint。終端 k2 は c1 への orientConstraint
+  * m0 → m1 → m2 → m3 → m4 を ikRPsolver の ik_b で動かす（ひねりにキー・ikBlend 0.5）。ik_b は c2 の子
+  * n0 → n1 を ikSCsolver の ik_c（1 ボーン）で動かす。ik_c は tz にキー
 """
 from __future__ import annotations
 
@@ -144,6 +148,49 @@ def main():
     node("joint", "la", None, '".t" -type "double3" 3 3 3 ')
     constraint("lookAt", "la_la", "la", [("c2", 1, None, False)], ('".a" -type "double3" 0 0 -1 ', '".wut" 0', '".tws" 0.3'),
                outputs="r")
+
+    # 段階 3: IK
+    def joints(names, parent, ts, *attrs):
+        for k, (n, t) in enumerate(zip(names, ts)):
+            node("joint", n, parent if k == 0 else names[k - 1], '".t" -type "double3" %g %g %g ' % t, *(attrs if k == 1 else ()))
+
+    def ik_handle(name, parent, chain_start, effector_parent, end, solver, *attrs):
+        node("ikEffector", name + "_eff", effector_parent)
+        node("ikHandle", name, parent, *attrs)
+        con(chain_start + ".msg", name + ".hsj")
+        con(name + "_eff.hp", name + ".hee")
+        con(solver + ".msg", name + ".hsv")
+        for a in "xyz":
+            con("%s.t%s" % (end, a), "%s_eff.t%s" % (name, a))
+
+    joints(["k0", "k1", "k2", "k3"], None, [(0, 4, 0), (3, 0, -0.5), (3, 0, 0.5), (1, 0, 0)], '".pa" -type "double3" 0 -15 0 ')
+    con("k0.s", "k1.is")
+    keys("k0", "rx", "animCurveTA", [(f, f % 20) for f in frames])
+    ik_handle("ik_a", "c0", "k0", "k1", "k2", "ikRPsolver")
+    node("transform", "pv_a", None, '".t" -type "double3" 3 4 5 ')
+    keys("pv_a", "tz", "animCurveTL", [(f, 5 - 0.3 * f) for f in frames])
+    A('createNode poleVectorConstraint -n "ik_a_pvc" -p "ik_a";')
+    A('\taddAttr -dcb 0 -ci true -k true -sn "w0" -ln "pv_aW0" -dv 1 -min 0 -at "double";')
+    A('\tsetAttr -k on ".w0";')
+    for a in "xyz":
+        con("ik_a_pvc.ct%s" % a, "ik_a.pv%s" % a)
+    con("ik_a.pim", "ik_a_pvc.cpim")
+    con("k0.pm", "ik_a_pvc.ps")
+    con("k0.t", "ik_a_pvc.crp")
+    for src, dst in (("t", "tt"), ("rp", "trp"), ("rpt", "trt"), ("pm", "tpm")):
+        con("pv_a.%s" % src, "ik_a_pvc.tg[0].%s" % dst)
+    con("ik_a_pvc.w0", "ik_a_pvc.tg[0].tw")
+    constraint("orientConstraint", "k2_oc", "k2", [("c1", 1, None, True)], outputs="r")
+
+    joints(["m0", "m1", "m2", "m3", "m4"], "grp", [(0, -3, 0), (2, 0, 0.3), (2, 0, -0.3), (2, 0, 0.2), (1, 0, 0)])
+    ik_handle("ik_b", "c2", "m0", "m2", "m3", "ikRPsolver", '".ikb" 0.5')
+    keys("ik_b", "twi", "animCurveTA", [(f, 2 * f) for f in frames])
+
+    joints(["n0", "n1"], None, [(-2, 0, 0), (0, 3, 0)])
+    ik_handle("ik_c", None, "n0", "n0", "n1", "ikSCsolver", '".t" -type "double3" -1 2 1 ')
+    keys("ik_c", "tz", "animCurveTL", [(f, -1 + 0.1 * f) for f in frames])
+    A('createNode ikRPsolver -n "ikRPsolver";')
+    A('createNode ikSCsolver -n "ikSCsolver";')
 
     A('createNode script -n "sceneConfigurationScriptNode";')
     A('\tsetAttr ".b" -type "string" "playbackOptions -min 1 -max 30 -ast 1 -aet 30 ";')
