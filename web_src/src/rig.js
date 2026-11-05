@@ -115,11 +115,17 @@ const ANGLE_KEYS = new Set(['r', 'jo', 'ra']);                                 /
 const SHEAR_AXIS = { shxy: 0, shxz: 1, shyz: 2 };
 /** ローカル行列の属性の種類と成分（tx → ['t', 0]・rp → ['rp', -1]・shxz → ['sh', 1]・ro → ['ro', -1]） */
 function xformKey(key) {
-  if (key in SHEAR_AXIS) return ['sh', SHEAR_AXIS[key]];
-  const m = /^(t|r|s|jo|ra|rp|sp|rpt|spt)([xyz])?$/.exec(key);
-  if (m) return [m[1], m[2] ? XYZ.indexOf(m[2]) : -1];
-  return [key, -1];
+  let r = XFORM_KEYS.get(key);                // 属性名だけで決まるので、毎フレーム正規表現で調べ直さない（結果は書き換えないこと）
+  if (r) return r;
+  if (key in SHEAR_AXIS) r = ['sh', SHEAR_AXIS[key]];
+  else {
+    const m = /^(t|r|s|jo|ra|rp|sp|rpt|spt)([xyz])?$/.exec(key);
+    r = m ? [m[1], m[2] ? XYZ.indexOf(m[2]) : -1] : [key, -1];
+  }
+  XFORM_KEYS.set(key, r);
+  return r;
 }
+const XFORM_KEYS = new Map();
 const CHAN_MODES = { full: 0, fk: 1, t: 2 };
 const NO_INPUTS = [];
 const NO_POSE = () => null;                // ポーズ確認の追加分なし
@@ -422,6 +428,7 @@ export class RigEvaluator {
     this.keepStatic = true;                  // false なら keep を使わない（毎フレームすべて計算する）
     this.plans = new Map();                  // グラフの id → 属性 → 値の求め方（plugPlan）
     this.chanInputList = new Map();          // ノード番号 → チャンネルの接続（chanInputs）
+    this.curveAttrs = new Map();             // AnimationClip のノードの材料 → カーブが動かす属性（curveAttrsOf）
     this.varying = false;                    // いま計算中の値が、時間で変わる値を読んだか
     // 再生キャッシュ: 追加分ごとのレイヤー { keys（追加分の目印）, frames（整数のフレーム → { mats（動くノードのローカル
     // 行列を並べた Float64Array）, props, curves, bytes, layer }）, bytes }。後ろほど新しく使ったもの。
@@ -788,8 +795,8 @@ export class RigEvaluator {
 
   /** 値のキャッシュ。fm: このフレームだけ・km: 時間で変わらない値。fallback があれば循環を防ぐ（label は問題の表示） */
   memo(fm, km, key, compute, fallback, label) {
-    if (fm.has(key)) {
-      const v = fm.get(key);
+    let v = fm.get(key);
+    if (v !== undefined || fm.has(key)) {
       this.varying = true;                    // fm に残るのは時間で変わる値（と計算中の印）
       if (v !== BUSY) {
         if (fm.deps) this.addDeps(fm.deps.get(key));
@@ -799,16 +806,17 @@ export class RigEvaluator {
       this.problems.add(`循環: ${label()}`);
       return fallback();
     }
-    if (km.has(key)) {
+    v = km.get(key);
+    if (v !== undefined || km.has(key)) {
       if (km.deps) this.addDeps(km.deps.get(key));
-      return km.get(key);
+      return v;
     }
     const outer = this.varying, outerDeps = this.dcur, outerShared = this.dshared;
     this.varying = false;
     this.dcur = null;
     this.dshared = false;
     if (fallback) fm.set(key, BUSY);
-    let done = false, v;
+    let done = false;
     try {
       v = compute();
       done = true;
@@ -897,12 +905,12 @@ export class RigEvaluator {
     return this.memo(this.cache.chan, this.keep.chan, ni * 3 + CHAN_MODES[mode], () => {
       const out = restCopy();
       const entry = this.clip.byNode.get(ni);
-      const fromCurve = new Set();
+      // カーブが動かす属性（接続より優先する）。't' のときに使わない成分が入っていても、下でその成分の接続は読まないので同じ
+      const fromCurve = this.curveAttrsOf(entry);
       for (const ch of entry.channels) {
         if (mode === 't' && ch.base !== 't') continue;
         out[ch.base][ch.axis] = evaluateCurve(ch.curve, this.frame);
         this.varying = true;
-        fromCurve.add(ch.attr);
       }
       for (const [key2, src] of this.chanInputs(ni)) {
         if (key2 === 'opm') {                                   // offsetParentMatrix の接続（行列ベースの親子付け）
@@ -939,6 +947,16 @@ export class RigEvaluator {
       }
       return clampLimits(out);                                 // 移動・回転・スケールの制限（Maya の transform の limit）
     }, restCopy, () => `chan ${mode}:${ni}`);
+  }
+
+  /** ノードのカーブが動かす属性の Set（チャンネルの並びが同じあいだは使い回す） */
+  curveAttrsOf(entry) {
+    let c = this.curveAttrs.get(entry);
+    if (!c || c.n !== entry.channels.length) {
+      c = { n: entry.channels.length, set: new Set(entry.channels.map((ch) => ch.attr)) };
+      this.curveAttrs.set(entry, c);
+    }
+    return c.set;
   }
 
   /** チャンネル（移動・回転・スケール）と offsetParentMatrix の接続 [属性, 接続元]（接続の順。最初に 1 回だけ調べる） */
