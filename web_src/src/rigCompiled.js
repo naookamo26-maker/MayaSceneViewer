@@ -81,6 +81,25 @@ function build(rig, deps, useMath) {
     return !!km && km.has(attr);
   };
   const steps = new Map();             // ノード番号 → 手順
+  const NO_READS = { why: null, reads: [] };
+  const walked = new Map();            // ノードの id（DAG ノードは id.属性）→ 結果（たどっている途中は NO_READS: 循環）
+  const combine = (own, parts) => {
+    const out = new Map();
+    for (const r of own) out.set(r.ni + ':' + r.base, r);
+    for (const p of parts) {
+      if (p.why) return p;
+      for (const r of p.reads) out.set(r.ni + ':' + r.base, r);
+    }
+    return { why: null, reads: [...out.values()] };
+  };
+  const remember = (key, compute) => {
+    const hit = walked.get(key);
+    if (hit) return hit;
+    walked.set(key, NO_READS);
+    const r = compute();
+    walked.set(key, r);
+    return r;
+  };
   const cons = new Map();              // グラフの id → コンストレイントの手順
   const opmOf = (ni) => {
     const g = rig.dagGraph.get(ni);
@@ -196,11 +215,10 @@ function build(rig, deps, useMath) {
       const g = rig.byId.get(src.node);
       if (g && useMath && !CON_TYPES[g.type]) {
         // 計算ノード・DAG ノードからの接続: 上流をたどって、扱える種類か・読む DAG ノードを調べる
-        const reads = [];
-        const why = walkSource(src, reads, new Set());
-        if (why) return why;
+        const w = walkSource(src);
+        if (w.why) return w.why;
         inputs.push({ base, axis, src });
-        rawReads.push(...reads);
+        for (const r of w.reads) rawReads.push(r);
         continue;
       }
       if (!g || g.dag >= 0 || !CON_TYPES[g.type] || g.def) return `チャンネルの入力（${g ? g.type : '不明'}）`;
@@ -221,31 +239,24 @@ function build(rig, deps, useMath) {
     return null;
   }
 
-  // ---- 計算ノードの上流（RigEvaluator.source → plug → outputs と同じ形をたどる）。扱えなければ理由
-  function walkSource(src, reads, seen) {
-    if (src.curve !== undefined) return null;
+  // ---- 計算ノードの上流（RigEvaluator.source → plug → outputs と同じ形をたどる）。
+  // 戻り値 { why: 扱えない理由か null, reads: 読む DAG ノードと属性 [{ ni, base }] }。ノード（DAG ノードは属性）ごとに
+  // 結果を覚えて、どのノードも 1 回だけたどる（入力ごとにたどり直すと、大きな計算ノードのネットワークで時間が二乗で増える）
+  function walkSource(src) {
+    if (src.curve !== undefined) return NO_READS;
     const g = rig.byId.get(src.node);
-    if (!g) return 'チャンネルの入力（不明）';
-    const attr = String(src.attr);
+    if (!g) return { why: 'チャンネルの入力（不明）', reads: [] };
     if (g.dag >= 0) {
-      const base = attr.replace(/\[\d+\]$/, '');
-      reads.push({ ni: g.dag, base });
-      if (TRS_RE.test(base) || PM_PLUGS.has(base) || MATRIX_PLUGS.has(base)) return null;
-      if (base === 'opm' || base === 'offsetParentMatrix') return null;     // RigEvaluator が求める
+      const base = String(src.attr).replace(/\[\d+\]$/, '');
+      const self = { ni: g.dag, base };
+      if (TRS_RE.test(base) || PM_PLUGS.has(base) || MATRIX_PLUGS.has(base)) return { why: null, reads: [self] };
+      if (base === 'opm' || base === 'offsetParentMatrix') return { why: null, reads: [self] };    // RigEvaluator が求める
       // それ以外（ピボット・カスタム属性など）: その属性への接続をたどる
-      const key = g.id + '.' + base;
-      if (seen.has(key)) return null;
-      seen.add(key);
-      for (const [k, s2] of Object.entries(g.inputs || {})) {
-        if (k === base || k.startsWith(base)) { const w = walkSource(s2, reads, seen); if (w) return w; }
-      }
-      return null;
+      return remember(g.id + '.' + base, () => combine([self],
+        Object.entries(g.inputs || {}).filter(([k]) => k === base || k.startsWith(base)).map(([, s2]) => walkSource(s2))));
     }
-    if (!(g.def || MATH_TYPES.has(g.type) || mathKind(g.type))) return `チャンネルの入力（${g.type}）`;
-    if (seen.has(g.id)) return null;
-    seen.add(g.id);
-    for (const s2 of Object.values(g.inputs || {})) { const w = walkSource(s2, reads, seen); if (w) return w; }
-    return null;
+    if (!(g.def || MATH_TYPES.has(g.type) || mathKind(g.type))) return { why: `チャンネルの入力（${g.type}）`, reads: [] };
+    return remember(g.id, () => combine([], Object.values(g.inputs || {}).map(walkSource)));
   }
   // 読む DAG ノードから、先に計算しておくノード（reads）を決める。扱えなければ任せる
   const constChan = new Map();         // 動かないノード → チャンネルの値（レストの値に制限を当てたもの）
@@ -390,11 +401,11 @@ function build(rig, deps, useMath) {
     }
   }
   // コンストレイントのターゲットは、ピボットの接続がないこと（あれば、そのコンストレイントで動くノードを任せる）
-  for (const c of [...cons.values()]) {
-    if (c.targets.some((t) => rig.rest(t.ni) && rig.chanInputs(t.ni).some(([k]) => /^(rp|rpt)[xyz]?$/.test(k)))) {
-      cons.delete(c.id);
-      for (const st of [...steps.values()]) if (st.inputs && st.inputs.some((x) => x.con === c)) delegate(st.ni, 'ターゲットの接続されたピボット');
-    }
+  const badCons = new Set([...cons.values()].filter((c) => c.targets.some((t) => rig.rest(t.ni)
+    && rig.chanInputs(t.ni).some(([k]) => /^(rp|rpt)[xyz]?$/.test(k)))));
+  if (badCons.size) {
+    for (const c of badCons) cons.delete(c.id);
+    for (const st of [...steps.values()]) if (st.inputs && st.inputs.some((x) => badCons.has(x.con))) delegate(st.ni, 'ターゲットの接続されたピボット');
   }
 
   // ---- 計算の順番（親・ターゲット・親のスケールの打ち消しのノードが先）
