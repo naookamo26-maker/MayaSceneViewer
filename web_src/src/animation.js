@@ -64,18 +64,28 @@ function autoSlope(type, px, x, nx, py, y, ny) {
 }
 
 /** 1 本のカーブを評価できる形にする（接線の傾きと重みを計算する） */
-export function prepareCurve(meta, times, values, types, fixedOf) {
+const F64_PER_KEY = 6;     // prepareCurve の Float64Array の数（t・v・inSlope・outSlope・inW・outW）
+const U8_PER_KEY = 3;      // Uint8Array の数（step・tinType・toutType）
+
+export function prepareCurve(meta, times, values, types, fixedOf, pool = null) {
   const n = meta.count;
   const off = meta.offset;
-  const t = Float64Array.from(times.subarray(off, off + n));
-  const v = Float64Array.from(values.subarray(off, off + n));
-  const inSlope = new Float64Array(n);
-  const outSlope = new Float64Array(n);
-  const inW = new Float64Array(n);       // 重み付きのときの接線の長さ（フレーム）。0 は既定（区間の長さ）
-  const outW = new Float64Array(n);
-  const step = new Uint8Array(n);
-  const tinType = new Uint8Array(n);     // 接線の種類（.ma の値。カーブエディタの表示用）
-  const toutType = new Uint8Array(n);
+  // pool があれば、全カーブ分をまとめて確保した配列の一部を使う（カーブごとに配列を作るとカーブの多いシーンで遅い）
+  //   pool: { n: キーの総数, f64: Float64Array(n × F64_PER_KEY), u8: Uint8Array(n × U8_PER_KEY) }。k 本目の配列は
+  //   [k × n, (k + 1) × n) の、このカーブのキー（off から n 個）の位置（キーの範囲がほかのカーブと重ならないこと）
+  let kf = 0, ku = 0;
+  const f64 = pool ? () => { const a = kf++ * pool.n + off; return pool.f64.subarray(a, a + n); } : () => new Float64Array(n);
+  const u8 = pool ? () => { const a = ku++ * pool.n + off; return pool.u8.subarray(a, a + n); } : () => new Uint8Array(n);
+  const t = f64();
+  const v = f64();
+  for (let i = 0; i < n; i++) { t[i] = times[off + i]; v[i] = values[off + i]; }
+  const inSlope = f64();
+  const outSlope = f64();
+  const inW = f64();       // 重み付きのときの接線の長さ（フレーム）。0 は既定（区間の長さ）
+  const outW = f64();
+  const step = u8();
+  const tinType = u8();     // 接線の種類（.ma の値。カーブエディタの表示用）
+  const toutType = u8();
   const weighted = !!meta.weighted;
   const secant = (a, b) => (v[b] - v[a]) / Math.max(t[b] - t[a], EPS);
 
@@ -471,7 +481,21 @@ export class AnimationClip {
     const fixed = decodeArray(anim.fixedTangents);
     const fixedOf = new Map();
     for (let i = 0; i + 4 < fixed.length; i += 5) fixedOf.set(fixed[i], [fixed[i + 1], fixed[i + 2], fixed[i + 3], fixed[i + 4]]);
-    this.curves = (anim.curves || []).map((c) => prepareCurve(c, times, values, types, fixedOf));
+    // カーブごとの配列は、すべてのキーの分をまとめて確保して切り分ける（種類ごとに 1 本。カーブの多いシーンで速い）
+    // キーの範囲がほかのカーブと重なるもの（ふつうはない）は、そのカーブだけ配列を作る
+    const metas = anim.curves || [];
+    const nk = times.length;
+    const pooled = new Uint8Array(metas.length);
+    let end = 0;
+    for (const i of metas.map((_, k) => k).sort((a, b) => metas[a].offset - metas[b].offset)) {
+      const c = metas[i];
+      if (Number.isInteger(c.offset) && Number.isInteger(c.count) && c.offset >= end && c.count >= 0 && c.offset + c.count <= nk) {
+        pooled[i] = 1;
+        end = c.offset + c.count;
+      }
+    }
+    const pool = { n: nk, f64: new Float64Array(nk * F64_PER_KEY), u8: new Uint8Array(nk * U8_PER_KEY) };
+    this.curves = metas.map((c, i) => prepareCurve(c, times, values, types, fixedOf, pooled[i] ? pool : null));
     // 時間のカーブ（ドリブンキー UA・UL・UU を除く。キーの目盛りとタイムラインに使う）
     // 時間で引くカーブ（Trax のクリップのカーブは、キーがクリップの中の時間なので除く）
     this.timeCurves = this.curves.filter((c) => (!c.type || c.type[0] === 'T') && !c.trax);
