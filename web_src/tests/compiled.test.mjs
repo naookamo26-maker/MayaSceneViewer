@@ -30,7 +30,8 @@ test('サンプルのリグは専用の評価になり、全フレームで従�
   const frames = framesOf(a);
   b.evaluate(frames[0]);
   assert.ok(b.compiledPlan, `計画を作る（${b.compiledReason}）`);
-  assert.deepEqual(b.compiledPlan.counts, { simple: 4, driven: 12, delegated: 0, constraints: 12 });
+  assert.deepEqual(b.compiledPlan.counts, { simple: 6, driven: 19, delegated: 0, constraints: 13, ik: 3 });
+  assert.equal(b.compiledPlan.iks.filter((ik) => ik.pvc).length, 1, '極ベクトルのコンストレイントも専用に計算する');
   // 逆順・整数でないフレームも
   for (const f of [...frames, ...frames.slice().reverse(), 1.5, 7.25, 29.9, 0, 40]) {
     assert.equal(valuesOf(b, f), valuesOf(a, f), `フレーム ${f}`);
@@ -48,14 +49,15 @@ test('再生キャッシュに入れたものも同じ。ポーズ確認で動�
     assert.equal(valuesOf(b, f), valuesOf(fresh, f), `キャッシュから ${f}`);
     assert.ok(b.current, `フレーム ${f} はキャッシュから`);
   }
-  // c1・jt（コンストレイントのターゲット）と j0（コンストレイントで動く）を動かす: 従来の評価器が、専用の評価で覚えた
+  // c1・jt（コンストレイントのターゲット）・j0（コンストレイントで動く）・pv_a（極ベクトルのターゲット）・k0・m1（IK のジョイント）を
+  // 動かす（m1 は従来の評価器でも全体を計算し直す）: 従来の評価器が、専用の評価で覚えた
   // フレームから影響のないノードを写し、影響のあるノード（依存の記録で見分ける）だけ計算する
-  for (const name of ['c1', 'jt', 'j0', 'jp', 'grp']) {
+  for (const name of ['c1', 'jt', 'j0', 'jp', 'pv_a', 'k0', 'm1', 'c2', 'grp']) {
     const ni = nodeIndex(name);
     const m = new Matrix4().compose(new Vector3(0.1, 0.2, 0), new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), 0.4), new Vector3(1, 1, 1));
     const poseOf = (n) => (n === ni ? m : null), keys = new Map([[ni, name]]);
     for (const f of frames) assert.equal(valuesOf(b, f, poseOf, keys), valuesOf(fresh, f, poseOf, keys), `${name} を動かしたとき ${f}`);
-    assert.ok(b.seeded > 0 || name === 'grp', `${name}: 影響のないノードは写す（${b.seeded}）`);
+    assert.ok(b.seeded > 0 || name === 'grp' || name === 'm1', `${name}: 影響のないノードは写す（${b.seeded}）`);
   }
   for (const f of frames) assert.equal(valuesOf(b, f), valuesOf(fresh, f), `追加分を戻したとき ${f}`);
 });
