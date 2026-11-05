@@ -15,9 +15,8 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 
 import test_extract_maya_fake as F  # noqa: E402
-from ma_viewer.extract_ma import load_ma  # noqa: E402
 
-F.SCENE = F.FakeScene(load_ma(os.path.join(ROOT, "samples", "sample_arm.ma")))
+F.SCENE = F.FakeScene(F.load_ma(os.path.join(ROOT, "samples", "sample_arm.ma")))   # メッシュの配列をリストに戻した変換結果
 F.install_fake_maya()
 cmds = sys.modules["maya.cmds"]
 calls = {"select": [], "jobs": {}, "killed": []}

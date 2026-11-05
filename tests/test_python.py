@@ -14,8 +14,19 @@ sys.path.insert(0, ROOT)
 from ma_viewer import ma_reader as R  # noqa: E402
 from ma_viewer import mathutil as M  # noqa: E402
 from ma_viewer import schema  # noqa: E402
-from ma_viewer.extract_ma import load_ma, scene_to_dict  # noqa: E402
+from ma_viewer.extract_ma import load_ma as _load_ma, scene_to_dict as _scene_to_dict  # noqa: E402
+from ma_viewer.schema import unpack_meshes  # noqa: E402
 from ma_viewer.ma_scene import parse_ma_text, parse_polyfaces  # noqa: E402
+
+
+def load_ma(*a, **k):
+    """メッシュの数値の配列をリストに戻した変換結果（中身を数値のリストとして調べるため）"""
+    return unpack_meshes(_load_ma(*a, **k))
+
+
+def scene_to_dict(*a, **k):
+    return unpack_meshes(_scene_to_dict(*a, **k))
+
 
 SAMPLE = os.path.join(ROOT, "samples", "sample_arm.ma")
 EXPECTED = os.path.join(ROOT, "samples", "sample_arm.expected.json")

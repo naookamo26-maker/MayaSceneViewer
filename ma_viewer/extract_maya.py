@@ -119,7 +119,7 @@ def _uv_data(fn_mesh, counts: List[int], uv_set: Optional[str] = None) -> Option
         c = uv_counts[f] if f < len(uv_counts) else 0
         indices.extend(uv_ids[p:p + c] if c == n else [-1] * n)
         p += c
-    return {"set": uv_set, "values": values, "indices": indices}
+    return {"set": uv_set, "values": schema.pack_array(values, "float32"), "indices": schema.pack_array(indices, "int32")}
 
 
 def _hard_edges(fn_mesh) -> List[int]:
@@ -365,11 +365,12 @@ class _Extractor:
             "transform": t_idx,
             "visible": bool(dag.isVisible()),
             "visibleSelf": bool(cmds.getAttr(full + ".visibility")),
-            "positions": positions,
-            "counts": counts,
-            "indices": indices,
+            # 数値の配列はバイナリにする（.ma の変換と同じ）
+            "positions": schema.pack_array(positions, "float32"),
+            "counts": schema.pack_array(counts, "int32"),
+            "indices": schema.pack_array(indices, "int32"),
             "uv": uv,
-            "hardEdges": _hard_edges(source),
+            "hardEdges": schema.pack_array(_hard_edges(source), "int32"),
             "material": face_mats[0] if face_mats and len(set(face_mats)) == 1 else -1,
             "faceMaterials": face_mats if len(set(face_mats)) > 1 else None,
             "skin": skin,
@@ -662,9 +663,9 @@ class _Extractor:
             "influences": influences,
             "bindPreMatrices": pms,
             "geomMatrix": schema.matrix_list(_matrix_from_plug(dep, "geomMatrix")),
-            "counts": counts,
-            "indices": idx,
-            "weights": vals,
+            "counts": schema.pack_array(counts, "int32"),
+            "indices": schema.pack_array(idx, "uint16" if len(influences) <= 65535 else "int32"),
+            "weights": schema.pack_array(vals, "float32"),
         }
 
     # ------------------------------------------------------------------
@@ -722,7 +723,7 @@ class _Extractor:
     def to_dict(self) -> dict:
         self._apply_bind_pose()
         scene_path = cmds.file(query=True, sceneName=True) or ""
-        nverts = sum(len(m["positions"]) // 3 for m in self.meshes)
+        nverts = sum(schema.array_len(m["positions"]) // 3 for m in self.meshes)
         return {
             "schema": schema.SCHEMA_NAME,
             "version": schema.SCHEMA_VERSION,
@@ -751,7 +752,7 @@ class _Extractor:
                 "meshes": len(self.meshes),
                 "cameras": len(self.cameras),
                 "vertices": nverts,
-                "polygons": sum(len(m["counts"]) for m in self.meshes),
+                "polygons": sum(schema.array_len(m["counts"]) for m in self.meshes),
                 "skinnedMeshes": sum(1 for m in self.meshes if m["skin"]),
                 "materials": len(self.materials),
                 "textures": len(self.textures),

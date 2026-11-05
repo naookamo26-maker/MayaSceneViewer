@@ -69,6 +69,8 @@ transform・joint などの変換ノードです。**親は必ず子より前に
 
 ## meshes
 
+数値の配列（`positions`・`counts`・`indices`・`hardEdges`・`uv` の `values` と `indices`・`skin` の `counts`・`indices`・`weights`）は、数値のリストか、base64 にしたリトルエンディアンのバイナリ `{"dtype", "count", "data"}` です（`dtype` は `float32`・`int32`・`uint16`・`uint8`。animation と同じ形）。.ma の変換と Maya 抽出器は、大きなメッシュでも小さく速く受け渡せるようバイナリで出力します（座標・UV・ウェイトは float32、番号は int32、skin の `indices` は uint16）。ビューアと `ma_viewer.schema.validate` はどちらも読めます。Python で中身を数値のリストとして調べるときは `ma_viewer.schema.unpack_meshes(scene)` で戻せます。
+
 | キー | 内容 |
 |---|---|
 | `name` / `path` | シェイプの名前とフルパス |

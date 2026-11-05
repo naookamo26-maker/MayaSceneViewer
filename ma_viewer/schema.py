@@ -32,6 +32,9 @@
      "visibleSelf": bool,         # メッシュ自身の表示状態（省略時は visible と同じ）
      "positions": [x, y, z, ...], # オブジェクト空間（スキン時はバインド時の形状）
      "counts": [面ごとの頂点数], "indices": [面の頂点番号を連結],
+     # 数値の配列（positions・counts・indices・hardEdges・uv の values と indices・skin の counts・indices・weights）は、
+     # 数値のリストか、base64 のバイナリ {"dtype": "float32" | "int32" | "uint16" | "uint8", "count": n, "data": str}
+     # （pack_array。.ma の変換はバイナリで出す）
      "skin": null | {
         "cluster": str, "method": int (0=リニア, 1=DQ, 2=ブレンド),
         "normalize": int (0=なし, 1=インタラクティブ, 2=ポスト。省略時 1),
@@ -59,10 +62,71 @@
 """
 from __future__ import annotations
 
+import base64
+import sys
+from array import array
 from typing import List
 
 SCHEMA_NAME = "maya-scene-lite"
 SCHEMA_VERSION = 1
+
+# バイナリの配列の型 → (numpy の型, array モジュールの型)。リトルエンディアン
+_DTYPES = {"float32": ("<f4", "f"), "int32": ("<i4", "i"), "uint16": ("<u2", "H"), "uint8": ("u1", "B")}
+_BIG = sys.byteorder != "little"
+
+
+def pack_array(values, dtype: str) -> dict:
+    """数値の配列（リスト・numpy の配列）を base64 のバイナリ {"dtype", "count", "data"} にする。
+    JSON の数値のリストより小さく、文字列にするのも読むのも速い（ビューアは型付き配列に直接戻す）"""
+    np_type, code = _DTYPES[dtype]
+    try:
+        import numpy as np
+    except ImportError:
+        np = None
+    if np is not None:
+        data = np.asarray(values).astype(np_type, copy=False).tobytes()
+    else:
+        a = array(code, [float(v) for v in values] if code == "f" else [int(v) for v in values])
+        if _BIG and a.itemsize > 1:
+            a.byteswap()
+        data = a.tobytes()
+    return {"dtype": dtype, "count": len(values), "data": base64.b64encode(data).decode("ascii")}
+
+
+def is_packed(x) -> bool:
+    return isinstance(x, dict) and "data" in x and "dtype" in x
+
+
+def array_values(x) -> list:
+    """数値の配列（リストか pack_array の形）を数値のリストにする。None・リストはそのまま返す"""
+    if not is_packed(x):
+        return x
+    a = array(_DTYPES[x["dtype"]][1])
+    a.frombytes(base64.b64decode(x["data"]))
+    if _BIG and a.itemsize > 1:
+        a.byteswap()
+    return a.tolist()
+
+
+def unpack_meshes(scene: dict) -> dict:
+    """シーンのメッシュの数値の配列（バイナリ）を、数値のリストに戻す（その場で書き換えて返す）。
+    Python で中身を調べるとき（テスト・確認用）"""
+    for m in scene.get("meshes") or []:
+        for k in ("positions", "counts", "indices", "hardEdges"):
+            if k in m:
+                m[k] = array_values(m[k])
+        if m.get("uv"):
+            m["uv"]["values"] = array_values(m["uv"]["values"])
+            m["uv"]["indices"] = array_values(m["uv"]["indices"])
+        if m.get("skin"):
+            for k in ("counts", "indices", "weights"):
+                m["skin"][k] = array_values(m["skin"][k])
+    return scene
+
+
+def array_len(x) -> int:
+    """数値の配列（リストか pack_array の形）の要素数"""
+    return int(x["count"]) if is_packed(x) else len(x)
 
 
 class SchemaError(ValueError):
@@ -88,28 +152,29 @@ def validate(scene: dict) -> List[str]:
             raise SchemaError("nodes[%d] の matrix が 16 要素ではありません" % i)
     nn = len(nodes)
     for mi, m in enumerate(meshes):
-        pos = m.get("positions", [])
+        pos = array_values(m.get("positions")) or []
         if len(pos) % 3:
             raise SchemaError("meshes[%d] の positions が 3 の倍数ではありません" % mi)
         nv = len(pos) // 3
-        counts = m.get("counts", [])
-        idx = m.get("indices", [])
+        counts = array_values(m.get("counts")) or []
+        idx = array_values(m.get("indices")) or []
         if sum(counts) != len(idx):
             raise SchemaError("meshes[%d] の counts と indices の長さが合いません" % mi)
         if idx and (max(idx) >= nv or min(idx) < 0):
             raise SchemaError("meshes[%d] の indices が頂点数の範囲外です" % mi)
         if not (0 <= m.get("transform", -1) < nn):
             raise SchemaError("meshes[%d] の transform が不正です" % mi)
-        he = m.get("hardEdges") or []
+        he = array_values(m.get("hardEdges")) or []
         if len(he) % 2 or (he and (max(he) >= nv or min(he) < 0)):
             raise SchemaError("meshes[%d] の hardEdges が不正です" % mi)
         nmat = len(scene.get("materials") or [])
         uv = m.get("uv")
         if uv:
-            nuv = len(uv["values"]) // 2
-            if len(uv["values"]) % 2 or len(uv["indices"]) != len(idx):
+            uvv, uvi = array_values(uv["values"]), array_values(uv["indices"])
+            nuv = len(uvv) // 2
+            if len(uvv) % 2 or len(uvi) != len(idx):
                 raise SchemaError("meshes[%d] の uv の配列長が合いません" % mi)
-            if uv["indices"] and (max(uv["indices"]) >= nuv or min(uv["indices"]) < -1):
+            if uvi and (max(uvi) >= nuv or min(uvi) < -1):
                 raise SchemaError("meshes[%d] の uv.indices が範囲外です" % mi)
         fm = m.get("faceMaterials")
         if fm is not None:
@@ -126,11 +191,12 @@ def validate(scene: dict) -> List[str]:
                 raise SchemaError("meshes[%d] の bindPreMatrices の数が合いません" % mi)
             if any(not (0 <= x < nn) for x in sk["influences"]):
                 raise SchemaError("meshes[%d] の influences が不正です" % mi)
-            if len(sk["counts"]) != nv:
+            sc, si, sw = array_values(sk["counts"]), array_values(sk["indices"]), array_values(sk["weights"])
+            if len(sc) != nv:
                 raise SchemaError("meshes[%d] の skin.counts が頂点数と合いません" % mi)
-            if sum(sk["counts"]) != len(sk["indices"]) or len(sk["indices"]) != len(sk["weights"]):
+            if sum(sc) != len(si) or len(si) != len(sw):
                 raise SchemaError("meshes[%d] の skin の配列長が合いません" % mi)
-            if sk["indices"] and max(sk["indices"]) >= ni:
+            if si and max(si) >= ni:
                 raise SchemaError("meshes[%d] の skin.indices が範囲外です" % mi)
     ntex = len(scene.get("textures") or [])
     for i, mat in enumerate(scene.get("materials") or []):

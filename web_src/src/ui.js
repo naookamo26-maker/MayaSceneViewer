@@ -739,7 +739,7 @@ export class UI {
       h += '<tr><th>UV</th><td>なし</td></tr>';
     }
     h += '</table>';
-    const perFace = m.faceMaterials || m.counts.map(() => m.material ?? -1);
+    const perFace = m.faceMaterials || Array.from(m.counts, () => m.material ?? -1);
     const faceCount = new Map();
     for (const x of perFace) faceCount.set(x, (faceCount.get(x) || 0) + 1);
     const multi = faceCount.size > 1;
