@@ -117,8 +117,8 @@ def main() -> int:
             check(s["pose"] == "file", "キーのあるアニメーションを読み込むと「ファイルの値」に切り替わる")
             check("animation" in (win.current_scene or {}), "Python 側のシーンにもアニメーションを保持（書き出し用）")
             check(any(w.startswith("アニメーション:") for w in win.viewer.warnings), "アニメーションの警告を警告一覧に追加")
-            check("アニメーション" in win.statusBar().currentMessage(), "ステータスバーに読み込み結果: %s"
-                  % win.statusBar().currentMessage())
+            # 読み込み結果はログに出る（ステータスバーは、最後に「シーンを開くのに ◯ 秒かかりました。」になる）
+            check("アニメーション: カーブ" in win.log_view.toPlainText(), "ログにアニメーションの読み込み結果")
             # 以降はバインドポーズ（ボタン・B キーと同じ操作）から確かめる
             js("window.mayaViewer.debug.app.setPoseSource('bind'); 'ok'", lambda _: js(STATE_JS, bound))
 

@@ -748,26 +748,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.viewer.run_js("JSON.stringify(window.mayaViewer && window.mayaViewer.verifyRig())", with_check)
 
     def _show_rig_report_dialog(self, path, text):
-        dlg = QtWidgets.QDialog(self)
-        dlg.setWindowTitle("リグの診断 - %s" % os.path.basename(path))
-        dlg.resize(820, 640)
-        lay = QtWidgets.QVBoxLayout(dlg)
-        view = QtWidgets.QPlainTextEdit(text)
-        view.setReadOnly(True)
-        view.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
-        lay.addWidget(view)
-        row = QtWidgets.QHBoxLayout()
-        row.addStretch(1)
-        b_copy = QtWidgets.QPushButton("コピー")
-        b_copy.clicked.connect(lambda: QtWidgets.QApplication.clipboard().setText(text))
-        b_close = QtWidgets.QPushButton("閉じる")
-        b_close.clicked.connect(dlg.accept)
-        row.addWidget(b_copy)
-        row.addWidget(b_close)
-        lay.addLayout(row)
+        """リグの診断のウィンドウ（操作方法と同じく、左の項目の一覧から選んで表示する。report_dialog.py）"""
+        from .report_dialog import show_report
+        dlg = show_report(self, "リグの診断 - %s" % os.path.basename(path), text)
         self.rig_report_text = text            # テスト用
         self.rig_report_dialog = dlg
-        dlg.show()
 
     def show_help(self):
         from .help_dialog import show_help

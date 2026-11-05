@@ -24,6 +24,7 @@ sys.path.insert(0, ROOT)
 
 RIG = os.path.join(ROOT, "samples", "rig_sample.ma")
 EXPR = os.path.join(ROOT, "samples", "exprespy_sample.ma")
+RIG6 = os.path.join(ROOT, "samples", "rig6_sample.ma")
 
 
 def _parse(r):
@@ -52,6 +53,13 @@ def main() -> int:
 
     def js(code, then, delay=100):
         win.viewer.run_js(code, lambda r: QtCore.QTimer.singleShot(delay, lambda: then(_parse(r))))
+
+    shots = os.environ.get("REVIEW_SHOTS")         # 画像を保存するフォルダ（確認用。なければ撮らない）
+
+    def shot(widget, name):
+        if shots:
+            os.makedirs(shots, exist_ok=True)
+            widget.grab().save(os.path.join(shots, name))
 
     def log_text():
         return win.log_view.toPlainText()
@@ -91,6 +99,10 @@ def main() -> int:
 
         def footer(r):
             check(r["status"] == "none", "Qt ではビューアの下の欄を出さない: %s" % r)
+            win.log_dock.show()
+            win.log_dock.raise_()
+            app.processEvents()
+            shot(win, "log.png")
             js("window.mayaViewer.debug.app.ui.setMessage('テストのメッセージ', 0); 'ok'",
                lambda _: (check(win.statusBar().currentMessage() == "テストのメッセージ",
                                 "ビューアのメッセージをステータスバーに出す: %s" % win.statusBar().currentMessage()), nxt()))
@@ -118,18 +130,53 @@ def main() -> int:
             check(not any("のコードを解析して評価します" in w for w in win.viewer.warnings), "お知らせは警告に入れない")
             check("[警告] 警告 " in t and "件（［表示］→［警告］で、分類ごとの一覧を見られます）" in t, "ログには警告の件数だけ")
             check(not any(("[警告] " + w) in t for w in win.viewer.warnings), "ログに警告を 1 件ずつ流さない")
+            win.show_warnings()
+            app.processEvents()
+            shot(win, "warnings.png")
             v = win.warn_view.toPlainText()
             check(v.startswith("■ ") and "────" in v and "\n\n■ " in v,
                   "警告の一覧は分類ごとに見出し・仕切り線・空行で分ける:\n" + v[:300])
             nxt()
         wait(lambda: "かかりました。" in log_text() and win.viewer.warnings, lambda: QtCore.QTimer.singleShot(500, done))
 
+    # 5 ---------------------------------------------------------------------
+    def s_rig_report(nxt):
+        win.log_view.clear()
+        win.open_file(RIG6)
+
+        def opened():
+            win.rig_report_dialog = None
+            win.show_rig_report()
+            wait(lambda: getattr(win, "rig_report_dialog", None) is not None, shown, 20)
+
+        def shown():
+            dlg = win.rig_report_dialog
+            tree, view = dlg.report_tree, dlg.report_view
+            names = [tree.topLevelItem(i).text(0) for i in range(tree.topLevelItemCount())]
+            check(dlg.isVisible() and names[0] == "概要" and "★ IK ハンドル" in names and "★ 評価できないノード" in names,
+                  "リグの診断は項目の一覧（問題のある項目に ★）: %s" % names)
+            check("概要" in view.toPlainText() and "要点" in view.toPlainText(), "最初は概要（項目ごとの要点）")
+            ik = tree.topLevelItem(names.index("★ IK ハンドル"))
+            kids = [ik.child(i).text(0) for i in range(ik.childCount())]
+            check(len(kids) >= 5 and "★ leg_ik（ikRPsolver）" in kids, "IK ハンドルはハンドルごとに分ける: %s" % kids)
+            shot(dlg, "rig_report_overview.png")
+            tree.setCurrentItem(ik.child(kids.index("★ leg_ik（ikRPsolver）")))
+            app.processEvents()
+            shot(dlg, "rig_report_ik.png")
+            t = view.toPlainText()
+            check("leg_ik（ikRPsolver）" in t and "my_pv_driver" in t and "t2_ik" not in t, "選んだハンドルの分だけ表示")
+            dlg.report_search.setText("my_pv_driver")
+            check("「my_pv_driver」を含む行" in view.toPlainText() and not tree.isEnabled(), "検索で、言葉を含む行を項目ごとに")
+            dlg.close()
+            nxt()
+        wait(lambda: "かかりました。" in log_text(), opened)
+
     def s_end(_nxt):
         win.a_anim.setChecked(anim_setting)
         print("結果:", "OK" if ok["v"] else "NG")
         app.exit(0 if ok["v"] else 1)
 
-    steps = [s_open, s_cache_menu, s_warnings]
+    steps = [s_open, s_cache_menu, s_warnings, s_rig_report]
     steps += getattr(sys.modules[__name__], "EXTRA_STEPS", lambda *_: [])(win, check, js, wait, log_text, run)
     steps.append(s_end)
     win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(300, lambda: run(steps)))
