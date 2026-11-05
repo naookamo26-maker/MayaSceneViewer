@@ -436,6 +436,7 @@ python tests/qt_toolbar_test.py                         # ツールバー（ア�
 python tests/qt_warnings_test.py                        # 警告のパネル（ログとタブ切り替え、メニュー・アイコンから開く、読み込み直しで更新、コピー）
 python tests/qt_tree_panel_test.py                      # 階層の開閉（Shift+クリック・すべて開閉）と左パネルの幅
 python tests/qt_reference_tree_test.py                  # 階層のリファレンスの印・名前空間、メッシュの行の選択と選択情報のメッシュの欄
+python tests/qt_tree_virtual_test.py                    # ノードの多いシーンの階層（見えている行だけを描く: スクロール・F・キー操作・クリック・目のアイコン・絞り込み）
 python tests/qt_properties_test.py                      # 右パネル: カメラの欄（焦点距離・画角・このカメラから見る）、頂点の欄の出し分け
 python tests/qt_camera_menu_test.py                     # カメラの多いシーンのメニュー（一覧のスクロール）と、解像度ゲートがタイムラインに重ならないこと
 python tests/qt_undo_test.py                            # 元に戻す・やり直し（キー・メニュー・操作の単位）
