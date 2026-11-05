@@ -39,6 +39,9 @@ export function referenceOf(data, name) {
 }
 /** パスのファイル名 */
 const fileName = (p) => String(p || '').split(/[\\/]/).pop();
+/** これより行が多い階層は、見えている範囲の行だけを要素にする（仮想リスト） */
+export const TREE_VIRTUAL_ROWS = 2000;
+const TREE_ROW_HEIGHT = 22;          // 行の高さ（style.css の .row と同じ）
 /** 階層の名前: 名前空間（armA:）は薄く表示する（HTML を解析せずに要素へ入れる） */
 function setNameContent(el, label) {
   const k = label.lastIndexOf(':');
@@ -410,7 +413,7 @@ export class UI {
       // Maya のアウトライナーと同じ: Ctrl+クリックで切り替え、Shift+クリックでリードの行からその行までを選ぶ
       // （Ctrl+Shift+クリックは加える）。メッシュの行は、その transform を選ぶ
       const ctrl = e.ctrlKey || e.metaKey;
-      if (e.shiftKey && !ctrl && this.selectedRow && !this.selectedRow.el.hidden) {
+      if (e.shiftKey && !ctrl && this.selectedRow && !this.selectedRow.hidden) {
         this.app.setSelection(this.rangeNodes(this.selectedRow, row), { notify: true });
         return;
       }
@@ -419,6 +422,8 @@ export class UI {
       else this.app.select(row.node, { notify: true, mode });
     });
     // Maya のアウトライナーと同じく、キー操作はマウスが上にあるパネルで受ける（treeKey）
+    tree.addEventListener('scroll', () => this.scheduleTreeRender(), { passive: true });
+    new ResizeObserver(() => this.scheduleTreeRender()).observe(tree);
     tree.addEventListener('pointerenter', () => { this.treeHover = true; });
     tree.addEventListener('pointerleave', () => { this.treeHover = false; });
     $('tree-expand-all').addEventListener('click', () => this.setAllOpen(true));
@@ -439,8 +444,8 @@ export class UI {
     if (k === 'f' || k === 'F') { this.revealSelected(); return true; }
     if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) return false;
     const cur = this.selectedRow;
-    const shown = this.rows.filter((r) => !r.el.hidden);
-    if (!cur || cur.el.hidden) {
+    const shown = this.shownRows;
+    if (!cur || cur.hidden) {
       if (shown.length && (k === 'ArrowUp' || k === 'ArrowDown')) this.selectRow(k === 'ArrowUp' ? shown[shown.length - 1] : shown[0]);
       return true;
     }
@@ -451,7 +456,7 @@ export class UI {
       if (cur.hasChildren && !this.collapsed.has(cur.key) && !this.filter) { this.collapsed.add(cur.key); this.applyTreeVisibility(); }
       else {
         const p = cur.mesh >= 0 ? this.rowOfNode.get(cur.node) : this.rowOfNode.get(this.app.data.nodes[cur.node].parent);
-        if (p && !p.el.hidden) this.selectRow(p);
+        if (p && !p.hidden) this.selectRow(p);
       }
     } else if (k === 'ArrowRight' && cur.hasChildren) {
       if (this.collapsed.has(cur.key)) { this.collapsed.delete(cur.key); this.applyTreeVisibility(); }
@@ -462,7 +467,7 @@ export class UI {
 
   /** 表示している行のうち、from から to までの行のノード（選んだ順。to の行が最後 = リード） */
   rangeNodes(from, to) {
-    const shown = this.rows.filter((r) => !r.el.hidden);
+    const shown = this.shownRows;
     let a = shown.indexOf(from), b = shown.indexOf(to);
     if (a < 0 || b < 0) return [to.node];
     const step = a <= b ? 1 : -1;
@@ -481,7 +486,7 @@ export class UI {
   selectRow(row) {
     if (row.mesh >= 0) this.app.selectMesh(row.mesh);
     else this.app.select(row.node, { notify: true });
-    row.el.scrollIntoView({ block: 'nearest' });
+    this.scrollToRow(row, 'nearest');
   }
 
   /** 選択している行を見えるようにする（祖先を開いて、まん中にスクロール。Maya のアウトライナーの F） */
@@ -493,19 +498,21 @@ export class UI {
     for (let p = row.mesh >= 0 ? row.node : nodes[row.node].parent; p >= 0; p = nodes[p].parent) {
       if (this.collapsed.delete('n' + p)) changed = true;
     }
-    if (this.filter && row.el.hidden) {                    // 絞り込みで隠れていれば、絞り込みを外す
+    if (this.filter && row.hidden) {                       // 絞り込みで隠れていれば、絞り込みを外す
       this.filter = '';
       $('tree-filter').value = '';
       changed = true;
     }
     if (changed) this.applyTreeVisibility();
-    if (!row.el.hidden) row.el.scrollIntoView({ block: 'center' });
+    if (!row.hidden) this.scrollToRow(row, 'center');
   }
 
   populate(data, built) {
     const tree = $('tree');
     tree.textContent = '';
+    tree.scrollTop = 0;
     this.rows = [];
+    this.shownRows = [];
     this.rowOfNode = new Map();
     this.rowOfMesh = new Map();
     this.collapsed = new Set();
@@ -519,7 +526,6 @@ export class UI {
       meshesOf.get(m.transform).push(mi);
     });
     const cameraNodes = new Set((data.cameras || []).map((c) => c.transform));
-    const frag = document.createDocumentFragment();
     const collapseDeep = data.nodes.length > 400;
     // 行の要素は、アイコンとリファレンスの印の組み合わせごとのひな形を複製して作る（行ごとに HTML を解析すると、
     // ノードの多いシーンで遅いため）
@@ -538,12 +544,11 @@ export class UI {
       }
       return t;
     };
-    const addRow = (row) => {
-      // リファレンスから読み込んだノード（名前空間から判定）は、アイコンに印を付けて名前の色を変える
-      const ref = referenceOf(data, row.label);
+    // 行の要素は描くときに作る（大きなシーンでは見えている行だけ。makeRowEl）
+    this.makeRowEl = (row) => {
+      const ref = row.ref;
       const el = templateOf(row.icon, !!ref).cloneNode(true);
-      el.className = 'row' + (row.dim ? ' dim' : '') + (ref ? ' referenced' : '');
-      el.dataset.row = String(this.rows.length);
+      el.dataset.row = String(row.index);
       el.style.setProperty('--depth', row.depth);
       if (!row.hasChildren) el.firstChild.classList.add('leaf');
       const name = el.childNodes[2];
@@ -552,8 +557,18 @@ export class UI {
       row.eye = el.lastChild;
       row.el = el;
       row.twisty = el.firstChild;
+      row.drawn = '';
+      this.syncRow(row);
+      return el;
+    };
+    const addRow = (row) => {
+      // リファレンスから読み込んだノード（名前空間から判定）は、アイコンに印を付けて名前の色を変える
+      row.ref = referenceOf(data, row.label);
+      row.index = this.rows.length;
+      // 行の状態（要素には syncRow で反映する）
+      Object.assign(row, { el: null, hidden: false, closed: false, selected: false, other: false, childSelected: false,
+        filterParent: false, eyeOn: true });
       this.rows.push(row);
-      frag.appendChild(el);
       return row;
     };
     const visit = (ni, depth) => {
@@ -578,8 +593,88 @@ export class UI {
       for (const k of kids) visit(k, depth + 1);
     };
     data.nodes.forEach((n, i) => { if (n.parent < 0) visit(i, 0); });
-    tree.appendChild(frag);
+    // 行が多ければ、見えている範囲の行だけを描く（少なければ、これまでどおり全行の要素を順に置く）
+    this.treeVirtual = this.rows.length > TREE_VIRTUAL_ROWS;
+    if (this.treeVirtual) {
+      this.treeTop = document.createElement('div');
+      this.treeBottom = document.createElement('div');
+      this.treeTop.className = this.treeBottom.className = 'tree-spacer';
+      // 横幅: 見えていない行の幅は測れないので、名前の長さから見積もったいちばん長い行の幅にそろえる
+      let w = 0;
+      for (const r of this.rows) w = Math.max(w, 6 + r.depth * 14 + 34 + r.label.length * 7.5 + 26);
+      this.treeTop.style.minWidth = `${Math.ceil(w)}px`;
+    } else {
+      const frag = document.createDocumentFragment();
+      for (const r of this.rows) frag.appendChild(this.makeRowEl(r));
+      tree.appendChild(frag);
+    }
     this.applyTreeVisibility();
+  }
+
+  /** 行の状態（表示・選択・開閉・目のアイコン）を、要素があれば要素に反映する */
+  syncRow(row) {
+    const el = row.el;
+    if (!el) return;
+    const cls = 'row' + (row.dim ? ' dim' : '') + (row.ref ? ' referenced' : '') + (row.filterParent ? ' filter-parent' : '')
+      + (row.childSelected ? ' child-selected' : '') + (row.selected ? ' selected' : '') + (row.other ? ' other' : '');
+    const key = cls + (row.hidden ? 'h' : '') + (row.closed ? 'c' : '') + (row.eyeOn ? 'e' : '');
+    if (row.drawn === key) return;
+    row.drawn = key;
+    if (el.className !== cls) el.className = cls;
+    if (!this.treeVirtual) el.hidden = row.hidden;
+    row.twisty.textContent = row.closed ? '▸' : '▾';
+    if (row.hasChildren) el.setAttribute('aria-expanded', String(!row.closed));
+    if (row.selected) el.setAttribute('aria-selected', 'true'); else el.removeAttribute('aria-selected');
+    row.eye.setAttribute('aria-pressed', String(row.eyeOn));
+    row.eye.setAttribute('aria-label', row.eyeOn ? '表示中' : '非表示');
+  }
+
+  /** 行の状態を変えたあと: 全行を描いているなら要素に反映し、見えている行だけなら描き直す */
+  syncRows(rows) {
+    if (this.treeVirtual) this.renderTree();
+    else for (const r of rows) this.syncRow(r);
+  }
+
+  scheduleTreeRender() {
+    if (!this.treeVirtual || this.treeRenderPending) return;
+    this.treeRenderPending = true;
+    requestAnimationFrame(() => { this.treeRenderPending = false; this.renderTree(); });
+  }
+
+  /** 見えている範囲の行（前後に少し余分）だけを要素にして置く（大きなシーンのとき） */
+  renderTree() {
+    if (!this.treeVirtual || !this.rows) return;
+    const tree = $('tree');
+    const shown = this.shownRows;
+    const h = TREE_ROW_HEIGHT, view = tree.clientHeight || 600;
+    // 行が減った直後（絞り込み・閉じる）は、スクロール位置が内容の高さを超えていることがあるので収める
+    const top = Math.min(tree.scrollTop, Math.max(0, shown.length * h - view));
+    const first = Math.max(0, Math.floor(top / h) - 20);
+    const last = Math.min(shown.length, Math.ceil((top + view) / h) + 20);
+    this.treeTop.style.height = `${first * h}px`;
+    this.treeBottom.style.height = `${(shown.length - last) * h}px`;
+    const els = [this.treeTop];
+    for (let i = first; i < last; i++) {
+      const r = shown[i];
+      if (r.el) this.syncRow(r); else this.makeRowEl(r);
+      els.push(r.el);
+    }
+    els.push(this.treeBottom);
+    const cur = tree.children;
+    if (cur.length !== els.length || els.some((e, i) => cur[i] !== e)) tree.replaceChildren(...els);
+  }
+
+  /** 行を見える位置にスクロールする（block: 'nearest' | 'center'。scrollIntoView と同じ） */
+  scrollToRow(row, block = 'nearest') {
+    if (!this.treeVirtual) { if (row.el) row.el.scrollIntoView({ block }); return; }
+    const i = this.shownRows.indexOf(row);
+    if (i < 0) return;
+    const tree = $('tree'), h = TREE_ROW_HEIGHT, view = tree.clientHeight || 600;
+    const top = i * h;
+    if (block === 'center') tree.scrollTop = top - (view - h) / 2;
+    else if (top < tree.scrollTop) tree.scrollTop = top;
+    else if (top + h > tree.scrollTop + view) tree.scrollTop = top + h - view;
+    this.renderTree();
   }
 
   /** rowIndex の行と、その下の階層をすべて開く（open=false なら閉じる） */
@@ -595,10 +690,10 @@ export class UI {
         on = !app.isNodeHidden(row.node);
         dim = !!app.hiddenEff[row.node];
       }
-      row.eye.setAttribute('aria-pressed', String(on));
-      row.eye.setAttribute('aria-label', on ? '表示中' : '非表示');
-      row.el.classList.toggle('dim', dim);
+      row.eyeOn = on;
+      row.dim = dim;
     }
+    this.syncRows(this.rows);
   }
 
   setSubtreeOpen(rowIndex, open) {
@@ -616,7 +711,7 @@ export class UI {
     this.collapsed.clear();
     if (!open) for (const r of this.rows) if (r.hasChildren) this.collapsed.add(r.key);
     this.applyTreeVisibility();
-    if (open && this.selectedRow && !this.selectedRow.el.hidden) this.selectedRow.el.scrollIntoView({ block: 'nearest' });
+    if (open && this.selectedRow && !this.selectedRow.hidden) this.scrollToRow(this.selectedRow, 'nearest');
   }
 
   applyTreeVisibility() {
@@ -631,21 +726,21 @@ export class UI {
         const parent = !hit && row.depth < need;
         keep[i] = hit || parent;
         if (hit || parent) need = row.depth;
-        row.el.classList.toggle('filter-parent', parent);
+        row.filterParent = parent;
       }
-      this.rows.forEach((row, i) => { row.el.hidden = !keep[i]; });
-      return;
+      this.rows.forEach((row, i) => { row.hidden = !keep[i]; });
+    } else {
+      for (const row of this.rows) {
+        row.filterParent = false;
+        if (row.depth > hideDepth) { row.hidden = true; continue; }
+        hideDepth = Infinity;
+        row.hidden = false;
+        row.closed = this.collapsed.has(row.key);
+        if (row.closed) hideDepth = row.depth;
+      }
     }
-    for (const row of this.rows) {
-      row.el.classList.remove('filter-parent');
-      if (row.depth > hideDepth) { row.el.hidden = true; continue; }
-      hideDepth = Infinity;
-      row.el.hidden = false;
-      const closed = this.collapsed.has(row.key);
-      row.twisty.textContent = closed ? '▸' : '▾';
-      if (row.hasChildren) row.el.setAttribute('aria-expanded', String(!closed));
-      if (closed) hideDepth = row.depth;
-    }
+    this.shownRows = this.rows.filter((r) => !r.hidden);
+    this.syncRows(this.rows);
   }
 
   /**
@@ -653,13 +748,11 @@ export class UI {
    * all は選択中のノードすべて（複数のとき、リード以外の行は淡く強調する）
    */
   highlightNode(ni, nodes, mesh = -1, all = null) {
-    for (const r of this.selectedRows || []) {
-      r.el.classList.remove('selected', 'other');
-      r.el.removeAttribute('aria-selected');
-    }
+    const touched = [];
+    for (const r of this.selectedRows || []) { r.selected = r.other = false; touched.push(r); }
     this.selectedRows = [];
     this.selectedRow = null;
-    for (const r of this.parentMarks || []) r.el.classList.remove('child-selected');
+    for (const r of this.parentMarks || []) { r.childSelected = false; touched.push(r); }
     this.parentMarks = [];
     const row = (mesh >= 0 && this.rowOfMesh.get(mesh)) || this.rowOfNode.get(ni);
     const rows = [];
@@ -668,23 +761,24 @@ export class UI {
       if (r && r !== row && n !== ni) rows.push(r);
     }
     if (row) rows.push(row);
-    if (!rows.length) return;
+    if (!rows.length) { this.syncRows(touched); return; }
     const marked = new Set(rows);
     // Maya のアウトライナーと同じく、ビューポートで選んでも階層は開かない・スクロールしない（F で表示）。
     // 選んだノードの祖先の行に印を付け、閉じた中に選択があることが分かるようにする
     for (const r of rows) {
       for (let p = r.mesh >= 0 ? r.node : nodes[r.node].parent; p >= 0; p = nodes[p].parent) {
         const pr = this.rowOfNode.get(p);
-        if (pr && !marked.has(pr)) { pr.el.classList.add('child-selected'); this.parentMarks.push(pr); marked.add(pr); }
+        if (pr && !marked.has(pr)) { pr.childSelected = true; this.parentMarks.push(pr); marked.add(pr); touched.push(pr); }
       }
     }
     for (const r of rows) {
-      r.el.classList.add('selected');
-      if (r !== row) r.el.classList.add('other');
-      r.el.setAttribute('aria-selected', 'true');
+      r.selected = true;
+      r.other = r !== row;
       this.selectedRows.push(r);
+      touched.push(r);
     }
     this.selectedRow = row || null;
+    this.syncRows(touched);
   }
 
   /** 矩形選択の枠（rect はキャンバスの中のピクセル。null で消す） */
