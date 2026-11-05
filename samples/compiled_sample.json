@@ -1876,7 +1876,8 @@
    },
    "segmentScaleCompensate":true,
    "drivenBy":[
-    "rx ← k0_rx（animCurveTA）"
+    "rx ← k0_rx（animCurveTA）",
+    "ry ← k0_rv（reverse）"
    ]
   },
   {
@@ -2353,6 +2354,151 @@
    "drivenBy":[
     "tz ← ik_c_tz（animCurveTL）"
    ]
+  },
+  {
+   "name":"q0",
+   "path":"|q0",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    -3.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    -3.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     -3.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "rz ← q0_uc（unitConversion）",
+    "ty ← q0_sum（sum）",
+    "s ← c2（transform）"
+   ]
+  },
+  {
+   "name":"q1",
+   "path":"|q1",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "t ← q1_dm（decomposeMatrix）",
+    "r ← q1_dm（decomposeMatrix）"
+   ]
   }
  ],
  "meshes":[],
@@ -2369,8 +2515,8 @@
  "textures":[],
  "warnings":[],
  "stats":{
-  "nodes":33,
-  "joints":24,
+  "nodes":35,
+  "joints":26,
   "meshes":0,
   "curves":0,
   "cameras":0,
@@ -2381,7 +2527,7 @@
   "textures":0,
   "texturesMissing":0,
   "bindPoseNodes":0,
-  "drivenNodes":20
+  "drivenNodes":22
  },
  "animation":{
   "fps":24.0,
@@ -2537,6 +2683,16 @@
     "name":"ik_c_tz",
     "type":"TL",
     "offset":140,
+    "count":10,
+    "tangent":18,
+    "weighted":false,
+    "pre":0,
+    "post":0
+   },
+   {
+    "name":"c0_amt",
+    "type":"TU",
+    "offset":150,
     "count":10,
     "tangent":18,
     "weighted":false,
@@ -3578,6 +3734,66 @@
      0.0,
      0.0
     ]
+   },
+   {
+    "node":33,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     -3.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":34,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
    }
   ],
   "graph":[
@@ -3604,6 +3820,9 @@
      },
      "rz":{
       "curve":3
+     },
+     "amt":{
+      "curve":15
      }
     }
    },
@@ -5078,6 +5297,10 @@
     "inputs":{
      "rx":{
       "curve":11
+     },
+     "ry":{
+      "node":52,
+      "attr":"ox"
      }
     }
    },
@@ -5360,6 +5583,131 @@
       31
      ]
     }
+   },
+   {
+    "id":45,
+    "name":"q0",
+    "type":"joint",
+    "dag":33,
+    "inputs":{
+     "rz":{
+      "node":47,
+      "attr":"o"
+     },
+     "ty":{
+      "node":48,
+      "attr":"o"
+     },
+     "s":{
+      "node":3,
+      "attr":"s"
+     }
+    }
+   },
+   {
+    "id":46,
+    "name":"q0_md",
+    "type":"multiplyDivide",
+    "dag":-1,
+    "attrs":{
+     "i2":[
+      90.0,
+      1.0,
+      1.0
+     ]
+    },
+    "inputs":{
+     "i1x":{
+      "node":1,
+      "attr":"amt"
+     }
+    }
+   },
+   {
+    "id":47,
+    "name":"q0_uc",
+    "type":"unitConversion",
+    "dag":-1,
+    "attrs":{
+     "cf":0.017453292519943295
+    },
+    "inputs":{
+     "i":{
+      "node":46,
+      "attr":"ox"
+     }
+    }
+   },
+   {
+    "id":48,
+    "name":"q0_sum",
+    "type":"sum",
+    "dag":-1,
+    "attrs":{
+     "i[1]":0.5
+    },
+    "inputs":{
+     "i[0]":{
+      "node":1,
+      "attr":"ty"
+     }
+    }
+   },
+   {
+    "id":49,
+    "name":"q1",
+    "type":"joint",
+    "dag":34,
+    "inputs":{
+     "t":{
+      "node":51,
+      "attr":"ot"
+     },
+     "r":{
+      "node":51,
+      "attr":"or"
+     }
+    }
+   },
+   {
+    "id":50,
+    "name":"q1_mm",
+    "type":"multMatrix",
+    "dag":-1,
+    "inputs":{
+     "i[0]":{
+      "node":2,
+      "attr":"wm"
+     },
+     "i[1]":{
+      "node":49,
+      "attr":"pim"
+     }
+    }
+   },
+   {
+    "id":51,
+    "name":"q1_dm",
+    "type":"decomposeMatrix",
+    "dag":-1,
+    "inputs":{
+     "imat":{
+      "node":50,
+      "attr":"o"
+     }
+    }
+   },
+   {
+    "id":52,
+    "name":"k0_rv",
+    "type":"reverse",
+    "dag":-1,
+    "inputs":{
+     "ix":{
+      "node":1,
+      "attr":"amt"
+     }
+    }
    }
   ],
   "nodeDefs":{},
@@ -5368,18 +5716,18 @@
   "props":[],
   "times":{
    "dtype":"float32",
-   "count":150,
-   "data":"AACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBB"
+   "count":160,
+   "data":"AACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQ=="
   },
   "values":{
    "dtype":"float32",
-   "count":150,
-   "data":"zcxMPs3MTD8zM7M/AAAAQGZmJkDNzExAMzNzQM3MjEAAAKBAMzOzQAAA4EAAAOBBAABEQgAAjEIAAIA/AACwQQAALEIAAIBCAACqQgAAgEEAAIDAAACAwQAA4MEAACDCAABQwgAAgMIAAJjCAACwwgAAyMIAAODCAABQQQAAsEEAAPhBAAAgQgAAREIAAGhCAACGQgAAmEIAAKpCAAC8QgAAXMIAACDCAADIwQAAIMEAAKBAAACgQQAADEIAAEhCAACCQgAAoEJcj4I/cT2KP4XrkT+amZk/rkehP8P1qD/Xo7A/7FG4PwAAwD8Ursc/uB6FP+F6lD8K16M/MzOzP1yPwj+F69E/rkfhP9ej8D8AAABAFK4HQBSuhz9SuJ4/j8K1P83MzD8K1+M/SOH6P8P1CEDhehRAAAAgQB+FK0AAAABAAAAAQQAAYEEAAKBBAADQQQAAAEIAABhCAAAwQgAASEIAAGBCzczMvc3MzL4zMzO/AACAv2Zmpr/NzMy/MzPzv83MDMAAACDAMzMzwM3M7L8zM7O/MzNzvwAAAL/NzEy9zczMPpqZWT9mZqY/AADgP83MDEAAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAAAAQAAAoEAAAABBZmaWQDMzc0CamTlAAAAAQM3MjD/NzEw+MzMzv83MzL8AACDAmplZwAAAAEAAAABBAABgQQAAoEEAANBBAAAAQgAAGEIAADBCAABIQgAAYEJmZma/mpkZv5qZmb4AAAAAmpmZPpqZGT9mZmY/mpmZPwAAwD9mZuY/"
+   "count":160,
+   "data":"zcxMPs3MTD8zM7M/AAAAQGZmJkDNzExAMzNzQM3MjEAAAKBAMzOzQAAA4EAAAOBBAABEQgAAjEIAAIA/AACwQQAALEIAAIBCAACqQgAAgEEAAIDAAACAwQAA4MEAACDCAABQwgAAgMIAAJjCAACwwgAAyMIAAODCAABQQQAAsEEAAPhBAAAgQgAAREIAAGhCAACGQgAAmEIAAKpCAAC8QgAAXMIAACDCAADIwQAAIMEAAKBAAACgQQAADEIAAEhCAACCQgAAoEJcj4I/cT2KP4XrkT+amZk/rkehP8P1qD/Xo7A/7FG4PwAAwD8Ursc/uB6FP+F6lD8K16M/MzOzP1yPwj+F69E/rkfhP9ej8D8AAABAFK4HQBSuhz9SuJ4/j8K1P83MzD8K1+M/SOH6P8P1CEDhehRAAAAgQB+FK0AAAABAAAAAQQAAYEEAAKBBAADQQQAAAEIAABhCAAAwQgAASEIAAGBCzczMvc3MzL4zMzO/AACAv2Zmpr/NzMy/MzPzv83MDMAAACDAMzMzwM3M7L8zM7O/MzNzvwAAAL/NzEy9zczMPpqZWT9mZqY/AADgP83MDEAAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAAAAQAAAoEAAAABBZmaWQDMzc0CamTlAAAAAQM3MjD/NzEw+MzMzv83MzL8AACDAmplZwAAAAEAAAABBAABgQQAAoEEAANBBAAAAQgAAGEIAADBCAABIQgAAYEJmZma/mpkZv5qZmb4AAAAAmpmZPpqZGT9mZmY/mpmZPwAAwD9mZuY/zczMPc3MzD4zMzM/AAAAAJqZmT6amRk/ZmZmP83MTD4AAAA/zcxMPw=="
   },
   "tangentTypes":{
    "dtype":"uint8",
-   "count":300,
-   "data":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+   "count":320,
+   "data":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
   },
   "fixedTangents":{
    "dtype":"float32",
@@ -5388,12 +5736,12 @@
   },
   "warnings":[],
   "stats":{
-   "curves":15,
-   "keys":150,
+   "curves":16,
+   "keys":160,
    "channels":14,
-   "nodes":25,
-   "graphNodes":45,
-   "seconds":0.0033
+   "nodes":27,
+   "graphNodes":53,
+   "seconds":0.0035
   }
  }
 }

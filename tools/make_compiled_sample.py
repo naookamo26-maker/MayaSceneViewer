@@ -3,7 +3,7 @@
 
   python tools/make_compiled_sample.py   → samples/compiled_sample.ma, samples/compiled_sample.json
 
-専用に扱う要素（キーで動くノード・parent/point/orient/scale/aim コンストレイント・lookAt・IK と poleVectorConstraint）を詰め込み、専用の評価の計画が作られることと、
+専用に扱う要素（キーで動くノード・parent/point/orient/scale/aim コンストレイント・lookAt・IK と poleVectorConstraint・計算ノード）を詰め込み、専用の評価の計画が作られることと、
 従来の評価器（RigEvaluator）と全フレームでビット単位で同じ結果になることを web_src/tests/compiled.test.mjs で確かめる。
 再生範囲 1〜30。
   * grp（動かない）→ c0（回転順 zxy・ピボット (1, 0, 0)・(0, 0.5, 0)・移動と回転のキー）
@@ -25,6 +25,10 @@
     ik_a は c0 の子。極ベクトルは pv_a（tz にキー）への poleVectorConstraint。終端 k2 は c1 への orientConstraint
   * m0 → m1 → m2 → m3 → m4 を ikRPsolver の ik_b で動かす（ひねりにキー・ikBlend 0.5）。ik_b は c2 の子
   * n0 → n1 を ikSCsolver の ik_c（1 ボーン）で動かす。ik_c は tz にキー
+  * q0（c0 のカスタム属性 amt にキー）: amt → multiplyDivide → unitConversion → q0.rz、c0.ty → sum（Maya 2024 の計算ノード）→ q0.ty、
+    c2.s → q0.s（DAG ノードの直接の接続）
+  * q1: multMatrix（c1.wm × q1.pim）→ decomposeMatrix → q1.t・q1.r（c1 に重ねる）
+  * k0 の ry ← reverse ← c0.amt（IK のジョイントの FK の値を計算ノードで決める）
 """
 from __future__ import annotations
 
@@ -191,6 +195,32 @@ def main():
     keys("ik_c", "tz", "animCurveTL", [(f, -1 + 0.1 * f) for f in frames])
     A('createNode ikRPsolver -n "ikRPsolver";')
     A('createNode ikSCsolver -n "ikSCsolver";')
+
+    # 段階 4: 計算ノード・DAG ノードの直接の接続
+    i = L.index('createNode transform -n "c0" -p "grp";')
+    L.insert(i + 1, '\taddAttr -ci true -sn "amt" -ln "amt" -min 0 -max 1 -at "double";')
+    keys("c0", "amt", "animCurveTU", [(f, (f % 10) / 10.0) for f in frames])
+    node("joint", "q0", None, '".t" -type "double3" 0 0 -3 ')
+    node("multiplyDivide", "q0_md", None, '".i2" -type "float3" 90 1 1 ')
+    node("unitConversion", "q0_uc", None, '".cf" 0.017453292519943295')
+    con("c0.amt", "q0_md.i1x")
+    con("q0_md.ox", "q0_uc.i")
+    con("q0_uc.o", "q0.rz")
+    node("sum", "q0_sum", None, '".i[1]" 0.5')
+    con("c0.ty", "q0_sum.i[0]")
+    con("q0_sum.o", "q0.ty")
+    con("c2.s", "q0.s")
+    node("joint", "q1", None)
+    node("multMatrix", "q1_mm", None)
+    node("decomposeMatrix", "q1_dm", None)
+    con("c1.wm", "q1_mm.i[0]")
+    con("q1.pim", "q1_mm.i[1]")
+    con("q1_mm.o", "q1_dm.imat")
+    con("q1_dm.ot", "q1.t")
+    con("q1_dm.or", "q1.r")
+    node("reverse", "k0_rv", None)
+    con("c0.amt", "k0_rv.ix")
+    con("k0_rv.ox", "k0.ry")
 
     A('createNode script -n "sceneConfigurationScriptNode";')
     A('\tsetAttr ".b" -type "string" "playbackOptions -min 1 -max 30 -ast 1 -aet 30 ";')
