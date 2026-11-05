@@ -433,6 +433,152 @@
    ]
   },
   {
+   "name":"jo",
+   "path":"|grp|c0|c1|c2|jo",
+   "type":"joint",
+   "parent":3,
+   "matrix":[
+    0.984807753,
+    0.1736481777,
+    0.0,
+    0.0,
+    -0.1729873939,
+    0.9810602622,
+    0.0871557427,
+    0.0,
+    0.0151344359,
+    -0.0858316512,
+    0.9961946981,
+    0.0,
+    0.0,
+    -1.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    0.5756368337,
+    0.6159639402,
+    -0.5378016922,
+    0.0,
+    -0.4052398793,
+    0.7861423683,
+    0.466648494,
+    0.0,
+    0.710227341,
+    -0.0506813687,
+    0.7021456565,
+    0.0,
+    3.2095645284,
+    1.3222053463,
+    -1.8877894823,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     -1.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xzy",
+    "jo":[
+     5.0,
+     0.0,
+     10.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "rx ← jo_oc（orientConstraint）",
+    "ry ← jo_oc（orientConstraint）",
+    "rz ← jo_oc（orientConstraint）"
+   ]
+  },
+  {
+   "name":"jb",
+   "path":"|grp|c0|c1|c2|jb",
+   "type":"joint",
+   "parent":3,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    -2.0,
+    1.0
+   ],
+   "worldMatrix":[
+    0.6477418975,
+    0.4698463104,
+    -0.5997290045,
+    0.0,
+    -0.3585664405,
+    0.8825641193,
+    0.304155689,
+    0.0,
+    0.6722057289,
+    0.0180283112,
+    0.7401448764,
+    0.0,
+    1.5065866301,
+    2.1687128431,
+    -3.0639235461,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     -2.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "rx ← jb_ac（aimConstraint）",
+    "ry ← jb_ac（aimConstraint）",
+    "rz ← jb_ac（aimConstraint）"
+   ]
+  },
+  {
    "name":"j0",
    "path":"|j0",
    "type":"joint",
@@ -517,7 +663,7 @@
    "name":"j1",
    "path":"|j0|j1",
    "type":"joint",
-   "parent":6,
+   "parent":8,
    "matrix":[
     1.0,
     0.0,
@@ -593,7 +739,7 @@
    "name":"j2",
    "path":"|j0|j1|j2",
    "type":"joint",
-   "parent":7,
+   "parent":9,
    "matrix":[
     1.0,
     0.0,
@@ -832,6 +978,371 @@
     "ry ← jm_pc（parentConstraint）",
     "rz ← jm_pc（parentConstraint）"
    ]
+  },
+  {
+   "name":"jp",
+   "path":"|jp",
+   "type":"transform",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   },
+   "drivenBy":[
+    "tx ← jp_pc（pointConstraint）",
+    "ty ← jp_pc（pointConstraint）",
+    "tz ← jp_pc（pointConstraint）"
+   ]
+  },
+  {
+   "name":"js",
+   "path":"|js",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    3.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    3.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     3.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "sx ← js_sc（scaleConstraint）",
+    "sy ← js_sc（scaleConstraint）",
+    "sz ← js_sc（scaleConstraint）"
+   ]
+  },
+  {
+   "name":"ja",
+   "path":"|ja",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    0.8660254038,
+    0.5,
+    0.0,
+    0.0,
+    -0.5,
+    0.8660254038,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    0.8660254038,
+    0.5,
+    0.0,
+    0.0,
+    -0.5,
+    0.8660254038,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     30.0
+    ]
+   },
+   "pivot":[
+    0.0,
+    0.2,
+    0.0
+   ],
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "tx ← ja_tx（animCurveTL）",
+    "rx ← ja_ac（aimConstraint）",
+    "ry ← ja_ac（aimConstraint）",
+    "rz ← ja_ac（aimConstraint）"
+   ]
+  },
+  {
+   "name":"jc",
+   "path":"|jc",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    -2.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    -2.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     -2.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"yxz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "rx ← jc_ac（aimConstraint）",
+    "ry ← jc_ac（aimConstraint）",
+    "rz ← jc_ac（aimConstraint）"
+   ]
+  },
+  {
+   "name":"la",
+   "path":"|la",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    3.0,
+    3.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    3.0,
+    3.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     3.0,
+     3.0,
+     3.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "rx ← la_la（lookAt）",
+    "ry ← la_la（lookAt）",
+    "rz ← la_la（lookAt）"
+   ]
   }
  ],
  "meshes":[],
@@ -848,8 +1359,8 @@
  "textures":[],
  "warnings":[],
  "stats":{
-  "nodes":11,
-  "joints":7,
+  "nodes":18,
+  "joints":13,
   "meshes":0,
   "curves":0,
   "cameras":0,
@@ -860,7 +1371,7 @@
   "textures":0,
   "texturesMissing":0,
   "bindPoseNodes":0,
-  "drivenNodes":9
+  "drivenNodes":16
  },
  "animation":{
   "fps":24.0,
@@ -971,6 +1482,16 @@
     "weighted":false,
     "pre":0,
     "post":0
+   },
+   {
+    "name":"ja_tx",
+    "type":"TL",
+    "offset":100,
+    "count":10,
+    "tangent":18,
+    "weighted":false,
+    "pre":0,
+    "post":0
    }
   ],
   "channels":[
@@ -1020,9 +1541,14 @@
     "curve":8
    },
    {
-    "node":10,
+    "node":12,
     "attr":"tx",
     "curve":9
+   },
+   {
+    "node":15,
+    "attr":"tx",
+    "curve":10
    }
   ],
   "nodes":[
@@ -1224,6 +1750,78 @@
    {
     "node":6,
     "joint":true,
+    "ro":3,
+    "t":[
+     0.0,
+     -1.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "isNode":3,
+    "isScale":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "jo":[
+     5.0,
+     0.0,
+     10.0
+    ]
+   },
+   {
+    "node":7,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     -2.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "isNode":3,
+    "isScale":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":8,
+    "joint":true,
     "ro":1,
     "t":[
      0.0,
@@ -1252,7 +1850,7 @@
     ]
    },
    {
-    "node":7,
+    "node":9,
     "joint":true,
     "ro":0,
     "t":[
@@ -1275,7 +1873,7 @@
      0.0,
      0.0
     ],
-    "isNode":6,
+    "isNode":8,
     "isScale":[
      1.0,
      1.0,
@@ -1288,7 +1886,7 @@
     ]
    },
    {
-    "node":8,
+    "node":10,
     "joint":true,
     "ro":0,
     "t":[
@@ -1318,7 +1916,7 @@
     ]
    },
    {
-    "node":9,
+    "node":11,
     "joint":true,
     "ro":0,
     "t":[
@@ -1366,13 +1964,158 @@
     ]
    },
    {
-    "node":10,
+    "node":12,
     "joint":true,
     "ro":0,
     "t":[
      0.0,
      0.0,
      0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":13,
+    "joint":false,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":14,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     3.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":15,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     30.0
+    ]
+   },
+   {
+    "node":16,
+    "joint":true,
+    "ro":4,
+    "t":[
+     0.0,
+     -2.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":17,
+    "joint":true,
+    "ro":0,
+    "t":[
+     3.0,
+     3.0,
+     3.0
     ],
     "r":[
      0.0,
@@ -1476,7 +2219,7 @@
     "id":6,
     "name":"j0",
     "type":"joint",
-    "dag":6,
+    "dag":8,
     "inputs":{
      "tx":{
       "node":7,
@@ -1573,7 +2316,7 @@
       "attr":"ro"
      }
     },
-    "driven":6,
+    "driven":8,
     "targets":[
      {
       "index":0,
@@ -1585,7 +2328,7 @@
     "id":8,
     "name":"j1",
     "type":"joint",
-    "dag":7,
+    "dag":9,
     "inputs":{
      "tx":{
       "node":9,
@@ -1727,7 +2470,7 @@
       "attr":"ro"
      }
     },
-    "driven":7,
+    "driven":9,
     "targets":[
      {
       "index":0,
@@ -1743,7 +2486,7 @@
     "id":10,
     "name":"j2",
     "type":"joint",
-    "dag":8,
+    "dag":10,
     "inputs":{
      "tx":{
       "node":11,
@@ -1842,7 +2585,7 @@
       "attr":"ro"
      }
     },
-    "driven":8,
+    "driven":10,
     "targets":[
      {
       "index":0,
@@ -1854,7 +2597,7 @@
     "id":12,
     "name":"j3",
     "type":"joint",
-    "dag":9,
+    "dag":11,
     "inputs":{
      "tx":{
       "node":13,
@@ -1953,7 +2696,7 @@
       "attr":"ro"
      }
     },
-    "driven":9,
+    "driven":11,
     "targets":[
      {
       "index":0,
@@ -1965,7 +2708,7 @@
     "id":14,
     "name":"jm",
     "type":"joint",
-    "dag":10,
+    "dag":12,
     "inputs":{
      "tx":{
       "curve":9
@@ -2043,11 +2786,846 @@
       "attr":"ro"
      }
     },
-    "driven":10,
+    "driven":12,
     "targets":[
      {
       "index":0,
       "node":1
+     }
+    ]
+   },
+   {
+    "id":16,
+    "name":"jp",
+    "type":"transform",
+    "dag":13,
+    "inputs":{
+     "tx":{
+      "node":17,
+      "attr":"ctx"
+     },
+     "ty":{
+      "node":17,
+      "attr":"cty"
+     },
+     "tz":{
+      "node":17,
+      "attr":"ctz"
+     }
+    }
+   },
+   {
+    "id":17,
+    "name":"jp_pc",
+    "type":"pointConstraint",
+    "dag":-1,
+    "attrs":{
+     "w0":0.4,
+     "c2W0":1.0,
+     "w1":0.6,
+     "jtW1":1.0,
+     "o":[
+      0.5,
+      0.0,
+      -0.25
+     ]
+    },
+    "inputs":{
+     "tg[0].tw":{
+      "node":17,
+      "attr":"w0"
+     },
+     "tg[0].tt":{
+      "node":3,
+      "attr":"t"
+     },
+     "tg[0].trp":{
+      "node":3,
+      "attr":"rp"
+     },
+     "tg[0].trt":{
+      "node":3,
+      "attr":"rpt"
+     },
+     "tg[0].tr":{
+      "node":3,
+      "attr":"r"
+     },
+     "tg[0].tro":{
+      "node":3,
+      "attr":"ro"
+     },
+     "tg[0].ts":{
+      "node":3,
+      "attr":"s"
+     },
+     "tg[0].tpm":{
+      "node":3,
+      "attr":"pm"
+     },
+     "tg[1].tw":{
+      "node":17,
+      "attr":"w1"
+     },
+     "tg[1].tt":{
+      "node":5,
+      "attr":"t"
+     },
+     "tg[1].trp":{
+      "node":5,
+      "attr":"rp"
+     },
+     "tg[1].trt":{
+      "node":5,
+      "attr":"rpt"
+     },
+     "tg[1].tr":{
+      "node":5,
+      "attr":"r"
+     },
+     "tg[1].tro":{
+      "node":5,
+      "attr":"ro"
+     },
+     "tg[1].ts":{
+      "node":5,
+      "attr":"s"
+     },
+     "tg[1].tpm":{
+      "node":5,
+      "attr":"pm"
+     },
+     "tg[1].tjo":{
+      "node":5,
+      "attr":"jo"
+     },
+     "tg[1].tsc":{
+      "node":5,
+      "attr":"ssc"
+     },
+     "tg[1].tis":{
+      "node":5,
+      "attr":"is"
+     },
+     "cpim":{
+      "node":16,
+      "attr":"pim"
+     },
+     "crp":{
+      "node":16,
+      "attr":"rp"
+     },
+     "crt":{
+      "node":16,
+      "attr":"rpt"
+     },
+     "cro":{
+      "node":16,
+      "attr":"ro"
+     }
+    },
+    "driven":13,
+    "targets":[
+     {
+      "index":0,
+      "node":3
+     },
+     {
+      "index":1,
+      "node":5
+     }
+    ]
+   },
+   {
+    "id":18,
+    "name":"jo",
+    "type":"joint",
+    "dag":6,
+    "inputs":{
+     "rx":{
+      "node":19,
+      "attr":"crx"
+     },
+     "ry":{
+      "node":19,
+      "attr":"cry"
+     },
+     "rz":{
+      "node":19,
+      "attr":"crz"
+     }
+    }
+   },
+   {
+    "id":19,
+    "name":"jo_oc",
+    "type":"orientConstraint",
+    "dag":-1,
+    "attrs":{
+     "w0":1.0,
+     "c1W0":1.0,
+     "w1":2.0,
+     "jtW1":1.0,
+     "o":[
+      10.0,
+      0.0,
+      -20.0
+     ]
+    },
+    "inputs":{
+     "tg[0].tw":{
+      "node":19,
+      "attr":"w0"
+     },
+     "tg[0].tt":{
+      "node":2,
+      "attr":"t"
+     },
+     "tg[0].trp":{
+      "node":2,
+      "attr":"rp"
+     },
+     "tg[0].trt":{
+      "node":2,
+      "attr":"rpt"
+     },
+     "tg[0].tr":{
+      "node":2,
+      "attr":"r"
+     },
+     "tg[0].tro":{
+      "node":2,
+      "attr":"ro"
+     },
+     "tg[0].ts":{
+      "node":2,
+      "attr":"s"
+     },
+     "tg[0].tpm":{
+      "node":2,
+      "attr":"pm"
+     },
+     "tg[0].tjo":{
+      "node":2,
+      "attr":"jo"
+     },
+     "tg[0].tsc":{
+      "node":2,
+      "attr":"ssc"
+     },
+     "tg[0].tis":{
+      "node":2,
+      "attr":"is"
+     },
+     "tg[1].tw":{
+      "node":19,
+      "attr":"w1"
+     },
+     "tg[1].tt":{
+      "node":5,
+      "attr":"t"
+     },
+     "tg[1].trp":{
+      "node":5,
+      "attr":"rp"
+     },
+     "tg[1].trt":{
+      "node":5,
+      "attr":"rpt"
+     },
+     "tg[1].tr":{
+      "node":5,
+      "attr":"r"
+     },
+     "tg[1].tro":{
+      "node":5,
+      "attr":"ro"
+     },
+     "tg[1].ts":{
+      "node":5,
+      "attr":"s"
+     },
+     "tg[1].tpm":{
+      "node":5,
+      "attr":"pm"
+     },
+     "tg[1].tjo":{
+      "node":5,
+      "attr":"jo"
+     },
+     "tg[1].tsc":{
+      "node":5,
+      "attr":"ssc"
+     },
+     "tg[1].tis":{
+      "node":5,
+      "attr":"is"
+     },
+     "cpim":{
+      "node":18,
+      "attr":"pim"
+     },
+     "crp":{
+      "node":18,
+      "attr":"rp"
+     },
+     "crt":{
+      "node":18,
+      "attr":"rpt"
+     },
+     "cro":{
+      "node":18,
+      "attr":"ro"
+     }
+    },
+    "driven":6,
+    "targets":[
+     {
+      "index":0,
+      "node":2
+     },
+     {
+      "index":1,
+      "node":5
+     }
+    ]
+   },
+   {
+    "id":20,
+    "name":"js",
+    "type":"joint",
+    "dag":14,
+    "inputs":{
+     "sx":{
+      "node":21,
+      "attr":"csx"
+     },
+     "sy":{
+      "node":21,
+      "attr":"csy"
+     },
+     "sz":{
+      "node":21,
+      "attr":"csz"
+     }
+    }
+   },
+   {
+    "id":21,
+    "name":"js_sc",
+    "type":"scaleConstraint",
+    "dag":-1,
+    "attrs":{
+     "w0":1.0,
+     "c2W0":1.0,
+     "w1":1.0,
+     "s3W1":1.0,
+     "o":[
+      1.0,
+      2.0,
+      1.0
+     ]
+    },
+    "inputs":{
+     "tg[0].tw":{
+      "node":21,
+      "attr":"w0"
+     },
+     "tg[0].tt":{
+      "node":3,
+      "attr":"t"
+     },
+     "tg[0].trp":{
+      "node":3,
+      "attr":"rp"
+     },
+     "tg[0].trt":{
+      "node":3,
+      "attr":"rpt"
+     },
+     "tg[0].tr":{
+      "node":3,
+      "attr":"r"
+     },
+     "tg[0].tro":{
+      "node":3,
+      "attr":"ro"
+     },
+     "tg[0].ts":{
+      "node":3,
+      "attr":"s"
+     },
+     "tg[0].tpm":{
+      "node":3,
+      "attr":"pm"
+     },
+     "tg[1].tw":{
+      "node":21,
+      "attr":"w1"
+     },
+     "tg[1].tt":{
+      "node":4,
+      "attr":"t"
+     },
+     "tg[1].trp":{
+      "node":4,
+      "attr":"rp"
+     },
+     "tg[1].trt":{
+      "node":4,
+      "attr":"rpt"
+     },
+     "tg[1].tr":{
+      "node":4,
+      "attr":"r"
+     },
+     "tg[1].tro":{
+      "node":4,
+      "attr":"ro"
+     },
+     "tg[1].ts":{
+      "node":4,
+      "attr":"s"
+     },
+     "tg[1].tpm":{
+      "node":4,
+      "attr":"pm"
+     },
+     "cpim":{
+      "node":20,
+      "attr":"pim"
+     },
+     "crp":{
+      "node":20,
+      "attr":"rp"
+     },
+     "crt":{
+      "node":20,
+      "attr":"rpt"
+     },
+     "cro":{
+      "node":20,
+      "attr":"ro"
+     }
+    },
+    "driven":14,
+    "targets":[
+     {
+      "index":0,
+      "node":3
+     },
+     {
+      "index":1,
+      "node":4
+     }
+    ]
+   },
+   {
+    "id":22,
+    "name":"ja",
+    "type":"joint",
+    "dag":15,
+    "inputs":{
+     "tx":{
+      "curve":10
+     },
+     "rx":{
+      "node":23,
+      "attr":"crx"
+     },
+     "ry":{
+      "node":23,
+      "attr":"cry"
+     },
+     "rz":{
+      "node":23,
+      "attr":"crz"
+     }
+    }
+   },
+   {
+    "id":23,
+    "name":"ja_ac",
+    "type":"aimConstraint",
+    "dag":-1,
+    "attrs":{
+     "w0":1.0,
+     "c1W0":1.0,
+     "a":[
+      0.0,
+      1.0,
+      0.0
+     ],
+     "u":[
+      1.0,
+      0.0,
+      0.0
+     ],
+     "wut":3.0,
+     "wu":[
+      0.0,
+      0.0,
+      1.0
+     ],
+     "o":[
+      0.0,
+      15.0,
+      0.0
+     ]
+    },
+    "inputs":{
+     "tg[0].tw":{
+      "node":23,
+      "attr":"w0"
+     },
+     "tg[0].tt":{
+      "node":2,
+      "attr":"t"
+     },
+     "tg[0].trp":{
+      "node":2,
+      "attr":"rp"
+     },
+     "tg[0].trt":{
+      "node":2,
+      "attr":"rpt"
+     },
+     "tg[0].tr":{
+      "node":2,
+      "attr":"r"
+     },
+     "tg[0].tro":{
+      "node":2,
+      "attr":"ro"
+     },
+     "tg[0].ts":{
+      "node":2,
+      "attr":"s"
+     },
+     "tg[0].tpm":{
+      "node":2,
+      "attr":"pm"
+     },
+     "tg[0].tjo":{
+      "node":2,
+      "attr":"jo"
+     },
+     "tg[0].tsc":{
+      "node":2,
+      "attr":"ssc"
+     },
+     "tg[0].tis":{
+      "node":2,
+      "attr":"is"
+     },
+     "cpim":{
+      "node":22,
+      "attr":"pim"
+     },
+     "crp":{
+      "node":22,
+      "attr":"rp"
+     },
+     "crt":{
+      "node":22,
+      "attr":"rpt"
+     },
+     "cro":{
+      "node":22,
+      "attr":"ro"
+     },
+     "ct":{
+      "node":22,
+      "attr":"t"
+     }
+    },
+    "driven":15,
+    "targets":[
+     {
+      "index":0,
+      "node":2
+     }
+    ]
+   },
+   {
+    "id":24,
+    "name":"jb",
+    "type":"joint",
+    "dag":7,
+    "inputs":{
+     "rx":{
+      "node":25,
+      "attr":"crx"
+     },
+     "ry":{
+      "node":25,
+      "attr":"cry"
+     },
+     "rz":{
+      "node":25,
+      "attr":"crz"
+     }
+    }
+   },
+   {
+    "id":25,
+    "name":"jb_ac",
+    "type":"aimConstraint",
+    "dag":-1,
+    "attrs":{
+     "w0":1.0,
+     "jpW0":1.0,
+     "wut":0.0
+    },
+    "inputs":{
+     "tg[0].tw":{
+      "node":25,
+      "attr":"w0"
+     },
+     "tg[0].tt":{
+      "node":16,
+      "attr":"t"
+     },
+     "tg[0].trp":{
+      "node":16,
+      "attr":"rp"
+     },
+     "tg[0].trt":{
+      "node":16,
+      "attr":"rpt"
+     },
+     "tg[0].tr":{
+      "node":16,
+      "attr":"r"
+     },
+     "tg[0].tro":{
+      "node":16,
+      "attr":"ro"
+     },
+     "tg[0].ts":{
+      "node":16,
+      "attr":"s"
+     },
+     "tg[0].tpm":{
+      "node":16,
+      "attr":"pm"
+     },
+     "cpim":{
+      "node":24,
+      "attr":"pim"
+     },
+     "crp":{
+      "node":24,
+      "attr":"rp"
+     },
+     "crt":{
+      "node":24,
+      "attr":"rpt"
+     },
+     "cro":{
+      "node":24,
+      "attr":"ro"
+     },
+     "ct":{
+      "node":24,
+      "attr":"t"
+     }
+    },
+    "driven":7,
+    "targets":[
+     {
+      "index":0,
+      "node":16
+     }
+    ]
+   },
+   {
+    "id":26,
+    "name":"jc",
+    "type":"joint",
+    "dag":16,
+    "inputs":{
+     "rx":{
+      "node":27,
+      "attr":"crx"
+     },
+     "ry":{
+      "node":27,
+      "attr":"cry"
+     },
+     "rz":{
+      "node":27,
+      "attr":"crz"
+     }
+    }
+   },
+   {
+    "id":27,
+    "name":"jc_ac",
+    "type":"aimConstraint",
+    "dag":-1,
+    "attrs":{
+     "w0":1.0,
+     "c0W0":1.0,
+     "wut":4.0
+    },
+    "inputs":{
+     "tg[0].tw":{
+      "node":27,
+      "attr":"w0"
+     },
+     "tg[0].tt":{
+      "node":1,
+      "attr":"t"
+     },
+     "tg[0].trp":{
+      "node":1,
+      "attr":"rp"
+     },
+     "tg[0].trt":{
+      "node":1,
+      "attr":"rpt"
+     },
+     "tg[0].tr":{
+      "node":1,
+      "attr":"r"
+     },
+     "tg[0].tro":{
+      "node":1,
+      "attr":"ro"
+     },
+     "tg[0].ts":{
+      "node":1,
+      "attr":"s"
+     },
+     "tg[0].tpm":{
+      "node":1,
+      "attr":"pm"
+     },
+     "cpim":{
+      "node":26,
+      "attr":"pim"
+     },
+     "crp":{
+      "node":26,
+      "attr":"rp"
+     },
+     "crt":{
+      "node":26,
+      "attr":"rpt"
+     },
+     "cro":{
+      "node":26,
+      "attr":"ro"
+     },
+     "ct":{
+      "node":26,
+      "attr":"t"
+     }
+    },
+    "driven":16,
+    "targets":[
+     {
+      "index":0,
+      "node":1
+     }
+    ]
+   },
+   {
+    "id":28,
+    "name":"la",
+    "type":"joint",
+    "dag":17,
+    "inputs":{
+     "rx":{
+      "node":29,
+      "attr":"crx"
+     },
+     "ry":{
+      "node":29,
+      "attr":"cry"
+     },
+     "rz":{
+      "node":29,
+      "attr":"crz"
+     }
+    }
+   },
+   {
+    "id":29,
+    "name":"la_la",
+    "type":"lookAt",
+    "dag":-1,
+    "attrs":{
+     "w0":1.0,
+     "c2W0":1.0,
+     "a":[
+      0.0,
+      0.0,
+      -1.0
+     ],
+     "wut":0.0,
+     "tws":0.3
+    },
+    "inputs":{
+     "tg[0].tw":{
+      "node":29,
+      "attr":"w0"
+     },
+     "tg[0].tt":{
+      "node":3,
+      "attr":"t"
+     },
+     "tg[0].trp":{
+      "node":3,
+      "attr":"rp"
+     },
+     "tg[0].trt":{
+      "node":3,
+      "attr":"rpt"
+     },
+     "tg[0].tr":{
+      "node":3,
+      "attr":"r"
+     },
+     "tg[0].tro":{
+      "node":3,
+      "attr":"ro"
+     },
+     "tg[0].ts":{
+      "node":3,
+      "attr":"s"
+     },
+     "tg[0].tpm":{
+      "node":3,
+      "attr":"pm"
+     },
+     "cpim":{
+      "node":28,
+      "attr":"pim"
+     },
+     "crp":{
+      "node":28,
+      "attr":"rp"
+     },
+     "crt":{
+      "node":28,
+      "attr":"rpt"
+     },
+     "cro":{
+      "node":28,
+      "attr":"ro"
+     },
+     "ct":{
+      "node":28,
+      "attr":"t"
+     }
+    },
+    "driven":17,
+    "targets":[
+     {
+      "index":0,
+      "node":3
      }
     ]
    }
@@ -2058,18 +3636,18 @@
   "props":[],
   "times":{
    "dtype":"float32",
-   "count":100,
-   "data":"AACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQ=="
+   "count":110,
+   "data":"AACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EEAAIA/AACAQAAA4EAAACBBAABQQQAAgEEAAJhBAACwQQAAyEEAAOBBAACAPwAAgEAAAOBAAAAgQQAAUEEAAIBBAACYQQAAsEEAAMhBAADgQQAAgD8AAIBAAADgQAAAIEEAAFBBAACAQQAAmEEAALBBAADIQQAA4EE="
   },
   "values":{
    "dtype":"float32",
-   "count":100,
-   "data":"zcxMPs3MTD8zM7M/AAAAQGZmJkDNzExAMzNzQM3MjEAAAKBAMzOzQAAA4EAAAOBBAABEQgAAjEIAAIA/AACwQQAALEIAAIBCAACqQgAAgEEAAIDAAACAwQAA4MEAACDCAABQwgAAgMIAAJjCAACwwgAAyMIAAODCAABQQQAAsEEAAPhBAAAgQgAAREIAAGhCAACGQgAAmEIAAKpCAAC8QgAAXMIAACDCAADIwQAAIMEAAKBAAACgQQAADEIAAEhCAACCQgAAoEJcj4I/cT2KP4XrkT+amZk/rkehP8P1qD/Xo7A/7FG4PwAAwD8Ursc/uB6FP+F6lD8K16M/MzOzP1yPwj+F69E/rkfhP9ej8D8AAABAFK4HQBSuhz9SuJ4/j8K1P83MzD8K1+M/SOH6P8P1CEDhehRAAAAgQB+FK0AAAABAAAAAQQAAYEEAAKBBAADQQQAAAEIAABhCAAAwQgAASEIAAGBCzczMvc3MzL4zMzO/AACAv2Zmpr/NzMy/MzPzv83MDMAAACDAMzMzwA=="
+   "count":110,
+   "data":"zcxMPs3MTD8zM7M/AAAAQGZmJkDNzExAMzNzQM3MjEAAAKBAMzOzQAAA4EAAAOBBAABEQgAAjEIAAIA/AACwQQAALEIAAIBCAACqQgAAgEEAAIDAAACAwQAA4MEAACDCAABQwgAAgMIAAJjCAACwwgAAyMIAAODCAABQQQAAsEEAAPhBAAAgQgAAREIAAGhCAACGQgAAmEIAAKpCAAC8QgAAXMIAACDCAADIwQAAIMEAAKBAAACgQQAADEIAAEhCAACCQgAAoEJcj4I/cT2KP4XrkT+amZk/rkehP8P1qD/Xo7A/7FG4PwAAwD8Ursc/uB6FP+F6lD8K16M/MzOzP1yPwj+F69E/rkfhP9ej8D8AAABAFK4HQBSuhz9SuJ4/j8K1P83MzD8K1+M/SOH6P8P1CEDhehRAAAAgQB+FK0AAAABAAAAAQQAAYEEAAKBBAADQQQAAAEIAABhCAAAwQgAASEIAAGBCzczMvc3MzL4zMzO/AACAv2Zmpr/NzMy/MzPzv83MDMAAACDAMzMzwM3M7L8zM7O/MzNzvwAAAL/NzEy9zczMPpqZWT9mZqY/AADgP83MDEA="
   },
   "tangentTypes":{
    "dtype":"uint8",
-   "count":200,
-   "data":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+   "count":220,
+   "data":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
   },
   "fixedTangents":{
    "dtype":"float32",
@@ -2078,12 +3656,12 @@
   },
   "warnings":[],
   "stats":{
-   "curves":10,
-   "keys":100,
-   "channels":10,
-   "nodes":9,
-   "graphNodes":16,
-   "seconds":0.002
+   "curves":11,
+   "keys":110,
+   "channels":11,
+   "nodes":16,
+   "graphNodes":30,
+   "seconds":0.003
   }
  }
 }
