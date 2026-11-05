@@ -21,6 +21,7 @@ import {
   rebuildCurve, reverseCurve, withCvs,
 } from './curve.js';
 import { MATH_DEFAULTS, evaluateMath, mathAngleInput, mathKind, mathOutputs } from './mathNodes.js';
+import { buildPlan, runPlan } from './rigCompiled.js';
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -435,6 +436,11 @@ export class RigEvaluator {
     this.keepFor = { ikVariant: null, aimMode: null };
     this.keepStatic = true;                  // false なら keep を使わない（毎フレームすべて計算する）
     this.plans = new Map();                  // グラフの id → 属性 → 値の求め方（plugPlan）
+    // 専用の評価（rigCompiled.js）。最初の評価のあとで計画を作る（undefined = まだ・null = 扱えないリグ）。
+    // useCompiled を false にすると、いつもこの評価器で評価する（テスト・比較用）
+    this.compiledPlan = undefined;
+    this.compiledReason = null;
+    this.useCompiled = true;
     this.chanInputList = new Map();          // ノード番号 → チャンネルの接続（chanInputs）
     this.curveAttrs = new Map();             // AnimationClip のノードの材料 → カーブが動かす属性（curveAttrsOf）
     this.varying = false;                    // いま計算中の値が、時間で変わる値を読んだか
@@ -760,25 +766,48 @@ export class RigEvaluator {
       this.current = hit;
       return target;
     }
+    // 専用の評価: ポーズ確認の追加分がなく、再現チェックの候補を試していないとき（結果はこの評価器と同じ）
+    const compiled = this.useCompiled && this.poseKeys === NO_KEYS && this.ikVariant === null && this.aimMode === null;
+    if (compiled && this.compiledPlan) {
+      const plan = this.compiledPlan;
+      const store = !!layer && this.roomFor(layer);
+      runPlan(plan, f, target);
+      if (store && !plan.depsAdded) {                    // 追加分を読む依存（計画を作った評価で記録したもの）
+        for (const s of plan.moving) if (s.deps && s.deps.size) this.addNodeDeps(s.ni, s.deps);
+        plan.depsAdded = true;
+      }
+      if (store) this.storeSnapshot(f, layer, target);
+      return target;
+    }
     if (layer) this.seeded = this.seed(f, layer);
     const store = !!layer && this.roomFor(layer);
+    const capture = compiled && this.compiledPlan === undefined ? new Map() : null;
     for (const ni of this.moving) {
       this.dcur = null;
-        const m = target.get(ni) || new Matrix4();
+      const m = target.get(ni) || new Matrix4();
       m.copy(this.localFile(ni));
       target.set(ni, m);
       if (store && this.dcur) this.addNodeDeps(ni, this.dcur);
+      if (capture) capture.set(ni, this.dcur);
     }
     this.dcur = null;
-    if (store) {
-      const mats = new Float64Array(this.moving.size * 16);
-      let o = 0;
-      for (const ni of this.moving) { target.get(ni).toArray(mats, o); o += 16; }
-      this.current = { mats, props: null, curves: new Map(), bytes: 0, layer };
-      layer.frames.set(f, this.current);
-      this.addSnapshotBytes(this.current, mats.byteLength + SNAPSHOT_BASE);
+    if (capture) {                                       // 扱えるリグなら、次のフレームから専用の評価にする
+      const r = buildPlan(this, capture);
+      this.compiledPlan = r.plan || null;
+      this.compiledReason = r.reason || null;
     }
+    if (store) this.storeSnapshot(f, layer, target);
     return target;
+  }
+
+  /** フレーム f の動くノードのローカル行列を、再生キャッシュのレイヤー layer に入れる */
+  storeSnapshot(f, layer, target) {
+    const mats = new Float64Array(this.moving.size * 16);
+    let o = 0;
+    for (const ni of this.moving) { target.get(ni).toArray(mats, o); o += 16; }
+    this.current = { mats, props: null, curves: new Map(), bytes: 0, layer };
+    layer.frames.set(f, this.current);
+    this.addSnapshotBytes(this.current, mats.byteLength + SNAPSHOT_BASE);
   }
 
   /** フレーム f が（再生で使うレイヤーの）再生キャッシュにあるか */

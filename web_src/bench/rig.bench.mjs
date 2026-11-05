@@ -4,6 +4,7 @@
 //   1 周目: 新しい評価器で 1 周（読み込み直後の再生）。2 周目以降: 同じ評価器でくり返す。
 //   キャッシュなし: 再生キャッシュを使わずに評価だけをくり返す（評価そのものの速さ）。
 //   固定なし: さらに、時間で変わらない値もフレームごとに計算し直す。
+//   汎用（generic）: 専用の評価（rigCompiled.js）を使わず、キャッシュなしで評価する。plan: 専用の評価を使ったか。
 //   --save で全フレームの行列などを保存し、--check で保存した結果と同じか確かめる（高速化の前後の比較用）。
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -61,7 +62,7 @@ const saved = {};
 const expected = checkWith ? JSON.parse(readFileSync(checkWith, 'utf8')) : null;
 let mismatches = 0;
 const rows = [];
-const total = { first: 0, warm: 0, nocache: 0, nokeep: 0, frames: 0 };
+const total = { first: 0, warm: 0, nocache: 0, generic: 0, nokeep: 0, frames: 0 };
 for (const file of files) {
   const data = load(file);
   if (!data) continue;
@@ -83,6 +84,14 @@ for (const file of files) {
   t0 = performance.now();
   for (let k = 0; k < repeat; k++) for (const f of frames) step(ctx, f, false);
   const nocache = (performance.now() - t0) / (frames.length * repeat);
+  const plan = ctx.rig.compiledPlan ? '専用' : '汎用';
+  // 汎用の経路だけ（専用の評価を使わない。キャッシュなし）
+  ctx = makeRig(data);
+  if ('playbackLimit' in ctx.rig) { ctx.rig.playbackLimit = 0; ctx.rig.useCompiled = false; }
+  for (const f of frames) step(ctx, f, false);
+  t0 = performance.now();
+  for (let k = 0; k < repeat; k++) for (const f of frames) step(ctx, f, false);
+  const generic = (performance.now() - t0) / (frames.length * repeat);
   // 固定なし（時間で変わらない値もフレームごとに計算する）
   ctx = makeRig(data);
   if ('playbackLimit' in ctx.rig) { ctx.rig.playbackLimit = 0; ctx.rig.keepStatic = false; }
@@ -91,9 +100,11 @@ for (const file of files) {
   for (let k = 0; k < repeat; k++) for (const f of frames) step(ctx, f, false);
   const nokeep = (performance.now() - t0) / (frames.length * repeat);
   rows.push({ file, nodes: ctx.rig.moving.size, graph: ctx.rig.graph.length, frames: frames.length,
-    first: first.toFixed(3), warm: warm.toFixed(3), nocache: nocache.toFixed(3), nokeep: nokeep.toFixed(3) });
+    first: first.toFixed(3), warm: warm.toFixed(3), nocache: nocache.toFixed(3), generic: generic.toFixed(3), plan,
+    nokeep: nokeep.toFixed(3) });
   total.first += first * frames.length; total.warm += warm * frames.length; total.nocache += nocache * frames.length;
   total.nokeep += nokeep * frames.length;
+  total.generic += generic * frames.length;
   total.frames += frames.length;
   // 結果の記録・照合（新しい評価器で、前後に飛ぶ順も混ぜて評価する）
   if (saveTo || expected) {
@@ -115,7 +126,8 @@ for (const file of files) {
 }
 console.table(rows);
 console.log(`1 フレームあたり（ms・全サンプルの平均）: 1 周目 ${(total.first / total.frames).toFixed(3)} ・ `
-  + `2 周目以降 ${(total.warm / total.frames).toFixed(3)} ・ キャッシュなし ${(total.nocache / total.frames).toFixed(3)} ・ `
+  + `2 周目以降 ${(total.warm / total.frames).toFixed(3)} ・ キャッシュなし ${(total.nocache / total.frames).toFixed(3)}`
+  + `（汎用の経路だけ ${(total.generic / total.frames).toFixed(3)}）・ `
   + `固定なし ${(total.nokeep / total.frames).toFixed(3)}`);
 if (saveTo) { writeFileSync(saveTo, JSON.stringify(saved)); console.log(`結果を保存しました: ${saveTo}`); }
 if (expected || saveTo) {
