@@ -417,8 +417,14 @@ export class RigEvaluator {
     // （キャッシュの Map の deps）。読まれていないノードの追加分を変えても、キャッシュは捨てない。変えたノードを読んだ
     // 値だけを捨てる・作り直す
     this.poseReads = new Set([OPAQUE]);
-    this.dcur = null;                        // いま計算中の値が読んだノード（Set。null = まだない）
-    this.dshared = false;                    // dcur がほかの値の deps と同じもの（足す前に複製する）
+    this.dcur = null;                        // いま計算中の値が読んだノード（Set。null = まだない。変えない集合）
+    // 依存の集合は変えずに共有し、同じ組み合わせの和は覚えて使い回す（グラフの形は変わらないので、2 フレーム目からは
+    // 新しい集合をほとんど作らない）。集合の番号（depIds）・1 ノードだけの集合（depSingles）・和（depUnions: 番号 → 番号 → 和）
+    this.depIds = new WeakMap();
+    this.nextDepId = 1;
+    this.depSingles = new Map();
+    this.depUnions = new Map();
+    this.depUnionCount = 0;
     this.nodeDeps = new Map();               // 動くノード → そのローカル行列が読んだノード（再生キャッシュに入れた評価すべての和）
     this.dependents = new Map();             // ノード → その追加分で値が変わりうる動くノード（nodeDeps の逆引き）
     // 時間で変わらない値（キー・frame・time・Trax のどれも読まずに求めた値）は、フレームをまたいで keep に残す。
@@ -471,7 +477,6 @@ export class RigEvaluator {
     this.varying = false;
     this.current = null;
     this.dcur = null;
-    this.dshared = false;
   }
 
   /** 値の違うノード d（null = すべて）のうち、評価で追加分を読んだことのあるもの（null = すべて） */
@@ -499,28 +504,47 @@ export class RigEvaluator {
   /** ポーズ確認の追加分（ノード ni の。なければ null）。読んだことを依存として覚える */
   poseAt(ni) {
     this.poseReads.add(ni);
-    let c = this.dcur;
-    if (!c) {
-      this.dcur = new Set([ni]);
-      this.dshared = false;
-    } else if (!c.has(ni)) {
-      if (this.dshared) { c = this.dcur = new Set(c); this.dshared = false; }
-      c.add(ni);
-    }
+    let one = this.depSingles.get(ni);
+    if (!one) this.depSingles.set(ni, one = new Set([ni]));
+    this.dcur = this.unionDeps(this.dcur, one);
     return this.poseOf(ni);
   }
 
   /** いま計算中の値の依存に、読んだ値の依存 d を足す（d は変えない） */
   addDeps(d) {
-    if (!d) return;
-    let c = this.dcur;
-    if (!c) { this.dcur = d; this.dshared = true; return; }
-    if (c === d) return;
-    for (const x of d) {
-      if (c.has(x)) continue;
-      if (this.dshared) { c = this.dcur = new Set(c); this.dshared = false; }
-      c.add(x);
+    if (d) this.dcur = this.unionDeps(this.dcur, d);
+  }
+
+  depIdOf(set) {
+    let id = this.depIds.get(set);
+    if (id === undefined) this.depIds.set(set, id = this.nextDepId++);
+    return id;
+  }
+
+  /** 依存の集合 a と b の和（どちらも変えない。同じ組み合わせなら前に作ったものを返す） */
+  unionDeps(a, b) {
+    if (!a) return b;
+    if (!b || a === b) return a;
+    let ia = this.depIdOf(a), ib = this.depIdOf(b);
+    if (ia > ib) { const t = ia; ia = ib; ib = t; }
+    let row = this.depUnions.get(ia);
+    if (!row) this.depUnions.set(ia, row = new Map());
+    let u = row.get(ib);
+    if (u === undefined) {
+      const big = a.size >= b.size ? a : b, small = big === a ? b : a;
+      let all = true;
+      for (const x of small) if (!big.has(x)) { all = false; break; }
+      if (all) u = big;
+      else { u = new Set(big); for (const x of small) u.add(x); }
+      if (++this.depUnionCount > 500000) {                 // 追加分を何度も変えたときなど、覚えすぎたら捨てる
+        this.depUnions = new Map();
+        this.depUnionCount = 0;
+        row = new Map();
+        this.depUnions.set(ia, row);
+      }
+      row.set(ib, u);
     }
+    return u;
   }
 
   /** 動くノード ni のローカル行列が読んだノードを覚える（seed で、影響を受けないノードを見分ける） */
@@ -684,7 +708,7 @@ export class RigEvaluator {
       if (!bestAffected.has(ni)) {
         local.set(ni, new Matrix4().fromArray(best.mats, o));
         const d = this.nodeDeps.get(ni);
-        if (d && d.size) deps.set(ni, d);
+        if (d && d.size) deps.set(ni, new Set(d));          // nodeDeps はあとで足すので、変えない複製にする
         n++;
       }
       o += 16;
@@ -740,14 +764,12 @@ export class RigEvaluator {
     const store = !!layer && this.roomFor(layer);
     for (const ni of this.moving) {
       this.dcur = null;
-      this.dshared = false;
-      const m = target.get(ni) || new Matrix4();
+        const m = target.get(ni) || new Matrix4();
       m.copy(this.localFile(ni));
       target.set(ni, m);
       if (store && this.dcur) this.addNodeDeps(ni, this.dcur);
     }
     this.dcur = null;
-    this.dshared = false;
     if (store) {
       const mats = new Float64Array(this.moving.size * 16);
       let o = 0;
@@ -861,10 +883,9 @@ export class RigEvaluator {
       if (km.deps) this.addDeps(km.deps.get(key));
       return v;
     }
-    const outer = this.varying, outerDeps = this.dcur, outerShared = this.dshared;
+    const outer = this.varying, outerDeps = this.dcur;
     this.varying = false;
     this.dcur = null;
-    this.dshared = false;
     if (fallback) fm.set(key, BUSY);
     let done = false;
     try {
@@ -874,7 +895,6 @@ export class RigEvaluator {
       const varying = this.varying, deps = this.dcur;
       this.varying = outer || varying;
       this.dcur = outerDeps;
-      this.dshared = outerShared;
       this.addDeps(deps);
       if (!done) fm.delete(key);
       else {
