@@ -39,6 +39,7 @@ STATE_JS = """JSON.stringify((() => {
     frames: app.clip ? Math.floor(app.clip.end) - Math.ceil(app.clip.start) + 1 : 0,
     snapshots: rig ? rig.snapshots.size : -1, cached: rig ? !!rig.current : false, layers: rig ? rig.layers.length : 0,
     wrist: at('wrist'), hand: at('hand_ctrl'),
+    workers: app.bakers && app.bakers.available ? app.bakers.workers.length : 0,
     limitMB: rig ? rig.playbackLimit / 1048576 : null, settingMB: app.settings.playbackCacheMB,
     cacheHud: document.getElementById('vp-cache').hidden ? null : document.getElementById('vp-cache').textContent,
     viewState: document.getElementById('menu-view-state').textContent,
@@ -111,6 +112,7 @@ def main() -> int:
             check(s["settingMB"] == 512 and s["limitMB"] == 512, "保存した上限（512MB）を起動時に読み戻す: %s / %s"
                   % (s["settingMB"], s["limitMB"]))
             check(baked(s), "止まっているあいだに全フレームの再生キャッシュを作る: %d / %d" % (s["snapshots"], s["frames"]))
+            check(s["workers"] > 0, "再生キャッシュは Web Worker で作る（ワーカー %d 個）" % s["workers"])
             check(close(s["wrist"], first["wrist"]), "キャッシュを作っても表示中の姿勢は変わらない: %s" % s["wrist"])
             check(bool(s["cacheHud"]) and s["cacheHud"].startswith("キャッシュ 48 / 48 フレーム・") and s["cacheHud"].endswith(" KB"),
                   "ヘッドアップディスプレイにキャッシュのフレーム数と大きさ: %s" % s["cacheHud"])

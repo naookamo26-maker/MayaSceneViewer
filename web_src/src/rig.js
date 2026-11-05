@@ -341,6 +341,8 @@ export class RigEvaluator {
     this.sceneNodes = sceneNodes;
     this.staticLocal = staticLocal;
     this.graph = (clip.raw.graph || []).slice();
+    // グラフから求めた値（グラフのオブジェクトには書き込まない。共通 JSON をそのまま別の評価器・ワーカーに渡せるように）
+    this.derived = { maskSets: new WeakMap(), programs: new WeakMap(), weightsOf: new WeakMap() };
     this.byId = new Map(this.graph.map((g) => [g.id, g]));
     this.dagGraph = new Map();               // ノード番号 → グラフのノード
     for (const g of this.graph) if (g.dag >= 0) this.dagGraph.set(g.dag, g);
@@ -790,6 +792,54 @@ export class RigEvaluator {
       n++;
     }
     this.evaluate(back.f, back.poseOf, this.matrices, back.key);
+    return n;
+  }
+
+  /**
+   * 再生で使う追加分（bake で作るもの）を、ワーカーに送れる形にする: { keys（目印の Map）, poses: [[ノード番号,
+   * 追加分の行列の 16 要素 | null, 目印]]（ノード番号の順）, sig（目印を並べた文字列。同じ追加分か比べる） }。
+   * 目印がない・ノードごとの目印でない（版の数など）ときは null（ワーカーでは作れない）
+   */
+  playbackPoseData() {
+    const play = this.play || { poseOf: this.poseOf, keys: this.poseKeys };
+    const keys = play.keys;
+    if (!keys || keys.has(OPAQUE)) return null;
+    const poses = [];
+    for (const [ni, key] of keys) {
+      const m = play.poseOf(ni);
+      poses.push([ni, m ? m.toArray() : null, key]);
+    }
+    poses.sort((a, b) => a[0] - b[0]);
+    return { keys, poses, sig: JSON.stringify(poses.map((p) => [p[0], p[2]])) };
+  }
+
+  /**
+   * ほかの評価器（ワーカー）が作った再生キャッシュを、目印 keys のレイヤーに入れる（bake の代わり）。
+   * @param frames [{ f, mats（動くノードの順の Float64Array）, props, curves: Map（グラフの id → カーブの形） }]
+   * @param deps [[動くノード, 読んだ追加分のノード…]]（nodeDeps に足す）  @param poseReads 追加分を読んだノード
+   * @returns 入れたフレームの数（上限に達したら途中で止める）
+   */
+  importSnapshots(keys, frames, deps = [], poseReads = []) {
+    if (this.playbackLimit <= 0 || !keys) return 0;
+    // 作った評価器が追加分を読んだノード（レイヤーの見分けと、追加分を変えたときに作り直す範囲に使う）
+    for (const n of poseReads) this.poseReads.add(n);
+    for (const [ni, list] of deps) if (list.length) this.addNodeDeps(ni, new Set(list));
+    const L = this.layerFor(keys, true);
+    let n = 0;
+    for (const fr of frames) {
+      if (!Number.isInteger(fr.f) || L.frames.has(fr.f)) continue;
+      if (fr.mats.length !== this.moving.size * 16) continue;          // 動くノードの数が違う（別のリグの結果）
+      if (!this.roomFor(L)) break;
+      const snap = { mats: fr.mats, props: fr.props || null, curves: fr.curves || new Map(), bytes: 0, layer: L };
+      L.frames.set(fr.f, snap);
+      let bytes = fr.mats.byteLength + SNAPSHOT_BASE;
+      if (snap.props) bytes += snap.props.reduce((k, p) => k + 64 + Object.keys(p.values).length * 48, 64);
+      for (const v of snap.curves.values()) {
+        if (v && v.isCurve && !this.countedCurves.has(v)) { this.countedCurves.add(v); bytes += 160 + v.cvs.length * 64; }
+      }
+      this.addSnapshotBytes(snap, bytes);
+      n++;
+    }
     return n;
   }
 
@@ -1749,9 +1799,10 @@ export class RigEvaluator {
   maskOf(g, k) {
     const list = (g.mask || {})[k];
     if (!Array.isArray(list)) return null;
-    if (!g.maskSets) g.maskSets = {};
-    if (!g.maskSets[k]) g.maskSets[k] = new Set(list);
-    return g.maskSets[k];
+    let sets = this.derived.maskSets.get(g);
+    if (!sets) this.derived.maskSets.set(g, sets = {});
+    if (!sets[k]) sets[k] = new Set(list);
+    return sets[k];
   }
 
   /**
@@ -1854,22 +1905,23 @@ export class RigEvaluator {
 
   /** expression: 式を（最初の 1 回だけ）関数にして、このフレームの値で評価する。出力は out[n] */
   expression(g) {
-    if (g.program === undefined) {
+    let compiled = this.derived.programs.get(g);
+    if (compiled === undefined) {
       try {
-        g.program = compileExpression(g.expr || '');
+        compiled = { program: compileExpression(g.expr || ''), problem: null };
       } catch (err) {
-        g.program = null;
-        g.problem = err.message;
+        compiled = { program: null, problem: err.message };
       }
+      this.derived.programs.set(g, compiled);
     }
-    if (!g.program) {
-      this.problems.add(`expression ${g.name} を解釈できません: ${g.problem}`);
+    if (!compiled.program) {
+      this.problems.add(`expression ${g.name} を解釈できません: ${compiled.problem}`);
       return null;
     }
     if (TIME_RE.test(g.expr || '')) this.varying = true;
     let res;
     try {
-      res = g.program.run({
+      res = compiled.program.run({
         input: (k) => this.num(g.id, `in[${k}]`, 0),
         frame: this.frame,
         time: this.frame / (this.clip.fps || 24),
@@ -1922,11 +1974,12 @@ export class RigEvaluator {
   skinCurve(g) {
     const c = this.plug(g.id, 'ip[0].ig');
     if (!c || !c.isCurve || !g.skin) return null;
-    if (!g.weightsOf) {
-      g.weightsOf = new Map();
+    let weightsOf = this.derived.weightsOf.get(g);
+    if (!weightsOf) {
+      this.derived.weightsOf.set(g, weightsOf = new Map());
       for (const [v, i, w] of g.skin.weights) {
-        if (!g.weightsOf.has(v)) g.weightsOf.set(v, []);
-        g.weightsOf.get(v).push([i, w]);
+        if (!weightsOf.has(v)) weightsOf.set(v, []);
+        weightsOf.get(v).push([i, w]);
       }
     }
     const gm = g.skin.gm ? new Matrix4().fromArray(g.skin.gm) : new Matrix4();
@@ -1942,7 +1995,7 @@ export class RigEvaluator {
     };
     const only = this.maskOf(g, 0);
     const cvs = c.cvs.map((p, v) => {
-      const list = g.weightsOf.get(v);
+      const list = weightsOf.get(v);
       if (!list || (only && !only.has(v))) return p.clone();
       const acc = new Vector3();
       let total = 0;

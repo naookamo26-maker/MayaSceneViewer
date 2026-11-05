@@ -29,6 +29,7 @@ import { TEMPLATE_HEX, isTemplated } from './displayType.js';
 import { CameraIcons, cameraFrustum, cameraParams } from './cameraView.js';
 import { SequencerPanel, activeShot, shotStarts, shotTime } from './sequencer.js';
 import { CurveEditor } from './curveEditor.js';
+import { BakeWorkers } from './bakeWorkers.js';
 
 const VERSION = '1.0.0';
 const D2R = Math.PI / 180;
@@ -78,6 +79,12 @@ class ViewerApp {
     this.maps = new MapManager();
     this.edit = null;           // 記録中の操作（元に戻す用）
     this.history = new History((changes) => this.applyPoseChanges(changes));
+    // 再生キャッシュを Web Worker で作る（使えなければ、画面のスレッドの空き時間に作る）
+    this.bakers = new BakeWorkers({
+      onImported: () => this.updateCacheView(),
+      onDone: () => this.updateCacheView(),
+      onError: (message) => this.log('warn', `再生キャッシュのワーカーを使えないため、画面のスレッドで作ります: ${message}`),
+    });
     this.history.onChange = (h) => this.historyChanged(h);
     this.poseDirty = false;
     this.gizmoDragging = false;
@@ -535,6 +542,7 @@ class ViewerApp {
     this.pause();
     this.clip = null;
     this.rig = null;
+    this.bakers.reset(null);
     this.rigCurves = null;
     this.timeline.setClip(null);
     this.curveEditor.setClip(null, null);
@@ -1006,6 +1014,10 @@ class ViewerApp {
     // 姿勢の基準が変わったときに子のスケール補正も掛け直すよう、動くノードとその子を覚えておく
     this.rig = new RigEvaluator(clip, this.data.nodes, (ni) => this.built.nodeObjects[ni].userData.fileMatrix);
     this.rig.setPlaybackLimit(this.settings.playbackCacheMB * MB);
+    // ワーカーにも同じアニメーションを渡す（受け取った JSON の文字列があれば、それを渡す。複製より速い）
+    const sent = this.animationText && this.animationText.anim === anim ? this.animationText.text : anim;
+    this.bakers.reset(this.rig, sent, this.data.nodes);
+    this.animationText = null;
     const touched = new Set();
     for (const ni of this.rig.moving) {
       touched.add(ni);
@@ -1190,8 +1202,19 @@ class ViewerApp {
   scheduleBake() {
     clearTimeout(this.bakeTimer);
     if (this.bakeHandle) { (window.cancelIdleCallback || clearTimeout)(this.bakeHandle); this.bakeHandle = null; }
-    if (!this.rig || !this.hasTimeline || this.rig.playbackFull) return;
+    if (!this.rig || !this.hasTimeline || this.rig.playbackFull) { this.bakers.cancel(); return; }
     const rig = this.rig;
+    // Web Worker で作る（画面のスレッドを止めない・コアの数だけ並べる）。作っている途中なら、再生中も続ける
+    const pose = this.bakers.available ? rig.playbackPoseData() : null;
+    if (pose) {
+      const todo = () => {
+        if (rig !== this.rig || !this.clip) return [];
+        const L = rig.layerFor(pose.keys), out = [];
+        for (let f = Math.ceil(this.clip.start); f <= this.clip.end; f++) if (!(L && L.frames.has(f))) out.push(f);
+        return out;
+      };
+      if (this.bakers.request(pose, todo)) return;
+    }
     const idle = window.requestIdleCallback || ((fn) => setTimeout(() => fn({ timeRemaining: () => 8 }), 50));
     const step = (deadline) => {
       this.bakeHandle = null;
@@ -2515,7 +2538,9 @@ window.mayaViewer = {
     const text = app.transfer ? app.transfer.join('') : '';
     app.transfer = null;
     try {
-      return app.setAnimation(JSON.parse(text));
+      const anim = JSON.parse(text);
+      app.animationText = { anim, text };       // 再生キャッシュのワーカーにそのまま渡す（setAnimation で使って消す）
+      return app.setAnimation(anim);
     } catch (err) {
       app.timeline.setStatus('アニメーションを読めませんでした: ' + err.message);
       return false;
