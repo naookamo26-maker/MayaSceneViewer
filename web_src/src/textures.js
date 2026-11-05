@@ -62,6 +62,46 @@ export function resizeRGBA(src, w, h, w2, h2) {
   return out;
 }
 
+/**
+ * ファイルの先頭から画像の大きさと、アルファを持てない形式か（opaque）を読む（デコードせずに済ませるため）。
+ * PNG（IHDR・tRNS）と JPEG（SOF）だけ。読めない・EXIF のある JPEG（向きで縦横が入れ替わりうる）は null
+ */
+export function imageInfo(buffer) {
+  const b = new Uint8Array(buffer);
+  const u32 = (o) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
+  const u16 = (o) => (b[o] << 8) | b[o + 1];
+  const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (b.length >= 33 && PNG.every((x, i) => b[i] === x)) {
+    if (String.fromCharCode(b[12], b[13], b[14], b[15]) !== 'IHDR') return null;
+    const width = u32(16), height = u32(20), colorType = b[25];
+    // 色の種類 0（グレー）・2（RGB）・3（パレット）は、tRNS がなければアルファを持たない
+    let opaque = colorType === 0 || colorType === 2 || colorType === 3;
+    for (let o = 8; opaque && o + 8 <= b.length;) {
+      const len = u32(o), type = String.fromCharCode(b[o + 4], b[o + 5], b[o + 6], b[o + 7]);
+      if (type === 'tRNS') opaque = false;
+      if (type === 'IDAT' || type === 'IEND') break;
+      o += 12 + len;
+    }
+    return width && height ? { width, height, opaque } : null;
+  }
+  if (b.length >= 4 && b[0] === 0xff && b[1] === 0xd8) {
+    for (let o = 2; o + 9 < b.length;) {
+      if (b[o] !== 0xff) return null;
+      const m = b[o + 1];
+      if (m === 0xff) { o++; continue; }                       // 詰め物
+      if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { o += 2; continue; }
+      const len = u16(o + 2);
+      if (m === 0xe1 && String.fromCharCode(b[o + 4], b[o + 5], b[o + 6], b[o + 7]) === 'Exif') return null;
+      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) {
+        const height = u16(o + 5), width = u16(o + 7);
+        return width && height ? { width, height, opaque: true } : null;
+      }
+      o += 2 + len;
+    }
+  }
+  return null;
+}
+
 function fitSize(w, h) {
   const longest = Math.max(w, h);
   if (longest <= MAX_TEXTURE_SIZE) return [w, h];
@@ -86,13 +126,24 @@ export async function decodeImage(buffer, format) {
       sourceWidth: img.width, sourceHeight: img.height, hasAlpha: scanAlpha(data) };
   }
   const blob = new Blob([buffer]);
-  const probe = await createImageBitmap(blob);
-  const sourceWidth = probe.width, sourceHeight = probe.height;
-  probe.close && probe.close();
+  // 大きさはファイルの先頭から読む（読めない形式だけ、大きさを知るために一度デコードする）
+  const info = imageInfo(buffer);
+  let sourceWidth, sourceHeight;
+  if (info) {
+    sourceWidth = info.width; sourceHeight = info.height;
+  } else {
+    const probe = await createImageBitmap(blob);
+    sourceWidth = probe.width; sourceHeight = probe.height;
+    probe.close && probe.close();
+  }
   const [w2, h2] = fitSize(sourceWidth, sourceHeight);
   const opts = { premultiplyAlpha: 'none', colorSpaceConversion: 'none', imageOrientation: 'flipY' };
   if (w2 !== sourceWidth) Object.assign(opts, { resizeWidth: w2, resizeHeight: h2, resizeQuality: 'high' });
   const bmp = await createImageBitmap(blob, opts);
+  // 形式上アルファを持てない画像は、画素を読み戻さない
+  if (info && info.opaque) {
+    return { kind: 'bitmap', image: bmp, width: bmp.width, height: bmp.height, sourceWidth, sourceHeight, hasAlpha: false };
+  }
   // アルファの有無だけ調べる（色はテクスチャ側で使う）
   const c = newCanvas(bmp.width, bmp.height);
   const ctx = c.getContext('2d', { willReadFrequently: true });
