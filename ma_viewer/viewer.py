@@ -187,6 +187,7 @@ class ViewerWidget(QtWidgets.QWidget):
         self.bridge.selectedSignal.connect(self.nodeSelected)
         self.bridge.historySignal.connect(self.historyChanged)
         self.warnings: list = []
+        self.warnings_text = ""                       # 分類ごとに見出し・仕切りで分けた文章（ビューアが作る）
         self.bridge.warningsSignal.connect(self._on_warnings)
         self.bridge.showWarningsSignal.connect(self.showWarningsRequested)
         self.bridge.logSignal.connect(self.logMessage)
@@ -302,10 +303,17 @@ class ViewerWidget(QtWidgets.QWidget):
         self._call("clear")
 
     def _on_warnings(self, text):
+        """警告の一覧（{ list: [文章], text: 分類ごとに見出し・仕切りで分けた文章 }。古い形の配列も受け取る）"""
         try:
-            self.warnings = [str(w) for w in json.loads(text)]
+            data = json.loads(text)
         except ValueError:
-            self.warnings = []
+            data = []
+        if isinstance(data, dict):
+            self.warnings = [str(w) for w in data.get("list") or []]
+            self.warnings_text = str(data.get("text") or "")
+        else:
+            self.warnings = [str(w) for w in data] if isinstance(data, list) else []
+            self.warnings_text = "\n".join(self.warnings)
         self.warningsChanged.emit(self.warnings)
 
     def undo(self):
@@ -557,16 +565,16 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
 
         # 警告: ログと同じ下部のパネルに置き、タブで切り替える
-        self.warn_list = QtWidgets.QListWidget()
-        self.warn_list.setWordWrap(True)
-        self.warn_list.setAlternatingRowColors(True)
-        self.warn_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        # 一覧は分類ごとに見出し・仕切り線・空行で分けた文章（ビューアの warnGroups.js が分ける）
+        self.warn_view = QtWidgets.QPlainTextEdit()
+        self.warn_view.setReadOnly(True)
+        self.warn_view.setPlainText("警告はありません。")
         copy_btn = QtWidgets.QPushButton("すべてコピー")
         copy_btn.clicked.connect(self.copy_warnings)
         box = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(box)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(self.warn_list, 1)
+        lay.addWidget(self.warn_view, 1)
         row = QtWidgets.QHBoxLayout()
         row.addStretch(1)
         row.addWidget(copy_btn)
@@ -702,8 +710,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.a_redo.setText(("やり直す: %s" % redo_label if can_redo else "やり直す") + "\tCtrl+Y")
 
     def _on_warnings_changed(self, warnings):
-        self.warn_list.clear()
-        self.warn_list.addItems(warnings)
+        self.warn_view.setPlainText(self.viewer.warnings_text if warnings else "警告はありません。")
         title = "警告（%d 件）" % len(warnings) if warnings else "警告"
         self.warn_dock.setWindowTitle(title)
         self.a_warn.setText(title)
@@ -714,7 +721,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.warn_dock.raise_()
 
     def copy_warnings(self):
-        QtWidgets.QApplication.clipboard().setText("\n".join(self.viewer.warnings))
+        QtWidgets.QApplication.clipboard().setText(self.viewer.warnings_text if self.viewer.warnings else "")
 
     def show_rig_report(self):
         """リグの診断（.ma を読み直して、評価できないノードと IK の上流を一覧にする）"""
@@ -876,8 +883,10 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.current_scene["animation"] = anim
         size = self.viewer.set_animation(anim, payload)
         st = anim.get("stats", {})
-        for w in anim.get("warnings", []):
-            self.log("warn", w)
+        for n in anim.get("notes", []):
+            self.log("info", n)
+        if anim.get("warnings"):
+            self.log("warn", "アニメーションの警告 %d 件（［表示］→［警告］で、分類ごとの一覧を見られます）" % len(anim["warnings"]))
         amount = "%.1f MB" % (size / 1048576.0) if size >= 1048576 else "%d KB" % max(1, size // 1024)
         msg = "アニメーション: カーブ %s 本・キー %s 個・ノード %s 個（解析 %.2f 秒・転送 %s）" % (
             "{:,}".format(st.get("curves", 0)), "{:,}".format(st.get("keys", 0)), "{:,}".format(st.get("nodes", 0)),
@@ -998,8 +1007,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.current_scene = scene
         st = scene.get("stats", {})
         size = self.viewer.set_scene(scene, payload=payload)
-        for w in scene.get("warnings", []):
-            self.log("warn", w)
+        # お知らせ（解析した・定義で評価したなど）はログに出す。警告はログに 1 件ずつ流さず、件数だけ
+        for n in scene.get("notes", []):
+            self.log("info", n)
+        if scene.get("warnings"):
+            self.log("warn", "警告 %d 件（［表示］→［警告］で、分類ごとの一覧を見られます）" % len(scene["warnings"]))
         try:
             from .extract_ma import LAST_TIMING
             if LAST_TIMING and (scene.get("source") or {}).get("kind") == "ma":

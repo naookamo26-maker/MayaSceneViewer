@@ -259,7 +259,8 @@ class SceneTest(unittest.TestCase):
             self.assertIn(graph[name]["def"], anim["nodeDefs"])
         self.assertNotIn("def", graph.get("badCmds", {}))
         warnings = "\n".join(self.scene["warnings"])
-        self.assertIn("exprespy 16 個", warnings)
+        self.assertIn("exprespy 16 個", "\n".join(self.scene["notes"]))      # 解析したことはお知らせ（警告ではない）
+        self.assertNotIn("exprespy 16 個", warnings)
         self.assertIn("exprespy badCmds のコードを解析できません（1 行目: maya.cmds", warnings)
         self.assertIn("exprespy badMesh のコードを解析できません（形状（boxShape.o）", warnings)
         anim_warnings = "\n".join(anim["warnings"])
@@ -313,7 +314,7 @@ class SceneTest(unittest.TestCase):
         graph = [g for g in scene["animation"]["graph"] if g["type"] == "exprespy"]
         self.assertEqual(len(graph), 9)
         self.assertTrue(all(g.get("def") for g in graph))
-        self.assertIn("exprespy 9 個", "\n".join(scene["warnings"]))
+        self.assertIn("exprespy 9 個", "\n".join(scene["notes"]))
         by_name = {g["name"]: g for g in scene["animation"]["graph"]}
         # 自分の独自の属性（method・reverseOrder）を入力にする
         self.assertEqual(by_name["composeRotExpr"]["inputs"]["i11"], {"node": by_name["composeRotExpr"]["id"],
@@ -339,7 +340,7 @@ class SceneTest(unittest.TestCase):
         warnings = "\n".join(scene["warnings"] + scene["animation"]["warnings"])
         for name in ("junkA", "junkB", "junkC"):
             self.assertNotIn(name, warnings)                  # 解析できないコードでも警告しない
-        self.assertIn("exprespy 16 個", warnings)               # 使われているノードの数は変わらない
+        self.assertIn("exprespy 16 個", "\n".join(scene["notes"]))   # 使われているノードの数は変わらない
         self.assertIn("■ 出力が使われていない exprespy（評価しません。削除しても動きは変わりません）: 3 個（junkA、junkB、junkC）",
                       report)
 

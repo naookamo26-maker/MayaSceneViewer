@@ -29,6 +29,7 @@ import { TEMPLATE_HEX, isTemplated } from './displayType.js';
 import { CameraIcons, cameraFrustum, cameraParams } from './cameraView.js';
 import { SequencerPanel, activeShot, shotStarts, shotTime } from './sequencer.js';
 import { CurveEditor } from './curveEditor.js';
+import { warningsText } from './warnGroups.js';
 import { BakeWorkers } from './bakeWorkers.js';
 
 const VERSION = '1.0.0';
@@ -1939,7 +1940,8 @@ class ViewerApp {
 
   // ------------------------------------------------------------------ 警告
   onWarningsChanged(list) {
-    if (this.bridge && this.bridge.warningsChanged) this.bridge.warningsChanged(JSON.stringify(list));
+    // Qt には一覧と、分類ごとに見出し・仕切りで分けた文章を送る（warnGroups.js。ブラウザのダイアログと同じ分け方）
+    if (this.bridge && this.bridge.warningsChanged) this.bridge.warningsChanged(JSON.stringify({ list, text: warningsText(list) }));
   }
 
   /** 警告の一覧を開く（Qt では別ウィンドウ、ブラウザではページ内のダイアログ） */

@@ -107,12 +107,29 @@ def main() -> int:
         win.set_scene_cache_limit(256)
         nxt()
 
+    # 4 ---------------------------------------------------------------------
+    def s_warnings(nxt):
+        win.log_view.clear()
+        win.open_file(EXPR)
+
+        def done():
+            t = log_text()
+            check("[情報] exprespy" in t and "のコードを解析して評価します" in t, "お知らせ（exprespy を解析した）はログに出す")
+            check(not any("のコードを解析して評価します" in w for w in win.viewer.warnings), "お知らせは警告に入れない")
+            check("[警告] 警告 " in t and "件（［表示］→［警告］で、分類ごとの一覧を見られます）" in t, "ログには警告の件数だけ")
+            check(not any(("[警告] " + w) in t for w in win.viewer.warnings), "ログに警告を 1 件ずつ流さない")
+            v = win.warn_view.toPlainText()
+            check(v.startswith("■ ") and "────" in v and "\n\n■ " in v,
+                  "警告の一覧は分類ごとに見出し・仕切り線・空行で分ける:\n" + v[:300])
+            nxt()
+        wait(lambda: "かかりました。" in log_text() and win.viewer.warnings, lambda: QtCore.QTimer.singleShot(500, done))
+
     def s_end(_nxt):
         win.a_anim.setChecked(anim_setting)
         print("結果:", "OK" if ok["v"] else "NG")
         app.exit(0 if ok["v"] else 1)
 
-    steps = [s_open, s_cache_menu]
+    steps = [s_open, s_cache_menu, s_warnings]
     steps += getattr(sys.modules[__name__], "EXTRA_STEPS", lambda *_: [])(win, check, js, wait, log_text, run)
     steps.append(s_end)
     win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(300, lambda: run(steps)))

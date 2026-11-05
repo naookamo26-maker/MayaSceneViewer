@@ -67,7 +67,10 @@ def main() -> int:
         QtCore.QTimer.singleShot(300, lambda: (
             check(win.warn_dock.isVisible(), "メニューから警告のパネルが開く"),
             check(win.dockWidgetArea(win.warn_dock) == QtCore.Qt.DockWidgetArea.BottomDockWidgetArea, "パネルは下部"),
-            check(win.warn_list.count() == len(win.viewer.warnings), "一覧の件数が一致（%d 件）" % win.warn_list.count()),
+            check(win.warn_view.toPlainText() == win.viewer.warnings_text and all(
+                w.replace("アニメーション: ", "") in win.warn_view.toPlainText() for w in win.viewer.warnings),
+                "一覧にすべての警告（分類ごと）"),
+            check("■ " in win.warn_view.toPlainText() and "────" in win.warn_view.toPlainText(), "分類の見出しと仕切り線"),
             win.log_dock.show(),
             QtCore.QTimer.singleShot(200, lambda: (
                 check("MayaSceneViewerWarnings" in tabs_of_log(), "ログと警告は同じ場所でタブになる"),
@@ -83,10 +86,12 @@ def main() -> int:
     def s_update(nxt):
         win.open_file(os.path.join(ROOT, "samples", "sample_arm.ma"))
         QtCore.QTimer.singleShot(2500, lambda: (
-            check(win.warn_dock.isVisible() and win.warn_list.count() == len(win.viewer.warnings),
-                  "開いたまま別のファイルを読み込むと更新（%d 件）" % win.warn_list.count()),
+            check(win.warn_dock.isVisible() and win.warn_view.toPlainText() == (win.viewer.warnings_text if win.viewer.warnings
+                                                                                 else "警告はありません。"),
+                  "開いたまま別のファイルを読み込むと更新（%d 件）" % len(win.viewer.warnings)),
             win.copy_warnings(),
-            check(QtWidgets.QApplication.clipboard().text() == "\n".join(win.viewer.warnings), "すべてコピー"),
+            check(QtWidgets.QApplication.clipboard().text() == (win.viewer.warnings_text if win.viewer.warnings else ""),
+                  "すべてコピー（分類ごとの文章）"),
             nxt()))
 
     def s_dialog(nxt):
@@ -98,7 +103,7 @@ def main() -> int:
     def s_clear(nxt):
         win.viewer.clear()
         QtCore.QTimer.singleShot(400, lambda: js(BADGE, lambda r: (
-            check(r["hidden"] and win.a_warn.text() == "警告" and win.warn_list.count() == 0,
+            check(r["hidden"] and win.a_warn.text() == "警告" and win.warn_view.toPlainText() == "警告はありません。",
                   "シーンを閉じるとアイコンが消え、一覧も空になる"), nxt())))
 
     def shot(name):
