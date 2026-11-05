@@ -145,7 +145,8 @@ class TestScene(unittest.TestCase):
 
     def test_warnings(self):
         w = self.scene["warnings"]
-        self.assertTrue(any("同梱の定義で評価します" in x and "weightedSum（1 個）" in x for x in w))
+        self.assertTrue(any("同梱の定義で評価します" in x and "weightedSum（1 個）" in x for x in self.scene["notes"]))
+        self.assertFalse(any("同梱の定義で評価します" in x for x in w), "お知らせは警告に入れない")
         self.assertTrue(any("1.0 用ですが、シーンは 1.1" in x for x in w))
         self.assertTrue(any("brokenNode を使えません" in x and "1 行目" in x for x in w))
         # 定義で評価するノードは「未対応」にしない（定義の壊れた brokenNode だけ）

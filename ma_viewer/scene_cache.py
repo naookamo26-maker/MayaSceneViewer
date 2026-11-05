@@ -11,8 +11,9 @@
     （環境変数・workspace.mel・あとから置いたテクスチャなども、これで気づく）
 
 置き場所: 環境変数 MA_VIEWER_CACHE_DIR、なければ Windows は %LOCALAPPDATA%/MayaSceneViewer/cache、それ以外は
-~/.cache/MayaSceneViewer。MA_VIEWER_NO_CACHE=1 なら使わない。合計が上限（MA_VIEWER_CACHE_MB、既定 1024 MB）を
-超えたら、古く使ったものから消す。中身は zlib で圧縮した JSON の文字列。
+~/.cache/MayaSceneViewer。MA_VIEWER_NO_CACHE=1 なら使わない。合計が上限（ビューアの設定 set_limit_mb。
+環境変数 MA_VIEWER_CACHE_MB があればそちら。既定 256 MB）を超えたら、古く使ったものから消す。
+1 つのシーンの保存は、圧縮して元の .ma のおよそ 1 割（45 MB の .ma で約 5 MB）。中身は zlib で圧縮した JSON の文字列。
 """
 from __future__ import annotations
 
@@ -41,11 +42,26 @@ def cache_dir() -> str:
     return os.path.join(os.path.expanduser("~"), ".cache", "MayaSceneViewer")
 
 
+DEFAULT_LIMIT_MB = 256
+_limit_mb: float = DEFAULT_LIMIT_MB
+
+
+def set_limit_mb(mb: float) -> None:
+    """上限（MB。ビューアの設定）。環境変数 MA_VIEWER_CACHE_MB があれば、そちらを使う"""
+    global _limit_mb
+    _limit_mb = max(0.0, float(mb))
+
+
+def limit_from_env() -> bool:
+    return bool(os.environ.get("MA_VIEWER_CACHE_MB"))
+
+
 def limit_bytes() -> int:
     try:
-        return max(0, int(float(os.environ.get("MA_VIEWER_CACHE_MB", "1024")) * 1024 * 1024))
+        mb = float(os.environ.get("MA_VIEWER_CACHE_MB") or _limit_mb)
     except ValueError:
-        return 1024 * 1024 * 1024
+        mb = _limit_mb
+    return max(0, int(mb * 1024 * 1024))
 
 
 def _norm(p: str) -> str:

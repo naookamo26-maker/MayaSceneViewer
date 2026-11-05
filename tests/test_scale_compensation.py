@@ -77,7 +77,7 @@ class ScaleCompensationTest(unittest.TestCase):
                 cj = nodes["cj"]["worldMatrix"]
                 d = [cj[12 + k] - w[12 + k] for k in range(3)]
                 self.assertAlmostEqual(math.sqrt(sum(x * x for x in d)), 1.0, places=9)
-                self.assertTrue(any("親のスケールを打ち消す" in x for x in scene["warnings"]))
+                self.assertTrue(any("親のスケールを打ち消す" in x for x in scene["notes"]))
 
     def test_transform_without_compensation(self):
         nodes, _ = self.load({"myCompXform": {"as": "transform"}})

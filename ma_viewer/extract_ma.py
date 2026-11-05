@@ -1210,17 +1210,16 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     ms.node_map = {t: normalize_spec(v) for t, v in ms.node_map.items()}
     ms.mapped_nodes = apply_node_map(ms, ms.node_map)
     for t, names in sorted(ms.mapped_nodes.items()):
-        ms.warn("自作ノードの型 %s（%s%s）を、設定ファイルのとおり %s として扱います%s。"
+        ms.note("自作ノードの型 %s（%s%s）を、設定ファイルのとおり %s として扱います%s。"
                 % (t, "、".join(names[:5]), " ほか %d 個" % (len(names) - 5) if len(names) > 5 else "",
-                   ms.node_map[t]["as"], "（親のスケールを打ち消す）" if ms.node_map[t].get("ssc") else ""),
-                key="#自作ノードの割り当て " + t)
+                   ms.node_map[t]["as"], "（親のスケールを打ち消す）" if ms.node_map[t].get("ssc") else ""))
     # 自作ノードの定義（ma_viewer/node_defs に同梱）: 属性と計算を書いた定義で評価する
     from .node_defs import apply_definitions, load_definitions, plugin_version_warnings
     if getattr(ms, "node_defs", None) is None:
         ms.node_defs = load_definitions()
     ms.defined_nodes = apply_definitions(ms, ms.node_defs)
     if ms.defined_nodes:
-        ms.warn("自作ノードを、同梱の定義で評価します: %s。" % "、".join(
+        ms.note("自作ノードを、同梱の定義で評価します: %s。" % "、".join(
             "%s（%d 個）" % (t, len(names)) for t, names in sorted(ms.defined_nodes.items())))
     for w in plugin_version_warnings(ms, ms.defined_nodes, ms.node_defs):
         ms.warn(w)
@@ -1233,7 +1232,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         from .exprespy import apply_exprespy
         ms.exprespy_defs, ms.exprespy_nodes, ms.exprespy_problems = apply_exprespy(ms)
     if ms.exprespy_nodes:
-        ms.warn("exprespy %d 個（%s）のコードを解析して評価します。" % (
+        ms.note("exprespy %d 個（%s）のコードを解析して評価します。" % (
             len(ms.exprespy_nodes), "、".join(ms.exprespy_nodes[:5]) + (" ほか" if len(ms.exprespy_nodes) > 5 else "")))
         if ms.linear_unit != "cm":
             ms.warn("exprespy は長さを cm で計算しますが、シーンの長さの単位は %s です。ビューアはファイルの単位のまま"
@@ -1249,7 +1248,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     ms.curve_world = ctx.world_matrix                   # ワールド空間の形を入力にするヒストリの計算に使う
     curve_problems = bake_curve_history(ms, world=ctx.world_matrix)
     if ms.curve_history_baked:
-        ms.warn("ヒストリのあるカーブ %d 本の形を、形を作るノード（circle など）から計算しました。" % ms.curve_history_baked)
+        ms.note("ヒストリのあるカーブ %d 本の形を、形を作るノード（circle など）から計算しました。" % ms.curve_history_baked)
     if curve_problems:
         ms.warn("形を計算できないカーブがあります（形を作るノードの型: %s）。Maya でヒストリを削除して保存すると表示できます。"
                 % "、".join("%s %d 本" % (t, len(v)) for t, v in sorted(curve_problems.items(),
@@ -1674,6 +1673,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         "materials": mb.materials,
         "textures": mb.textures,
         "warnings": list(ms.warnings),
+        "notes": list(getattr(ms, "notes", [])),
         "stats": {
             "nodes": len(out_nodes),
             "joints": sum(1 for x in out_nodes if x["type"] == "joint"),

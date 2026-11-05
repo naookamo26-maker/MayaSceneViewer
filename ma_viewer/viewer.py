@@ -38,6 +38,8 @@ class Bridge(QtCore.QObject):
     historySignal = Signal(bool, bool, str, str)
     warningsSignal = Signal(str)
     showWarningsSignal = Signal()
+    statusSignal = Signal(str, int)
+    loadEventSignal = Signal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -67,6 +69,16 @@ class Bridge(QtCore.QObject):
     @Slot()
     def showWarnings(self):
         self.showWarningsSignal.emit()
+
+    @Slot(str, int)
+    def statusMessage(self, text, ms):
+        """ビューアの操作のメッセージ（Qt ではウィンドウのステータスバーに出す。ms = 0 なら消さない）"""
+        self.statusSignal.emit(text, ms)
+
+    @Slot(str, str)
+    def loadEvent(self, name, detail):
+        """読み込みの段階がビューアで終わった（scene: 最初の描画・animation: アニメーションの準備・cache: 再生キャッシュ）"""
+        self.loadEventSignal.emit(name, detail)
 
     # JS から保存・読み戻しできる設定（キー → QSettings のキー）
     SAVED_SETTINGS = {"playbackCacheMB": "viewer/playbackCacheMB"}
@@ -144,6 +156,8 @@ class ViewerWidget(QtWidgets.QWidget):
     historyChanged = Signal(bool, bool, str, str)   # 元に戻せるか, やり直せるか, それぞれの操作名
     warningsChanged = Signal(list)                  # 警告の一覧
     showWarningsRequested = Signal()                # ビューアの警告アイコンが押された
+    statusMessage = Signal(str, int)                # ビューアの操作のメッセージ（ステータスバーへ）
+    loadEvent = Signal(str, str)                    # 読み込みの段階がビューアで終わった
 
     def __init__(self, parent=None):
         require_webengine()
@@ -173,9 +187,12 @@ class ViewerWidget(QtWidgets.QWidget):
         self.bridge.selectedSignal.connect(self.nodeSelected)
         self.bridge.historySignal.connect(self.historyChanged)
         self.warnings: list = []
+        self.warnings_text = ""                       # 分類ごとに見出し・仕切りで分けた文章（ビューアが作る）
         self.bridge.warningsSignal.connect(self._on_warnings)
         self.bridge.showWarningsSignal.connect(self.showWarningsRequested)
         self.bridge.logSignal.connect(self.logMessage)
+        self.bridge.statusSignal.connect(self.statusMessage)
+        self.bridge.loadEventSignal.connect(self.loadEvent)
         self.page.consoleMessage.connect(lambda lv, t: self.logMessage.emit(lv, "JS: " + t))
         self.page.fileDropped.connect(self.fileDropped)
         self.view.loadFinished.connect(self._on_load_finished)
@@ -286,10 +303,17 @@ class ViewerWidget(QtWidgets.QWidget):
         self._call("clear")
 
     def _on_warnings(self, text):
+        """警告の一覧（{ list: [文章], text: 分類ごとに見出し・仕切りで分けた文章 }。古い形の配列も受け取る）"""
         try:
-            self.warnings = [str(w) for w in json.loads(text)]
+            data = json.loads(text)
         except ValueError:
-            self.warnings = []
+            data = []
+        if isinstance(data, dict):
+            self.warnings = [str(w) for w in data.get("list") or []]
+            self.warnings_text = str(data.get("text") or "")
+        else:
+            self.warnings = [str(w) for w in data] if isinstance(data, list) else []
+            self.warnings_text = "\n".join(self.warnings)
         self.warningsChanged.emit(self.warnings)
 
     def undo(self):
@@ -516,6 +540,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.viewer = ViewerWidget(self)
         self.setCentralWidget(self.viewer)
         self.viewer.logMessage.connect(self.log)
+        self.viewer.statusMessage.connect(lambda text, ms: self.statusBar().showMessage(text, ms))
+        self.viewer.loadEvent.connect(self._on_load_event)
+        self.load_clock = None
         self.viewer.nodeSelected.connect(self._on_viewer_selected)
         self.viewer.fileDropped.connect(self.open_file)
 
@@ -538,16 +565,16 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
 
         # 警告: ログと同じ下部のパネルに置き、タブで切り替える
-        self.warn_list = QtWidgets.QListWidget()
-        self.warn_list.setWordWrap(True)
-        self.warn_list.setAlternatingRowColors(True)
-        self.warn_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        # 一覧は分類ごとに見出し・仕切り線・空行で分けた文章（ビューアの warnGroups.js が分ける）
+        self.warn_view = QtWidgets.QPlainTextEdit()
+        self.warn_view.setReadOnly(True)
+        self.warn_view.setPlainText("警告はありません。")
         copy_btn = QtWidgets.QPushButton("すべてコピー")
         copy_btn.clicked.connect(self.copy_warnings)
         box = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(box)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(self.warn_list, 1)
+        lay.addWidget(self.warn_view, 1)
         row = QtWidgets.QHBoxLayout()
         row.addStretch(1)
         row.addWidget(copy_btn)
@@ -593,16 +620,42 @@ class ViewerWindow(QtWidgets.QMainWindow):
                                  checked=_settings_bool("sceneCache", True),
                                  tip="変換した結果を保存し、同じ .ma（リファレンス・テクスチャも同じ）を開き直すときは解析を省く"
                                      "（次に開くファイルから有効）")
-        a_clear_cache = self._act("変換結果のキャッシュを消去", self.clear_scene_cache,
+        a_clear_cache = self._act("キャッシュを消去", self.clear_scene_cache,
                                   tip="保存した変換結果をすべて消す")
+        # 変換結果のキャッシュの上限（既定 256 MB。1 シーンは元の .ma のおよそ 1 割）
+        from . import scene_cache
+        try:
+            limit_mb = int(_settings().value("sceneCacheMB", scene_cache.DEFAULT_LIMIT_MB))
+        except (TypeError, ValueError):
+            limit_mb = scene_cache.DEFAULT_LIMIT_MB
+        scene_cache.set_limit_mb(limit_mb)
+        self.a_cache_usage = QtGui.QAction("使用量: -", self)
+        self.a_cache_usage.setEnabled(False)
+        self.cache_limit_actions = {}
+        limit_group = QtGui.QActionGroup(self)
+        for size_mb in (128, 256, 512, 1024, 2048):
+            a = QtGui.QAction("上限 %s" % ("%d GB" % (size_mb // 1024) if size_mb >= 1024 else "%d MB" % size_mb), self,
+                              checkable=True)
+            a.setChecked(size_mb == limit_mb)
+            a.triggered.connect(lambda _c=False, v=size_mb: self.set_scene_cache_limit(v))
+            limit_group.addAction(a)
+            self.cache_limit_actions[size_mb] = a
         m = mb.addMenu("ファイル")
         for a in (a_open, a_reload, a_export):
             m.addAction(a)
         m.addSeparator()
         m.addAction(self.a_anim)
         m.addAction(self.a_refs)
-        m.addAction(self.a_cache)
-        m.addAction(a_clear_cache)
+        mc = m.addMenu("変換結果のキャッシュ")
+        mc.addAction(self.a_cache)
+        mc.addSeparator()
+        mc.addAction(self.a_cache_usage)
+        for a in self.cache_limit_actions.values():
+            mc.addAction(a)
+        mc.addSeparator()
+        mc.addAction(a_clear_cache)
+        mc.aboutToShow.connect(self._update_cache_usage)
+        self.cache_menu = mc
         m.addSeparator()
         m.addAction(a_close)
 
@@ -657,8 +710,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.a_redo.setText(("やり直す: %s" % redo_label if can_redo else "やり直す") + "\tCtrl+Y")
 
     def _on_warnings_changed(self, warnings):
-        self.warn_list.clear()
-        self.warn_list.addItems(warnings)
+        self.warn_view.setPlainText(self.viewer.warnings_text if warnings else "警告はありません。")
         title = "警告（%d 件）" % len(warnings) if warnings else "警告"
         self.warn_dock.setWindowTitle(title)
         self.a_warn.setText(title)
@@ -669,7 +721,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.warn_dock.raise_()
 
     def copy_warnings(self):
-        QtWidgets.QApplication.clipboard().setText("\n".join(self.viewer.warnings))
+        QtWidgets.QApplication.clipboard().setText(self.viewer.warnings_text if self.viewer.warnings else "")
 
     def show_rig_report(self):
         """リグの診断（.ma を読み直して、評価できないノードと IK の上流を一覧にする）"""
@@ -696,26 +748,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.viewer.run_js("JSON.stringify(window.mayaViewer && window.mayaViewer.verifyRig())", with_check)
 
     def _show_rig_report_dialog(self, path, text):
-        dlg = QtWidgets.QDialog(self)
-        dlg.setWindowTitle("リグの診断 - %s" % os.path.basename(path))
-        dlg.resize(820, 640)
-        lay = QtWidgets.QVBoxLayout(dlg)
-        view = QtWidgets.QPlainTextEdit(text)
-        view.setReadOnly(True)
-        view.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
-        lay.addWidget(view)
-        row = QtWidgets.QHBoxLayout()
-        row.addStretch(1)
-        b_copy = QtWidgets.QPushButton("コピー")
-        b_copy.clicked.connect(lambda: QtWidgets.QApplication.clipboard().setText(text))
-        b_close = QtWidgets.QPushButton("閉じる")
-        b_close.clicked.connect(dlg.accept)
-        row.addWidget(b_copy)
-        row.addWidget(b_close)
-        lay.addLayout(row)
+        """リグの診断のウィンドウ（操作方法と同じく、左の項目の一覧から選んで表示する。report_dialog.py）"""
+        from .report_dialog import show_report
+        dlg = show_report(self, "リグの診断 - %s" % os.path.basename(path), text)
         self.rig_report_text = text            # テスト用
         self.rig_report_dialog = dlg
-        dlg.show()
 
     def show_help(self):
         from .help_dialog import show_help
@@ -769,6 +806,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.viewer.show_loading("%s を読み込み中" % name)
         self.statusBar().showMessage("読み込み中: %s" % path)
         self.log("info", "読み込み開始: %s" % path)
+        from .load_clock import LoadClock
+        self.load_clock = LoadClock(path)
+        self.load_clock.expect_animation = self.a_anim.isChecked() and not path.lower().endswith(".json")
 
         self._thread = QtCore.QThread(self)
         self._worker = _LoadWorker(path, animation=self.a_anim.isChecked(), references=self.a_refs.isChecked(),
@@ -793,10 +833,16 @@ class ViewerWindow(QtWidgets.QMainWindow):
     @Slot(object, float, object)
     def _on_loaded(self, scene, seconds, payload=None):
         cached = payload is not None and payload.cached
+        clock = getattr(self, "load_clock", None)
+        if clock is not None and not clock.finished:
+            clock.mark("変換結果のキャッシュから読み込み" if cached else
+                       ("JSON の読み込み" if clock.path.lower().endswith(".json") else "解析・変換"))
+            if scene.get("animation"):
+                clock.expect_animation = True              # JSON にアニメーションが入っている
         self.show_scene(scene, ("キャッシュから読み込み %.2f 秒" if cached else "解析 %.2f 秒") % seconds, payload)
         if cached:
             self.log("info", "変換結果のキャッシュから読み込みました（.ma・リファレンス・テクスチャ・設定が前回と同じため、"
-                             "解析を省きました。［ファイル］→［変換結果をキャッシュする］で切り替え）")
+                             "解析を省きました。［ファイル］→［変換結果のキャッシュ］で切り替え）")
         self._anim_scene = scene           # このシーンのアニメーションだけを受け取る
         if self._worker is not None and self._worker.animation and not self.current_path.lower().endswith(".json"):
             self.viewer.set_animation_status("アニメーションを読み込み中")
@@ -810,14 +856,22 @@ class ViewerWindow(QtWidgets.QMainWindow):
     def _on_animation_ready(self, anim, seconds, payload=None):
         if self._pending_open is not None or self.current_scene is None or self.current_scene is not self._anim_scene:
             return
+        clock = getattr(self, "load_clock", None)
         if anim is None:
             self.viewer.set_animation_status("")
+            if clock is not None:
+                clock.expect_animation = False
+                self._finish_load_clock()
             return
+        if clock is not None and not clock.finished:
+            clock.mark("アニメーションの解析と転送")
         self.current_scene["animation"] = anim
         size = self.viewer.set_animation(anim, payload)
         st = anim.get("stats", {})
-        for w in anim.get("warnings", []):
-            self.log("warn", w)
+        for n in anim.get("notes", []):
+            self.log("info", n)
+        if anim.get("warnings"):
+            self.log("warn", "アニメーションの警告 %d 件（［表示］→［警告］で、分類ごとの一覧を見られます）" % len(anim["warnings"]))
         amount = "%.1f MB" % (size / 1048576.0) if size >= 1048576 else "%d KB" % max(1, size // 1024)
         msg = "アニメーション: カーブ %s 本・キー %s 個・ノード %s 個（解析 %.2f 秒・転送 %s）" % (
             "{:,}".format(st.get("curves", 0)), "{:,}".format(st.get("keys", 0)), "{:,}".format(st.get("nodes", 0)),
@@ -831,10 +885,72 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.log("error", detail)
         self.viewer.set_animation_status("アニメーションを読み込めませんでした: %s" % message)
         self.log("warn", "アニメーションを読み込めませんでした（シーンはそのまま表示します）: %s" % message)
+        clock = getattr(self, "load_clock", None)
+        if clock is not None:
+            clock.expect_animation = False
+            self._finish_load_clock()
+
+    @Slot(str, str)
+    def _on_load_event(self, name, detail):
+        """ビューアでの読み込みの段階の終わり（scene: 最初の描画・animation: アニメーションの準備・cache: 再生キャッシュ）"""
+        clock = getattr(self, "load_clock", None)
+        if clock is None:
+            return
+        if name == "cache":
+            if clock.finished:
+                from .load_clock import fmt_seconds
+                msg = "再生キャッシュを作り終えました（開き始めてから %s・作成 %s）" % (
+                    fmt_seconds(clock.elapsed()), fmt_seconds(float(detail or 0)))
+                self.log("info", msg)
+                self.statusBar().showMessage(msg, 6000)
+            return
+        if clock.finished:
+            return
+        if name == "scene" and not clock.scene_done:
+            clock.mark("ビューアでの組み立てと最初の描画")
+            clock.scene_done = True
+        elif name == "animation" and not clock.animation_done:
+            clock.mark("アニメーションの準備（リグの評価の準備）" if detail != "failed" else "アニメーションの準備（失敗）")
+            clock.animation_done = True
+        self._finish_load_clock()
+
+    def _finish_load_clock(self):
+        """シーンの表示（と、読むならアニメーションの準備）が終わったら、経過と合計をログに出す"""
+        clock = getattr(self, "load_clock", None)
+        if clock is None or clock.finished or not clock.ready():
+            return
+        clock.finish()
+        self.log("info", clock.summary())
+        msg = clock.total_message()
+        self.log("info", msg)
+        self.statusBar().showMessage(msg, 10000)
 
     def _toggle_cache(self, on):
         _settings_set("sceneCache", bool(on))
         self.statusBar().showMessage("変換結果を%s（次に開くファイルから）" % ("キャッシュします" if on else "キャッシュしません"), 5000)
+
+    def _update_cache_usage(self):
+        """［変換結果のキャッシュ］を開いたとき: 使用量 / 上限（件数）"""
+        from . import scene_cache
+        mb = lambda b: "%.1f MB" % (b / 1048576.0)  # noqa: E731
+        n = len(scene_cache.entries())
+        text = "使用量: %s / %s（%d 件）" % (mb(scene_cache.total_bytes()), mb(scene_cache.limit_bytes()), n)
+        if scene_cache.limit_from_env():
+            text += "　※ 上限は環境変数 MA_VIEWER_CACHE_MB"
+        self.a_cache_usage.setText(text)
+        return text
+
+    def set_scene_cache_limit(self, mb):
+        from . import scene_cache
+        scene_cache.set_limit_mb(mb)
+        _settings_set("sceneCacheMB", int(mb))
+        for v, a in self.cache_limit_actions.items():
+            a.setChecked(v == mb)
+        scene_cache.prune()
+        msg = "変換結果のキャッシュの上限を %s にしました（%s）" % (
+            "%d GB" % (mb // 1024) if mb >= 1024 else "%d MB" % mb, self._update_cache_usage())
+        self.statusBar().showMessage(msg, 6000)
+        self.log("info", msg)
 
     def clear_scene_cache(self):
         from . import scene_cache
@@ -876,8 +992,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.current_scene = scene
         st = scene.get("stats", {})
         size = self.viewer.set_scene(scene, payload=payload)
-        for w in scene.get("warnings", []):
-            self.log("warn", w)
+        # お知らせ（解析した・定義で評価したなど）はログに出す。警告はログに 1 件ずつ流さず、件数だけ
+        for n in scene.get("notes", []):
+            self.log("info", n)
+        if scene.get("warnings"):
+            self.log("warn", "警告 %d 件（［表示］→［警告］で、分類ごとの一覧を見られます）" % len(scene["warnings"]))
         try:
             from .extract_ma import LAST_TIMING
             if LAST_TIMING and (scene.get("source") or {}).get("kind") == "ma":
@@ -906,7 +1025,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if note:
             msg += " ・ " + note
         self.statusBar().showMessage(msg)
-        self.log("info", msg)
+        # シーンの数（三角形・カメラを含む）はビューアがログに出すので、ここでは転送の大きさだけ
+        self.log("info", "ビューアへの転送: %s%s" % (amount, "（%s）" % note if note else ""))
 
     def _error(self, text):
         self.viewer.show_error(text)

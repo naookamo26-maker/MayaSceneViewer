@@ -29,6 +29,7 @@ import { TEMPLATE_HEX, isTemplated } from './displayType.js';
 import { CameraIcons, cameraFrustum, cameraParams } from './cameraView.js';
 import { SequencerPanel, activeShot, shotStarts, shotTime } from './sequencer.js';
 import { CurveEditor } from './curveEditor.js';
+import { warningsText } from './warnGroups.js';
 import { BakeWorkers } from './bakeWorkers.js';
 
 const VERSION = '1.0.0';
@@ -375,6 +376,11 @@ class ViewerApp {
     if (this.bridge && this.bridge.log) this.bridge.log(level, String(text));
   }
 
+  /** 読み込みの段階がビューアで終わったことを Qt に知らせる（ログの「読み込みの経過」用） */
+  loadEvent(name, detail = '') {
+    if (this.bridge && this.bridge.loadEvent) this.bridge.loadEvent(name, String(detail));
+  }
+
   // ------------------------------------------------------------------ 読み込み
   loadFile(file) {
     if (/\.(ma|mb)$/i.test(file.name)) {
@@ -460,8 +466,10 @@ class ViewerApp {
       const tris = built.meshes.reduce((s, e) => s + e.triCount, 0);
       const verts = built.meshes.reduce((s, e) => s + e.vertexCount, 0);
       const nCurves = this.curves.items.filter(Boolean).length;
-      this.ui.setStats(`メッシュ ${num(built.meshes.length)} ・ 頂点 ${num(verts)} ・ 三角形 ${num(tris)} ・ ジョイント ${num(built.jointIndices.length)}`
-        + (nCurves ? ` ・ カーブ ${num(nCurves)}` : '') + (this.cameras.length ? ` ・ カメラ ${num(this.cameras.length)}` : ''));
+      const stats = `メッシュ ${num(built.meshes.length)} ・ 頂点 ${num(verts)} ・ 三角形 ${num(tris)} ・ ジョイント ${num(built.jointIndices.length)}`
+        + (nCurves ? ` ・ カーブ ${num(nCurves)}` : '') + (this.cameras.length ? ` ・ カメラ ${num(this.cameras.length)}` : '');
+      this.ui.setStats(stats);
+      this.log('info', `シーン: ${stats}`);
       this.ui.setEmpty(false);
       this.ui.hideError();
       this.ui.hideLoading();
@@ -485,12 +493,11 @@ class ViewerApp {
       const renderStart = performance.now();
       this.ui.setMessage(`読み込みました（${Math.round(performance.now() - t0)} ms）`
         + (this.viewCamera >= 0 ? `。Maya のビューと同じく、カメラ ${this.cameras[this.viewCamera].name} から表示しています（Shift+C で自由視点）` : ''), 6000);
-      this.log('info', `scene loaded: ${built.meshes.length} meshes, ${built.jointIndices.length} joints`);
       // 読み込みの内訳（ビューア側）。最初の描画が終わったところまでを測る
       const tm = this.timing || {};
       const setupStart = tb + buildMs;
       requestAnimationFrame(() => requestAnimationFrame(() => {
-        const ms = (x) => `${Math.round(x)} ms`;
+        const ms = (x) => `${(x / 1000).toFixed(2)} 秒`;
         marks.push(['最初の描画', performance.now() - renderStart]);
         this.lastTiming = { transfer: tm.transfer || 0, parse: tm.parse || 0, build: buildMs, setup: performance.now() - setupStart,
           setupParts: Object.fromEntries(marks) };
@@ -498,6 +505,7 @@ class ViewerApp {
           + `・シーンの組み立て ${ms(buildMs)}・画面の準備と最初の描画 ${ms(this.lastTiming.setup)}`
           + `（${marks.map(([k, v]) => `${k} ${ms(v)}`).join('・')}）`);
         this.timing = null;
+        this.loadEvent('scene');
       }));
       // アニメーション（JSON に含まれているもの、またはシーンの組み立て前に届いたもの）
       const anim = this.pendingAnimation || data.animation;
@@ -835,7 +843,7 @@ class ViewerApp {
         this.showTextureState();
         if (errors.length) this.ui.addWarnings(errors);
         this.ui.setMessage(`テクスチャ ${total} 枚を読み込みました`);
-        this.log('info', `textures loaded: ${total}`);
+        this.log('info', `テクスチャ ${total} 枚を読み込みました`);
       } else {
         this.ui.setMessage(`テクスチャを読み込み中（${done} / ${total}）`, 0);
       }
@@ -999,6 +1007,7 @@ class ViewerApp {
     } catch (err) {
       this.timeline.setStatus('アニメーションを読み込めませんでした: ' + (err && err.message || err));
       this.log('error', err && err.stack || err);
+      this.loadEvent('animation', 'failed');
       return false;
     }
     this.pause();
@@ -1058,12 +1067,14 @@ class ViewerApp {
     if (this.seqFollow) this.applySequence();
     this.fpsMeter = null;
     this.updateHud();
+    // 読み込みの経過（Qt のログ）: アニメーションの準備が終わった。再生キャッシュは、ここから作り終わるまでを測る
+    this.bakeClock = { rig: this.rig, start: performance.now(), reported: !this.hasTimeline };
+    this.loadEvent('animation');
     this.updateToolbarHints();
     const st = anim.stats || {};
     this.ui.setMessage(`アニメーションを読み込みました（カーブ ${num(st.curves ?? clip.curves.length)} 本・`
       + `動くノード ${num(this.rig.moving.size)} 個・${clip.start}〜${clip.end} フレーム）`
       + (switched ? '。姿勢の基準を「ファイルの値」に切り替えました（B でバインドポーズ）' : ''), 6000);
-    this.log('info', `animation loaded: ${clip.curves.length} curves, ${clip.nodes.length} nodes`);
     return true;
   }
 
@@ -1184,6 +1195,16 @@ class ViewerApp {
     this.cacheViewRig = rig;
     this.cacheViewFrames = frames;
     this.timeline.setCached(st && st.frames ? (f) => frames.has(f) : null);
+    // 再生キャッシュを作り終えた（読み込みの経過として Qt のログに出す。アニメーションごとに 1 回）
+    const bc = this.bakeClock;
+    if (bc && bc.rig === rig && !bc.reported && st && st.limit && frames) {
+      let missing = false;
+      for (let f = Math.ceil(this.clip.start); f <= this.clip.end; f++) if (!frames.has(f)) { missing = true; break; }
+      if (!missing) {
+        bc.reported = true;
+        this.loadEvent('cache', ((performance.now() - bc.start) / 1000).toFixed(2));
+      }
+    }
     if (!st || !this.settings.hud || !rig.moving.size) { this.ui.setCacheHud(null); return; }
     if (!st.limit) { this.ui.setCacheHud('キャッシュ オフ', ''); return; }
     let total = 0, have = 0;
@@ -1919,7 +1940,8 @@ class ViewerApp {
 
   // ------------------------------------------------------------------ 警告
   onWarningsChanged(list) {
-    if (this.bridge && this.bridge.warningsChanged) this.bridge.warningsChanged(JSON.stringify(list));
+    // Qt には一覧と、分類ごとに見出し・仕切りで分けた文章を送る（warnGroups.js。ブラウザのダイアログと同じ分け方）
+    if (this.bridge && this.bridge.warningsChanged) this.bridge.warningsChanged(JSON.stringify({ list, text: warningsText(list) }));
   }
 
   /** 警告の一覧を開く（Qt では別ウィンドウ、ブラウザではページ内のダイアログ） */

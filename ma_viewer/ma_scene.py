@@ -408,6 +408,7 @@ class MaScene:
         self.read_seconds = 0.0
         self.connections: List[Tuple[MaNode, str, MaNode, str]] = []   # (元, 元の属性, 先, 先の属性)
         self.warnings: List[str] = []
+        self.notes: List[str] = []               # お知らせ（問題ではないもの。警告に入れず、ログに出す）
         self._warn_keys: Dict[str, int] = {}
         self._warn_limits: Dict[str, int] = {}
 
@@ -420,6 +421,11 @@ class MaScene:
         self._warn_limits[k] = limit
         if n < limit:
             self.warnings.append(msg)
+
+    def note(self, msg: str):
+        """お知らせを記録する（解析した・定義で評価したなど、表示に問題のないもの。ログに出す）"""
+        if msg not in self.notes:
+            self.notes.append(msg)
 
     def finalize_warnings(self):
         for k, n in self._warn_keys.items():

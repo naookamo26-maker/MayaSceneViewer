@@ -1,6 +1,7 @@
 // 画面のパネル類（DOM）。描画やシーン操作は app（main.js）に任せる。
 
 import { CONTROL_ROLES, ROLE_LABELS } from './controlRoles.js';
+import { groupWarnings } from './warnGroups.js';
 import { ROLE_COLORS } from './controlOverlay.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1175,8 +1176,10 @@ export class UI {
     $('warn-count').textContent = String(list.length);
     btn.title = `警告 ${list.length} 件を表示`;
     btn.setAttribute('aria-label', btn.title);
+    // 分類ごとに見出しと仕切りで分ける（Qt の警告パネルと同じ分け方。warnGroups.js）
     $('warn-body').innerHTML = list.length
-      ? '<ul>' + list.map((w) => `<li>${esc(w)}</li>`).join('') + '</ul>'
+      ? groupWarnings(list).map((g) => `<section class="warn-group"><h3>${esc(g.name)}（${g.items.length} 件）</h3>`
+        + '<ul>' + g.items.map((w) => `<li>${esc(w)}</li>`).join('') + '</ul></section>').join('')
       : '<p class="muted">警告はありません。</p>';
     this.app.onWarningsChanged(this.warnings);
   }
@@ -1228,6 +1231,9 @@ export class UI {
   setFile(text) { $('status-file').textContent = text; }
   setStats(text) { $('status-stats').textContent = text; }
   setMessage(text, ms = 4000) {
+    // Qt ではウィンドウのステータスバーに出す（ビューアの下の欄は表示しない）
+    const b = this.app && this.app.bridge;
+    if (b && b.statusMessage) b.statusMessage(text || '', text ? ms || 0 : 0);
     $('status-msg').textContent = text || '';
     clearTimeout(this.msgTimer);
     if (text && ms) this.msgTimer = setTimeout(() => { $('status-msg').textContent = ''; }, ms);

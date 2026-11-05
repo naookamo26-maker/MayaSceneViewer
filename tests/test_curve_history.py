@@ -79,7 +79,9 @@ class CurveHistoryTest(unittest.TestCase):
 
     def test_warnings_and_report(self):
         warnings = "\n".join(self.scene["warnings"])
-        self.assertIn("ヒストリのあるカーブ 3 本の形を、形を作るノード（circle など）から計算しました", warnings)
+        self.assertIn("ヒストリのあるカーブ 3 本の形を、形を作るノード（circle など）から計算しました",
+                      "\n".join(self.scene["notes"]), "お知らせ（警告ではない）")
+        self.assertNotIn("ヒストリのあるカーブ 3 本", warnings)
         self.assertIn("形を作るノードの型: makeTextCurves 1 本、offsetCurve 1 本", warnings)
         self.assertIn("rbDShape: 形を作るノード rbD_offset（offsetCurve。カーブのオフセット", warnings)
         self.assertIn("txFShape: 形を作るノード txF_freeze の入力: txF_text（makeTextCurves。文字のカーブ", warnings)

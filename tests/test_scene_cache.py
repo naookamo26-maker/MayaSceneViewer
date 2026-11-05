@@ -133,6 +133,19 @@ class SceneCacheTest(unittest.TestCase):
         os.environ["MA_VIEWER_NO_CACHE"] = "1"
         self.assertIsNone(scene_cache.lookup(path, True, True), "MA_VIEWER_NO_CACHE=1 なら使わない")
 
+    def test_limit_setting_and_env(self):
+        self.assertEqual(scene_cache.DEFAULT_LIMIT_MB, 256)
+        old = scene_cache._limit_mb
+        try:
+            scene_cache.set_limit_mb(128)
+            self.assertEqual(scene_cache.limit_bytes(), 128 * 1024 * 1024)
+            os.environ["MA_VIEWER_CACHE_MB"] = "64"
+            self.assertTrue(scene_cache.limit_from_env())
+            self.assertEqual(scene_cache.limit_bytes(), 64 * 1024 * 1024, "環境変数があればそちら")
+        finally:
+            os.environ.pop("MA_VIEWER_CACHE_MB", None)
+            scene_cache.set_limit_mb(old)
+
     def test_prune_removes_least_recently_used(self):
         a, b = self.copy("anim_sample.ma"), self.copy("sample_arm.ma")
         convert_and_store(a)
