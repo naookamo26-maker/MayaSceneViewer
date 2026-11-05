@@ -593,16 +593,41 @@ class ViewerWindow(QtWidgets.QMainWindow):
                                  checked=_settings_bool("sceneCache", True),
                                  tip="変換した結果を保存し、同じ .ma（リファレンス・テクスチャも同じ）を開き直すときは解析を省く"
                                      "（次に開くファイルから有効）")
-        a_clear_cache = self._act("変換結果のキャッシュを消去", self.clear_scene_cache,
+        a_clear_cache = self._act("キャッシュを消去", self.clear_scene_cache,
                                   tip="保存した変換結果をすべて消す")
+        # 変換結果のキャッシュの上限（既定 256 MB。1 シーンは元の .ma のおよそ 1 割）
+        from . import scene_cache
+        try:
+            limit_mb = int(_settings().value("sceneCacheMB", scene_cache.DEFAULT_LIMIT_MB))
+        except (TypeError, ValueError):
+            limit_mb = scene_cache.DEFAULT_LIMIT_MB
+        scene_cache.set_limit_mb(limit_mb)
+        self.a_cache_usage = QtGui.QAction("使用量: -", self)
+        self.a_cache_usage.setEnabled(False)
+        self.cache_limit_actions = {}
+        limit_group = QtGui.QActionGroup(self)
+        for mb in (128, 256, 512, 1024, 2048):
+            a = QtGui.QAction("上限 %s" % ("%d GB" % (mb // 1024) if mb >= 1024 else "%d MB" % mb), self, checkable=True)
+            a.setChecked(mb == limit_mb)
+            a.triggered.connect(lambda _c=False, v=mb: self.set_scene_cache_limit(v))
+            limit_group.addAction(a)
+            self.cache_limit_actions[mb] = a
         m = mb.addMenu("ファイル")
         for a in (a_open, a_reload, a_export):
             m.addAction(a)
         m.addSeparator()
         m.addAction(self.a_anim)
         m.addAction(self.a_refs)
-        m.addAction(self.a_cache)
-        m.addAction(a_clear_cache)
+        mc = m.addMenu("変換結果のキャッシュ")
+        mc.addAction(self.a_cache)
+        mc.addSeparator()
+        mc.addAction(self.a_cache_usage)
+        for a in self.cache_limit_actions.values():
+            mc.addAction(a)
+        mc.addSeparator()
+        mc.addAction(a_clear_cache)
+        mc.aboutToShow.connect(self._update_cache_usage)
+        self.cache_menu = mc
         m.addSeparator()
         m.addAction(a_close)
 
@@ -796,7 +821,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.show_scene(scene, ("キャッシュから読み込み %.2f 秒" if cached else "解析 %.2f 秒") % seconds, payload)
         if cached:
             self.log("info", "変換結果のキャッシュから読み込みました（.ma・リファレンス・テクスチャ・設定が前回と同じため、"
-                             "解析を省きました。［ファイル］→［変換結果をキャッシュする］で切り替え）")
+                             "解析を省きました。［ファイル］→［変換結果のキャッシュ］で切り替え）")
         self._anim_scene = scene           # このシーンのアニメーションだけを受け取る
         if self._worker is not None and self._worker.animation and not self.current_path.lower().endswith(".json"):
             self.viewer.set_animation_status("アニメーションを読み込み中")
@@ -835,6 +860,29 @@ class ViewerWindow(QtWidgets.QMainWindow):
     def _toggle_cache(self, on):
         _settings_set("sceneCache", bool(on))
         self.statusBar().showMessage("変換結果を%s（次に開くファイルから）" % ("キャッシュします" if on else "キャッシュしません"), 5000)
+
+    def _update_cache_usage(self):
+        """［変換結果のキャッシュ］を開いたとき: 使用量 / 上限（件数）"""
+        from . import scene_cache
+        mb = lambda b: "%.1f MB" % (b / 1048576.0)  # noqa: E731
+        n = len(scene_cache.entries())
+        text = "使用量: %s / %s（%d 件）" % (mb(scene_cache.total_bytes()), mb(scene_cache.limit_bytes()), n)
+        if scene_cache.limit_from_env():
+            text += "　※ 上限は環境変数 MA_VIEWER_CACHE_MB"
+        self.a_cache_usage.setText(text)
+        return text
+
+    def set_scene_cache_limit(self, mb):
+        from . import scene_cache
+        scene_cache.set_limit_mb(mb)
+        _settings_set("sceneCacheMB", int(mb))
+        for v, a in self.cache_limit_actions.items():
+            a.setChecked(v == mb)
+        scene_cache.prune()
+        msg = "変換結果のキャッシュの上限を %s にしました（%s）" % (
+            "%d GB" % (mb // 1024) if mb >= 1024 else "%d MB" % mb, self._update_cache_usage())
+        self.statusBar().showMessage(msg, 6000)
+        self.log("info", msg)
 
     def clear_scene_cache(self):
         from . import scene_cache
