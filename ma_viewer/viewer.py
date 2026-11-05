@@ -11,6 +11,7 @@ import json
 import os
 import time
 import traceback
+from typing import Optional
 
 from .qt_compat import (QAction, QWebChannel, QWebEnginePage, QWebEngineScript, QWebEngineSettings,
                         QWebEngineView, QtCore, QtGui, QtWidgets, Qt, Signal, Slot, require_webengine,
@@ -231,24 +232,26 @@ class ViewerWidget(QtWidgets.QWidget):
         js_args = ", ".join(json.dumps(a, ensure_ascii=True) for a in args)
         self.run_js("window.mayaViewer && window.mayaViewer.%s(%s)" % (func, js_args), callback)
 
-    def set_scene(self, scene: dict, message: str = "シーンを転送中"):
-        """共通 JSON（dict）をビューアに送る。大きなデータは分割して送る。"""
+    def set_scene(self, scene: dict, message: str = "シーンを転送中", payload: Optional[Payload] = None):
+        """共通 JSON（dict）をビューアに送る。大きなデータは分割して送る。
+        payload: 読み込みスレッドで文字列にしておいたもの（なければここで文字列にする）"""
         self.bridge.allowed_files = {os.path.normcase(os.path.abspath(t["resolved"]))
                                      for t in scene.get("textures") or [] if t.get("resolved")}
-        t0 = time.perf_counter()
-        payload = json.dumps(scene, ensure_ascii=True, separators=(",", ":"))
-        self.last_dump_seconds = time.perf_counter() - t0
+        payload = payload or Payload.of(scene)
+        self.last_dump_seconds = payload.seconds
+        payload = payload.text
         self._call("beginTransfer", message)
         for i in range(0, len(payload), CHUNK_SIZE):
             self.run_js("window.mayaViewer.appendChunk(%s)" % json.dumps(payload[i:i + CHUNK_SIZE]))
         self._call("endTransfer")
         return len(payload)
 
-    def set_animation(self, anim: dict):
-        """アニメーション（共通 JSON の animation）を送る。シーンを送ったあとに呼ぶ。"""
-        t0 = time.perf_counter()
-        payload = json.dumps(anim, ensure_ascii=True, separators=(",", ":"))
-        self.last_dump_seconds = time.perf_counter() - t0
+    def set_animation(self, anim: dict, payload: Optional[Payload] = None):
+        """アニメーション（共通 JSON の animation）を送る。シーンを送ったあとに呼ぶ。
+        payload: 読み込みスレッドで文字列にしておいたもの（なければここで文字列にする）"""
+        payload = payload or Payload.of(anim)
+        self.last_dump_seconds = payload.seconds
+        payload = payload.text
         self._call("beginAnimationTransfer")
         for i in range(0, len(payload), CHUNK_SIZE):
             self.run_js("window.mayaViewer.appendChunk(%s)" % json.dumps(payload[i:i + CHUNK_SIZE]))
@@ -319,13 +322,29 @@ class ViewerWidget(QtWidgets.QWidget):
 # 読み込みスレッド
 # ---------------------------------------------------------------------------
 
+class Payload:
+    """ビューアに送る JSON の文字列と、文字列にかかった秒数。大きなシーンでは文字列にするのに時間がかかるので、
+    読み込みスレッドで作っておき、画面のスレッドを止めない"""
+    __slots__ = ("text", "seconds")
+
+    def __init__(self, text: str, seconds: float):
+        self.text = text
+        self.seconds = seconds
+
+    @classmethod
+    def of(cls, data) -> "Payload":
+        t0 = time.perf_counter()
+        text = json.dumps(data, ensure_ascii=True, separators=(",", ":"))
+        return cls(text, time.perf_counter() - t0)
+
+
 class _LoadWorker(QtCore.QObject):
     """読み込みは 2 段階: シーン（finished）を先に渡して表示し、そのあとアニメーション（animationReady）を読む。"""
     progress = Signal(float, str, str, float)   # 全体の割合, 文言, いま読んでいるファイルの文言・割合（なければ "", -1）
-    finished = Signal(object, float)
+    finished = Signal(object, float, object)   # シーン, 秒, 文字列にしたもの（Payload）
     failed = Signal(str, str)
     animationProgress = Signal(float, str)
-    animationReady = Signal(object, float)     # animation（なければ None）, 秒
+    animationReady = Signal(object, float, object)   # animation（なければ None）, 秒, 文字列にしたもの（Payload か None）
     animationFailed = Signal(str, str)
     done = Signal()
 
@@ -368,7 +387,8 @@ class _LoadWorker(QtCore.QObject):
                 from .extract_ma import load_ma_staged
                 scene, load_animation = load_ma_staged(self.path, progress=self._progress,
                                                        references=self.references)
-            self.finished.emit(scene, time.time() - t0)
+            seconds = time.time() - t0
+            self.finished.emit(scene, seconds, Payload.of(scene))
         except _Cancelled:
             self.failed.emit("中止しました", "")
             load_animation = None
@@ -381,8 +401,9 @@ class _LoadWorker(QtCore.QObject):
             t1 = time.time()
             try:
                 anim = load_animation(self._progress)
+                seconds = time.time() - t1
                 if not self._cancel:
-                    self.animationReady.emit(anim, time.time() - t1)
+                    self.animationReady.emit(anim, seconds, Payload.of(anim) if anim is not None else None)
             except _Cancelled:
                 pass
             except Exception as exc:  # noqa: BLE001  アニメーションが読めなくてもシーンは表示したままにする
@@ -704,9 +725,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.viewer.show_loading(msg, frac, sub_text, sub_frac)
         self.statusBar().showMessage("%s　%s" % (msg, sub_text) if sub_text else msg)
 
-    @Slot(object, float)
-    def _on_loaded(self, scene, seconds):
-        self.show_scene(scene, "解析 %.2f 秒" % seconds)
+    @Slot(object, float, object)
+    def _on_loaded(self, scene, seconds, payload=None):
+        self.show_scene(scene, "解析 %.2f 秒" % seconds, payload)
         self._anim_scene = scene           # このシーンのアニメーションだけを受け取る
         if self._worker is not None and self._worker.animation and not self.current_path.lower().endswith(".json"):
             self.viewer.set_animation_status("アニメーションを読み込み中")
@@ -716,15 +737,15 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if self._pending_open is None:
             self.viewer.set_animation_status(msg)
 
-    @Slot(object, float)
-    def _on_animation_ready(self, anim, seconds):
+    @Slot(object, float, object)
+    def _on_animation_ready(self, anim, seconds, payload=None):
         if self._pending_open is not None or self.current_scene is None or self.current_scene is not self._anim_scene:
             return
         if anim is None:
             self.viewer.set_animation_status("")
             return
         self.current_scene["animation"] = anim
-        size = self.viewer.set_animation(anim)
+        size = self.viewer.set_animation(anim, payload)
         st = anim.get("stats", {})
         for w in anim.get("warnings", []):
             self.log("warn", w)
@@ -769,11 +790,12 @@ class ViewerWindow(QtWidgets.QMainWindow):
             path, self._pending_open = self._pending_open, None
             self.open_file(path)
 
-    def show_scene(self, scene: dict, note: str = ""):
-        """共通 JSON をビューアに表示する（Maya 抽出や外部ツールからも使える）。"""
+    def show_scene(self, scene: dict, note: str = "", payload: Optional[Payload] = None):
+        """共通 JSON をビューアに表示する（Maya 抽出や外部ツールからも使える）。
+        payload: 読み込みスレッドで文字列にしておいたもの（なければここで文字列にする）"""
         self.current_scene = scene
         st = scene.get("stats", {})
-        size = self.viewer.set_scene(scene)
+        size = self.viewer.set_scene(scene, payload=payload)
         for w in scene.get("warnings", []):
             self.log("warn", w)
         try:
