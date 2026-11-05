@@ -853,6 +853,8 @@ class _MaterialBuilder:
             if d and d not in ref_dirs:
                 ref_dirs.append(d)
         self.resolver = TextureResolver(ms.source_path or "", extra_dirs=ref_dirs)
+        # テクスチャを探した記録（変換結果のキャッシュで、次に開くときに同じ結果になるかを確かめる。scene_cache）
+        ms.texture_lookups = {"extra_dirs": list(ref_dirs), "calls": []}
         self.materials: List[dict] = []
         self.textures: List[dict] = []
         self._mat_of: Dict[int, int] = {}
@@ -895,6 +897,7 @@ class _MaterialBuilder:
         if (raw_attrs.get("uvt") or [""])[0] == "3":       # uvTilingMode = UDIM（ファイル名はタイル番号入り）
             raw = to_udim_pattern(raw)
         entry = texture_entry(f.name, raw, self.resolver)
+        self.ms.texture_lookups["calls"].append((f.name, raw, entry))
         for w in texture_warnings(entry, used_by):
             self.ms.warn(w)
         from .place2d import uv_entry
@@ -1959,4 +1962,5 @@ def load_ma_staged(path: str, progress: ProgressFn = None, node_map: Optional[di
         finally:
             ms.text = ""                 # 読み終えたら本文を手放す
 
+    load_animation.scene = ms            # 解析したシーン（変換結果のキャッシュが、変換に影響した外部の状態を記録するため）
     return sc, load_animation
