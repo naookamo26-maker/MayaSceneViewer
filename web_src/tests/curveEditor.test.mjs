@@ -8,7 +8,8 @@ import { Matrix4 } from 'three';
 import { AnimationClip, TANGENT, evaluateCurve } from '../src/animation.js';
 import { RigEvaluator } from '../src/rig.js';
 import {
-  channelColor, channelLabel, collectChannels, curveAxis, frameAll, niceStep, normalizer, viewAxis,
+  channelColor, channelLabel, collectChannels, collectChannelsFor, curveAxis, frameAll, groupByNode, niceStep, normalizer,
+  viewAxis,
 } from '../src/curveEditor.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -42,6 +43,22 @@ test('ドリブンキー（グラフのノードのカーブ）も集め、ド�
   assert.equal(viewAxis(ch), 'driver');
   ch[1].visible = false;
   assert.equal(viewAxis(ch), 'driver');
+});
+
+test('複数のノード: 選んだ順にノードごとに集め、ノード番号を付ける（同じカーブは最初のノードだけ）', () => {
+  const { clip, rig, idx } = setup('rig6_sample.json');
+  const nodes = ['ctl', 'drv2', 'tip_ctrl'].map(idx);
+  const ch = collectChannelsFor(clip, rig, nodes);
+  assert.deepEqual(ch.map((c) => `${c.node}.${c.attr}`), [`${nodes[0]}.tx`, `${nodes[0]}.ty`, `${nodes[1]}.rx`, `${nodes[2]}.ty`]);
+  // 1 つだけなら collectChannels と同じカーブ
+  assert.deepEqual(collectChannelsFor(clip, rig, [nodes[0]]).map((c) => c.curve), collectChannels(clip, rig, nodes[0]).map((c) => c.curve));
+  // 同じノードを 2 回渡しても、カーブは 1 本ずつ
+  assert.equal(collectChannelsFor(clip, rig, [nodes[0], nodes[0]]).length, 2);
+  assert.deepEqual(collectChannelsFor(clip, rig, []), []);
+  // 一覧の見出し: ノードごとのチャンネルの番号
+  assert.deepEqual(groupByNode(ch), [{ node: nodes[0], items: [0, 1] }, { node: nodes[1], items: [2] }, { node: nodes[2], items: [3] }]);
+  // 選んだ順（リードが最後）
+  assert.deepEqual(groupByNode(collectChannelsFor(clip, rig, [nodes[2], nodes[0]])).map((g) => g.node), [nodes[2], nodes[0]]);
 });
 
 test('表示範囲: 横はキーと再生範囲、縦は値（接線の行き過ぎも含む）に余白。正規化は -1〜1', () => {

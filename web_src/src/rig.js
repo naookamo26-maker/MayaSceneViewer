@@ -331,6 +331,22 @@ export function visibleFrom(vals) {
   return g('v') >= 0.5 && g('lodv') >= 0.5 && !(g('ove') >= 0.5 && g('ovv') < 0.5);
 }
 
+/**
+ * animation.props（node・mesh・curve）の評価結果から、リグで隠れるか。
+ * ディスプレイレイヤーの表示（lv）・有効（le）が接続で決まるときはその値で、そうでなければファイルの値（layerHidden）で決める
+ * @param st props の static（ファイルの値）  @param values evaluateProps の values
+ */
+export function hiddenByProps(st, values) {
+  const s = st || {}, v = values || {};
+  const all = { ...s, ...v };
+  let layer = !!s.layerHidden;
+  if (typeof v.lv === 'number' || typeof v.le === 'number') {
+    const n = (k) => (typeof all[k] === 'number' ? all[k] : 1);
+    layer = n('le') >= 0.5 && n('lv') < 0.5;              // 無効なレイヤーは表示に影響しない
+  }
+  return layer || !visibleFrom(all);
+}
+
 export class RigEvaluator {
   /**
    * @param clip AnimationClip（カーブとノードの材料）

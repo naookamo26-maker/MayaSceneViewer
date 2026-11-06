@@ -194,13 +194,23 @@ _DISPLAY_KEYS = {"do", "drawOverride", "iog", "instObjGroups", "msg", "message"}
 _DEFORM_OUT = re.compile(r"^og\[(\d+)\]$")
 
 # 移動・回転・スケール以外で、リグ（接続・カーブ）で決まる値を評価する属性（animation.props）
-#   node・mesh: 表示（.v・.lodv・描画のオーバーライドの .ove / .ovv）
+#   node・mesh・curve: 表示（.v・.lodv・描画のオーバーライドの .ove / .ovv）。curve は nurbsCurve のシェイプ
+#     （コントローラーの形）。入っているディスプレイレイヤーの .v・.e が接続で決まるときは、それも lv・le として評価する
 #   camera: 焦点距離・フィルムバック・クリップ面・平行投影の幅など
 #   place2d: テクスチャの UV の繰り返し・オフセット（place2dTexture。ma_viewer/place2d.py）
 VIS_KEYS = ("v", "lodv", "ove", "ovv")
 VIS_DEFAULTS = {"v": 1.0, "lodv": 1.0, "ove": 0.0, "ovv": 1.0}
 CAMERA_KEYS = ("fl", "hfa", "vfa", "ncp", "fcp", "ow", "hfo", "vfo", "lsr", "cs")
-PROP_KEYS = {"node": VIS_KEYS, "mesh": VIS_KEYS, "camera": CAMERA_KEYS, "place2d": PLACE2D_KEYS}
+PROP_KEYS = {"node": VIS_KEYS, "mesh": VIS_KEYS, "curve": VIS_KEYS, "camera": CAMERA_KEYS, "place2d": PLACE2D_KEYS}
+VIS_KINDS = ("node", "mesh", "curve")
+# ディスプレイレイヤーの表示（.v）・有効（.e）。props では lv・le（レイヤーの属性の名前と区別する）
+LAYER_KEYS = (("lv", ("v", "visibility")), ("le", ("e", "enabled")))
+
+
+def display_layer_of(n: MaNode) -> Optional[MaNode]:
+    """ノードが入っているディスプレイレイヤー（.do ← displayLayer.di）。なければ None"""
+    src = n.inputs.get("do") or n.inputs.get("drawOverride")
+    return src[0] if src is not None and src[0].type == "displayLayer" else None
 # .ma の属性の名前が props の属性と違うもの（place2dTexture は値をそのまま保持する型で、長い名前のこともある）
 PROP_ALIASES = {"place2d": PLACE2D_ALIASES}
 
@@ -349,6 +359,15 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
                     info.props.append((kind, n, key, src, sattr))
                     need_plug(src, sattr, n, name)
                     break
+        layer = display_layer_of(n) if kind in VIS_KINDS else None
+        if layer is not None:                       # レイヤーの表示が接続で決まる（コントローラーの属性 → レイヤー.v など）
+            for key, names in LAYER_KEYS:
+                for name in names:
+                    if name in layer.inputs:
+                        src, sattr = layer.inputs[name]
+                        info.props.append((kind, n, key, src, sattr))
+                        need_plug(src, sattr, layer, name)
+                        break
 
     # 表示するカーブの形を決める入力（skinCluster・制御点の接続など）
     for n in geometry:

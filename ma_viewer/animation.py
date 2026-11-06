@@ -448,17 +448,28 @@ def _used_defs(ms: MaScene, graph_nodes: List[dict]) -> dict:
     return {t: pool[t] for t in used if t in pool}
 
 
+def _vis_static(ms: MaScene, kind: str, n: MaNode) -> dict:
+    """表示の属性（.v・.lodv・.ove・.ovv）のファイルの値。カーブのシェイプは属性を読み飛ばしているので読み直す"""
+    from .rig import VIS_DEFAULTS, parse_attrs
+    if kind != "curve":
+        return {k: (1.0 if n.flag(k, d >= 0.5) else 0.0) for k, d in VIS_DEFAULTS.items()}
+    from .extract_ma import _num
+    a = parse_attrs(ms.text, n)
+    return {k: (1.0 if _num(a.get(k), d) >= 0.5 else 0.0) for k, d in VIS_DEFAULTS.items()}
+
+
 def build_props(ms: MaScene, info, out_index: Dict[int, int], curve_index: Dict[int, int]) -> List[dict]:
     """移動・回転・スケール以外で、接続で決まる属性（表示・カメラの焦点距離など）。ビューアがフレームごとに評価する。
 
-    [{"kind": "node" | "mesh" | "camera" | "place2d", "index": 番号, "inputs": {属性: 接続元}, "static": {...}}]。
+    [{"kind": "node" | "mesh" | "curve" | "camera" | "place2d", "index": 番号, "inputs": {属性: 接続元}, "static": {...}}]。
+    curve の index は curves の番号（nurbsCurve のシェイプ）。
     place2d の index は textures[i].uv.place2d の番号（テクスチャの UV の繰り返し・オフセット）。
     接続元は graph の inputs と同じ形。評価できない接続元（未対応のノード）の属性は入れない（ファイルの値のまま）。
     """
-    from .extract_ma import _hidden_by_layer
-    from .rig import CONSTRAINT_TYPES, VIS_DEFAULTS, _evaluable
-    index_of = {"node": out_index, "mesh": getattr(ms, "mesh_index", {}), "camera": getattr(ms, "camera_index", {}),
-                "place2d": getattr(ms, "place2d_index", {})}
+    from .extract_ma import _hidden_by_layer, layer_state
+    from .rig import CONSTRAINT_TYPES, VIS_KINDS, _evaluable, display_layer_of
+    index_of = {"node": out_index, "mesh": getattr(ms, "mesh_index", {}), "curve": getattr(ms, "curve_shapes", {}),
+                "camera": getattr(ms, "camera_index", {}), "place2d": getattr(ms, "place2d_index", {})}
     by_target: Dict[Tuple[str, int], dict] = {}
     place2d_used = getattr(ms, "place2d_used", set())
     for kind, consumer, key, src, sattr in info.props:
@@ -476,10 +487,14 @@ def build_props(ms: MaScene, info, out_index: Dict[int, int], curve_index: Dict[
         e = by_target.get((kind, idx))
         if e is None:
             e = by_target[(kind, idx)] = {"kind": kind, "index": idx, "inputs": {}}
-            if kind in ("node", "mesh"):
+            if kind in VIS_KINDS:
                 # 接続されていない表示の属性はファイルの値（ディスプレイレイヤーで隠れているかも）
-                e["static"] = {k: (1.0 if consumer.flag(k, d >= 0.5) else 0.0) for k, d in VIS_DEFAULTS.items()}
+                e["static"] = _vis_static(ms, kind, consumer)
                 e["static"]["layerHidden"] = _hidden_by_layer(consumer)
+                layer = display_layer_of(consumer)
+                if layer is not None:               # レイヤーの .e・.v のファイルの値（接続で決まるときに使う）
+                    le, lv = layer_state(layer)
+                    e["static"]["le"], e["static"]["lv"] = (1.0 if le else 0.0), (1.0 if lv else 0.0)
         e["inputs"][key] = inp
     return [by_target[k] for k in sorted(by_target)]
 

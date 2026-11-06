@@ -90,15 +90,21 @@ def _visible_self(n: MaNode) -> bool:
     return not _hidden_by_layer(n)
 
 
+def layer_state(layer: MaNode) -> Tuple[bool, bool]:
+    """ディスプレイレイヤーの（有効か、表示か）のファイルの値"""
+    raw = layer.raw or {}
+    enabled = not ("e" in raw and raw["e"] and not R.to_bool(raw["e"][0]))
+    visible = not ("v" in raw and raw["v"] and not R.to_bool(raw["v"][0]))
+    return enabled, visible
+
+
 def _hidden_by_layer(n: MaNode) -> bool:
     """ディスプレイレイヤー（.do ← displayLayer.di）が非表示か（レイヤーが無効なら影響しない）"""
     src = n.inputs.get("do")
     if src is None or src[0].type != "displayLayer" or src[0].raw is None:
         return False
-    raw = src[0].raw
-    if "e" in raw and raw["e"] and not R.to_bool(raw["e"][0]):
-        return False
-    return "v" in raw and bool(raw["v"]) and not R.to_bool(raw["v"][0])
+    enabled, visible = layer_state(src[0])
+    return enabled and not visible
 
 
 def _inherited(n: Optional[MaNode], key: str, own, root):
@@ -1357,6 +1363,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     from .rig import discover
     props = [("node", n) for n in ms.nodes if id(n) in keep and not n.is_shape and n.is_dag]
     props += [("mesh", n) for n, *_ in mesh_entries] + [("camera", n) for n in camera_shapes]
+    props += [("curve", n) for n, _a in curve_shapes]       # コントローラーの形の表示（IK・FK の切り替えなど）
     from .place2d import collect as collect_place2d       # テクスチャの UV の繰り返し・オフセット
     props += [("place2d", p) for p in collect_place2d(ms)]
     # HumanIK: キャラクターと、スケルトンを動かすものを調べる。コントロールリグの FK・リターゲット・スタンスは行列ノードに

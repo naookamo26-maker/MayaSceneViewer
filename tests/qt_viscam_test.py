@@ -101,6 +101,28 @@ def main() -> int:
                           nxt()))
         js("window.mayaViewer.setFrame(15); 'ok'", lambda _: state(got))
 
+    def s_switch(nxt):
+        """コントローラーを動かして切り替える表示: 保存時に隠れていた IK 側（transform・レイヤー）も表示し、FK 側のカーブを隠す。
+        目のアイコンで隠したものは、リグが表示にしても隠したまま"""
+        sw_js = """JSON.stringify((() => { const app = window.mayaViewer.debug.app;
+            const ni = (n) => app.data.nodes.findIndex((x) => x.name === n);
+            const curve = (n) => app.curves.items.find((it) => it && it.entry.name === n).line.visible;
+            const st = () => ({ ik: !app.hiddenEff[ni('ik_ctrl')], extra: !app.hiddenEff[ni('ik_extra')], fk: curve('fk_ctrlShape') });
+            const pose = (tx) => app.setPose(ni('switch_ctrl'), { t: [tx, 0, 0], r: [0, 0, 0], s: [1, 1, 1] });
+            const before = st(); pose(1); const ik = st();
+            app.toggleNodeVisible(ni('ik_extra')); pose(0); pose(1); const eye = st();
+            app.toggleNodeVisible(ni('ik_extra')); pose(0); const back = st();
+            return { before, ik, eye, back }; })())"""
+
+        def got(r):
+            check(r["before"] == {"ik": False, "extra": False, "fk": True}, "保存時の表示（FK 側）: %s" % r["before"])
+            check(r["ik"] == {"ik": True, "extra": True, "fk": False},
+                  "切り替えのコントローラーを動かすと、保存時に隠れていた IK 側を表示し FK 側のカーブを隠す: %s" % r["ik"])
+            check(r["eye"]["extra"] is False, "目のアイコンで隠したものは、リグが表示にしても隠したまま: %s" % r["eye"])
+            check(r["back"] == r["before"], "戻すと元の表示: %s" % r["back"])
+            nxt()
+        js(sw_js, got)
+
     def s_camera(nxt):
         def cam1(s):
             check(s["view"] == "shot_cam" and s["gate"] and s["camState"] == "shot_cam",
@@ -232,7 +254,7 @@ def main() -> int:
         poll()
 
     win.viewer.pageReady.connect(lambda: QtCore.QTimer.singleShot(200, lambda: run(
-        [s_open, s_frame, s_camera, s_camera_menu, s_camera_drag, s_bind_key, s_inert, s_grid, s_camaim,
+        [s_open, s_frame, s_switch, s_camera, s_camera_menu, s_camera_drag, s_bind_key, s_inert, s_grid, s_camaim,
          lambda _: (win.a_anim.setChecked(load_setting), app.quit())])))
     QtCore.QTimer.singleShot(90000, lambda: (print("NG タイムアウト"), ok.update(v=False), app.quit()))
     app.exec()

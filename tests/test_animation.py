@@ -444,6 +444,23 @@ class TestVisibilityAndCameras(unittest.TestCase):
         self.assertEqual(self.graph("vis_ctrl")["attrs"]["geoVis"], 0.0)
         self.assertFalse(any("（v）" in w or "lodv" in w for w in self.anim["warnings"]))
 
+    def test_switch_visibility_props(self):
+        """移動で切り替える表示: transform・カーブのシェイプ・ディスプレイレイヤーの表示（IK・FK の切り替えの形）"""
+        cond = self.graph("sw_cond")["id"]
+        ik = self.prop("node", "ik_ctrl")
+        self.assertEqual(ik["inputs"], {"v": {"node": cond, "attr": "ocr"}})
+        self.assertEqual(ik["static"]["v"], 0.0)                         # 保存時は非表示（ファイルの値）
+        self.assertFalse(self.scene["nodes"][self.names.index("ik_ctrl")]["visible"])
+        # カーブのシェイプの .v（kind: curve。index は curves の番号）
+        ci = [c["name"] for c in self.scene["curves"]].index("fk_ctrlShape")
+        fk = next(p for p in self.anim["props"] if p["kind"] == "curve" and p["index"] == ci)
+        self.assertEqual(fk["inputs"], {"v": {"node": self.graph("sw_rev")["id"], "attr": "ox"}})
+        self.assertEqual(fk["static"]["v"], 1.0)
+        # ディスプレイレイヤーの .v が接続で決まる: 入っているノードの lv（レイヤーの .e・.v のファイルの値も static に）
+        extra = self.prop("node", "ik_extra")
+        self.assertEqual(extra["inputs"], {"lv": {"node": cond, "attr": "ocr"}})
+        self.assertEqual((extra["static"]["layerHidden"], extra["static"]["le"], extra["static"]["lv"]), (True, 1.0, 0.0))
+
     def test_view_camera(self):
         """保存したときに Maya のビューで見ていたカメラ（uiConfigurationScriptNode の Current Layout）"""
         self.assertEqual(self.scene["cameras"][self.scene["viewCamera"]]["name"], "shot_cam")

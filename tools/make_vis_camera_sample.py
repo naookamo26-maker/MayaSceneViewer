@@ -8,6 +8,9 @@ samples/sample_arm.ma に、次のものを足したもの（再生範囲 1〜24
       vis_ctrl.geoVis → box.v                         （Maya では箱は常に非表示）
       vis_ctrl.geoVis → vis_rev（reverse）→ arm_geoShape.lodv  （1 − 0 = 1 なので腕は表示のまま）
       vis_ctrl.proxyVis → arm_geo.v                   （腕は 12 フレームから非表示）
+  * 移動で切り替える表示（IK・FK の切り替えの形。保存時は FK 側を表示）: switch_ctrl.tx（保存時 0）→ sw_cond（condition。
+    0.5 より大きければ 1、そうでなければ 0）→ ik_ctrl.v（保存時は非表示）・ik_layer.v（ディスプレイレイヤー。保存時は非表示。
+    ik_extra が入っている）、sw_cond → sw_rev（reverse）→ fk_ctrlShape.v（カーブのシェイプ。保存時は表示）
   * shot_cam: 透視投影のカメラ（焦点距離にキー: 1 → 35mm、24 → 85mm。フィルムバック 36×24mm 相当・フィルムフィット水平）
   * ortho_cam: 平行投影のカメラ（真上から。orthographicWidth 40）
   * レンダーの解像度（defaultResolution）: 1920×1080
@@ -35,6 +38,13 @@ def curve(kind, name, keys, extra=()):
                                                    " ".join("%g %g" % kv for kv in keys))]
     lines.extend("\t" + e for e in extra)
     return lines
+
+
+def line_shape(name, parent):
+    """長さ 1 の直線のカーブのシェイプ（コントローラーの形の代わり）"""
+    return ['createNode nurbsCurve -n "%s" -p "%s";' % (name, parent),
+            '\tsetAttr -k off ".v";',
+            '\tsetAttr ".cc" -type "nurbsCurve" 1 1 0 no 3 2 0 1 2 0 0 0 1 0 0 ;']
 
 
 def main():
@@ -83,6 +93,30 @@ def main():
         '\tsetAttr ".o" yes;',
         '\tsetAttr ".ow" 40;',
     ]
+    out += [
+        'createNode transform -n "switch_ctrl";',
+        '\tsetAttr ".t" -type "double3" 0 12 -8 ;',
+        *line_shape("switch_ctrlShape", "switch_ctrl"),
+        'createNode transform -n "ik_ctrl";',
+        '\tsetAttr ".v" no;',
+        '\tsetAttr ".t" -type "double3" -8 8 0 ;',
+        *line_shape("ik_ctrlShape", "ik_ctrl"),
+        'createNode transform -n "fk_ctrl";',
+        '\tsetAttr ".t" -type "double3" -8 4 0 ;',
+        *line_shape("fk_ctrlShape", "fk_ctrl"),
+        'createNode transform -n "ik_extra";',
+        '\tsetAttr ".t" -type "double3" -8 0 0 ;',
+        *line_shape("ik_extraShape", "ik_extra"),
+        'createNode condition -n "sw_cond";',
+        '\tsetAttr ".st" 0.5;',
+        '\tsetAttr ".op" 2;',
+        '\tsetAttr ".ct" -type "float3" 1 1 1 ;',
+        '\tsetAttr ".cf" -type "float3" 0 0 0 ;',
+        'createNode reverse -n "sw_rev";',
+        'createNode displayLayer -n "ik_layer";',
+        '\tsetAttr ".v" no;',
+        '\tsetAttr ".do" 1;',
+    ]
     out += curve("TU", "vis_ctrl_proxyVis", [(1, 1), (12, 0)], ['setAttr -s 2 ".kot[0:1]"  5 5;'])
     out += curve("TU", "shot_camShape_focalLength", [(1, 35), (24, 85)],
                  ['setAttr -s 2 ".kit[0:1]"  2 2;', 'setAttr -s 2 ".kot[0:1]"  2 2;'])
@@ -97,6 +131,12 @@ def main():
         'connectAttr "vis_ctrl_proxyVis.o" "vis_ctrl.proxyVis";',
         'connectAttr "vis_ctrl.proxyVis" "arm_geo.v";',
         'connectAttr "shot_camShape_focalLength.o" "shot_camShape.fl";',
+        'connectAttr "switch_ctrl.tx" "sw_cond.ft";',
+        'connectAttr "sw_cond.ocr" "ik_ctrl.v";',
+        'connectAttr "sw_cond.ocr" "ik_layer.v";',
+        'connectAttr "ik_layer.di" "ik_extra.do";',
+        'connectAttr "sw_cond.ocr" "sw_rev.ix";',
+        'connectAttr "sw_rev.ox" "fk_ctrlShape.v";',
     ]
     text = body + "\n".join(out) + "\n" + tail.replace("sample_arm.ma", "vis_camera_sample.ma")
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:

@@ -1,6 +1,7 @@
 // カーブエディタ（Maya の Graph Editor の確認用。見るだけで、カーブは変えない）。
 //
-// 選んだノードを動かすアニメーションカーブ（ビューアが読み込んだもの）を、横軸フレーム・縦軸値のグラフに描く:
+// 選んだノード（複数可。左の一覧はノードごとにまとめる）を動かすアニメーションカーブ（ビューアが読み込んだもの）を、
+// 横軸フレーム・縦軸値のグラフに描く:
 //   * ノードの移動・回転・スケールのキー（clip.channels）
 //   * ノードの属性に直接つながるカーブ（表示 .v・ピボットなど。リグのグラフの入力）
 //   * 計算ノードを通してつながるカーブ（ドリブンキーなど。横軸はドライバーの値）
@@ -89,6 +90,35 @@ export function collectChannels(clip, rig, ni) {
   return out;
 }
 
+/**
+ * 選んだノードすべて（nodes。選んだ順）のカーブの一覧。collectChannels の結果にノード番号 node を足して、ノードの順に並べる。
+ * 同じカーブが複数のノードを動かすとき（共有するドリブンキーなど）は、最初のノードにだけ入れる
+ */
+export function collectChannelsFor(clip, rig, nodes) {
+  const out = [];
+  const seen = new Set();
+  for (const ni of nodes || []) {
+    for (const ch of collectChannels(clip, rig, ni)) {
+      if (seen.has(ch.curve)) continue;
+      seen.add(ch.curve);
+      out.push({ ...ch, node: ni });
+    }
+  }
+  return out;
+}
+
+/** チャンネルの一覧をノードごとにまとめる [{ node, items: [チャンネルの番号…] }]（ノードの順は一覧の順） */
+export function groupByNode(channels) {
+  const groups = [];
+  const byNode = new Map();
+  channels.forEach((ch, i) => {
+    let g = byNode.get(ch.node);
+    if (!g) { byNode.set(ch.node, g = { node: ch.node, items: [] }); groups.push(g); }
+    g.items.push(i);
+  });
+  return groups;
+}
+
 /** 表示しているカーブの横軸（'time' フレーム・'driver' ドライバーの値・'clip' クリップの時間・'mixed' 混在。なければ 'time'） */
 export function viewAxis(channels) {
   const kinds = new Set(channels.filter((c) => c.visible !== false).map((c) => curveAxis(c.curve)));
@@ -167,15 +197,18 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 const PAD = { left: 52, right: 10, top: 20, bottom: 6 };     // グラフの余白（左は値の目盛り、上はフレームの目盛り）
 const HANDLE_PX = 36;                                         // 重みのない接線のハンドルの長さ（画面のピクセル）
 const MIN_H = 140;
+const LIST_W = { min: 120, max: 480 };                        // 左の一覧の幅（ドラッグで変える）
 
 export class CurveEditor {
   constructor(app) {
     this.app = app;
     this.clip = null;
     this.rig = null;
-    this.node = -1;
-    this.channels = [];
+    this.nodes = [];                  // 選んだノード（選んだ順。最後がリード）
+    this.channels = [];               // カーブの一覧（collectChannelsFor。ノードの順）
     this.hidden = new Set();          // 隠したチャンネル（カーブのオブジェクト。ノードを変えても覚えておく）
+    this.folded = new Set();          // 一覧で折りたたんだノード（ノード番号）
+    this.highlight = null;            // 一覧でポインターを乗せた行のカーブ（チャンネルの番号の Set。ほかのカーブを薄く描く）
     this.view = null;
     this.normalize = false;
     this.selectedKey = null;          // { ch: チャンネルの番号, k: キーの番号 }
@@ -197,7 +230,11 @@ export class CurveEditor {
     new ResizeObserver(() => this.render()).observe(this.canvas);
     this.bindGraph();
     this.bindResizer();
+    this.bindListResizer();
   }
+
+  /** リード（最後に選んだノード。なければ -1） */
+  get node() { return this.nodes.length ? this.nodes[this.nodes.length - 1] : -1; }
 
   get collapsed() { return document.body.classList.contains('curve-editor-collapsed'); }
 
@@ -215,62 +252,147 @@ export class CurveEditor {
     this.clip = clip;
     this.rig = rig;
     this.hidden.clear();
+    this.folded.clear();
     $('curve-editor').hidden = !clip;
-    this.setNode(this.node);
+    this.setNodes(this.nodes);
   }
 
   /** 選んだノード（-1 で選択なし） */
-  setNode(ni) {
-    this.node = ni;
+  setNode(ni) { this.setNodes(ni >= 0 ? [ni] : []); }
+
+  /** 選んだノードすべて（選んだ順。最後がリード。空なら選択なし） */
+  setNodes(list) {
+    this.nodes = [...(list || [])];
     this.selectedKey = null;
     if (!this.collapsed) this.rebuild();
     else this.updateTitle();
   }
 
   rebuild() {
-    this.channels = collectChannels(this.clip, this.rig, this.node);
+    this.channels = collectChannelsFor(this.clip, this.rig, this.nodes);
     for (const ch of this.channels) ch.visible = !this.hidden.has(ch.curve);
     this.buildList();
     this.updateTitle();
     this.frameAll();
   }
 
-  updateTitle() {
+  nodeName(ni) {
     const nodes = this.app.data ? this.app.data.nodes : [];
-    const name = this.node >= 0 && nodes[this.node] ? nodes[this.node].name : '';
-    $('ce-node').textContent = name ? `${name}${this.collapsed ? '' : `・カーブ ${this.channels.length} 本`}` : '';
+    return ni >= 0 && nodes[ni] ? nodes[ni].name : '';
+  }
+
+  updateTitle() {
+    const name = this.nodeName(this.node);
+    const more = this.nodes.length > 1 ? ` ほか ${this.nodes.length - 1} 個` : '';
+    const el = $('ce-node');
+    el.textContent = name ? `${name}${more}${this.collapsed ? '' : `・カーブ ${this.channels.length} 本`}` : '';
+    el.title = this.nodes.length > 1 ? this.nodes.map((ni) => this.nodeName(ni)).join('\n') : el.textContent;
     this.updateInfo();
   }
 
+  /**
+   * 左の一覧: ノードごとの見出し（▾ で折りたたみ・チェックでそのノードのカーブをまとめて表示・ダブルクリックでそのノードだけ表示）と、
+   * その下のチャンネル（チェックで表示・ダブルクリックでそのカーブだけ表示）。Maya の Graph Editor の左の一覧と同じ並び
+   */
   buildList() {
     const list = this.list;
     list.textContent = '';
-    if (this.node < 0 || !this.channels.length) {
+    if (!this.nodes.length || !this.channels.length) {
       const p = document.createElement('p');
       p.className = 'ce-empty';
-      p.textContent = this.node < 0 ? 'ノードを選ぶと、そのカーブを表示します' : 'このノードを動かすカーブはありません（読み込んだ範囲）';
+      p.textContent = !this.nodes.length ? 'ノードを選ぶと、そのカーブを表示します'
+        : this.nodes.length > 1 ? '選んだノードを動かすカーブはありません（読み込んだ範囲）'
+          : 'このノードを動かすカーブはありません（読み込んだ範囲）';
       list.appendChild(p);
       return;
     }
-    this.channels.forEach((ch, i) => {
-      const row = document.createElement('label');
-      row.className = 'ce-row';
-      row.title = `${ch.curve.name}（${ch.curve.type || ''}）\nダブルクリック: このカーブだけを表示`;
-      row.innerHTML = `<input type="checkbox"${ch.visible ? ' checked' : ''}><i style="background:${ch.color}"></i><span>${esc(ch.label)}</span>`;
-      const box = row.firstChild;
-      box.addEventListener('change', () => this.setVisible(i, box.checked));
-      row.addEventListener('dblclick', (e) => {
-        e.preventDefault();
-        this.channels.forEach((c, j) => this.setVisible(j, j === i, false));
-        this.syncList();
-        this.frameAll();
+    for (const g of groupByNode(this.channels)) {
+      const group = document.createElement('div');
+      group.className = 'ce-group';
+      group.dataset.node = String(g.node);
+      group.classList.toggle('folded', this.folded.has(g.node));
+      const head = document.createElement('div');
+      head.className = 'ce-node-row';
+      head.title = `${this.nodeName(g.node)}（カーブ ${g.items.length} 本）\nダブルクリック: このノードのカーブだけを表示`;
+      head.innerHTML = `<button type="button" class="ce-fold" aria-label="折りたたむ"></button><input type="checkbox">`
+        + `<span class="ce-node-name">${esc(this.nodeName(g.node))}</span><span class="ce-count">${g.items.length}</span>`;
+      const [fold, box] = head.children;
+      fold.setAttribute('aria-expanded', String(!this.folded.has(g.node)));
+      fold.addEventListener('click', () => this.setFolded(g.node, !this.folded.has(g.node)));
+      box.addEventListener('change', () => {
+        for (const i of g.items) this.setVisible(i, box.checked, false);
+        this.afterVisibility();
       });
-      list.appendChild(row);
-    });
+      head.addEventListener('dblclick', (e) => {
+        if (e.target === fold || e.target === box) return;
+        e.preventDefault();
+        const mine = new Set(g.items);
+        this.channels.forEach((c, j) => this.setVisible(j, mine.has(j), false));
+        this.afterVisibility(true);
+      });
+      this.bindHighlight(head, g.items);
+      group.appendChild(head);
+      for (const i of g.items) {
+        const ch = this.channels[i];
+        const row = document.createElement('label');
+        row.className = 'ce-row';
+        row.dataset.ch = String(i);
+        row.title = `${this.nodeName(ch.node)}.${ch.attr}: ${ch.curve.name}（${ch.curve.type || ''}）\nダブルクリック: このカーブだけを表示`;
+        row.innerHTML = `<input type="checkbox"${ch.visible ? ' checked' : ''}><i style="background:${ch.color}"></i><span>${esc(ch.label)}</span>`;
+        const cb = row.firstChild;
+        cb.addEventListener('change', () => { this.setVisible(i, cb.checked, false); this.afterVisibility(); });
+        row.addEventListener('dblclick', (e) => {
+          e.preventDefault();
+          this.channels.forEach((c, j) => this.setVisible(j, j === i, false));
+          this.afterVisibility(true);
+        });
+        this.bindHighlight(row, [i]);
+        group.appendChild(row);
+      }
+      list.appendChild(group);
+    }
+    this.syncList();
   }
 
+  /** 一覧のチェック（ノードの見出しは、全部表示・一部表示（中間）・全部非表示）と、選んだキーのカーブの行の強調を合わせる */
   syncList() {
-    this.list.querySelectorAll('.ce-row input').forEach((box, i) => { box.checked = this.channels[i].visible; });
+    this.list.querySelectorAll('.ce-row').forEach((row) => {
+      const i = +row.dataset.ch;
+      row.firstChild.checked = this.channels[i].visible;
+      row.classList.toggle('active', !!this.selectedKey && this.selectedKey.ch === i);
+    });
+    for (const group of this.list.querySelectorAll('.ce-group')) {
+      const rows = [...group.querySelectorAll('.ce-row')].map((r) => this.channels[+r.dataset.ch]);
+      const on = rows.filter((c) => c.visible).length;
+      const box = group.querySelector('.ce-node-row input');
+      box.checked = on === rows.length;
+      box.indeterminate = on > 0 && on < rows.length;
+      group.classList.toggle('active', !!this.selectedKey && this.channels[this.selectedKey.ch]
+        && String(this.channels[this.selectedKey.ch].node) === group.dataset.node);
+    }
+  }
+
+  /** 一覧の行にポインターを乗せているあいだ、その行のカーブを強調する（ほかは薄く描く） */
+  bindHighlight(el, items) {
+    el.addEventListener('pointerenter', () => this.setHighlight(items));
+    el.addEventListener('pointerleave', () => this.setHighlight(null));
+  }
+
+  setHighlight(items) {
+    const next = items && items.length ? new Set(items) : null;
+    if (!next && !this.highlight) return;
+    this.highlight = next;
+    this.render();
+  }
+
+  /** ノードの見出しの折りたたみ（カーブの表示は変えない） */
+  setFolded(ni, on) {
+    if (on) this.folded.add(ni); else this.folded.delete(ni);
+    const group = this.list.querySelector(`.ce-group[data-node="${ni}"]`);
+    if (group) {
+      group.classList.toggle('folded', on);
+      group.querySelector('.ce-fold').setAttribute('aria-expanded', String(!on));
+    }
   }
 
   setVisible(i, on, redraw = true) {
@@ -278,7 +400,14 @@ export class CurveEditor {
     ch.visible = on;
     if (on) this.hidden.delete(ch.curve); else this.hidden.add(ch.curve);
     if (this.selectedKey && this.selectedKey.ch === i && !on) this.selectedKey = null;
-    if (redraw) { this.updateInfo(); this.render(); }
+    if (redraw) this.afterVisibility();
+  }
+
+  /** 表示するカーブを変えたあと（frame なら全体を表示し直す） */
+  afterVisibility(frame = false) {
+    this.syncList();
+    this.updateInfo();
+    if (frame) this.frameAll(); else this.render();
   }
 
   frameAll() {
@@ -354,7 +483,10 @@ export class CurveEditor {
     g.beginPath();
     g.rect(r.x, r.y, r.w, r.h);
     g.clip();
-    this.channels.forEach((ch, i) => { if (ch.visible) this.drawCurve(g, r, i); });
+    // 強調するカーブ（一覧でポインターを乗せた行）は最後に、ほかの上に描く
+    const hl = this.highlight;
+    this.channels.forEach((ch, i) => { if (ch.visible && !(hl && hl.has(i))) this.drawCurve(g, r, i); });
+    if (hl) this.channels.forEach((ch, i) => { if (ch.visible && hl.has(i)) this.drawCurve(g, r, i); });
     this.drawSelectedKey(g);
     g.restore();
     this.drawFrame();
@@ -414,9 +546,10 @@ export class CurveEditor {
       }
       g.stroke();
     };
-    g.lineWidth = 1.5;
+    const dim = this.highlight && !this.highlight.has(i);
+    g.lineWidth = this.highlight && !dim ? 2.5 : 1.5;
     g.strokeStyle = ch.color;
-    g.globalAlpha = 0.9;
+    g.globalAlpha = dim ? 0.2 : 0.9;
     piece(this.view.x0, Math.min(first, this.view.x1), true);           // 前の無限
     // キーのあいだ: 区間ごとに描く（ステップの区間は角を描く）
     g.setLineDash([]);
@@ -438,7 +571,7 @@ export class CurveEditor {
     }
     g.stroke();
     piece(Math.max(last, this.view.x0), this.view.x1, true);            // 後の無限
-    g.globalAlpha = 1;
+    g.globalAlpha = dim ? 0.3 : 1;
     // キー
     g.fillStyle = ch.color;
     for (let k = 0; k < c.n; k++) {
@@ -446,6 +579,7 @@ export class CurveEditor {
       if (px < r.x - 4 || px > r.x + r.w + 4) continue;
       g.fillRect(Math.round(px) - 2, Math.round(py) - 2, 5, 5);
     }
+    g.globalAlpha = 1;
   }
 
   /** 選んだキー（白い枠）と接線のハンドル */
@@ -519,7 +653,7 @@ export class CurveEditor {
     const el = $('ce-info');
     const s = this.selectedKey;
     if (!s || !this.channels[s.ch]) {
-      el.textContent = this.collapsed || this.node < 0 ? '' : 'キーをクリックで情報・ホイール: ズーム（Shift: 横だけ・Ctrl: 縦だけ）・ドラッグ: 移動・右ドラッグ: ズーム・上端をドラッグ: フレーム・A: 全体・F: 選んだキー';
+      el.textContent = this.collapsed || !this.nodes.length ? '' : 'キーをクリックで情報・ホイール: ズーム（Shift: 横だけ・Ctrl: 縦だけ）・ドラッグ: 移動・右ドラッグ: ズーム・上端をドラッグ: フレーム・A: 全体・F: 選んだキー';
       el.title = el.textContent;
       return;
     }
@@ -529,7 +663,7 @@ export class CurveEditor {
     const tan = (k) => TANGENT_LABEL[k] || String(k);
     const x = c.t[s.k];
     const xText = axis !== 'driver' && Math.abs(x - Math.round(x)) < 1e-6 ? String(Math.round(x)) : fmtValue(x);
-    const parts = [`${ch.label}（${c.name}）`, `キー ${s.k + 1} / ${c.n}`, `${xLabel} ${xText}`, `値 ${fmtValue(c.v[s.k])}`,
+    const parts = [`${this.nodes.length > 1 ? `${this.nodeName(ch.node)}・` : ''}${ch.label}（${c.name}）`, `キー ${s.k + 1} / ${c.n}`, `${xLabel} ${xText}`, `値 ${fmtValue(c.v[s.k])}`,
       `接線 イン ${tan(c.tinType[s.k])}・アウト ${tan(c.toutType[s.k])}`];
     if (c.weighted) parts.push('ウェイト付き');
     if (s.k === 0 && c.pre) parts.push(`前: ${INFINITY_LABEL[c.pre] || c.pre}`);
@@ -584,6 +718,8 @@ export class CurveEditor {
       if (e.button === 0 && !e.altKey) {
         const key = this.keyAt(p.x, p.y);
         this.selectedKey = key;
+        this.syncList();
+        this.revealSelected();
         this.updateInfo();
         this.render();
         if (key) return;
@@ -612,6 +748,15 @@ export class CurveEditor {
     c.addEventListener('pointercancel', end);
   }
 
+  /** 選んだキーのカーブの行を一覧で見えるようにする（折りたたんでいれば開く） */
+  revealSelected() {
+    const s = this.selectedKey;
+    if (!s || !this.channels[s.ch]) return;
+    if (this.folded.has(this.channels[s.ch].node)) this.setFolded(this.channels[s.ch].node, false);
+    const row = this.list.querySelector(`.ce-row[data-ch="${s.ch}"]`);
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+  }
+
   scrub(px) {
     const f = Math.round(this.fromScreen(px, 0).x);
     if (this.clip) this.app.scrubTo(Math.min(Math.max(f, this.clip.start), this.clip.end));
@@ -626,6 +771,27 @@ export class CurveEditor {
     else return false;
     e.preventDefault();
     return true;
+  }
+
+  /** 一覧とグラフのあいだをドラッグして、一覧の幅を変える */
+  bindListResizer() {
+    const handle = $('ce-list-resizer');
+    if (!handle) return;
+    let start = null;
+    handle.addEventListener('pointerdown', (e) => {
+      start = { x: e.clientX, w: this.list.getBoundingClientRect().width };
+      try { handle.setPointerCapture(e.pointerId); } catch (err) { /* 合成イベントなど */ }
+      e.preventDefault();
+    });
+    handle.addEventListener('pointermove', (e) => {
+      if (!start) return;
+      const w = Math.min(Math.max(start.w + (e.clientX - start.x), LIST_W.min), LIST_W.max);
+      this.list.style.width = `${Math.round(w)}px`;
+    });
+    const end = () => { start = null; };
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+    handle.addEventListener('dblclick', () => { this.list.style.width = ''; });
   }
 
   /** パネルの上端をドラッグして高さを変える */

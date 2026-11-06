@@ -7,6 +7,7 @@ import {
 import { MayaControls } from './mayaControls.js';
 import { combineSelection, makeProjector, normRect, pointHitsRect, polylineHitsRect, selectionModeOf, trianglesHitRect } from './marquee.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+import { commonLocks, installGizmoLocks } from './gizmoLocks.js';
 import { PoseState, fixChannels, hasFixed, identityPose, isIdentityPose, limitPose, nodeChannels, poseFromTransform, poseKey, poseMatrix, poseQuaternion, propagatePoseDelta } from './pose.js';
 import {
   applyPoseSource, hasBindPose, poseBaseMatrix, BASE_COLOR, buildScene, characterRadius, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
@@ -22,7 +23,7 @@ import { connectBridge, isQtHost } from './bridge.js';
 import { History, sameChanges } from './history.js';
 import { compareGpuCpuSkinning } from './skinCheck.js';
 import { AnimationClip, worldRotationDegrees } from './animation.js';
-import { RigEvaluator, visibleFrom } from './rig.js';
+import { RigEvaluator, hiddenByProps } from './rig.js';
 import { Timeline } from './timeline.js';
 import { CurveOverlay } from './curveOverlay.js';
 import { TEMPLATE_HEX, isTemplated } from './displayType.js';
@@ -184,6 +185,7 @@ class ViewerApp {
     this.gizmo = new TransformControls(this.camera, canvas);
     this.gizmo.setSpace('local');
     this.gizmo.setSize(DEFAULTS.gizmoSize);
+    installGizmoLocks(this.gizmo);                        // ロックした軸のハンドルは灰色で、つかめない（Maya と同じ）
     this.gizmo.addEventListener('change', () => this.requestRender());
     this.gizmo.addEventListener('dragging-changed', (e) => {
       this.gizmoDragging = e.value;
@@ -267,7 +269,10 @@ class ViewerApp {
       this.canvas.addEventListener('pointerdown', (e) => {
         if (e.button !== 0 || e.altKey || this.controls.dragging) { down = null; return; }
         // ハンドルの上で押したときは選択（ピック）しない
-        const onGizmo = !!(this.gizmo && this.gizmo.object && this.gizmo.enabled && this.gizmo.axis !== null);
+        const onGizmo = !!(this.gizmo && this.gizmo.object && this.gizmo.enabled
+          && (this.gizmo.axis !== null || this.gizmo.lockedAxis !== null));
+        // ロックした軸（灰色）のハンドル: 動かさず、選択も変えない（後ろのものを選んだり、選択を解除したりしない）
+        if (onGizmo && this.gizmo.axis === null) this.showLockedHandleMessage(this.gizmo.lockedAxis);
         down = { x: e.clientX, y: e.clientY, id: e.pointerId, onGizmo, marquee: false };
         if (!onGizmo) { try { this.canvas.setPointerCapture(e.pointerId); } catch { /* 合成イベントなど */ } }
       });
@@ -874,13 +879,33 @@ class ViewerApp {
     this.hidden = new Set();
     this.rigHidden = new Set();     // リグ（接続・カーブ）で決まる表示が、いまのフレームで非表示のノード
     this.rigShown = new Set();      // そのうち、目のアイコンなどで表示し直したノード（リグより優先）
-    this.data.nodes.forEach((n, i) => { if (n.visible === false) this.hidden.add(i); });
+    // ファイルで非表示のノードのうち、まだ目のアイコンなどで変えていないもの。表示がリグで決まるもの（animation.props）は、
+    // アニメーションを読み込んだら hidden から外してリグの評価に任せる（保存時に隠れていた IK のコントローラーなどを、
+    // 切り替えのコントローラーを動かしたら表示する）
+    this.fileHidden = new Set();
+    this.data.nodes.forEach((n, i) => { if (n.visible === false) { this.hidden.add(i); this.fileHidden.add(i); } });
     for (const e of this.built.meshes) {
       e.selfVisible = e.data.visibleSelf !== undefined ? e.data.visibleSelf !== false : e.data.visible !== false;
+      e.fileHidden = !e.selfVisible;
       e.rigHidden = false;
       e.rigShown = false;
     }
     this.computeVisibility();
+  }
+
+  /**
+   * アニメーションの読み込み: 表示がリグで決まるノード・メッシュ・カーブ（props）は、ファイルで非表示でも隠したままにせず、
+   * リグの評価（applyRigVisibility）で決める。目のアイコンなどで変えたものは、その状態のまま
+   */
+  releaseFileHidden(props) {
+    for (const ni of this.fileHidden) this.hidden.add(ni);           // 前のアニメーションで外したものを戻す
+    for (const e of this.built.meshes) if (e.fileHidden) e.selfVisible = false;
+    this.curves.resetRig();
+    for (const p of props || []) {
+      if (p.kind === 'node') { if (this.fileHidden.has(p.index)) this.hidden.delete(p.index); }
+      else if (p.kind === 'mesh') { const e = this.built.meshes[p.index]; if (e && e.fileHidden) e.selfVisible = true; }
+      else if (p.kind === 'curve') this.curves.setRigDriven(p.index);
+    }
   }
 
   /** ノード自身が非表示か（目のアイコンの状態。リグで隠れている場合も含む） */
@@ -907,10 +932,11 @@ class ViewerApp {
   applyRigVisibility(props) {
     let changed = false;
     for (const p of props) {
-      if (p.kind !== 'node' && p.kind !== 'mesh') continue;
-      const st = p.static || {};
-      const hide = !!st.layerHidden || !visibleFrom({ ...st, ...p.values });
-      if (p.kind === 'node') {
+      if (p.kind !== 'node' && p.kind !== 'mesh' && p.kind !== 'curve') continue;
+      const hide = hiddenByProps(p.static, p.values);
+      if (p.kind === 'curve') {
+        if (this.curves.setRigHidden(p.index, hide)) changed = true;
+      } else if (p.kind === 'node') {
         if (hide !== this.rigHidden.has(p.index)) { changed = true; if (hide) this.rigHidden.add(p.index); else this.rigHidden.delete(p.index); }
       } else {
         const e = this.built.meshes[p.index];
@@ -940,6 +966,7 @@ class ViewerApp {
 
   setNodeVisible(ni, visible) {
     if (!this.built || ni < 0) return;
+    this.fileHidden.delete(ni);                             // 自分で決めた表示は、アニメーションを読み込んでも変えない
     if (visible) {
       this.hidden.delete(ni);
       if (this.rigHidden.has(ni)) this.rigShown.add(ni);    // リグで隠れていても表示する
@@ -960,6 +987,7 @@ class ViewerApp {
     if (!this.built || !list.length) return;
     if (list.length === 1) { this.setNodeVisible(list[0], visible); return; }
     for (const ni of list) {
+      this.fileHidden.delete(ni);
       if (visible) {
         this.hidden.delete(ni);
         if (this.rigHidden.has(ni)) this.rigShown.add(ni);
@@ -977,6 +1005,7 @@ class ViewerApp {
     if (!this.built || !this.hidden || !list.length) return;
     if (list.length === 1) { this.toggleNodeVisible(list[0]); return; }
     const show = list.filter((ni) => this.isNodeHidden(ni)), hide = list.filter((ni) => !this.isNodeHidden(ni));
+    for (const ni of list) this.fileHidden.delete(ni);
     for (const ni of show) { this.hidden.delete(ni); if (this.rigHidden.has(ni)) this.rigShown.add(ni); }
     for (const ni of hide) { this.hidden.add(ni); this.rigShown.delete(ni); }
     this.updateVisibility();
@@ -987,6 +1016,7 @@ class ViewerApp {
     if (!this.built) return;
     const e = this.built.meshes[mi];
     e.selfVisible = v;
+    e.fileHidden = false;
     e.rigShown = v && e.rigHidden;                          // リグで隠れていても表示する
     this.updateVisibility();
   }
@@ -1017,6 +1047,7 @@ class ViewerApp {
     this.rigHidden.clear();
     this.rigShown.clear();
     for (const e of this.built.meshes) { e.rigHidden = false; e.rigShown = false; }
+    this.releaseFileHidden(anim.props);
     this.cameraProps = new Map();
     this.updateVisibility();
     // リグ（コンストレイント・IK・計算ノード）を含めて評価する（上で作成）。動かないノードはファイルの値
@@ -1407,7 +1438,7 @@ class ViewerApp {
     this.updateGizmo();
     if (this.settings.weightMode === 'selected') this.applyWeights();
     this.updateTimelineKeys();
-    this.curveEditor.setNode(ni);
+    this.curveEditor.setNodes(sel);
     if (opts.notify) this.notifySelection();
     this.requestRender();
   }
@@ -1763,6 +1794,36 @@ class ViewerApp {
     return { ro: roOf(a.ro), jo: isJoint ? a.jo || null : null, ra: a.ra || null };
   }
 
+  /** ハンドルで一緒に動かすノード（リードと、複数選んでいるときのほかの選択。選んだノードの子孫は親と一緒に動くので除く） */
+  gizmoNodes() {
+    if (this.selected < 0) return [];
+    if (this.selection.length < 2) return [this.selected];
+    const nodes = this.data.nodes, set = new Set(this.selection);
+    const underSelected = (ni) => { for (let p = nodes[ni].parent; p >= 0; p = nodes[p].parent) if (set.has(p)) return true; return false; };
+    return [this.selected, ...this.selection.filter((ni) => ni !== this.selected && !underSelected(ni))];
+  }
+
+  /** ハンドルの灰色にする軸（tool のチャンネルを、一緒に動かすノードすべてでロックしている軸。[X, Y, Z] か null） */
+  gizmoLocks(tool = this.settings.tool) {
+    const key = { translate: 't', rotate: 'r', scale: 's' }[tool];
+    if (!key) return null;
+    return commonLocks(this.gizmoNodes().map((ni) => (this.lockedOf(ni) || {})[key] || null));
+  }
+
+  /** ロックした軸（灰色）のハンドルを押したときの説明 */
+  showLockedHandleMessage(axis) {
+    if (this.selected < 0) return;
+    const mode = this.gizmo.mode;
+    const label = { translate: '移動', rotate: '回転', scale: 'スケール' }[mode] || '';
+    const key = { translate: 't', rotate: 'r', scale: 's' }[mode];
+    const locks = this.gizmoLocks(mode) || [];
+    const names = ['X', 'Y', 'Z'].filter((a, i) => locks[i]).map((a) => `${key}${a.toLowerCase()}`);
+    const axisText = axis === 'E' || axis === 'XYZE' || axis === 'XYZ' ? '' : ` ${axis} `;
+    const n = this.gizmoNodes().length;
+    const who = n > 1 ? `選んだ ${n} 個すべてで、` : `${this.data.nodes[this.selected].name} の`;
+    this.ui.setMessage(`${who}${label}${axisText}は Maya でロックされているため動かせません（ロック: ${names.join('・')}）`, 4000);
+  }
+
   /** Maya でロックした移動・回転・スケール（{ t | r | s: [X, Y, Z] } か null） */
   lockedOf(ni) {
     return this.data && this.data.nodes[ni] ? this.data.nodes[ni].locked || null : null;
@@ -1992,11 +2053,10 @@ class ViewerApp {
       this.syncGizmo(true);
       this.gizmo.setMode(tool);
       this.gizmo.setSpace(this.settings.space);
-      // Maya で 3 成分ともロックしたもの（移動・回転・スケール）は、ハンドルの軸を出さない（一部のロックは結果で固定する）
-      const locked = this.lockedOf(this.selected);
-      const l = locked && locked[{ translate: 't', rotate: 'r', scale: 's' }[tool]];
-      const all = !!l && l.every(Boolean);
-      this.gizmo.showX = this.gizmo.showY = this.gizmo.showZ = !all;
+      // Maya と同じく、ロックした成分（移動・回転・スケール）の軸のハンドルは灰色で表示し、つかめない
+      // （3 成分ともロックならすべて灰色。平面・中央のハンドルは、含む軸がすべてロックのときだけ灰色で、一部なら結果で固定する）。
+      // 複数選んでいるときは、一緒に動かすノードすべてでロックしている軸だけ（動かせるノードがあればつかめ、ノードごとに固定する）
+      this.gizmo.setLockedAxes(this.gizmoLocks(tool));
       if (this.gizmo.object !== this.poseProxy) this.gizmo.attach(this.poseProxy);
     }
     this.requestRender();
@@ -2022,11 +2082,14 @@ class ViewerApp {
     let pose = poseFromTransform(pr.position, pr.quaternion, pr.scale);
     // スケールを 0 付近で止めたときは代理オブジェクトにも反映する
     pr.scale.fromArray(pose.s);
-    // Maya でロックしたチャンネルは変えない（ハンドルはドラッグを終えたときに結果の位置へ戻す）
+    // Maya でロックしたチャンネルは変えない（ハンドルはドラッグを終えたときに結果の位置へ戻す）。
+    // 一緒に動かすノードには、リードのロック・制限で固定する前の量（ハンドルを動かした量）を伝え、ノードごとに固定する
+    // （リードでロックした軸でも、ほかのノードはその軸に動かせる）
+    const handled = pose;
     pose = this.lockedPose(this.selected, pose);
     this.beforeDriverPose(this.selected);
     this.pose.set(this.selected, pose);
-    if (this.gizmoGroup) this.applyGizmoGroup(pose);
+    if (this.gizmoGroup) this.applyGizmoGroup(handled);
     this.afterPoseChange();
     this.ui.showPoseFor(this.selected, pose);
   }
@@ -2037,11 +2100,8 @@ class ViewerApp {
    */
   gizmoGroupStart() {
     if (!this.pose || this.selection.length < 2 || this.selected < 0) return null;
-    const nodes = this.data.nodes;
-    const set = new Set(this.selection);
-    const underSelected = (ni) => { for (let p = nodes[ni].parent; p >= 0; p = nodes[p].parent) if (set.has(p)) return true; return false; };
     this.built.root.updateMatrixWorld(true);
-    const others = this.selection.filter((ni) => ni !== this.selected && !underSelected(ni))
+    const others = this.gizmoNodes().slice(1)
       .map((ni) => ({ ni, start: this.pose.get(ni), frame: this.pose.frameMatrix(ni, new Matrix4()) }));
     if (!others.length) return null;
     return { lead: this.pose.get(this.selected), leadFrame: this.pose.frameMatrix(this.selected, new Matrix4()), others };
