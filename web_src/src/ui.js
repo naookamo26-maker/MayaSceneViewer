@@ -874,7 +874,9 @@ export class UI {
     const n = info.node;
     const a = n.attrs || {};
     const typeLabel = info.cameras && info.cameras.length ? 'カメラ'
-      : ({ joint: 'ジョイント', transform: 'トランスフォーム' }[n.type] || n.type);
+      : ({ joint: 'ジョイント', transform: 'トランスフォーム' }[n.type] || n.type)
+        // シェイプの種類: ロケーターと、自作のシェイプ（プラグインのロケーターなど。ロケーターと同じく目印で示す）の型
+        + (n.shape === 'locator' ? `（${n.shapeType || 'ロケーター'}）` : '');
     // 「ポーズ変更中」の印は、出ていないときも場所を取っておく（動かし始め・戻したときに下の行が上下に動かないように）
     head.innerHTML = `<p class="info-title"><span class="info-name">${esc(n.name)}<span class="info-type">${esc(typeLabel)}</span></span>`
       + `<span class="posed-badge${info.posed ? '' : ' off'}"${info.posed ? '' : ' aria-hidden="true"'}>ポーズ変更中</span></p>`

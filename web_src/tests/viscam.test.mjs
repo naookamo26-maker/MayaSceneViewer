@@ -23,7 +23,7 @@ function visibilityAt(f) {
   const out = {};
   for (const p of rig.evaluateProps()) {
     const name = p.kind === 'node' ? names[p.index] : p.kind === 'mesh' ? data.meshes[p.index].name
-      : p.kind === 'curve' ? data.curves[p.index].name : data.cameras[p.index].name;
+      : p.kind === 'curve' ? data.curves[p.index].name : p.kind === 'shape' ? `${names[p.index]}Shape` : data.cameras[p.index].name;
     out[name] = p.kind === 'camera' ? p.values : visibleFrom({ ...p.static, ...p.values });
   }
   return out;
@@ -69,14 +69,16 @@ test('コントローラーを動かして切り替える表示（ポーズ確�
     rig.evaluate(1, (ni) => (ni === sw && tx ? poseMatrix(pose) : null), undefined, new Map(tx ? [[sw, `tx${tx}`]] : []));
     const out = {};
     for (const p of rig.evaluateProps()) {
-      if (p.kind !== 'node' && p.kind !== 'curve') continue;
-      out[p.kind === 'node' ? names[p.index] : curveNames[p.index]] = !hiddenByProps(p.static, p.values);
+      if (p.kind !== 'node' && p.kind !== 'curve' && p.kind !== 'shape') continue;
+      const key = p.kind === 'curve' ? curveNames[p.index] : p.kind === 'shape' ? `${names[p.index]}Shape` : names[p.index];
+      out[key] = !hiddenByProps(p.static, p.values);
     }
     return out;
   };
-  const fk = { ik_ctrl: false, ik_extra: false, fk_ctrlShape: true };
-  const ik = { ik_ctrl: true, ik_extra: true, fk_ctrlShape: false };
-  const pick = (o) => ({ ik_ctrl: o.ik_ctrl, ik_extra: o.ik_extra, fk_ctrlShape: o.fk_ctrlShape });
+  // ik_loc_grp: 形のないコントローラーの親のグループ、ik_pvShape: ロケーターのシェイプ
+  const fk = { ik_ctrl: false, ik_extra: false, fk_ctrlShape: true, ik_loc_grp: false, ik_pvShape: false };
+  const ik = { ik_ctrl: true, ik_extra: true, fk_ctrlShape: false, ik_loc_grp: true, ik_pvShape: true };
+  const pick = (o) => Object.fromEntries(Object.keys(fk).map((k) => [k, o[k]]));
   assert.deepEqual(pick(shown(0)), fk);                // 保存時（FK）
   assert.deepEqual(pick(shown(1)), ik);                // switch_ctrl.tx を 1 動かす → IK 側を表示
   assert.deepEqual(pick(shown(0)), fk);                // 戻す

@@ -64,6 +64,8 @@ transform・joint などの変換ノードです。**親は必ず子より前に
 | `visible` | 自身の表示状態 |
 | `unselectable` | Maya のビューポートで選択できないとき、その理由（`テンプレート`・`リファレンス`）。テンプレート（.template。祖先も含む）と、描画のオーバーライドかディスプレイレイヤーの表示の種類（近い方の設定）から決める。meshes・curves も同じ |
 | `shape` | ロケーターのシェイプを持つ transform は `"locator"`（省略可。.ma のみ）。リグのコントローラーの目印の形に使う |
+| `shapeType` | `shape` が自作のシェイプ（プラグインのロケーターなど）のとき、その型（省略可。.ma のみ） |
+| `shapeHidden` | `shape` のシェイプがファイルで非表示（.v・.lodv・描画のオーバーライド・ディスプレイレイヤー）なら true。コントローラーの目印を出さない（省略可。.ma のみ） |
 | `color` | 描画のオーバーライドかディスプレイレイヤーの色 `[r, g, b]`（省略可。.ma のみ）。ロケーターならシェイプ、なければ transform から祖先へ、curves の color と同じ探し方。コントローラーの目印の色に使う |
 | `pivot` | コントローラーの目印を置く位置（オブジェクト空間）。回転のピボット（.rp）、ロケーターはシェイプの localPosition（省略可。0 のときと .ma 以外は省略）。フリーズしたコントローラーや cluster のハンドルは、移動が 0 でもここが形の位置になる |
 | `attrs` | 表示用の値。`t`、`r`（度）、`s`、`jo`（度、joint のみ）、`ro`（`"xyz"` など） |
@@ -270,9 +272,9 @@ graph で使っている自作ノードの定義（型 → `{"type", "attributes
 
 | キー | 内容 |
 |---|---|
-| `kind` / `index` | 対象。`node`（nodes の番号）・`mesh`（meshes の番号）・`curve`（curves の番号。nurbsCurve のシェイプ）・`camera`（cameras の番号）・`place2d`（textures の `uv.place2d` の番号。その place2dTexture を使うテクスチャすべて） |
-| `inputs` | 属性への接続（graph の `inputs` と同じ形）。node・mesh・curve は表示の属性（`v`・`lodv`・`ove`・`ovv`）と、入っているディスプレイレイヤーの表示 `lv`・有効 `le`（レイヤーの `.v`・`.e` が接続で決まるとき）、camera は `fl`・`hfa`・`vfa`・`ncp`・`fcp`・`ow`・`hfo`・`vfo`・`lsr`・`cs`、place2d は `ofu`・`ofv`・`reu`・`rev` と 2 つ組の `of`・`re`（長い名前 offsetU などの接続もこの名前） |
-| `static` | node・mesh・curve のみ。接続されていない表示の属性のファイルの値と、ディスプレイレイヤーで隠れているか（`layerHidden`）。ディスプレイレイヤーに入っていれば、その `.e`・`.v` のファイルの値（`le`・`lv`） |
+| `kind` / `index` | 対象。`node`（nodes の番号）・`mesh`（meshes の番号）・`curve`（curves の番号。nurbsCurve のシェイプ）・`shape`（ロケーター（自作のシェイプも）の表示。index は親の transform の nodes の番号で、コントローラーの目印だけに効く）・`camera`（cameras の番号）・`place2d`（textures の `uv.place2d` の番号。その place2dTexture を使うテクスチャすべて） |
+| `inputs` | 属性への接続（graph の `inputs` と同じ形）。node・mesh・curve・shape は表示の属性（`v`・`lodv`・`ove`・`ovv`）と、入っているディスプレイレイヤーの表示 `lv`・有効 `le`（レイヤーの `.v`・`.e` が接続で決まるとき）、camera は `fl`・`hfa`・`vfa`・`ncp`・`fcp`・`ow`・`hfo`・`vfo`・`lsr`・`cs`、place2d は `ofu`・`ofv`・`reu`・`rev` と 2 つ組の `of`・`re`（長い名前 offsetU などの接続もこの名前） |
+| `static` | node・mesh・curve・shape のみ。接続されていない表示の属性のファイルの値と、ディスプレイレイヤーで隠れているか（`layerHidden`）。ディスプレイレイヤーに入っていれば、その `.e`・`.v` のファイルの値（`le`・`lv`） |
 
 表示されるのは `v` と `lodv` が 0.5 以上で、`ove` が有効なら `ovv` も 0.5 以上のとき（ディスプレイレイヤーで隠れていないこと。`lv`・`le` の接続があれば、`le` が 0.5 以上で `lv` が 0.5 未満なら隠れる。なければ `layerHidden`）。ファイルで非表示のもの（nodes・meshes・curves の `visible` が false）も、props にあればリグの値で表示を決めます。接続元が評価できない（未対応のノード）属性は入れず、ファイルの値のまま表示します。graph の DAG ノードは、表示の属性が既定と違う値（`v` = 0 など）なら `attrs` に持ちます（別のノードの表示の入力になるとき用）。
 

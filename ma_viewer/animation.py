@@ -451,7 +451,7 @@ def _used_defs(ms: MaScene, graph_nodes: List[dict]) -> dict:
 def _vis_static(ms: MaScene, kind: str, n: MaNode) -> dict:
     """表示の属性（.v・.lodv・.ove・.ovv）のファイルの値。カーブのシェイプは属性を読み飛ばしているので読み直す"""
     from .rig import VIS_DEFAULTS, parse_attrs
-    if kind != "curve":
+    if kind not in ("curve", "shape"):
         return {k: (1.0 if n.flag(k, d >= 0.5) else 0.0) for k, d in VIS_DEFAULTS.items()}
     from .extract_ma import _num
     a = parse_attrs(ms.text, n)
@@ -462,7 +462,8 @@ def build_props(ms: MaScene, info, out_index: Dict[int, int], curve_index: Dict[
     """移動・回転・スケール以外で、接続で決まる属性（表示・カメラの焦点距離など）。ビューアがフレームごとに評価する。
 
     [{"kind": "node" | "mesh" | "curve" | "camera" | "place2d", "index": 番号, "inputs": {属性: 接続元}, "static": {...}}]。
-    curve の index は curves の番号（nurbsCurve のシェイプ）。
+    curve の index は curves の番号（nurbsCurve のシェイプ）。shape はロケーター（自作のシェイプも）の表示で、
+    index は親の transform の nodes の番号（コントローラーの目印だけに効く）。
     place2d の index は textures[i].uv.place2d の番号（テクスチャの UV の繰り返し・オフセット）。
     接続元は graph の inputs と同じ形。評価できない接続元（未対応のノード）の属性は入れない（ファイルの値のまま）。
     """
@@ -470,6 +471,8 @@ def build_props(ms: MaScene, info, out_index: Dict[int, int], curve_index: Dict[
     from .rig import CONSTRAINT_TYPES, VIS_KINDS, _evaluable, display_layer_of
     index_of = {"node": out_index, "mesh": getattr(ms, "mesh_index", {}), "curve": getattr(ms, "curve_shapes", {}),
                 "camera": getattr(ms, "camera_index", {}), "place2d": getattr(ms, "place2d_index", {})}
+    index_of["shape"] = {id(c): out_index[id(c.parent)] for _k, c, *_ in info.props
+                         if _k == "shape" and c.parent is not None and id(c.parent) in out_index}
     by_target: Dict[Tuple[str, int], dict] = {}
     place2d_used = getattr(ms, "place2d_used", set())
     for kind, consumer, key, src, sattr in info.props:

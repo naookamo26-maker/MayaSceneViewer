@@ -201,8 +201,10 @@ _DEFORM_OUT = re.compile(r"^og\[(\d+)\]$")
 VIS_KEYS = ("v", "lodv", "ove", "ovv")
 VIS_DEFAULTS = {"v": 1.0, "lodv": 1.0, "ove": 0.0, "ovv": 1.0}
 CAMERA_KEYS = ("fl", "hfa", "vfa", "ncp", "fcp", "ow", "hfo", "vfo", "lsr", "cs")
-PROP_KEYS = {"node": VIS_KEYS, "mesh": VIS_KEYS, "curve": VIS_KEYS, "camera": CAMERA_KEYS, "place2d": PLACE2D_KEYS}
-VIS_KINDS = ("node", "mesh", "curve")
+PROP_KEYS = {"node": VIS_KEYS, "mesh": VIS_KEYS, "curve": VIS_KEYS, "shape": VIS_KEYS, "camera": CAMERA_KEYS,
+             "place2d": PLACE2D_KEYS}
+# shape: ロケーター（自作のシェイプも）の表示。index は transform の番号で、コントローラーの目印だけに効く
+VIS_KINDS = ("node", "mesh", "curve", "shape")
 # ディスプレイレイヤーの表示（.v）・有効（.e）。props では lv・le（レイヤーの属性の名前と区別する）
 LAYER_KEYS = (("lv", ("v", "visibility")), ("le", ("e", "enabled")))
 

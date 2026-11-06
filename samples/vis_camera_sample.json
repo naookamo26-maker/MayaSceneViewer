@@ -1195,6 +1195,337 @@
     ],
     "ro":"xyz"
    }
+  },
+  {
+   "name":"ik_loc_grp",
+   "path":"|ik_loc_grp",
+   "type":"transform",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":false,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   }
+  },
+  {
+   "name":"ik_loc",
+   "path":"|ik_loc_grp|ik_loc",
+   "type":"transform",
+   "parent":17,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -12.0,
+    8.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -12.0,
+    8.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     -12.0,
+     8.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   },
+   "shape":"locator"
+  },
+  {
+   "name":"ik_pv",
+   "path":"|ik_pv",
+   "type":"transform",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -12.0,
+    4.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -12.0,
+    4.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     -12.0,
+     4.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz"
+   },
+   "shape":"locator",
+   "shapeHidden":true
+  },
+  {
+   "name":"ik_loc_jnt",
+   "path":"|ik_loc_jnt",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "t ← ik_loc（transform）"
+   ]
+  },
+  {
+   "name":"ik_pv_jnt",
+   "path":"|ik_pv_jnt",
+   "type":"joint",
+   "parent":-1,
+   "matrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "worldMatrix":[
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "inheritsTransform":true,
+   "visible":true,
+   "attrs":{
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ro":"xyz",
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "segmentScaleCompensate":true,
+   "drivenBy":[
+    "t ← ik_pv（transform）"
+   ]
   }
  ],
  "meshes":[
@@ -1601,8 +1932,8 @@
  ],
  "notes":[],
  "stats":{
-  "nodes":17,
-  "joints":5,
+  "nodes":22,
+  "joints":7,
   "meshes":3,
   "curves":4,
   "cameras":2,
@@ -1613,7 +1944,7 @@
   "textures":0,
   "texturesMissing":0,
   "bindPoseNodes":5,
-  "drivenNodes":0
+  "drivenNodes":2
  },
  "animation":{
   "fps":24.0,
@@ -1697,6 +2028,116 @@
      0.0,
      0.0
     ]
+   },
+   {
+    "node":18,
+    "joint":false,
+    "ro":0,
+    "t":[
+     -12.0,
+     8.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":19,
+    "joint":false,
+    "ro":0,
+    "t":[
+     -12.0,
+     4.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":20,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "node":21,
+    "joint":true,
+    "ro":0,
+    "t":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "r":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "s":[
+     1.0,
+     1.0,
+     1.0
+    ],
+    "ra":[
+     0.0,
+     0.0,
+     0.0
+    ],
+    "jo":[
+     0.0,
+     0.0,
+     0.0
+    ]
    }
   ],
   "graph":[
@@ -1735,6 +2176,42 @@
    },
    {
     "id":3,
+    "name":"ik_loc",
+    "type":"transform",
+    "dag":18
+   },
+   {
+    "id":4,
+    "name":"ik_pv",
+    "type":"transform",
+    "dag":19
+   },
+   {
+    "id":5,
+    "name":"ik_loc_jnt",
+    "type":"joint",
+    "dag":20,
+    "inputs":{
+     "t":{
+      "node":3,
+      "attr":"t"
+     }
+    }
+   },
+   {
+    "id":6,
+    "name":"ik_pv_jnt",
+    "type":"joint",
+    "dag":21,
+    "inputs":{
+     "t":{
+      "node":4,
+      "attr":"t"
+     }
+    }
+   },
+   {
+    "id":7,
     "name":"sw_cond",
     "type":"condition",
     "dag":-1,
@@ -1760,13 +2237,13 @@
     }
    },
    {
-    "id":4,
+    "id":8,
     "name":"sw_rev",
     "type":"reverse",
     "dag":-1,
     "inputs":{
      "ix":{
-      "node":3,
+      "node":7,
       "attr":"ocr"
      }
     }
@@ -1790,7 +2267,7 @@
     "index":2,
     "inputs":{
      "v":{
-      "node":4,
+      "node":8,
       "attr":"ox"
      }
     },
@@ -1858,7 +2335,7 @@
     "index":14,
     "inputs":{
      "v":{
-      "node":3,
+      "node":7,
       "attr":"ocr"
      }
     },
@@ -1875,7 +2352,7 @@
     "index":16,
     "inputs":{
      "lv":{
-      "node":3,
+      "node":7,
       "attr":"ocr"
      }
     },
@@ -1887,6 +2364,40 @@
      "layerHidden":true,
      "le":1.0,
      "lv":0.0
+    }
+   },
+   {
+    "kind":"node",
+    "index":17,
+    "inputs":{
+     "v":{
+      "node":7,
+      "attr":"ocr"
+     }
+    },
+    "static":{
+     "v":0.0,
+     "lodv":1.0,
+     "ove":0.0,
+     "ovv":1.0,
+     "layerHidden":false
+    }
+   },
+   {
+    "kind":"shape",
+    "index":19,
+    "inputs":{
+     "v":{
+      "node":7,
+      "attr":"ocr"
+     }
+    },
+    "static":{
+     "v":0.0,
+     "lodv":1.0,
+     "ove":0.0,
+     "ovv":1.0,
+     "layerHidden":false
     }
    }
   ],
@@ -1915,9 +2426,9 @@
    "curves":2,
    "keys":4,
    "channels":0,
-   "nodes":0,
-   "graphNodes":5,
-   "seconds":0.0009
+   "nodes":2,
+   "graphNodes":9,
+   "seconds":0.0008
   }
  }
 }

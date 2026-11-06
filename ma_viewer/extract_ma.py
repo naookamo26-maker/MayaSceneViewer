@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 import os
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from . import mathutil as M
 from . import schema
@@ -1175,6 +1175,28 @@ _XFORM_SOURCE_PLUGS = {"wm", "worldMatrix", "pm", "parentMatrix", "wim", "worldI
                        "parentInverseMatrix", "xm", "xformMatrix"}
 
 
+# 移動・回転・スケールなど、transform にしかない属性（値・ロック・接続があれば transform。シェイプにはない）
+_XFORM_CHANNEL_RE = re.compile(r"^(t|r|s|ro|jo|ra|rp|sp|rpt|spt|sh|opm|it|translate|rotate|scale|rotateOrder|offsetParentMatrix|"
+                               r"inheritsTransform)([xyz]|X|Y|Z|xy|xz|yz)?$")
+_SHAPE_NAME_RE = re.compile(r"Shape\d*$")
+
+
+def _has_xform_channels(ms: MaScene, n: MaNode, outgoing: Set[int]) -> bool:
+    if n.locks or id(n) in outgoing:
+        return True
+    keys = list(n.xattrs) + [k.split("[")[0].split(".")[0] for k in n.inputs]
+    return any(_XFORM_CHANNEL_RE.match(k) for k in keys)
+
+
+def _vis_driven(n: MaNode) -> bool:
+    """表示の属性（.v など）か、入っているディスプレイレイヤーの .v・.e が接続で決まるか"""
+    from .rig import VIS_KEYS, display_layer_of
+    if any(k in n.inputs for k in VIS_KEYS) or any(k in n.inputs for k in ("visibility", "lodVisibility")):
+        return True
+    layer = display_layer_of(n)
+    return layer is not None and any(k in layer.inputs for k in ("v", "visibility", "e", "enabled"))
+
+
 def promote_custom_transforms(ms: MaScene) -> Dict[str, List[str]]:
     """型を知らないノード（プラグインの自作ノード）のうち、transform らしいものを transform として扱う。
 
@@ -1189,9 +1211,13 @@ def promote_custom_transforms(ms: MaScene) -> Dict[str, List[str]]:
         "mesh", "skinCluster", "tweak", "groupParts", "groupId", "script", "dagPose", "time", "ikRPsolver",
         "ikSCsolver", "ikSplineSolver", "ikSystem", "materialInfo", "shadingEngine", "objectSet"}
     evidence = set()
+    outgoing = set()                                   # 移動・回転・スケールの値を出力しているノード
     for src, sattr, _dst, _dattr in ms.connections:
-        if R.normalize_attr(sattr).split("[")[0] in _XFORM_SOURCE_PLUGS:
+        base = R.normalize_attr(sattr).split("[")[0]
+        if base in _XFORM_SOURCE_PLUGS:
             evidence.add(id(src))
+        if _XFORM_CHANNEL_RE.match(base.split(".")[0]):
+            outgoing.add(id(src))
     out: Dict[str, List[str]] = {}
     for n in ms.nodes:
         t = n.type
@@ -1201,6 +1227,15 @@ def promote_custom_transforms(ms: MaScene) -> Dict[str, List[str]]:
         if not (n.parent is not None or n.children or id(n) in evidence):
             continue
         n.is_dag = True
+        # 自作のシェイプ（プラグインのロケーターなど。コントローラーの形を描くものが多い）: 親があって子がなく、
+        # 移動・回転・スケールを持たないもの。名前が …Shape なら、行列の出力（.wm など）があってもシェイプ
+        # （型名が Shape で終わるものは、もとから MaNode.is_shape でシェイプ）
+        if (n.parent is not None and not n.children and not n.parent.is_shape
+                and not _has_xform_channels(ms, n, outgoing)
+                and (_SHAPE_NAME_RE.search(n.name) or id(n) not in evidence)):
+            n.custom_shape = True
+            ms.custom_shapes.setdefault(t, []).append(n.name)
+            continue
         out.setdefault(t, []).append(n.name)
     return out
 
@@ -1260,7 +1295,11 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
                 % "、".join("%s %d 本" % (t, len(v)) for t, v in sorted(curve_problems.items(),
                                                                          key=lambda kv: (-len(kv[1]), kv[0]))))
     # 自作のトランスフォームノード（プラグイン）は transform として扱う
+    ms.custom_shapes = {}
     ms.custom_transforms = promote_custom_transforms(ms)
+    for t, names in sorted(ms.custom_shapes.items()):
+        ms.note("自作ノードの型 %s（%s%s）をシェイプとして扱います（形は描かず、ロケーターと同じくコントローラーの目印で示します）。"
+                % (t, "、".join(names[:5]), " ほか %d 個" % (len(names) - 5) if len(names) > 5 else ""))
     for t, names in sorted(ms.custom_transforms.items()):
         ms.warn("自作ノードの型 %s（%s%s）を transform として扱います（移動・回転・スケールで位置を決めます）。"
                 % (t, "、".join(names[:5]), " ほか %d 個" % (len(names) - 5) if len(names) > 5 else ""),
@@ -1375,9 +1414,29 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     hik_driven = hik_driven_ids(ms.hik_characters)
     for w in hik_warnings(ms.hik_characters):
         ms.warn(w)
-    graph_info = discover(ms, keep, [n for n, _a in curve_shapes], props)
-    for n in list(graph_info.dag.values()):
-        keep_chain(n)
+    # ロケーター（自作のシェイプも）の表示: コントローラーの目印に使う（index は transform の番号。子には影響しない）
+    def marker_shapes(x):
+        return [c for c in x.children if (c.type == "locator" or c.custom_shape)]
+    props += [("shape", c) for n in ms.nodes if id(n) in keep and n.is_dag and not n.is_shape for c in marker_shapes(n)]
+    in_props = {id(n) for kind, n in props if kind in ("node", "shape")}
+    curve_list = [n for n, _a in curve_shapes]
+    for _round in range(4):
+        graph_info = discover(ms, keep, curve_list, props)
+        for n in list(graph_info.dag.values()):
+            keep_chain(n)
+        # リグの評価で出力に加わったノード（形のないコントローラー・その親のグループなど）の表示も評価する。
+        # 表示が接続で決まるものがあれば、その入力もたどるよう探し直す（新しく加わるノードがなくなるまで）
+        extra = []
+        for n in ms.nodes:
+            if id(n) not in keep or not n.is_dag or n.is_shape:
+                continue
+            for kind, x in [("node", n)] + [("shape", c) for c in marker_shapes(n)]:
+                if id(x) not in in_props:
+                    in_props.add(id(x))
+                    extra.append((kind, x))
+        props += extra
+        if not any(_vis_driven(x) for _kind, x in extra):
+            break
     ms.graph_info = graph_info
 
     lap("出力するノードの決定")
@@ -1517,9 +1576,19 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             entry["unselectable"] = why     # Maya のビューポートでは選択できない（テンプレート・リファレンス）
         # コントローラーの目印に使う: ロケーターのシェイプと、描画のオーバーライド・ディスプレイレイヤーの色
         # （ロケーターならシェイプから、なければ transform から祖先へ。カーブと同じ探し方）
+        # 自作のシェイプ（プラグインのロケーターなど）もロケーターと同じに扱う（形は描かないので目印で示す）
         loc = next((c for c in x.children if c.type == "locator"), None)
+        if loc is None:
+            loc = next((c for c in x.children if c.custom_shape and _num(_shape_attrs(ms, c).get("io")) < 0.5), None)
         if loc is not None:
             entry["shape"] = "locator"
+            if loc.custom_shape:
+                entry["shapeType"] = loc.type     # 自作のシェイプの型（選択情報に出す）
+            # シェイプが非表示（ファイルの値）なら目印を出さない（Maya でもロケーターは見えない。子には影響しない）
+            la = _shape_attrs(ms, loc)
+            if not (_num(la.get("v"), 1) >= 0.5 and _num(la.get("lodv"), 1) >= 0.5
+                    and not (_num(la.get("ove")) >= 0.5 and _num(la.get("ovv"), 1) < 0.5) and not _hidden_by_layer(loc)):
+                entry["shapeHidden"] = True
         color, _display = curve_display(loc if loc is not None else x, (loc if loc is not None else x).xattrs)
         if color:
             entry["color"] = schema.round_list(color)

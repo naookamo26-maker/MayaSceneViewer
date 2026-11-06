@@ -460,6 +460,12 @@ class TestVisibilityAndCameras(unittest.TestCase):
         extra = self.prop("node", "ik_extra")
         self.assertEqual(extra["inputs"], {"lv": {"node": cond, "attr": "ocr"}})
         self.assertEqual((extra["static"]["layerHidden"], extra["static"]["le"], extra["static"]["lv"]), (True, 1.0, 0.0))
+        # 形のないコントローラー（リグの評価で出力に加わるノード）の親のグループの表示も評価する
+        self.assertEqual(self.prop("node", "ik_loc_grp")["inputs"], {"v": {"node": cond, "attr": "ocr"}})
+        # ロケーターのシェイプの表示（kind: shape。index は transform の番号）。保存時は非表示
+        pv = next(p for p in self.anim["props"] if p["kind"] == "shape" and p["index"] == self.names.index("ik_pv"))
+        self.assertEqual((pv["inputs"], pv["static"]["v"]), ({"v": {"node": cond, "attr": "ocr"}}, 0.0))
+        self.assertTrue(self.scene["nodes"][self.names.index("ik_pv")].get("shapeHidden"))
 
     def test_view_camera(self):
         """保存したときに Maya のビューで見ていたカメラ（uiConfigurationScriptNode の Current Layout）"""
