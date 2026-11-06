@@ -635,8 +635,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         a_new = self._act("新規シーン", self.new_scene, "Ctrl+N", tip="表示中のシーンを閉じて、何も開いていない状態にする")
         a_open = self._act("開く…", self.open_dialog, "Ctrl+O", tip=".ma・パッケージ（.msv）・共通 JSON を開く")
         a_reload = self._act("再読み込み", self.reload, "F5", tip="同じファイルを読み直す")
-        a_export = self._act("JSON として書き出し…", self.export_json, "Ctrl+Shift+E")
-        a_export_pkg = self._act("パッケージ（.msv）として書き出し…", self.export_package, "Ctrl+Alt+E",
+        # 共通 JSON の書き出しはコマンド（python -m ma_viewer export。.msv からも戻せる）で行う
+        a_export_pkg = self._act("パッケージ（.msv）として書き出し…", self.export_package, "Ctrl+Shift+E",
                                  tip="数値をバイナリで圧縮し、テクスチャ（既定はアルベドのみ）を WebP で同梱した 1 ファイルにする")
         a_close = self._act("閉じる", self.close, "Ctrl+W")
         self.a_anim = self._act("アニメーションを読み込む", self._toggle_animation, checkable=True,
@@ -672,7 +672,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         m = mb.addMenu("ファイル")
         m.addAction(a_new)
         m.addSeparator()
-        for a in (a_open, a_reload, a_export_pkg, a_export):
+        for a in (a_open, a_reload, a_export_pkg):
             m.addAction(a)
         m.addSeparator()
         m.addAction(self.a_anim)
@@ -1083,19 +1083,6 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.viewer.show_error(text)
         self.statusBar().showMessage(text.splitlines()[0], 8000)
         self.log("error", text)
-
-    def export_json(self):
-        if self.current_scene is None:
-            QtWidgets.QMessageBox.information(self, "JSON として書き出し", "先にシーンを読み込んでください。")
-            return
-        base = os.path.splitext(self.current_path)[0] + ".json" if self.current_path else "scene.json"
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "JSON として書き出し", base, "JSON (*.json)")
-        if not path:
-            return
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(self.current_scene, f, ensure_ascii=False, separators=(",", ":"))
-        self.statusBar().showMessage("書き出しました: %s" % path, 6000)
-        self.log("info", "書き出しました: %s" % path)
 
     def export_package(self):
         """［ファイル］→［パッケージ（.msv）として書き出し］"""

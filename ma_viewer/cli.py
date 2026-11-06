@@ -3,7 +3,7 @@
 
   python -m ma_viewer                    ビューアを起動
   python -m ma_viewer view scene.ma      ファイルを開いてビューアを起動
-  python -m ma_viewer export scene.ma -o scene.json   共通 JSON に変換
+  python -m ma_viewer export scene.ma -o scene.json   共通 JSON に変換（.msv からも戻せる）
   python -m ma_viewer pack scene.ma -o scene.msv      パッケージ（.msv。小さく、アルベドのテクスチャ入り）に変換
   python -m ma_viewer info scene.ma      内容の概要と警告を表示
   python -m ma_viewer rig scene.ma       リグの診断（評価できないノードと、IK の極ベクトルなどの上流）
@@ -28,19 +28,33 @@ def _progress(frac, msg):
 
 
 def cmd_export(args) -> int:
-    from .extract_ma import load_ma
+    """.ma・.msv → 共通 JSON"""
+    from . import package
     t0 = time.time()
-    scene = load_ma(args.input, progress=None if args.quiet else _progress, animation=not args.no_animation)
-    if not args.quiet:
-        sys.stderr.write("\n")
+    if package.is_package(args.input):
+        # パッケージを共通 JSON に戻す（Maya 内で書き出したシーンの調査など）。同梱のテクスチャは JSON からは使えない
+        scene, _pkg = package.read_package(args.input)
+        scene["source"].pop("packagePath", None)
+        if args.no_animation:
+            scene.pop("animation", None)
+        if any(t.get("packed") for t in scene.get("textures") or []):
+            print("  お知らせ: パッケージに同梱したテクスチャは、JSON では表示されません（.msv のまま開いてください）")
+    else:
+        from .extract_ma import load_ma
+        scene = load_ma(args.input, progress=None if args.quiet else _progress, animation=not args.no_animation)
+        if not args.quiet:
+            sys.stderr.write("\n")
     out = args.output or os.path.splitext(args.input)[0] + ".json"
+    if os.path.abspath(out) == os.path.abspath(args.input):
+        print("入力と同じファイルには書き出せません: %s" % out, file=sys.stderr)
+        return 1
     with open(out, "w", encoding="utf-8") as f:
         if args.pretty:
             json.dump(scene, f, ensure_ascii=False, indent=1)
         else:
             json.dump(scene, f, ensure_ascii=False, separators=(",", ":"))
     print("書き出しました: %s（%.2f 秒）" % (out, time.time() - t0))
-    for w in scene["warnings"] + (scene.get("animation") or {}).get("warnings", []):
+    for w in scene.get("warnings", []) + (scene.get("animation") or {}).get("warnings", []):
         print("  警告: " + w)
     return 0
 
@@ -246,7 +260,7 @@ def main(argv=None) -> int:
     _safe_console()
     p = argparse.ArgumentParser(prog="ma_viewer", description="Maya ASCII 簡易ビューア")
     sub = p.add_subparsers(dest="cmd")
-    pe = sub.add_parser("export", help=".ma を共通 JSON に変換")
+    pe = sub.add_parser("export", help=".ma・.msv を共通 JSON に変換")
     pe.add_argument("input")
     pe.add_argument("-o", "--output")
     pe.add_argument("--pretty", action="store_true", help="字下げ・改行を入れて出力（読みやすいが大きくなる）")

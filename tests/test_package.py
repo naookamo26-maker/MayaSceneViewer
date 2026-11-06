@@ -215,6 +215,22 @@ class PackageTest(unittest.TestCase):
         scene2, _ = package.read_package(out2)
         self.assertFalse(any(t.get("packed") for t in scene2["textures"]))
 
+    def test_cli_export_from_package(self):
+        """.msv → 共通 JSON（Maya 内で書き出したシーンの調査用）: .ma から直接書き出した JSON と同じ内容"""
+        msv, js, direct = self.out("back.msv"), self.out("back.json"), self.out("direct.json")
+        with mock.patch("sys.stdout", new=io.StringIO()):
+            self.assertEqual(cli_main(["pack", ARM, "-o", msv, "-q"]), 0)
+            self.assertEqual(cli_main(["export", msv, "-o", js, "-q"]), 0)
+            self.assertEqual(cli_main(["export", ARM, "-o", direct, "-q"]), 0)
+            self.assertEqual(cli_main(["export", msv, "-o", msv, "-q"]), 1)     # 入力と同じファイルには書かない
+        with open(js, encoding="utf-8") as f:
+            back = json.load(f)
+        with open(direct, encoding="utf-8") as f:
+            want = json.load(f)
+        self.assertNotIn("packagePath", back["source"])
+        self.assertEqual(_strip(back), _strip(want))
+        schema.validate(back)
+
 
 if __name__ == "__main__":
     unittest.main()
