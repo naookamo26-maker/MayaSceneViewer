@@ -26,15 +26,26 @@ const isDrivenKey = (g) => /^animCurveU[ALTU]$/.test(g.type);
  * @param graph リグのグラフ（共通 JSON の animation.graph）
  * @param nodes 共通 JSON の nodes
  * @param candidates 目印を出すノード番号の一覧
+ * @param props 共通 JSON の animation.props（表示などの入力元は「属性のスイッチ」）
  * @returns Map<nodeIndex, { role, chain?: number[], joint?: number, lineTo?: number }>
  *   chain: 大きさの基準にするジョイントのチェーン（IK・ポールベクター・スプライン IK）
  *   joint: 大きさの基準にするジョイント（動かす先で最初に見つかったもの）
  *   lineTo: 破線で結ぶノード（ポールベクター → 肘・膝、エイム → 向くノード）
  */
-export function classifyControls(graph, nodes, candidates) {
+export function classifyControls(graph, nodes, candidates, props = []) {
   const byId = new Map(graph.map((g) => [g.id, g]));
   const idOfDag = new Map();
   for (const g of graph) if (g.dag >= 0) idOfDag.set(g.dag, g.id);
+  // ロケーター・自作のシェイプ（グラフでは DAG ノードでない）→ transform。シェイプの属性の使われ方も transform の役割にする
+  const shapeIds = new Map();
+  for (const g of graph) {
+    if (g.dag >= 0 || g.type === 'nurbsCurve' || !(g.parent >= 0)) continue;
+    if (!shapeIds.has(g.parent)) shapeIds.set(g.parent, []);
+    shapeIds.get(g.parent).push(g.id);
+  }
+  // 表示（.v など）・カメラの属性などの入力元
+  const propSources = new Set();
+  for (const p of props || []) for (const src of Object.values(p.inputs || {})) if (src.node !== undefined) propSources.add(src.node);
   // 下流（入力元のグラフ id → [{ g: 使う側, key: 入力の名前, attr: 出力の属性 }]）
   const users = new Map();
   for (const g of graph) {
@@ -104,7 +115,9 @@ export function classifyControls(graph, nodes, candidates) {
   // それ以外の役割: 入力元として使われ方を見る
   for (const ni of candidates) {
     const id = idOfDag.get(ni);
-    for (const { g, key, attr } of id === undefined ? [] : usersOf(id)) {
+    const ids = [...(id === undefined ? [] : [id]), ...(shapeIds.get(ni) || [])];
+    if (ids.some((x) => propSources.has(x))) add(ni, 'switch');            // ほかのノードの表示などを切り替える
+    for (const { g, key, attr } of ids.flatMap((x) => usersOf(x))) {
       const target = key.startsWith('tg[');
       if (CONSTRAINTS.has(g.type) && target) add(ni, 'constraint');
       else if (AIMS.has(g.type) && (target || key === 'wum' || key === 'wuo')) {   // ターゲットか上方向のノード

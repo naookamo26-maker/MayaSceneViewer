@@ -684,6 +684,29 @@ class TestStage6(unittest.TestCase):
         shape = next(g for g in anim["graph"] if g["name"] == "ctrlAShape")    # シェイプの独自の属性はリグで読む
         self.assertEqual((shape["dag"], shape["attrs"]["ikFk"]), (-1, 1.0))
 
+    def test_custom_switch_leaf(self):
+        """表示を切り替えるスイッチ（末端の自作ノード）: 自作の transform（-k off で移動を隠しただけのもの・チャンネルの設定が
+        何もないもの）は transform のまま出力し、名前が …Shape の自作のシェイプの属性で切り替えるときは、その transform を
+        出力する（どれもコントローラーの目印を出す）"""
+        crv = '\tsetAttr ".cc" -type "nurbsCurve" 1 1 0 no 3 2 0 1 2 0 0 0 1 0 0 ;\n'
+        body = ('createNode transform -n "ctrl_grp";\n'
+                'createNode rigSwitchCtrl -n "swA" -p "ctrl_grp";\n'
+                '\taddAttr -ci true -sn "a" -ln "aVis" -at "bool";\n\tsetAttr -k off ".tx";\n'
+                'createNode rigSwitchCtrl -n "swC" -p "ctrl_grp";\n\taddAttr -ci true -sn "c" -ln "cVis" -at "bool";\n'
+                'createNode transform -n "swB" -p "ctrl_grp";\n'
+                'createNode switchLocator -n "swBShape" -p "swB";\n\taddAttr -ci true -sn "b" -ln "bVis" -at "bool";\n'
+                + ''.join('createNode transform -n "geo%s";\ncreateNode nurbsCurve -n "geo%sShape" -p "geo%s";\n%s' % (x, x, x, crv)
+                          for x in "ABC")
+                + 'connectAttr "swA.a" "geoA.v";\nconnectAttr "swBShape.b" "geoB.v";\nconnectAttr "swC.c" "geoC.v";\n')
+        sc, anim = from_text(body)
+        nodes = {n["name"]: n for n in sc["nodes"]}
+        self.assertEqual((nodes["swA"]["type"], nodes["swC"]["type"]), ("rigSwitchCtrl", "rigSwitchCtrl"))
+        self.assertEqual((nodes["swB"].get("shape"), nodes["swB"].get("shapeType")), ("locator", "switchLocator"))
+        self.assertNotIn("swBShape", nodes)
+        graph = {g["name"]: g for g in anim["graph"]}
+        self.assertEqual(graph["swBShape"]["parent"], [n["name"] for n in sc["nodes"]].index("swB"))
+        self.assertEqual(sorted(sc["nodes"][p["index"]]["name"] for p in anim["props"]), ["geoA", "geoB", "geoC"])
+
     def test_custom_calc_node_not_transform(self):
         """入力の属性の名前が r・t などの計算用の自作ノード（親子なし・transform の行列の出力なし）は transform として
         扱わない（扱うと計算の結果を使わず、評価できないノードとしても出なくなる）"""

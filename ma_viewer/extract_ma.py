@@ -1182,7 +1182,7 @@ _SHAPE_NAME_RE = re.compile(r"Shape\d*$")
 
 
 def _has_xform_channels(ms: MaScene, n: MaNode, outgoing: Set[int]) -> bool:
-    if n.locks or id(n) in outgoing:
+    if n.locks or n.xform_seen or id(n) in outgoing:
         return True
     keys = list(n.xattrs) + [k.split("[")[0].split(".")[0] for k in n.inputs]
     return any(_XFORM_CHANNEL_RE.match(k) for k in keys)
@@ -1228,11 +1228,11 @@ def promote_custom_transforms(ms: MaScene) -> Dict[str, List[str]]:
             continue
         n.is_dag = True
         # 自作のシェイプ（プラグインのロケーターなど。コントローラーの形を描くものが多い）: 親があって子がなく、
-        # 移動・回転・スケールを持たないもの。名前が …Shape なら、行列の出力（.wm など）があってもシェイプ
-        # （型名が Shape で終わるものは、もとから MaNode.is_shape でシェイプ）
+        # 移動・回転・スケールを持たず（値・ロック・接続・-k などの設定のどれもない）、名前が …Shape（Maya がシェイプに
+        # 付ける名前）のもの。行列の出力（.wm など）があってもよい。名前が違うものは、末端の自作の transform（表示の
+        # スイッチなど）を見失わないよう transform のまま（型名が Shape で終わるものは、もとから MaNode.is_shape）
         if (n.parent is not None and not n.children and not n.parent.is_shape
-                and not _has_xform_channels(ms, n, outgoing)
-                and (_SHAPE_NAME_RE.search(n.name) or id(n) not in evidence)):
+                and not _has_xform_channels(ms, n, outgoing) and _SHAPE_NAME_RE.search(n.name)):
             n.custom_shape = True
             ms.custom_shapes.setdefault(t, []).append(n.name)
             continue
@@ -1434,8 +1434,15 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
                 if id(x) not in in_props:
                     in_props.add(id(x))
                     extra.append((kind, x))
+        # リグで値を読むロケーター・自作のシェイプ（独自の属性で表示を切り替えるスイッチなど）は、親の transform を出力する
+        # （コントローラーの目印を出す。シェイプだけでは階層にも出ない）
+        grew = False
+        for x in list(graph_info.dg.values()):
+            if x.is_shape and (x.type == "locator" or x.custom_shape) and x.parent is not None and id(x.parent) not in keep:
+                keep_chain(x.parent)
+                grew = True
         props += extra
-        if not any(_vis_driven(x) for _kind, x in extra):
+        if not grew and not any(_vis_driven(x) for _kind, x in extra):
             break
     ms.graph_info = graph_info
 

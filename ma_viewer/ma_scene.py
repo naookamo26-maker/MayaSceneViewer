@@ -111,6 +111,10 @@ def clamp_limits(v, lim) -> Tuple[float, float, float]:
 
 # ロックを読む属性（移動・回転・スケールのまとめと成分）
 _LOCK_NAMES = {b + ax for b in "trs" for ax in ("", "x", "y", "z")}
+# transform にしかない属性（シェイプにはない）。setAttr に出てきたら transform の証拠にする
+_XFORM_ONLY_NAMES = _LOCK_NAMES | {b + ax for b in ("ra", "rp", "sp", "rpt", "spt", "jo") for ax in ("", "x", "y", "z")} | {
+    "ro", "sh", "shxy", "shxz", "shyz", "it", "opm", "translate", "rotate", "scale", "rotateOrder", "inheritsTransform",
+    "translateX", "translateY", "translateZ", "rotateX", "rotateY", "rotateZ", "scaleX", "scaleY", "scaleZ"}
 
 
 def locked_channels(locks: Dict[str, bool]) -> Optional[Dict[str, List[bool]]]:
@@ -262,7 +266,8 @@ def _sparse_into(weights: Dict[int, Dict[int, float]], a: int, b: int, vals) -> 
 class MaNode:
     __slots__ = ("name", "type", "parent", "children", "path", "order", "is_dag",
                  "xattrs", "mesh", "skin", "tweak", "inputs", "raw", "skip_attrs", "span", "attr_map", "ns", "espan",
-                 "node_def", "baked", "xspans", "ssc_parent", "locks", "memo", "custom_shape")
+                 "node_def", "baked", "xspans", "ssc_parent", "locks", "memo", "custom_shape",
+                 "xform_seen")
 
     def __init__(self, name: str, node_type: str, parent: Optional["MaNode"], order: int, ns: str = ""):
         self.name = name
@@ -296,6 +301,9 @@ class MaNode:
         # 型を知らない自作のシェイプ（プラグインのロケーターなど。型名が Shape で終わらないもの）。
         # extract_ma.promote_custom_transforms が決める
         self.custom_shape = False
+        # setAttr に移動・回転・スケールなど transform にしかない属性の名前が出てきたか（値のない -k off ".tx" なども。
+        # 自作ノードが transform かシェイプかの判定に使う）
+        self.xform_seen = False
 
     @property
     def is_shape(self) -> bool:
@@ -995,6 +1003,8 @@ class MaScene:
         elems = R.parse_attr_path(attr)
         if not elems:
             return
+        if len(elems) == 1 and elems[0].name in _XFORM_ONLY_NAMES:
+            node.xform_seen = True
         if sa.lock is not None and len(elems) == 1 and elems[0].name in _LOCK_NAMES:
             node.locks.pop(elems[0].name, None)          # あとに書かれたものを優先する（順番を書かれた順にする）
             node.locks[elems[0].name] = sa.lock          # Maya でロックした属性（ビューアのポーズ確認でも動かさない）
