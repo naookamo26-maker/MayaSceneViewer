@@ -3,7 +3,8 @@
 
   python -m ma_viewer                    ビューアを起動
   python -m ma_viewer view scene.ma      ファイルを開いてビューアを起動
-  python -m ma_viewer export scene.ma -o scene.json   共通 JSON に変換
+  python -m ma_viewer export scene.ma -o scene.json   共通 JSON に変換（.msv からも戻せる）
+  python -m ma_viewer pack scene.ma -o scene.msv      パッケージ（.msv。小さく、アルベドのテクスチャ入り）に変換
   python -m ma_viewer info scene.ma      内容の概要と警告を表示
   python -m ma_viewer rig scene.ma       リグの診断（評価できないノードと、IK の極ベクトルなどの上流）
   python -m ma_viewer excerpt scene.ma [ノード名...]   指定したノード（省略時は lookAt）の部分だけを抜き出す
@@ -27,17 +28,84 @@ def _progress(frac, msg):
 
 
 def cmd_export(args) -> int:
-    from .extract_ma import load_ma
+    """.ma・.msv → 共通 JSON"""
+    from . import package
     t0 = time.time()
-    scene = load_ma(args.input, progress=None if args.quiet else _progress, animation=not args.no_animation)
-    if not args.quiet:
-        sys.stderr.write("\n")
+    if package.is_package(args.input):
+        # パッケージを共通 JSON に戻す（Maya 内で書き出したシーンの調査など）。同梱のテクスチャは JSON からは使えない
+        scene, _pkg = package.read_package(args.input)
+        scene["source"].pop("packagePath", None)
+        if args.no_animation:
+            scene.pop("animation", None)
+        if any(t.get("packed") for t in scene.get("textures") or []):
+            print("  お知らせ: パッケージに同梱したテクスチャは、JSON では表示されません（.msv のまま開いてください）")
+    else:
+        from .extract_ma import load_ma
+        scene = load_ma(args.input, progress=None if args.quiet else _progress, animation=not args.no_animation)
+        if not args.quiet:
+            sys.stderr.write("\n")
     out = args.output or os.path.splitext(args.input)[0] + ".json"
+    if os.path.abspath(out) == os.path.abspath(args.input):
+        print("入力と同じファイルには書き出せません: %s" % out, file=sys.stderr)
+        return 1
     with open(out, "w", encoding="utf-8") as f:
-        json.dump(scene, f, ensure_ascii=False, separators=(",", ":"), indent=None if args.compact else 1)
+        if args.pretty:
+            json.dump(scene, f, ensure_ascii=False, indent=1)
+        else:
+            json.dump(scene, f, ensure_ascii=False, separators=(",", ":"))
     print("書き出しました: %s（%.2f 秒）" % (out, time.time() - t0))
-    for w in scene["warnings"] + (scene.get("animation") or {}).get("warnings", []):
+    for w in scene.get("warnings", []) + (scene.get("animation") or {}).get("warnings", []):
         print("  警告: " + w)
+    return 0
+
+
+def _mb(n: int) -> str:
+    return "%.2f MB" % (n / 1048576.0) if n >= 1048576 else "%.1f KB" % (n / 1024.0)
+
+
+def cmd_pack(args) -> int:
+    """.ma・.json・.msv → .msv"""
+    from . import package
+    t0 = time.time()
+    src = args.input
+    low = src.lower()
+    source_pkg = None
+    if low.endswith(".json"):
+        with open(src, encoding="utf-8") as f:
+            scene = json.load(f)
+        schema.validate(scene)
+        if args.no_animation:
+            scene.pop("animation", None)
+    elif package.is_package(low):
+        scene, source_pkg = package.read_package(src)
+        if args.no_animation:
+            scene.pop("animation", None)
+    elif low.endswith(".mb"):
+        print("Maya バイナリ (.mb) は読み込めません。Maya で .ma として保存し直してください。", file=sys.stderr)
+        return 1
+    else:
+        from .extract_ma import load_ma
+        scene = load_ma(src, progress=None if args.quiet else _progress, animation=not args.no_animation)
+        if not args.quiet:
+            sys.stderr.write("\n")
+    out = args.output or os.path.splitext(src)[0] + package.EXT
+    if os.path.abspath(out) == os.path.abspath(src):
+        print("入力と同じファイルには書き出せません: %s" % out, file=sys.stderr)
+        return 1
+    say = None if args.quiet else (lambda msg: sys.stderr.write("\r%-60s" % msg[:60]))
+    r = package.write_package(scene, out, textures=args.textures, max_size=args.max_size, quality=args.quality,
+                              source=source_pkg, convert=False if args.keep_textures else None, progress=say)
+    if not args.quiet:
+        sys.stderr.write("\r%-60s\r" % "")
+    print("書き出しました: %s（%s・%.2f 秒）" % (out, _mb(r["size"]), time.time() - t0))
+    if r["textures"]:
+        print("  テクスチャ %d 枚（%s → %s%s）" % (r["textures"], _mb(r["textureBytesIn"]), _mb(r["textureBytesOut"]),
+                                           "・WebP" if r["converted"] else "・元のまま"))
+    for w in r["warnings"]:
+        print("  警告: " + w)
+    if not args.quiet:
+        for w in scene.get("warnings") or []:
+            print("  警告: " + w)
     return 0
 
 
@@ -192,12 +260,23 @@ def main(argv=None) -> int:
     _safe_console()
     p = argparse.ArgumentParser(prog="ma_viewer", description="Maya ASCII 簡易ビューア")
     sub = p.add_subparsers(dest="cmd")
-    pe = sub.add_parser("export", help=".ma を共通 JSON に変換")
+    pe = sub.add_parser("export", help=".ma・.msv を共通 JSON に変換")
     pe.add_argument("input")
     pe.add_argument("-o", "--output")
-    pe.add_argument("--compact", action="store_true", help="改行なしで出力")
+    pe.add_argument("--pretty", action="store_true", help="字下げ・改行を入れて出力（読みやすいが大きくなる）")
+    pe.add_argument("--compact", action="store_true", help=argparse.SUPPRESS)    # 互換のため（いまは既定）
     pe.add_argument("-q", "--quiet", action="store_true")
     pe.add_argument("--no-animation", action="store_true", help="アニメーションを書き出さない")
+    pk = sub.add_parser("pack", help=".ma・.json をパッケージ（.msv）に変換（数値をバイナリで圧縮し、テクスチャを同梱）")
+    pk.add_argument("input", help=".ma・.json・.msv")
+    pk.add_argument("-o", "--output", help="書き出す .msv（省略時は入力と同じ名前）")
+    pk.add_argument("--textures", choices=("albedo", "all", "none"), default="albedo",
+                    help="同梱するテクスチャ（既定 albedo: アルベドのみ。all: すべてのマップ。none: 入れない）")
+    pk.add_argument("--max-size", type=int, default=2048, help="テクスチャの長い辺の上限（px。既定 2048。0 で縮めない）")
+    pk.add_argument("--quality", type=int, default=80, help="WebP の品質（1〜100。既定 80）")
+    pk.add_argument("--keep-textures", action="store_true", help="テクスチャを WebP にせず、元のファイルのまま入れる")
+    pk.add_argument("--no-animation", action="store_true", help="アニメーションを書き出さない")
+    pk.add_argument("-q", "--quiet", action="store_true")
     pi = sub.add_parser("info", help="内容の概要を表示")
     pi.add_argument("input")
     pr = sub.add_parser("rig", help="リグの診断（評価できないノードと IK の上流）")
@@ -220,6 +299,8 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
     if args.cmd == "export":
         return cmd_export(args)
+    if args.cmd == "pack":
+        return cmd_pack(args)
     if args.cmd == "info":
         return cmd_info(args)
     if args.cmd == "rig":

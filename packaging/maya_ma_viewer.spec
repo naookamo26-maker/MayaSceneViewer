@@ -15,6 +15,13 @@ WEB = os.path.join(ROOT, "ma_viewer", "web")
 NODE_DEFS = os.path.join(ROOT, "ma_viewer", "node_defs")
 ICON = os.path.join(ROOT, "ma_viewer", "icon", "MayaSceneViewer.ico")   # packaging/make_icon.py で SVG から作る
 
+# Pillow のライセンス（同梱するライブラリの分を含む。THIRD_PARTY_LICENSES.md）を exe に入れる
+try:
+    from PyInstaller.utils.hooks import copy_metadata
+    PILLOW_METADATA = copy_metadata("pillow")
+except Exception:  # noqa: BLE001  Pillow を入れずに作る場合（テクスチャは元のまま同梱される）
+    PILLOW_METADATA = []
+
 a = Analysis(
     [os.path.join(ROOT, "run_viewer.py")],
     pathex=[ROOT],
@@ -22,8 +29,11 @@ a = Analysis(
     datas=[(os.path.join(WEB, f), os.path.join("ma_viewer", "web"))
            for f in ("index.html", "style.css", "viewer.bundle.js")]
           + [(p, os.path.join("ma_viewer", "node_defs")) for p in sorted(glob.glob(os.path.join(NODE_DEFS, "*.json")))]
-          + [(ICON, os.path.join("ma_viewer", "icon"))],      # ウィンドウのアイコン（resources.icon_path が読む）
-    hiddenimports=["PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebChannel"],
+          + [(ICON, os.path.join("ma_viewer", "icon"))]       # ウィンドウのアイコン（resources.icon_path が読む）
+          + PILLOW_METADATA,
+    # Pillow はパッケージ（.msv）のテクスチャを WebP にするのに使う（ma_viewer/package.py が関数の中で import する）
+    hiddenimports=["PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebChannel",
+                   "PIL.Image", "PIL.WebPImagePlugin", "PIL.TgaImagePlugin"],
     hookspath=[],
     runtime_hooks=[],
     # Maya 内でだけ使うモジュールと、ビューアに不要な大きなパッケージは入れない

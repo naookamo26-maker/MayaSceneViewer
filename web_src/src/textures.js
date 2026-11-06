@@ -99,6 +99,24 @@ export function imageInfo(buffer) {
       o += 2 + len;
     }
   }
+  // WebP（.msv に同梱したテクスチャ）: RIFF....WEBP の後の最初のチャンクで大きさとアルファの有無が分かる
+  if (b.length >= 30 && String.fromCharCode(b[0], b[1], b[2], b[3]) === 'RIFF'
+      && String.fromCharCode(b[8], b[9], b[10], b[11]) === 'WEBP') {
+    const kind = String.fromCharCode(b[12], b[13], b[14], b[15]);
+    const le24 = (o) => b[o] | (b[o + 1] << 8) | (b[o + 2] << 16);
+    if (kind === 'VP8 ') {                                     // 非可逆・アルファなし
+      const width = (b[26] | (b[27] << 8)) & 0x3fff, height = (b[28] | (b[29] << 8)) & 0x3fff;
+      return width && height ? { width, height, opaque: true } : null;
+    }
+    if (kind === 'VP8L' && b[20] === 0x2f) {                   // 可逆
+      const bits = (b[21] | (b[22] << 8) | (b[23] << 16) | (b[24] << 24)) >>> 0;
+      const width = (bits & 0x3fff) + 1, height = ((bits >>> 14) & 0x3fff) + 1;
+      return { width, height, opaque: !((bits >>> 28) & 1) };
+    }
+    if (kind === 'VP8X') {                                     // 拡張（アルファ付きの非可逆など）
+      return { width: le24(24) + 1, height: le24(27) + 1, opaque: !(b[20] & 0x10) };
+    }
+  }
   return null;
 }
 

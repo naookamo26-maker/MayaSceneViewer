@@ -809,9 +809,9 @@ export class UI {
     const texLabel = (ti) => {
       if (ti < 0) return '<span class="tex">テクスチャなし</span>';
       const info = (data.textures || [])[ti] || {};
-      const st = (textureState && textureState[ti]) || { status: info.resolved && info.format ? 'loading' : 'missing' };
+      const st = (textureState && textureState[ti]) || { status: (info.resolved || info.packed) && info.format ? 'loading' : 'missing' };
       const name = esc(fileName(info.path) || info.node || '?');
-      const where = esc(info.resolved || info.path || '');
+      const where = esc(info.resolved || (info.packed ? `${info.path || ''}（パッケージに同梱: ${info.packed}）` : info.path) || '');
       if (st.status === 'ok') {
         const size = (st.tiles > 1 ? `UDIM ${st.tiles} タイル・` : '')
           + (st.sourceWidth !== st.width ? `${st.sourceWidth}→${st.width}px` : `${st.width}px`);
@@ -819,7 +819,9 @@ export class UI {
       }
       if (st.status === 'loading') return `<span class="tex-wait">…</span><span class="tex" title="${where}">${name}（読み込み中）</span>`;
       if (st.status === 'pending') return `<span class="tex-wait">–</span><span class="tex" title="${where}">${name}（未読み込み）</span>`;
-      const why = st.status === 'error' ? '読み込めません' : (info.resolved ? '形式に未対応' : '見つかりません');
+      const why = st.status === 'error' ? '読み込めません'
+        : info.omitted === 'albedo-only' || info.omitted === 'none' ? 'パッケージに同梱していません'
+          : info.omitted === 'unreadable' || info.resolved || info.packed ? '形式に未対応' : '見つかりません';
       return `<span class="tex-bad" aria-label="${why}">✕</span><span class="tex" title="${where}">${name}（${why}）</span>`;
     };
     let h = '<table class="kv">';

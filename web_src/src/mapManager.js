@@ -3,7 +3,7 @@
 //   * 同じ画像は 1 回だけ読み、用途ごとのテクスチャ（sRGB・リニア・チャンネル抽出）を使い回す
 //   * UDIM はタイルごとに管理する
 //   * place2dTexture の繰り返し・オフセット（textures[i].uv。リグで動く値は setPlace2d）をテクスチャに入れる
-import { loadImage, makeTexture } from './textures.js';
+import { decodeImage, loadImage, makeTexture } from './textures.js';
 
 /** マップの種類と用途 → makeTexture の usage */
 export function usageFor(kind, channel, view) {
@@ -87,9 +87,9 @@ export class MapManager {
     if (!info) return null;
     if (info.udim) {
       const t = (info.tiles || []).find((x) => x.tile === tile);
-      return { ti, tile, info, url: t ? t.url : null, resolved: t ? t.resolved : null, format: info.format };
+      return { ti, tile, info, url: t ? t.url : null, resolved: t ? t.resolved : null, packed: t ? t.packed || null : null, format: info.format };
     }
-    return { ti, tile, info, url: info.url, resolved: info.resolved, format: info.format };
+    return { ti, tile, info, url: info.url, resolved: info.resolved, packed: info.packed || null, format: info.format };
   }
 
   /** 設定に必要なマップのキー */
@@ -107,6 +107,7 @@ export class MapManager {
 
   /**
    * 足りないマップを読み込む。読み込みが 1 枚終わるたびに onProgress(done, total) を呼ぶ。
+   * .msv に同梱したもの（packed）は opts.readPacked(name) → ArrayBuffer・Uint8Array の Promise で読む。
    * @returns 読み込みを始めた枚数
    */
   ensure(keys, readViaBridge, opts, onProgress, onError) {
@@ -115,7 +116,7 @@ export class MapManager {
     for (const key of keys) {
       if (this.state.has(key)) continue;
       const src = this.source(key);
-      if (!src || !src.resolved || !src.format) {
+      if (!src || !(src.resolved || src.packed) || !src.format) {
         this.state.set(key, { status: 'missing', ...src, textures: new Map() });
         continue;
       }
@@ -125,7 +126,12 @@ export class MapManager {
     }
     let done = 0;
     for (const [key, s] of jobs) {
-      loadImage(s.url, s.resolved, s.format, readViaBridge, opts).then((r) => {
+      const load = s.packed
+        ? (opts && opts.readPacked
+          ? opts.readPacked(s.packed).then(async (buf) => ({ decoded: await decodeImage(buf, s.format), via: 'package' }))
+          : Promise.reject(new Error('同梱のテクスチャを読む方法がありません')))
+        : loadImage(s.url, s.resolved, s.format, readViaBridge, opts);
+      load.then((r) => {
         if (token !== this.token) return;
         s.status = 'ok';
         s.decoded = r.decoded;
