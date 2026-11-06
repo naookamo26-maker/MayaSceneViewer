@@ -339,6 +339,7 @@ three.js では `SkinnedMesh` を detached モードにし、`bind(skeleton, gm)
 | `scene.json` | 共通 JSON（animation を含む）。数値の配列（base64 の `{"dtype", "count", "data"}`）は `{"dtype", "count", "buffer": "bin/data.bin", "offset": バイト位置}` に置き換える |
 | `bin/data.bin` | 数値の配列を並べたリトルエンディアンのバイナリ。各配列の先頭は 4 バイト境界 |
 | `textures/*` | 同梱したテクスチャ（`textures/<textures の番号>.webp`、UDIM は `textures/<番号>.<タイル>.webp`） |
+| `view.json` | 書き出したときの表示の状態（省略可。下の「view.json」） |
 
 JSON とバイナリは deflate で圧縮し、画像（WebP・PNG・JPEG）は無圧縮で入れます。ZIP64（4 GB 超）には対応していません。
 
@@ -351,4 +352,20 @@ textures の各項目は、次のように書き換えます。`path` などほ�
 | `resolved` / `url` | null（ファイルではなく、パッケージから読む） |
 | `omitted` | 同梱しなかった理由。`albedo-only`（アルベドだけ入れた）・`none`（入れない設定）・`missing`（元から見つからない）・`unreadable`（読めない・表示できない形式） |
 
-アルベドは、マテリアルの `maps.baseColor`（`texture`）が指すテクスチャです。Python の `ma_viewer.package.read_package(path)` は、数値の配列を base64 の形に戻して、.json を読んだときと同じ dict を返します（`source.packagePath` に .msv の場所を入れます。書き出すときは除きます）。ブラウザでは型付き配列に直接戻します。
+アルベドは、マテリアルの `maps.baseColor`（`texture`）が指すテクスチャです。### view.json
+
+Qt 版の書き出しで「表示の状態を保存する」をオンにすると（既定）、ビューアの見た目を保存し、開いたときに戻します。ノードはパスで指定し、シーンに見つからないものは飛ばします。選択は保存しません。
+
+| キー | 内容 |
+|---|---|
+| `version` | 1 |
+| `settings` | 表示の設定（シェーディング・ワイヤー・ジョイント・グリッド・カーブ・コントローラー・テクスチャ・ライト・マップ・姿勢の基準など）。ツール・ハンドル・クリックで選ぶもの・再生キャッシュは含めない |
+| `camera` | 自由視点は `{"mode": "free", "position", "target", "fov"}`。シーンのカメラから見ていれば `{"mode": "scene", "path": カメラの transform のパス, "name"}`（視点を一時的に動かしていれば `"edited": {"position", "target", "zoom"}`） |
+| `frame` / `range` | いまのフレームと再生範囲（アニメーションがあるときだけ） |
+| `sequence` | `{"follow": シーケンスで見ているか, "frame": シーケンスのフレーム}`（シーケンサがあるときだけ） |
+| `visibility` | 自分で変えた表示。`hidden`（隠したノード）・`shown`（ファイルやリグで非表示なのに表示したノード）・`meshes`（メッシュごとの表示 `{"path", "visible"}`） |
+| `poses` | ビューアで変えたポーズ `[{"path", "t", "r", "s"}]`（ファイルの値への追加分）。アニメーションカーブのあるノードのものは含めない |
+
+`python -m ma_viewer pack` で .msv から作り直すときは引き継ぎます（`--no-view` で外す）。`export` で JSON に戻すときは含めません。
+
+Python の `ma_viewer.package.read_package(path)` は、数値の配列を base64 の形に戻して、.json を読んだときと同じ dict を返します（`source.packagePath` に .msv の場所、`savedView` に view.json の中身を入れます。書き出すときは除きます）。ブラウザでは型付き配列に直接戻します。

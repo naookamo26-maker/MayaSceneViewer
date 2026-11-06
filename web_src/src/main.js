@@ -60,6 +60,11 @@ const DEFAULTS = {
   pickAll: false,                // Maya で選択できないもの（テンプレート・リファレンス）もクリックで選ぶ
 };
 const TOOLS = ['select', 'translate', 'rotate', 'scale'];
+// .msv に保存する表示の設定（見た目に関わるもの。ツール・ハンドル・クリックで選ぶもの・再生キャッシュなどの操作の好みは除く）
+const VIEW_SETTING_KEYS = ['shading', 'wire', 'skin', 'joints', 'xray', 'grid', 'curves', 'controls', 'controlColor',
+  'controlSizeMode', 'controlSize', 'controlHidden', 'axes', 'jointSize', 'weightMode', 'textures', 'alpha', 'alphaStyle',
+  'poseSource', 'lighting', 'mapView', 'maps', 'normalFlipY', 'cameraIcons', 'cameraGate', 'hud'];
+const VIEW_STATE_VERSION = 1;
 const num = (n) => n.toLocaleString('ja-JP');
 const MB = 1024 * 1024;
 
@@ -532,6 +537,16 @@ class ViewerApp {
       const anim = this.pendingAnimation || data.animation;
       this.pendingAnimation = null;
       if (anim) this.setAnimation(anim);
+      // .msv に保存した表示の状態（カメラ・表示設定・非表示・フレーム・ポーズ）
+      if (data.savedView) {
+        try {
+          const skipped = this.applyViewState(data.savedView);
+          this.ui.setMessage('保存された表示の状態で開きました（A で全体を表示）'
+            + (skipped ? `。シーンにないノード ${skipped} 個は飛ばしました` : ''), 6000);
+        } catch (err) {
+          this.log('warn', '保存された表示の状態を反映できませんでした: ' + (err && err.message || err));
+        }
+      }
       this.updateToolbarHints();
       return true;
     } catch (err) {
@@ -2576,6 +2591,149 @@ class ViewerApp {
     this.requestRender();
   }
 
+  /**
+   * 表示の状態（.msv の view.json。docs/data_format.md）。ノードはパスで持つ。選択は含めない。
+   * ポーズの変更は、アニメーションカーブのあるノードのものを除く（再生・フレームで決まるため）
+   */
+  viewState() {
+    if (!this.built) return null;
+    const nodes = this.data.nodes;
+    const path = (ni) => nodes[ni] && nodes[ni].path;
+    const settings = {};
+    for (const k of VIEW_SETTING_KEYS) settings[k] = JSON.parse(JSON.stringify(this.settings[k]));
+    const v = { version: VIEW_STATE_VERSION, settings };
+    const cam = this.activeCamera();
+    if (this.viewCamera >= 0) {
+      const c = this.cameras[this.viewCamera];
+      v.camera = { mode: 'scene', path: path(c.transform) || null, name: c.name };
+      if (this.camEdit) v.camera.edited = { position: cam.position.toArray(), target: this.controls.target.toArray(), zoom: cam.zoom || 1 };
+    } else {
+      v.camera = { mode: 'free', position: cam.position.toArray(), target: this.controls.target.toArray(), fov: cam.fov };
+    }
+    if (this.clip) {
+      v.frame = this.frame;
+      v.range = [this.clip.start, this.clip.end];
+    }
+    if (this.sequence) v.sequence = { follow: !!this.seqFollow, frame: this.seqFrame };
+    // 自分で変えた表示だけ（ファイルのままのものは入れない）
+    const hidden = [], shown = [];
+    nodes.forEach((n, i) => {
+      if (this.fileHidden.has(i)) return;
+      if (this.hidden.has(i)) hidden.push(n.path);
+      else if (n.visible === false || this.rigShown.has(i)) shown.push(n.path);
+    });
+    const meshes = this.built.meshes.filter((e) => !e.fileHidden && (!e.selfVisible || e.rigShown || e.data.visibleSelf === false))
+      .map((e) => ({ path: e.data.path, visible: !!e.selfVisible }));
+    v.visibility = { hidden, shown, meshes };
+    v.poses = [];
+    if (this.pose) {
+      for (const [ni, p] of this.pose.poses) {
+        const keyed = this.keyedOf(ni);
+        if (keyed && ['t', 'r', 's'].some((k) => keyed[k].some(Boolean))) continue;
+        v.poses.push({ path: path(ni), t: p.t.slice(), r: p.r.slice(), s: p.s.slice() });
+      }
+    }
+    return v;
+  }
+
+  /** 保存した表示の状態を入れる（シーンの読み込みの最後）。戻り値: シーンに見つからなかったノードの数 */
+  applyViewState(v) {
+    if (!this.built || !v || typeof v !== 'object') return 0;
+    if ((v.version || 1) > VIEW_STATE_VERSION) throw new Error(`新しい版の表示の状態です（version ${v.version}）`);
+    const byPath = new Map(this.data.nodes.map((n, i) => [n.path, i]));
+    let skipped = 0;
+    const find = (p) => { const ni = byPath.get(p); if (ni === undefined) skipped++; return ni; };
+    // 1. 表示の設定（姿勢の基準はフレームのあと）
+    const st = v.settings || {};
+    for (const k of VIEW_SETTING_KEYS) {
+      if (k === 'poseSource' || !(k in st)) continue;
+      this.setSetting(k, k === 'maps' ? { ...this.settings.maps, ...st.maps } : st[k]);
+    }
+    // 2. 再生範囲とフレーム
+    if (this.clip && Number.isFinite(v.frame)) {
+      if (Array.isArray(v.range) && v.range.length === 2) this.setPlaybackRange(+v.range[0], +v.range[1]);
+      if (this.hasTimeline) this.scrubTo(+v.frame);
+    }
+    if (st.poseSource === 'bind' || st.poseSource === 'file') {
+      this.poseSourceChosen = true;
+      this.setSetting('poseSource', st.poseSource);
+    }
+    if (v.sequence && this.sequence) {
+      if (v.sequence.follow) this.setSequenceFrame(+v.sequence.frame, { follow: true });
+      else this.seqFrame = Math.min(Math.max(+v.sequence.frame || this.sequence.start, this.sequence.start), this.sequence.end);
+      this.updateSequencePanel();
+    }
+    // 3. 自分で変えた表示（目のアイコンと同じ扱い）
+    const vis = v.visibility || {};
+    for (const p of vis.hidden || []) {
+      const ni = find(p);
+      if (ni === undefined) continue;
+      this.fileHidden.delete(ni);
+      this.hidden.add(ni);
+      this.rigShown.delete(ni);
+    }
+    for (const p of vis.shown || []) {
+      const ni = find(p);
+      if (ni === undefined) continue;
+      this.fileHidden.delete(ni);
+      this.hidden.delete(ni);
+      if (this.rigHidden.has(ni)) this.rigShown.add(ni);
+    }
+    const meshByPath = new Map(this.built.meshes.map((e) => [e.data.path, e]));
+    for (const m of vis.meshes || []) {
+      const e = meshByPath.get(m.path);
+      if (!e) { skipped++; continue; }
+      e.selfVisible = !!m.visible;
+      e.fileHidden = false;
+      e.rigShown = !!m.visible && e.rigHidden;
+    }
+    this.updateVisibility();
+    // 4. ポーズの変更（元に戻す履歴には積まない）
+    let posed = false;
+    for (const p of v.poses || []) {
+      const ni = find(p.path);
+      if (ni === undefined || !this.pose) continue;
+      this.pose.set(ni, { t: p.t, r: p.r, s: p.s });
+      posed = true;
+    }
+    if (posed) this.afterPoseChange();
+    // 5. カメラ（最後。フレームや表示で動かないように）
+    const c = v.camera || {};
+    const vec = (a) => (Array.isArray(a) && a.length === 3 && a.every(Number.isFinite) ? new Vector3().fromArray(a) : null);
+    if (c.mode === 'scene') {
+      const ci = this.cameras.findIndex((x) => this.data.nodes[x.transform] && this.data.nodes[x.transform].path === c.path);
+      if (ci >= 0) {
+        this.setCamera(ci, { quiet: true });
+        const pos = c.edited && vec(c.edited.position), tgt = c.edited && vec(c.edited.target);
+        if (pos && tgt) {
+          this.camEdit = { ci, frame: this.frame };
+          const cam = this.activeCamera();
+          this.controls.target.copy(tgt);
+          cam.position.copy(pos);
+          if (cam.isOrthographicCamera && Number.isFinite(c.edited.zoom)) cam.zoom = c.edited.zoom;
+          this.controls.update();
+          this.updateNavigation();
+        }
+      } else if (c.path) skipped++;
+    } else if (c.mode === 'free') {
+      const pos = vec(c.position), tgt = vec(c.target);
+      if (pos && tgt) {
+        this.setCamera(-1, { quiet: true });
+        const cam = this.camera;
+        if (Number.isFinite(c.fov) && c.fov > 0 && c.fov < 180) cam.fov = c.fov;
+        this.controls.target.copy(tgt);
+        cam.position.copy(pos);
+        const dist = Math.max(pos.distanceTo(tgt), 1e-6);
+        cam.near = Math.max(dist / 2000, 1e-4);
+        cam.far = dist * 50 + this.sceneRadius * 10;
+        cam.updateProjectionMatrix();
+        this.controls.update();
+      }
+    }
+    this.requestRender();
+    return skipped;
+  }
+
   stats() {
     if (!this.built) return { loaded: false };
     return {
@@ -2717,6 +2875,8 @@ window.mayaViewer = {
     return true;
   },
   setFrame(f) { app.scrubTo(+f); return app.frame; },
+  /** 表示の状態（.msv の view.json）を JSON の文字列で返す（Qt の書き出しで使う。シーンがなければ空文字） */
+  getViewState() { const v = app.viewState(); return v ? JSON.stringify(v) : ''; },
   play() { app.play(); },
   pause() { app.pause(); },
   showLoading(text, frac, subText, subFrac) { app.ui.setEmpty(false); app.ui.showLoading(text, frac, subText, subFrac); },

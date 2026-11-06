@@ -9,6 +9,8 @@
                   {"dtype", "count", "buffer": "bin/data.bin", "offset": バイト位置} に置き換える
   bin/data.bin    数値の配列を並べたリトルエンディアンのバイナリ（各配列の先頭は 4 バイト境界）
   textures/*      同梱したテクスチャ（Pillow があれば WebP にする。textures[i].packed がその名前）
+  view.json       書き出したときの表示の状態（カメラ・表示設定・非表示・フレーム・ポーズ。省略可）。
+                  ビューアが作る（web_src/src/main.js の viewState）。読み込むと scene["savedView"] に入る
 
 zip の圧縮は、JSON とバイナリは deflate、WebP・PNG・JPEG（もともと圧縮されている画像）は無圧縮で入れる。
 読み込みは一時ファイルを作らず、メモリの上で展開する。
@@ -35,6 +37,8 @@ EXT = ".msv"
 FORMAT_NAME = "maya-scene-viewer-package"
 FORMAT_VERSION = 1
 BIN_NAME = "bin/data.bin"
+VIEW_NAME = "view.json"
+_RUNTIME_KEYS = ("packagePath", )          # source の中の、読み込み時だけ付けるキー（書き出さない）
 TEXTURE_MODES = ("albedo", "all", "none")
 DEFAULT_TEXTURES = "albedo"
 DEFAULT_MAX_SIZE = 2048          # ビューアが表示に使う大きさの上限（web_src/src/textures.js の MAX_TEXTURE_SIZE）と同じ
@@ -244,11 +248,13 @@ def _pack_textures(scene_out: dict, mode: str, packer: _Packer) -> None:
 
 def write_package(scene: dict, path: str, textures: str = DEFAULT_TEXTURES, max_size: int = DEFAULT_MAX_SIZE,
                   quality: int = DEFAULT_QUALITY, source: Optional["Package"] = None,
-                  convert: Optional[bool] = None, progress: Optional[Callable[[str], None]] = None) -> dict:
+                  convert: Optional[bool] = None, progress: Optional[Callable[[str], None]] = None,
+                  view="keep") -> dict:
     """シーン（共通 JSON の dict）を .msv に書き出す。元のシーンは書き換えない。
     textures: "albedo"（既定。アルベドのみ）・"all"・"none"。
     source: シーンを .msv から読んだときのパッケージ（同梱のテクスチャをそのまま移す）。
     convert: テクスチャを WebP にするか（None なら Pillow があれば変換する）。
+    view: 表示の状態（dict）。"keep" なら、シーンが持つもの（.msv から読んだ savedView）をそのまま入れる。None なら入れない。
     戻り値: {"path", "size", "textures", "converted", "warnings"}"""
     if textures not in TEXTURE_MODES:
         raise ValueError("textures は %s のどれかです" % " / ".join(TEXTURE_MODES))
@@ -263,9 +269,13 @@ def write_package(scene: dict, path: str, textures: str = DEFAULT_TEXTURES, max_
     say("数値の配列をまとめています")
     chunks: List[bytes] = []
     scene_out = _move_arrays(scene, chunks, [0])
+    if view == "keep":
+        view = scene.get("savedView")
+    scene_out.pop("savedView", None)
     if isinstance(scene_out.get("source"), dict):
         scene_out["source"] = dict(scene_out["source"])
-        scene_out["source"].pop("packagePath", None)
+        for k in _RUNTIME_KEYS:
+            scene_out["source"].pop(k, None)
     if scene_out.get("textures") is not None:
         scene_out["textures"] = list(scene_out["textures"])
 
@@ -286,6 +296,9 @@ def write_package(scene: dict, path: str, textures: str = DEFAULT_TEXTURES, max_
                         json.dumps(scene_out, ensure_ascii=False, separators=(",", ":")),
                         compress_type=zipfile.ZIP_DEFLATED)
             zf.writestr(zipfile.ZipInfo(BIN_NAME, _date_time()), b"".join(chunks), compress_type=zipfile.ZIP_DEFLATED)
+            if isinstance(view, dict):
+                zf.writestr(zipfile.ZipInfo(VIEW_NAME, _date_time()), json.dumps(view, ensure_ascii=False),
+                            compress_type=zipfile.ZIP_DEFLATED)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -294,6 +307,7 @@ def write_package(scene: dict, path: str, textures: str = DEFAULT_TEXTURES, max_
             pass
         raise
     return {"path": path, "size": os.path.getsize(path), "textures": packer.count, "converted": bool(convert),
+            "view": isinstance(view, dict),
             "textureBytesIn": packer.bytes_in, "textureBytesOut": packer.bytes_out, "warnings": warnings}
 
 
@@ -364,7 +378,20 @@ class Package:
         src = scene.setdefault("source", {})
         src.setdefault("name", os.path.basename(self.path))
         src["packagePath"] = self.path              # 同梱のテクスチャを渡すため（書き出しには含めない）
+        view = self.view()
+        if view is not None:
+            scene["savedView"] = view               # ビューアが読み込みの最後に入れる（書き出しでは view.json に戻す）
         return scene
+
+    def view(self) -> Optional[dict]:
+        """書き出したときの表示の状態（view.json。なければ None）"""
+        if VIEW_NAME not in self.names:
+            return None
+        try:
+            v = json.loads(self.read(VIEW_NAME).decode("utf-8"))
+        except (ValueError, KeyError, OSError):
+            return None
+        return v if isinstance(v, dict) else None
 
 
 def read_package(path: str) -> Tuple[dict, Package]:

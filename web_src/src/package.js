@@ -4,6 +4,7 @@
 //   * scene.json の数値の配列 {dtype, count, buffer, offset} は、bin の該当部分を型付き配列にして置き換える
 //     （配列ごとに独立したバッファにする。Worker に送るとき、大きなバッファ全体を複製しないように）
 //   * テクスチャは read(name) で必要になったときに展開する
+//   * view.json（書き出したときの表示の状態）は scene.savedView に入れる
 
 export const PACKAGE_EXT = /\.msv$/i;
 const FORMAT_NAME = 'maya-scene-viewer-package';
@@ -85,6 +86,14 @@ export class ScenePackage {
     collectRefs(data, refs);
     for (const r of refs) if (!buffers.has(r.ref.buffer)) buffers.set(r.ref.buffer, await this.read(r.ref.buffer));
     for (const r of refs) r.set(toTyped(r.ref, buffers.get(r.ref.buffer)));
+    // 書き出したときの表示の状態（カメラ・表示設定・非表示・フレーム・ポーズ）。ビューアが読み込みの最後に入れる
+    if (this.has('view.json')) {
+      try {
+        data.savedView = await this.readJson('view.json');
+      } catch (err) {
+        (data.warnings = data.warnings || []).push(`保存された表示の状態（view.json）を読めません: ${err.message}`);
+      }
+    }
     this.manifest = manifest;
     return data;
   }

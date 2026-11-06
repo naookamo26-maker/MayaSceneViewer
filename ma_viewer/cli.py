@@ -35,6 +35,7 @@ def cmd_export(args) -> int:
         # パッケージを共通 JSON に戻す（Maya 内で書き出したシーンの調査など）。同梱のテクスチャは JSON からは使えない
         scene, _pkg = package.read_package(args.input)
         scene["source"].pop("packagePath", None)
+        scene.pop("savedView", None)               # 表示の状態はパッケージだけのもの
         if args.no_animation:
             scene.pop("animation", None)
         if any(t.get("packed") for t in scene.get("textures") or []):
@@ -94,7 +95,8 @@ def cmd_pack(args) -> int:
         return 1
     say = None if args.quiet else (lambda msg: sys.stderr.write("\r%-60s" % msg[:60]))
     r = package.write_package(scene, out, textures=args.textures, max_size=args.max_size, quality=args.quality,
-                              source=source_pkg, convert=False if args.keep_textures else None, progress=say)
+                              source=source_pkg, convert=False if args.keep_textures else None, progress=say,
+                              view=None if args.no_view else "keep")
     if not args.quiet:
         sys.stderr.write("\r%-60s\r" % "")
     print("書き出しました: %s（%s・%.2f 秒）" % (out, _mb(r["size"]), time.time() - t0))
@@ -276,6 +278,7 @@ def main(argv=None) -> int:
     pk.add_argument("--quality", type=int, default=80, help="WebP の品質（1〜100。既定 80）")
     pk.add_argument("--keep-textures", action="store_true", help="テクスチャを WebP にせず、元のファイルのまま入れる")
     pk.add_argument("--no-animation", action="store_true", help="アニメーションを書き出さない")
+    pk.add_argument("--no-view", action="store_true", help="元の .msv の表示の状態（カメラ・表示設定など）を引き継がない")
     pk.add_argument("-q", "--quiet", action="store_true")
     pi = sub.add_parser("info", help="内容の概要を表示")
     pi.add_argument("input")
