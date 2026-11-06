@@ -1102,7 +1102,7 @@ class ViewerApp {
     // （カーブの形を持つコントローラーは、カーブそのものが見えるので目印を出さない）
     const controls = [...this.rig.directDrivers].filter((ni) => this.data.nodes[ni].type !== 'joint'
       && !meshNodes.has(ni) && !this.curves.hasCurve(ni)).sort((a, b) => a - b);
-    const roles = classifyControls(anim.graph || [], this.data.nodes, controls);
+    const roles = classifyControls(anim.graph || [], this.data.nodes, controls, anim.props || []);
     // 骨のない部分の大きさの基準: スキンのあるメッシュ（なければメッシュ全体）の大きさ
     this.overlay.setControllers(controls, roles, characterRadius(this.built) || this.sceneRadius);
     this.applyControlOptions();

@@ -714,7 +714,7 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
             e = ik_of[id(n)]
             entry["ik"] = {"solver": e["solver"], "chain": [out_index[id(j)] for j in e["chain"]]}
             moving.update(out_index[id(j)] for j in e["chain"][:-1])
-        if n.type in ("nurbsCurve", "locator"):
+        if n.type in ("nurbsCurve", "locator") or n.custom_shape:
             entry["parent"] = out_index.get(id(n.parent), -1) if n.parent is not None else -1
             if id(n) in shape_index:
                 entry["shape"] = shape_index[id(n)]     # 表示するカーブ（共通 JSON の curves の番号）

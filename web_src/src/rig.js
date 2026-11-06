@@ -381,11 +381,10 @@ export class RigEvaluator {
         addUp(g.dag);
         if (sceneNodes[g.dag].parent >= 0) this.directDrivers.add(sceneNodes[g.dag].parent);
       }
-      for (const src of Object.values(g.inputs || {})) {
-        const s = src.node !== undefined ? this.byId.get(src.node) : null;
-        if (s && s.dag >= 0) addUp(s.dag);
-      }
+      for (const src of Object.values(g.inputs || {})) this.addDriverSource(src, addUp);
     }
+    // 表示（.v など）・カメラの属性などの入力元も、コントローラー（表示を切り替えるスイッチなど）
+    for (const p of clip.raw.props || []) for (const src of Object.values(p.inputs || {})) this.addDriverSource(src, addUp);
     // 動くノード: カーブ・リグの接続・IK で値が決まるノードと、スケールが動く親を持つジョイント（スケール補正）。
     // それ以外の材料（コントローラーなど）は、プラグの値を読むためだけに使い、行列はファイルの値のまま
     this.moving = new Set();
@@ -581,6 +580,17 @@ export class RigEvaluator {
       if (!s) this.dependents.set(x, s = new Set());
       s.add(ni);
     }
+  }
+
+  /**
+   * 接続元 src の DAG ノードを、ほかを動かすノード（drivers・directDrivers）に加える。ロケーター・自作のシェイプの
+   * 属性（独自の属性のスイッチなど）なら、その transform（Maya でシェイプを選ぶと選ばれるノード）
+   */
+  addDriverSource(src, addUp) {
+    const s = src.node !== undefined ? this.byId.get(src.node) : null;
+    if (!s) return;
+    if (s.dag >= 0) addUp(s.dag);
+    else if (s.type !== 'nurbsCurve' && s.parent >= 0) addUp(s.parent);
   }
 
   // ------------------------------------------------------------------ 再生キャッシュ

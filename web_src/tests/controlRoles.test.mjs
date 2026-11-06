@@ -21,7 +21,7 @@ function roles(name) {
   const curveNodes = new Set((d.curves || []).map((c) => c.transform));
   const list = [...rig.directDrivers].filter((ni) => d.nodes[ni].type !== 'joint' && !meshNodes.has(ni) && !curveNodes.has(ni));
   const out = {};
-  for (const [ni, r] of classifyControls(d.animation.graph, d.nodes, list)) {
+  for (const [ni, r] of classifyControls(d.animation.graph, d.nodes, list, d.animation.props)) {
     out[d.nodes[ni].name] = { ...r, chain: r.chain && r.chain.map((i) => d.nodes[i].name), joint: r.joint >= 0 ? d.nodes[r.joint].name : undefined,
       lineTo: r.lineTo >= 0 ? d.nodes[r.lineTo].name : undefined };
   }
@@ -78,4 +78,19 @@ test('名前から左右を決める', () => {
   for (const n of ['L_arm_ctrl', 'leftHand_ctrl', 'handL', 'LArm', 'rig:l_leg_ik', 'ctrl_l01', 'lf_foot']) assert.equal(sideFromName(n), 'L', n);
   for (const n of ['arm_R', 'rt_foot', 'footRight', '|grp|R_hand']) assert.equal(sideFromName(n), 'R', n);
   for (const n of ['BALL_ctrl', 'spine_ctrl', 'Lip_ctrl', 'IKFK_switch', 'R_L_mix', 'root']) assert.equal(sideFromName(n), null, n);
+});
+
+test('表示を切り替えるだけのコントローラー（animation.props の入力元）も目印を出し、役割は属性のスイッチ', () => {
+  const r = roles('vis_camera_sample');
+  assert.equal(r.vis_ctrl.role, 'switch');               // 独自の属性 geoVis → box.v（カーブの形のない transform）
+});
+
+test('ロケーター・自作のシェイプの属性が表示を切り替えるときは、その transform をスイッチにする', () => {
+  // ノード 0: ctrl_grp、1: visSwitch（transform）、2: geo。グラフの 0 は visSwitch のシェイプ（DAG ノードでない）
+  const nodes = [{ name: 'ctrl_grp', type: 'transform', parent: -1 }, { name: 'visSwitch', type: 'transform', parent: 0 },
+    { name: 'geo', type: 'transform', parent: -1 }];
+  const graph = [{ id: 0, name: 'visSwitchShape', type: 'switchLocator', dag: -1, parent: 1 }];
+  const props = [{ kind: 'node', index: 2, inputs: { v: { node: 0, attr: 'proxyVis' } } }];
+  assert.equal(classifyControls(graph, nodes, [1], props).get(1).role, 'switch');
+  assert.equal(classifyControls(graph, nodes, [1], []).get(1).role, 'other');      // 使われ方が分からなければその他
 });
