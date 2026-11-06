@@ -7,7 +7,7 @@ import {
 import { MayaControls } from './mayaControls.js';
 import { combineSelection, makeProjector, normRect, pointHitsRect, polylineHitsRect, selectionModeOf, trianglesHitRect } from './marquee.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
-import { installGizmoLocks } from './gizmoLocks.js';
+import { commonLocks, installGizmoLocks } from './gizmoLocks.js';
 import { PoseState, fixChannels, hasFixed, identityPose, isIdentityPose, limitPose, nodeChannels, poseFromTransform, poseKey, poseMatrix, poseQuaternion, propagatePoseDelta } from './pose.js';
 import {
   applyPoseSource, hasBindPose, poseBaseMatrix, BASE_COLOR, buildScene, characterRadius, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
@@ -1794,17 +1794,34 @@ class ViewerApp {
     return { ro: roOf(a.ro), jo: isJoint ? a.jo || null : null, ra: a.ra || null };
   }
 
+  /** ハンドルで一緒に動かすノード（リードと、複数選んでいるときのほかの選択。選んだノードの子孫は親と一緒に動くので除く） */
+  gizmoNodes() {
+    if (this.selected < 0) return [];
+    if (this.selection.length < 2) return [this.selected];
+    const nodes = this.data.nodes, set = new Set(this.selection);
+    const underSelected = (ni) => { for (let p = nodes[ni].parent; p >= 0; p = nodes[p].parent) if (set.has(p)) return true; return false; };
+    return [this.selected, ...this.selection.filter((ni) => ni !== this.selected && !underSelected(ni))];
+  }
+
+  /** ハンドルの灰色にする軸（tool のチャンネルを、一緒に動かすノードすべてでロックしている軸。[X, Y, Z] か null） */
+  gizmoLocks(tool = this.settings.tool) {
+    const key = { translate: 't', rotate: 'r', scale: 's' }[tool];
+    if (!key) return null;
+    return commonLocks(this.gizmoNodes().map((ni) => (this.lockedOf(ni) || {})[key] || null));
+  }
+
   /** ロックした軸（灰色）のハンドルを押したときの説明 */
   showLockedHandleMessage(axis) {
     if (this.selected < 0) return;
     const mode = this.gizmo.mode;
     const label = { translate: '移動', rotate: '回転', scale: 'スケール' }[mode] || '';
     const key = { translate: 't', rotate: 'r', scale: 's' }[mode];
-    const locks = (this.lockedOf(this.selected) || {})[key] || [];
+    const locks = this.gizmoLocks(mode) || [];
     const names = ['X', 'Y', 'Z'].filter((a, i) => locks[i]).map((a) => `${key}${a.toLowerCase()}`);
     const axisText = axis === 'E' || axis === 'XYZE' || axis === 'XYZ' ? '' : ` ${axis} `;
-    this.ui.setMessage(`${this.data.nodes[this.selected].name} の${label}${axisText}は Maya でロックされているため動かせません`
-      + `（ロック: ${names.join('・')}）`, 4000);
+    const n = this.gizmoNodes().length;
+    const who = n > 1 ? `選んだ ${n} 個すべてで、` : `${this.data.nodes[this.selected].name} の`;
+    this.ui.setMessage(`${who}${label}${axisText}は Maya でロックされているため動かせません（ロック: ${names.join('・')}）`, 4000);
   }
 
   /** Maya でロックした移動・回転・スケール（{ t | r | s: [X, Y, Z] } か null） */
@@ -2037,9 +2054,9 @@ class ViewerApp {
       this.gizmo.setMode(tool);
       this.gizmo.setSpace(this.settings.space);
       // Maya と同じく、ロックした成分（移動・回転・スケール）の軸のハンドルは灰色で表示し、つかめない
-      // （3 成分ともロックならすべて灰色。平面・中央のハンドルは、含む軸がすべてロックのときだけ灰色で、一部なら結果で固定する）
-      const locked = this.lockedOf(this.selected);
-      this.gizmo.setLockedAxes(locked && locked[{ translate: 't', rotate: 'r', scale: 's' }[tool]]);
+      // （3 成分ともロックならすべて灰色。平面・中央のハンドルは、含む軸がすべてロックのときだけ灰色で、一部なら結果で固定する）。
+      // 複数選んでいるときは、一緒に動かすノードすべてでロックしている軸だけ（動かせるノードがあればつかめ、ノードごとに固定する）
+      this.gizmo.setLockedAxes(this.gizmoLocks(tool));
       if (this.gizmo.object !== this.poseProxy) this.gizmo.attach(this.poseProxy);
     }
     this.requestRender();
@@ -2065,11 +2082,14 @@ class ViewerApp {
     let pose = poseFromTransform(pr.position, pr.quaternion, pr.scale);
     // スケールを 0 付近で止めたときは代理オブジェクトにも反映する
     pr.scale.fromArray(pose.s);
-    // Maya でロックしたチャンネルは変えない（ハンドルはドラッグを終えたときに結果の位置へ戻す）
+    // Maya でロックしたチャンネルは変えない（ハンドルはドラッグを終えたときに結果の位置へ戻す）。
+    // 一緒に動かすノードには、リードのロック・制限で固定する前の量（ハンドルを動かした量）を伝え、ノードごとに固定する
+    // （リードでロックした軸でも、ほかのノードはその軸に動かせる）
+    const handled = pose;
     pose = this.lockedPose(this.selected, pose);
     this.beforeDriverPose(this.selected);
     this.pose.set(this.selected, pose);
-    if (this.gizmoGroup) this.applyGizmoGroup(pose);
+    if (this.gizmoGroup) this.applyGizmoGroup(handled);
     this.afterPoseChange();
     this.ui.showPoseFor(this.selected, pose);
   }
@@ -2080,11 +2100,8 @@ class ViewerApp {
    */
   gizmoGroupStart() {
     if (!this.pose || this.selection.length < 2 || this.selected < 0) return null;
-    const nodes = this.data.nodes;
-    const set = new Set(this.selection);
-    const underSelected = (ni) => { for (let p = nodes[ni].parent; p >= 0; p = nodes[p].parent) if (set.has(p)) return true; return false; };
     this.built.root.updateMatrixWorld(true);
-    const others = this.selection.filter((ni) => ni !== this.selected && !underSelected(ni))
+    const others = this.gizmoNodes().slice(1)
       .map((ni) => ({ ni, start: this.pose.get(ni), frame: this.pose.frameMatrix(ni, new Matrix4()) }));
     if (!others.length) return null;
     return { lead: this.pose.get(this.selected), leadFrame: this.pose.frameMatrix(this.selected, new Matrix4()), others };

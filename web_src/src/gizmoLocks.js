@@ -4,7 +4,9 @@
 // （チャンネルボックスでロックした属性が灰色になるのと同じ色の意味）。3 成分ともロックしていれば、すべてのハンドルが灰色。
 // 平面のハンドル（XY など）・中央のハンドル（XYZ）・視点の回転（E・XYZE）は、含む軸がすべてロックされているときだけ灰色にする
 // （一部だけなら動かせ、ロックした成分は結果で固定する: ViewerApp.lockedPose）。
-import { Color } from 'three';
+// また、移動・スケールのハンドルは Maya と同じく各軸のプラス側だけにする（three.js はマイナス側にも矢印・箱を描き、
+// 線のない位置に出るので平面のハンドルの一部のように見える）。
+import { Color, Vector3 } from 'three';
 
 export const LOCKED_COLOR = new Color(0xa0a4a8);
 const LOCKED_OPACITY = 0.8;
@@ -18,6 +20,25 @@ export function handleLocked(name, locks) {
   if (name === 'E' || name === 'XYZE') return locks.every(Boolean);
   const axes = [0, 1, 2].filter((i) => name.includes('XYZ'[i]));
   return axes.length > 0 && axes.every((i) => !!locks[i]);
+}
+
+/**
+ * 複数のノードを一緒に動かすときのロック: すべてのノードでロックしている軸だけ（1 つでも動かせるノードがあれば、その軸はつかめる）。
+ * @param list 各ノードのロック（[X, Y, Z] か null）。空なら null
+ */
+export function commonLocks(list) {
+  if (!list.length) return null;
+  const out = [0, 1, 2].map((i) => list.every((l) => !!(l && l[i])));
+  return out.some(Boolean) ? out : null;
+}
+
+/** 移動・スケールのハンドルの、マイナス側の部品（矢印・箱とそのつかむ範囲）か */
+function negativeSide(handle) {
+  const axis = 'XYZ'.indexOf(handle.name);
+  if (axis < 0 || handle.name.length !== 1 || !handle.geometry) return false;
+  if (!handle.geometry.boundingSphere) handle.geometry.computeBoundingSphere();
+  const c = handle.geometry.boundingSphere.center;
+  return new Vector3(c.x, c.y, c.z).getComponent(axis) < -0.05;
 }
 
 /**
@@ -51,9 +72,15 @@ export function installGizmoLocks(controls) {
   for (const mode of ['translate', 'rotate', 'scale']) {
     for (const handle of gizmo.gizmo[mode].children) if (handle.material) handle.material = handle.material.clone();
   }
+  // 移動・スケールのマイナス側の部品（表示とつかむ範囲）
+  const negatives = [];
+  for (const mode of ['translate', 'scale']) {
+    for (const handle of [...gizmo.gizmo[mode].children, ...gizmo.picker[mode].children]) if (negativeSide(handle)) negatives.push(handle);
+  }
   const update = gizmo.updateMatrixWorld.bind(gizmo);
   gizmo.updateMatrixWorld = (force) => {
     update(force);
+    for (const handle of negatives) handle.visible = false;      // 見えないものは、つかむ判定にも使われない
     const locks = controls.lockedAxes;
     if (!locks) return;
     for (const handle of gizmo.gizmo[gizmo.mode].children) {

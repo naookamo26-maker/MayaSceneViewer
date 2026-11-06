@@ -1,7 +1,7 @@
 // ハンドルのロックした軸（灰色で表示し、つかめない）の判定
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handleLocked } from '../src/gizmoLocks.js';
+import { commonLocks, handleLocked } from '../src/gizmoLocks.js';
 
 test('1 軸のハンドルは、その軸がロックなら動かせない', () => {
   const locks = [true, false, false];
@@ -29,4 +29,12 @@ test('ロックがなければ、どのハンドルも動かせる', () => {
     assert.equal(handleLocked(name, null), false);
     assert.equal(handleLocked(name, [false, false, false]), false);
   }
+});
+
+test('複数のノードを一緒に動かすとき: すべてのノードでロックしている軸だけを灰色にする', () => {
+  assert.equal(commonLocks([[true, false, false], null]), null);                  // ほかのノードは X に動かせる
+  assert.deepEqual(commonLocks([[true, true, false], [true, false, false]]), [true, false, false]);
+  assert.deepEqual(commonLocks([[true, true, true]]), [true, true, true]);
+  assert.equal(commonLocks([]), null);
+  assert.equal(commonLocks([null, null]), null);
 });
