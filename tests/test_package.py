@@ -25,10 +25,21 @@ RIG = os.path.join(ROOT, "samples", "rig6_sample.ma")
 HAS_PILLOW = package.pillow_status()[0]
 
 
+SAMPLE_VIEW = {"version": 1, "settings": {"wire": True, "lighting": "flat"},
+               "camera": {"mode": "free", "position": [30, 20, 40], "target": [0, 2, 0], "fov": 35},
+               "visibility": {"hidden": ["|plain_geo"], "shown": [], "meshes": []}, "poses": []}
+
+
+def make_textured_sample(path: str = os.path.join(ROOT, "samples", "textured_sample.msv")) -> dict:
+    """JS のテスト（web_src/tests/package.test.mjs）が使う samples/textured_sample.msv を作り直す"""
+    return package.write_package(load_ma(TEXTURED, animation=True), path, textures="all", view=SAMPLE_VIEW)
+
+
 def _strip(scene: dict) -> dict:
     """比べるため: テクスチャ（同梱で書き換わる）と、読み込み時に付く source.packagePath を除く"""
     s = json.loads(json.dumps(scene))
     s.pop("textures", None)
+    s.pop("savedView", None)
     (s.get("source") or {}).pop("packagePath", None)
     return s
 
@@ -179,6 +190,46 @@ class PackageTest(unittest.TestCase):
                 self.assertEqual(pkg.read(t1["packed"]), pkg2.read(t2["packed"]))
         with zipfile.ZipFile(second) as zf:          # 読み込み時に付けた packagePath は書き出さない
             self.assertNotIn("packagePath", json.loads(zf.read("scene.json"))["source"])
+
+    def test_view_state(self):
+        """表示の状態: view.json に入り、読むと savedView になる。作り直しでは引き継ぎ、view=None なら入れない"""
+        first = self.out("view1.msv")
+        r = package.write_package(self.textured, first, view=SAMPLE_VIEW)
+        self.assertTrue(r["view"])
+        scene, pkg = package.read_package(first)
+        self.assertEqual(scene["savedView"], SAMPLE_VIEW)
+        self.assertEqual(pkg.view(), SAMPLE_VIEW)
+        with zipfile.ZipFile(first) as zf:          # scene.json には入れない
+            self.assertNotIn("savedView", json.loads(zf.read("scene.json")))
+        second, third = self.out("view2.msv"), self.out("view3.msv")
+        package.write_package(scene, second, source=pkg)           # 既定（keep）: 引き継ぐ
+        package.write_package(scene, third, source=pkg, view=None)
+        self.assertEqual(package.Package(second).view(), SAMPLE_VIEW)
+        self.assertIsNone(package.Package(third).view())
+        self.assertNotIn("savedView", package.read_package(third)[0])
+        # 新しく渡したものが優先
+        other = dict(SAMPLE_VIEW, frame=12)
+        fourth = self.out("view4.msv")
+        package.write_package(scene, fourth, source=pkg, view=other)
+        self.assertEqual(package.Package(fourth).view()["frame"], 12)
+
+    def test_cli_view(self):
+        """pack は元の .msv の表示の状態を引き継ぐ（--no-view で外す）。export の JSON には残さない"""
+        src = self.out("cliview.msv")
+        package.write_package(self.textured, src, view=SAMPLE_VIEW)
+        kept, dropped, js = self.out("kept.msv"), self.out("dropped.msv"), self.out("cliview.json")
+        with mock.patch("sys.stdout", new=io.StringIO()):
+            self.assertEqual(cli_main(["pack", src, "-o", kept, "-q"]), 0)
+            self.assertEqual(cli_main(["pack", src, "-o", dropped, "-q", "--no-view"]), 0)
+            self.assertEqual(cli_main(["export", src, "-o", js, "-q"]), 0)
+        self.assertEqual(package.Package(kept).view(), SAMPLE_VIEW)
+        self.assertIsNone(package.Package(dropped).view())
+        with open(js, encoding="utf-8") as f:
+            self.assertNotIn("savedView", json.load(f))
+
+    def test_sample_up_to_date(self):
+        """samples/textured_sample.msv（JS のテスト用）に表示の状態が入っている"""
+        self.assertEqual(package.Package(os.path.join(ROOT, "samples", "textured_sample.msv")).view(), SAMPLE_VIEW)
 
     def test_bad_files(self):
         bad = self.out("bad.msv")

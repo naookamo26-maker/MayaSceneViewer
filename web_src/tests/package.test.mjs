@@ -1,6 +1,7 @@
 // パッケージ（.msv）の読み込み: zip の目次・展開・数値の配列の復元・同梱のテクスチャ
 // 前提: python -m ma_viewer pack samples/sample_arm.ma -o samples/sample_arm.msv
-//       python -m ma_viewer pack samples/textured_project/scenes/textured_sample.ma -o samples/textured_sample.msv --textures all
+//       samples/textured_sample.msv は textured_sample.ma を --textures all で、表示の状態（view.json）付きで書き出したもの
+//       （tests/test_package.py の make_textured_sample で作り直せる）
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -60,6 +61,16 @@ test('同梱のテクスチャは WebP で、目次から読める。見つか�
   const leaf = scene.textures.find((t) => t.node === 'leaf_file');
   assert.equal(imageInfo((await pkg.read(leaf.packed)).buffer).opaque, false);
   buildScene(scene);
+});
+
+test('view.json（書き出したときの表示の状態）は scene.savedView に入る', async () => {
+  const { scene } = await openPackage(load('textured_sample.msv'));
+  assert.equal(scene.savedView.version, 1);
+  assert.equal(scene.savedView.camera.mode, 'free');
+  assert.deepEqual(scene.savedView.visibility.hidden, ['|plain_geo']);
+  // view.json のないパッケージでは入らない
+  const { scene: arm } = await openPackage(load('sample_arm.msv'));
+  assert.equal(arm.savedView, undefined);
 });
 
 test('zip でないもの・壊れたものは分かりやすい誤りにする', async () => {

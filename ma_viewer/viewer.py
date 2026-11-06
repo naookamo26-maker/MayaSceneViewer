@@ -1106,6 +1106,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
                                 else "テクスチャは元のまま入れます（%s）" % why, dlg)
         note.setWordWrap(True)
         form.addRow(note)
+        view_box = QtWidgets.QCheckBox("表示の状態を保存する（カメラ・表示設定・非表示・フレーム・ポーズ）", dlg)
+        view_box.setToolTip("開いたときに、いまの見た目で表示する。アニメーションカーブのあるノードのポーズは保存しない。"
+                            "選択は保存しない")
+        view_box.setChecked(_settings_bool("packageView", True))
+        form.addRow(view_box)
         buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok
                                              | QtWidgets.QDialogButtonBox.StandardButton.Cancel, dlg)
         buttons.accepted.connect(dlg.accept)
@@ -1114,7 +1119,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         mode = combo.currentData()
+        with_view = view_box.isChecked()
         _settings_set("packageTextures", mode)
+        _settings_set("packageView", with_view)
         base = os.path.splitext(self.current_path)[0] + package.EXT if self.current_path else "scene" + package.EXT
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, title, base, "パッケージ (*.msv)")
         if not path:
@@ -1125,10 +1132,29 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if src_path and os.path.normcase(os.path.abspath(src_path)) == os.path.normcase(os.path.abspath(path)):
             self._error("開いているパッケージと同じファイルには書き出せません。別の名前にしてください。")
             return
+        scene = self.current_scene
+        if not with_view:
+            self._write_package(scene, path, mode, src_path, None)
+            return
+
+        def got(raw):
+            # ビューアの表示の状態（JSON の文字列）を受け取ってから書き出す
+            try:
+                view = json.loads(raw) if isinstance(raw, str) and raw not in ("", "null") else None
+            except ValueError:
+                view = None
+            if view is None:
+                self.log("warn", "表示の状態を受け取れなかったため、保存せずに書き出します")
+            self._write_package(scene, path, mode, src_path, view)
+        self.viewer.run_js("window.mayaViewer && window.mayaViewer.getViewState ? window.mayaViewer.getViewState() : ''",
+                           got)
+
+    def _write_package(self, scene, path, mode, src_path, view):
+        from . import package
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
         try:
             source = package.Package(src_path) if src_path and os.path.isfile(src_path) else None
-            r = package.write_package(self.current_scene, path, textures=mode, source=source)
+            r = package.write_package(scene, path, textures=mode, source=source, view=view)
         except Exception as exc:  # noqa: BLE001
             QtWidgets.QApplication.restoreOverrideCursor()
             self.log("error", traceback.format_exc())
@@ -1137,8 +1163,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
         QtWidgets.QApplication.restoreOverrideCursor()
         size = "%.2f MB" % (r["size"] / 1048576.0)
         self.statusBar().showMessage("書き出しました: %s（%s）" % (path, size), 6000)
-        self.log("info", "書き出しました: %s（%s・テクスチャ %d 枚%s）"
-                 % (path, size, r["textures"], "・WebP" if r["converted"] else "・元のまま"))
+        self.log("info", "書き出しました: %s（%s・テクスチャ %d 枚%s%s）"
+                 % (path, size, r["textures"], "・WebP" if r["converted"] else "・元のまま",
+                    "・表示の状態あり" if r["view"] else ""))
         for w in r["warnings"]:
             self.log("warn", w)
 
