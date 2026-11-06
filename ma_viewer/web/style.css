@@ -605,9 +605,22 @@ body.curve-editor-collapsed .ce-head { border-bottom: none; }
 .ce-node { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 30%; }
 .ce-info { color: var(--text-dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
 .ce-body { flex: 1; min-height: 0; display: flex; }
-.ce-list { width: 190px; flex: none; overflow: auto; border-right: 1px solid var(--line); padding: 4px 0; }
-.ce-row { display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; white-space: nowrap; cursor: pointer; user-select: none; }
+.ce-list { width: 210px; flex: none; overflow: auto; padding: 4px 0; }
+.ce-list-resizer { width: 5px; flex: none; cursor: ew-resize; border-left: 1px solid var(--line); touch-action: none; }
+.ce-list-resizer:hover { background: var(--panel-2); }
+.ce-node-row { display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px 0 2px; white-space: nowrap; user-select: none; color: var(--text); }
+.ce-node-row:hover { background: var(--panel-2); }
+.ce-node-row input { margin: 0 2px 0 0; }
+.ce-fold { width: 16px; height: 18px; padding: 0; border: none; background: none; color: var(--text-dim); cursor: pointer; flex: none; font-size: 10px; }
+.ce-fold::before { content: '▾'; }
+.ce-group.folded .ce-fold::before { content: '▸'; }
+.ce-group.folded .ce-row { display: none; }
+.ce-group.active > .ce-node-row .ce-node-name { color: var(--select); }
+.ce-node-name { overflow: hidden; text-overflow: ellipsis; font-weight: 600; flex: 1; min-width: 0; }
+.ce-count { color: var(--text-dim); font-size: 10px; flex: none; }
+.ce-row { display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px 0 24px; white-space: nowrap; cursor: pointer; user-select: none; }
 .ce-row:hover { background: var(--panel-2); }
+.ce-row.active { background: var(--panel-2); box-shadow: inset 2px 0 0 #f2f2f2; }
 .ce-row input { margin: 0; }
 .ce-row i { width: 10px; height: 3px; flex: none; border-radius: 1px; }
 .ce-row span { overflow: hidden; text-overflow: ellipsis; }

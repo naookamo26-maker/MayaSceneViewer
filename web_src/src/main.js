@@ -1433,7 +1433,7 @@ class ViewerApp {
     this.updateGizmo();
     if (this.settings.weightMode === 'selected') this.applyWeights();
     this.updateTimelineKeys();
-    this.curveEditor.setNode(ni);
+    this.curveEditor.setNodes(sel);
     if (opts.notify) this.notifySelection();
     this.requestRender();
   }
