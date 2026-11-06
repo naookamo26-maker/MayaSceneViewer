@@ -658,6 +658,32 @@ class TestStage6(unittest.TestCase):
         from ma_viewer.rig_report import rig_report_file
         self.assertIn("■ transform として扱った自作ノード: myCtrlTransform（cx_ctrl）", rig_report_file(self.path))
 
+    def test_custom_shape(self):
+        """自作のシェイプ（プラグインのロケーターなど。型名が Shape で終わらない）はシェイプとして扱い、親の transform を
+        ロケーターと同じくコントローラーの目印で示す（シェイプ側の描画のオーバーライドの色・独自の属性も使う）。
+        移動・回転・スケールを持つ自作ノードは、葉でもこれまでどおり transform"""
+        body = ('createNode joint -n "jA";\ncreateNode joint -n "jB";\ncreateNode joint -n "jC";\n'
+                'createNode transform -n "ctrlA";\n\tsetAttr ".t" -type "double3" 0 2 0 ;\n'
+                'createNode ctrlLocator -n "ctrlAShape" -p "ctrlA";\n\tsetAttr -k off ".v";\n'
+                '\tsetAttr ".ove" yes;\n\tsetAttr ".ovc" 13;\n'
+                '\taddAttr -ci true -sn "ikFk" -ln "ikFk" -at "double";\n\tsetAttr -k on ".ikFk" 1;\n'
+                'createNode transform -n "grp";\n'
+                'createNode rigCtrlTransform -n "leafCtrl" -p "grp";\n\tsetAttr ".t" -type "double3" 1 1 1 ;\n'
+                'createNode condition -n "swc";\n\tsetAttr ".st" 0.5;\n\tsetAttr ".op" 2;\n'
+                'connectAttr "ctrlA.t" "jA.t";\nconnectAttr "leafCtrl.t" "jB.t";\n'
+                'connectAttr "ctrlAShape.ikFk" "swc.ft";\nconnectAttr "swc.ocr" "jC.v";\n')
+        sc, anim = from_text(body)
+        nodes = {n["name"]: n for n in sc["nodes"]}
+        self.assertNotIn("ctrlAShape", nodes)                          # 階層に transform として出さない
+        self.assertEqual((nodes["ctrlA"].get("shape"), nodes["ctrlA"].get("shapeType")), ("locator", "ctrlLocator"))
+        self.assertEqual(nodes["ctrlA"].get("color"), [1.0, 0.0, 0.0])  # シェイプの描画のオーバーライド（色番号 13）
+        self.assertEqual(nodes["leafCtrl"]["type"], "rigCtrlTransform")
+        self.assertIsNone(nodes["leafCtrl"].get("shape"))
+        self.assertFalse(any("ctrlLocator" in w for w in sc["warnings"]))   # transform として扱う警告は出さない
+        self.assertTrue(any("rigCtrlTransform（leafCtrl）を transform として扱います" in w for w in sc["warnings"]))
+        shape = next(g for g in anim["graph"] if g["name"] == "ctrlAShape")    # シェイプの独自の属性はリグで読む
+        self.assertEqual((shape["dag"], shape["attrs"]["ikFk"]), (-1, 1.0))
+
     def test_custom_calc_node_not_transform(self):
         """入力の属性の名前が r・t などの計算用の自作ノード（親子なし・transform の行列の出力なし）は transform として
         扱わない（扱うと計算の結果を使わず、評価できないノードとしても出なくなる）"""

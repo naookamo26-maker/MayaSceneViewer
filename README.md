@@ -46,7 +46,7 @@ Maya ASCII（.ma）のモデル形状・ジョイント・スキンウェイト�
     | 照準（向くノードと破線で結ぶ） | エイム・注視のターゲット | aimConstraint・lookAt のターゲットと上方向のノード |
     | 旗 | 属性のスイッチ | 値が condition・reverse・blendColors などの計算ノードに入る（IK/FK の切り替えなど） |
     | 四面体 | ドリブンキーのドライバー | animCurveUA・UL・UU・UT の入力（unitConversion を挟んだものも） |
-    | 十字 | ロケーター・計算の材料 | ロケーター、または distanceBetween・decomposeMatrix などに行列を渡すノード |
+    | 十字 | ロケーター・計算の材料 | ロケーター（プラグインの自作のロケーターなども）、または distanceBetween・decomposeMatrix などに行列を渡すノード |
     | 八面体 | その他 | 上のどれにも当たらない |
 
     目印はノードのピボット（ロケーターは localPosition）に置きます（フリーズしたコントローラーや cluster のハンドルも、形の位置に出ます）。菱形のアイコンの右の ▾ で開くパネルで、次を設定できます。
@@ -147,7 +147,7 @@ Python で書いたノードプラグイン（API 2.0・1.0）は、`python -m m
 ```
 
 - 置き場所（後のものが優先）: `~/.ma_viewer/nodes.json`、環境変数 `MA_VIEWER_NODES` のパス、.ma と同じフォルダの `ma_viewer_nodes.json`。
-- 「as」: ビューアが評価できる型（multMatrix・inverseMatrix・decomposeMatrix・composeMatrix・multiplyDivide・plusMinusAverage・transform・joint など）。型を知らない DAG ノードは、指定がなければ transform として扱います（親のスケールを受け継ぎます）。
+- 「as」: ビューアが評価できる型（multMatrix・inverseMatrix・decomposeMatrix・composeMatrix・multiplyDivide・plusMinusAverage・transform・joint など）。型を知らない DAG ノードは、指定がなければ transform として扱います（親のスケールを受け継ぎます）。ただし、親があって子がなく、移動・回転・スケールの値・ロック・接続を持たないもの（プラグインのロケーターなど、コントローラーの形を描く自作のシェイプ。名前が …Shape なら行列の出力があっても）はシェイプとして扱い、その transform を標準のロケーターと同じに扱います（コントローラーの目印は十字、色はシェイプの描画のオーバーライド、階層のアイコン、選択情報に型を表示）。シェイプの独自の属性（IK・FK の切り替えなど）もリグで読みます。
 - 「segmentScaleCompensate」: transform・joint として扱うノードで、親のスケールを打ち消すか（ジョイントの segmentScaleCompensate と同じ計算。親のスケールの逆数を、ローカル行列の移動の直前に掛けます。inverseScale の接続がなくても親のスケールを使います）。joint の既定は true、transform の既定は false。親のスケールを受け継がない自作の transform（伸び縮みするジョイントの下に置いても、向きがゆがまないもの）に使います。打ち消さずに扱うと、親のスケールが軸ごとに違うときに行列がゆがみ、そのノードを使うコンストレイントの向きがずれます。
 - 「attrs」: 自作ノードの属性名 → 標準ノードの短い属性名。`"i"` のように添字なしで書くと元の添字を引き継ぎ（inMatrix[2] → i[2]）、`"i[0]"` のように添字つきで書くとその属性になります。行列を扱う主な型の属性: multMatrix は入力 `i[k]`・出力 `o`、inverseMatrix は `imat` → `omat`、decomposeMatrix は `imat` → `ot`・`or`・`os`・`oq`、composeMatrix は `it`・`ir`・`is` → `omat`。
 

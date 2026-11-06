@@ -262,7 +262,7 @@ def _sparse_into(weights: Dict[int, Dict[int, float]], a: int, b: int, vals) -> 
 class MaNode:
     __slots__ = ("name", "type", "parent", "children", "path", "order", "is_dag",
                  "xattrs", "mesh", "skin", "tweak", "inputs", "raw", "skip_attrs", "span", "attr_map", "ns", "espan",
-                 "node_def", "baked", "xspans", "ssc_parent", "locks", "memo")
+                 "node_def", "baked", "xspans", "ssc_parent", "locks", "memo", "custom_shape")
 
     def __init__(self, name: str, node_type: str, parent: Optional["MaNode"], order: int, ns: str = ""):
         self.name = name
@@ -293,10 +293,13 @@ class MaNode:
         self.locks: Dict[str, bool] = {}   # setAttr -l でロックした移動・回転・スケール（tx・t など → ロックするか）
         # 変換で求めた、祖先から引き継ぐ値（表示・テンプレート・表示の種類と色）。深い階層で祖先を何度もたどらないため
         self.memo: Optional[Dict[str, object]] = None
+        # 型を知らない自作のシェイプ（プラグインのロケーターなど。型名が Shape で終わらないもの）。
+        # extract_ma.promote_custom_transforms が決める
+        self.custom_shape = False
 
     @property
     def is_shape(self) -> bool:
-        if self.type in SHAPE_TYPES:
+        if self.type in SHAPE_TYPES or self.custom_shape:
             return True
         if self.type in TRANSFORM_TYPES:
             return False

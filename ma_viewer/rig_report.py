@@ -314,6 +314,10 @@ def rig_report(ms: MaScene, scene: dict, anim: Optional[dict]) -> str:
     if custom:
         out.append("■ transform として扱った自作ノード: %s" % "、".join(
             "%s（%s）" % (t, "、".join(names[:5]) + (" ほか" if len(names) > 5 else "")) for t, names in sorted(custom.items())))
+    shapes = getattr(ms, "custom_shapes", {}) or {}
+    if shapes:
+        out.append("■ シェイプとして扱った自作ノード（ロケーターと同じく目印で示す）: %s" % "、".join(
+            "%s（%s）" % (t, "、".join(names[:5]) + (" ほか" if len(names) > 5 else "")) for t, names in sorted(shapes.items())))
     out.append("")
     out.append("■ 評価できないノード")
     if info is None or (not info.unsupported and not any(e["problem"] for e in info.ik)):

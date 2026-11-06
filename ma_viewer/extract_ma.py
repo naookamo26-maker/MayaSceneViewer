@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 import os
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from . import mathutil as M
 from . import schema
@@ -1175,6 +1175,19 @@ _XFORM_SOURCE_PLUGS = {"wm", "worldMatrix", "pm", "parentMatrix", "wim", "worldI
                        "parentInverseMatrix", "xm", "xformMatrix"}
 
 
+# 移動・回転・スケールなど、transform にしかない属性（値・ロック・接続があれば transform。シェイプにはない）
+_XFORM_CHANNEL_RE = re.compile(r"^(t|r|s|ro|jo|ra|rp|sp|rpt|spt|sh|opm|it|translate|rotate|scale|rotateOrder|offsetParentMatrix|"
+                               r"inheritsTransform)([xyz]|X|Y|Z|xy|xz|yz)?$")
+_SHAPE_NAME_RE = re.compile(r"Shape\d*$")
+
+
+def _has_xform_channels(ms: MaScene, n: MaNode, outgoing: Set[int]) -> bool:
+    if n.locks or id(n) in outgoing:
+        return True
+    keys = list(n.xattrs) + [k.split("[")[0].split(".")[0] for k in n.inputs]
+    return any(_XFORM_CHANNEL_RE.match(k) for k in keys)
+
+
 def promote_custom_transforms(ms: MaScene) -> Dict[str, List[str]]:
     """型を知らないノード（プラグインの自作ノード）のうち、transform らしいものを transform として扱う。
 
@@ -1189,9 +1202,13 @@ def promote_custom_transforms(ms: MaScene) -> Dict[str, List[str]]:
         "mesh", "skinCluster", "tweak", "groupParts", "groupId", "script", "dagPose", "time", "ikRPsolver",
         "ikSCsolver", "ikSplineSolver", "ikSystem", "materialInfo", "shadingEngine", "objectSet"}
     evidence = set()
+    outgoing = set()                                   # 移動・回転・スケールの値を出力しているノード
     for src, sattr, _dst, _dattr in ms.connections:
-        if R.normalize_attr(sattr).split("[")[0] in _XFORM_SOURCE_PLUGS:
+        base = R.normalize_attr(sattr).split("[")[0]
+        if base in _XFORM_SOURCE_PLUGS:
             evidence.add(id(src))
+        if _XFORM_CHANNEL_RE.match(base.split(".")[0]):
+            outgoing.add(id(src))
     out: Dict[str, List[str]] = {}
     for n in ms.nodes:
         t = n.type
@@ -1201,6 +1218,15 @@ def promote_custom_transforms(ms: MaScene) -> Dict[str, List[str]]:
         if not (n.parent is not None or n.children or id(n) in evidence):
             continue
         n.is_dag = True
+        # 自作のシェイプ（プラグインのロケーターなど。コントローラーの形を描くものが多い）: 親があって子がなく、
+        # 移動・回転・スケールを持たないもの。名前が …Shape なら、行列の出力（.wm など）があってもシェイプ
+        # （型名が Shape で終わるものは、もとから MaNode.is_shape でシェイプ）
+        if (n.parent is not None and not n.children and not n.parent.is_shape
+                and not _has_xform_channels(ms, n, outgoing)
+                and (_SHAPE_NAME_RE.search(n.name) or id(n) not in evidence)):
+            n.custom_shape = True
+            ms.custom_shapes.setdefault(t, []).append(n.name)
+            continue
         out.setdefault(t, []).append(n.name)
     return out
 
@@ -1260,7 +1286,11 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
                 % "、".join("%s %d 本" % (t, len(v)) for t, v in sorted(curve_problems.items(),
                                                                          key=lambda kv: (-len(kv[1]), kv[0]))))
     # 自作のトランスフォームノード（プラグイン）は transform として扱う
+    ms.custom_shapes = {}
     ms.custom_transforms = promote_custom_transforms(ms)
+    for t, names in sorted(ms.custom_shapes.items()):
+        ms.note("自作ノードの型 %s（%s%s）をシェイプとして扱います（形は描かず、ロケーターと同じくコントローラーの目印で示します）。"
+                % (t, "、".join(names[:5]), " ほか %d 個" % (len(names) - 5) if len(names) > 5 else ""))
     for t, names in sorted(ms.custom_transforms.items()):
         ms.warn("自作ノードの型 %s（%s%s）を transform として扱います（移動・回転・スケールで位置を決めます）。"
                 % (t, "、".join(names[:5]), " ほか %d 個" % (len(names) - 5) if len(names) > 5 else ""),
@@ -1517,9 +1547,14 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             entry["unselectable"] = why     # Maya のビューポートでは選択できない（テンプレート・リファレンス）
         # コントローラーの目印に使う: ロケーターのシェイプと、描画のオーバーライド・ディスプレイレイヤーの色
         # （ロケーターならシェイプから、なければ transform から祖先へ。カーブと同じ探し方）
+        # 自作のシェイプ（プラグインのロケーターなど）もロケーターと同じに扱う（形は描かないので目印で示す）
         loc = next((c for c in x.children if c.type == "locator"), None)
+        if loc is None:
+            loc = next((c for c in x.children if c.custom_shape and _num(_shape_attrs(ms, c).get("io")) < 0.5), None)
         if loc is not None:
             entry["shape"] = "locator"
+            if loc.custom_shape:
+                entry["shapeType"] = loc.type     # 自作のシェイプの型（選択情報に出す）
         color, _display = curve_display(loc if loc is not None else x, (loc if loc is not None else x).xattrs)
         if color:
             entry["color"] = schema.round_list(color)
