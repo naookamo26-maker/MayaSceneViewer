@@ -2459,8 +2459,44 @@ class ViewerApp {
   // ------------------------------------------------------------------ カメラ
   frameAll(resetDirection = false) {
     if (!this.built || !this.renderer) return;
-    const box = computeBounds(this.built, this.settings.skin);
+    // Maya の「すべてをフレーム」（A）と同じく、ビューに見えているものだけを包む。何も見えていなければシーン全体
+    let box = this.visibleBounds();
+    if (box.isEmpty()) box = computeBounds(this.built, this.settings.skin, true);
     this.fit(box.getCenter(new Vector3()), Math.max(box.getSize(_v).length() / 2, 1e-3), resetDirection);
+  }
+
+  /**
+   * いまビューに描いているものの範囲: 表示中のメッシュ・カーブと、表示をオンにしているジョイント・コントローラーの目印・
+   * カメラの形（隠れているもの・表示をオフにした種類は含めない）。何もなければ空の箱
+   */
+  visibleBounds() {
+    const box = new Box3();
+    for (const e of this.built.meshes) {
+      if (!e.visible) continue;
+      const step = Math.max(1, Math.floor(e.vertexCount / 20000));
+      for (let v = 0; v < e.vertexCount; v += step) box.expandByPoint(vertexWorldPosition(e, v, this.settings.skin, _v2));
+    }
+    this.built.root.updateMatrixWorld(true);
+    for (const it of this.curves.items) {                // 表示中のカーブ（ツールバーでカーブを隠していれば含めない）
+      if (!it || !it.line.visible) continue;
+      const pos = it.line.geometry.getAttribute('position');
+      const step = Math.max(1, Math.floor(pos.count / 16));
+      for (let k = 0; k < pos.count; k += step) box.expandByPoint(_v2.fromBufferAttribute(pos, k).applyMatrix4(it.line.matrixWorld));
+    }
+    const hidden = (ni) => !!(this.hiddenEff && this.hiddenEff[ni]);
+    if (this.settings.joints && this.overlay.jointGroup.visible) {
+      for (const ji of this.built.jointIndices) {
+        if (!hidden(ji)) box.expandByPoint(_v2.setFromMatrixPosition(this.built.nodeObjects[ji].matrixWorld));
+      }
+    }
+    if (this.settings.controls && this.overlay.controlGroup.visible) {
+      this.overlay.updateControls();                    // 目印の位置・表示をいまの姿勢に合わせる
+      for (const it of this.overlay.ctrl.items) if (it.shown) box.expandByPoint(it.obj.position);
+    }
+    for (const it of this.cameraIcons.items || []) {     // 表示しているカメラの形
+      if (it && it.line.visible) box.expandByPoint(_v2.setFromMatrixPosition(this.built.nodeObjects[it.node].matrixWorld));
+    }
+    return box;
   }
 
   frameSelection() {
