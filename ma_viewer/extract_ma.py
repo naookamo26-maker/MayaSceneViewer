@@ -1188,6 +1188,15 @@ def _has_xform_channels(ms: MaScene, n: MaNode, outgoing: Set[int]) -> bool:
     return any(_XFORM_CHANNEL_RE.match(k) for k in keys)
 
 
+def _vis_driven(n: MaNode) -> bool:
+    """表示の属性（.v など）か、入っているディスプレイレイヤーの .v・.e が接続で決まるか"""
+    from .rig import VIS_KEYS, display_layer_of
+    if any(k in n.inputs for k in VIS_KEYS) or any(k in n.inputs for k in ("visibility", "lodVisibility")):
+        return True
+    layer = display_layer_of(n)
+    return layer is not None and any(k in layer.inputs for k in ("v", "visibility", "e", "enabled"))
+
+
 def promote_custom_transforms(ms: MaScene) -> Dict[str, List[str]]:
     """型を知らないノード（プラグインの自作ノード）のうち、transform らしいものを transform として扱う。
 
@@ -1405,9 +1414,29 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     hik_driven = hik_driven_ids(ms.hik_characters)
     for w in hik_warnings(ms.hik_characters):
         ms.warn(w)
-    graph_info = discover(ms, keep, [n for n, _a in curve_shapes], props)
-    for n in list(graph_info.dag.values()):
-        keep_chain(n)
+    # ロケーター（自作のシェイプも）の表示: コントローラーの目印に使う（index は transform の番号。子には影響しない）
+    def marker_shapes(x):
+        return [c for c in x.children if (c.type == "locator" or c.custom_shape)]
+    props += [("shape", c) for n in ms.nodes if id(n) in keep and n.is_dag and not n.is_shape for c in marker_shapes(n)]
+    in_props = {id(n) for kind, n in props if kind in ("node", "shape")}
+    curve_list = [n for n, _a in curve_shapes]
+    for _round in range(4):
+        graph_info = discover(ms, keep, curve_list, props)
+        for n in list(graph_info.dag.values()):
+            keep_chain(n)
+        # リグの評価で出力に加わったノード（形のないコントローラー・その親のグループなど）の表示も評価する。
+        # 表示が接続で決まるものがあれば、その入力もたどるよう探し直す（新しく加わるノードがなくなるまで）
+        extra = []
+        for n in ms.nodes:
+            if id(n) not in keep or not n.is_dag or n.is_shape:
+                continue
+            for kind, x in [("node", n)] + [("shape", c) for c in marker_shapes(n)]:
+                if id(x) not in in_props:
+                    in_props.add(id(x))
+                    extra.append((kind, x))
+        props += extra
+        if not any(_vis_driven(x) for _kind, x in extra):
+            break
     ms.graph_info = graph_info
 
     lap("出力するノードの決定")
@@ -1555,6 +1584,11 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             entry["shape"] = "locator"
             if loc.custom_shape:
                 entry["shapeType"] = loc.type     # 自作のシェイプの型（選択情報に出す）
+            # シェイプが非表示（ファイルの値）なら目印を出さない（Maya でもロケーターは見えない。子には影響しない）
+            la = _shape_attrs(ms, loc)
+            if not (_num(la.get("v"), 1) >= 0.5 and _num(la.get("lodv"), 1) >= 0.5
+                    and not (_num(la.get("ove")) >= 0.5 and _num(la.get("ovv"), 1) < 0.5) and not _hidden_by_layer(loc)):
+                entry["shapeHidden"] = True
         color, _display = curve_display(loc if loc is not None else x, (loc if loc is not None else x).xattrs)
         if color:
             entry["color"] = schema.round_list(color)

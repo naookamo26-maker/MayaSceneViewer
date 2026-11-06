@@ -107,7 +107,9 @@ def main() -> int:
         sw_js = """JSON.stringify((() => { const app = window.mayaViewer.debug.app;
             const ni = (n) => app.data.nodes.findIndex((x) => x.name === n);
             const curve = (n) => app.curves.items.find((it) => it && it.entry.name === n).line.visible;
-            const st = () => ({ ik: !app.hiddenEff[ni('ik_ctrl')], extra: !app.hiddenEff[ni('ik_extra')], fk: curve('fk_ctrlShape') });
+            const marker = (n) => { const h = app.overlay.hiddenNodes; return !(h && h[ni(n)]); };
+            const st = () => ({ ik: !app.hiddenEff[ni('ik_ctrl')], extra: !app.hiddenEff[ni('ik_extra')], fk: curve('fk_ctrlShape'),
+                                loc: marker('ik_loc'), pv: marker('ik_pv') });
             const pose = (tx) => app.setPose(ni('switch_ctrl'), { t: [tx, 0, 0], r: [0, 0, 0], s: [1, 1, 1] });
             const before = st(); pose(1); const ik = st();
             app.toggleNodeVisible(ni('ik_extra')); pose(0); pose(1); const eye = st();
@@ -115,8 +117,9 @@ def main() -> int:
             return { before, ik, eye, back }; })())"""
 
         def got(r):
-            check(r["before"] == {"ik": False, "extra": False, "fk": True}, "保存時の表示（FK 側）: %s" % r["before"])
-            check(r["ik"] == {"ik": True, "extra": True, "fk": False},
+            check(r["before"] == {"ik": False, "extra": False, "fk": True, "loc": False, "pv": False},
+                  "保存時の表示（FK 側。ロケーターのコントローラーの目印も隠れる）: %s" % r["before"])
+            check(r["ik"] == {"ik": True, "extra": True, "fk": False, "loc": True, "pv": True},
                   "切り替えのコントローラーを動かすと、保存時に隠れていた IK 側を表示し FK 側のカーブを隠す: %s" % r["ik"])
             check(r["eye"]["extra"] is False, "目のアイコンで隠したものは、リグが表示にしても隠したまま: %s" % r["eye"])
             check(r["back"] == r["before"], "戻すと元の表示: %s" % r["back"])

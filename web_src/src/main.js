@@ -879,6 +879,11 @@ class ViewerApp {
     this.hidden = new Set();
     this.rigHidden = new Set();     // リグ（接続・カーブ）で決まる表示が、いまのフレームで非表示のノード
     this.rigShown = new Set();      // そのうち、目のアイコンなどで表示し直したノード（リグより優先）
+    // ロケーター（自作のシェイプも）のシェイプの表示: コントローラーの目印だけに効く（子には影響しない。Maya と同じ）。
+    // ファイルで非表示のもの・表示がリグで決まるもの（props の shape）・いまのフレームでリグで隠れているもの
+    this.markerFileHidden = new Set(this.data.nodes.flatMap((n, i) => (n.shapeHidden ? [i] : [])));
+    this.markerDriven = new Set();
+    this.markerRigHidden = new Set();
     // ファイルで非表示のノードのうち、まだ目のアイコンなどで変えていないもの。表示がリグで決まるもの（animation.props）は、
     // アニメーションを読み込んだら hidden から外してリグの評価に任せる（保存時に隠れていた IK のコントローラーなどを、
     // 切り替えのコントローラーを動かしたら表示する）
@@ -901,10 +906,13 @@ class ViewerApp {
     for (const ni of this.fileHidden) this.hidden.add(ni);           // 前のアニメーションで外したものを戻す
     for (const e of this.built.meshes) if (e.fileHidden) e.selfVisible = false;
     this.curves.resetRig();
+    this.markerDriven.clear();
+    this.markerRigHidden.clear();
     for (const p of props || []) {
       if (p.kind === 'node') { if (this.fileHidden.has(p.index)) this.hidden.delete(p.index); }
       else if (p.kind === 'mesh') { const e = this.built.meshes[p.index]; if (e && e.fileHidden) e.selfVisible = true; }
       else if (p.kind === 'curve') this.curves.setRigDriven(p.index);
+      else if (p.kind === 'shape') this.markerDriven.add(p.index);
     }
   }
 
@@ -932,9 +940,14 @@ class ViewerApp {
   applyRigVisibility(props) {
     let changed = false;
     for (const p of props) {
-      if (p.kind !== 'node' && p.kind !== 'mesh' && p.kind !== 'curve') continue;
+      if (p.kind !== 'node' && p.kind !== 'mesh' && p.kind !== 'curve' && p.kind !== 'shape') continue;
       const hide = hiddenByProps(p.static, p.values);
-      if (p.kind === 'curve') {
+      if (p.kind === 'shape') {
+        if (hide !== this.markerRigHidden.has(p.index)) {
+          changed = true;
+          if (hide) this.markerRigHidden.add(p.index); else this.markerRigHidden.delete(p.index);
+        }
+      } else if (p.kind === 'curve') {
         if (this.curves.setRigHidden(p.index, hide)) changed = true;
       } else if (p.kind === 'node') {
         if (hide !== this.rigHidden.has(p.index)) { changed = true; if (hide) this.rigHidden.add(p.index); else this.rigHidden.delete(p.index); }
@@ -946,10 +959,21 @@ class ViewerApp {
     return changed;
   }
 
+  /** ロケーターのシェイプが非表示か（ファイルの値か、リグで決まるならいまのフレームの値） */
+  isMarkerShapeHidden(ni) {
+    return this.markerDriven.has(ni) ? this.markerRigHidden.has(ni) : this.markerFileHidden.has(ni);
+  }
+
+  /** ジョイント・コントローラーの目印に渡す非表示（親を含めた非表示に、ロケーターのシェイプの非表示を足したもの） */
+  markerHiddenNodes() {
+    if (!this.markerFileHidden.size && !this.markerDriven.size) return this.hiddenEff;
+    return this.hiddenEff.map((h, i) => h || this.isMarkerShapeHidden(i));
+  }
+
   updateVisibility() {
     if (!this.built) return;
     this.computeVisibility();
-    this.overlay.setHiddenNodes(this.hiddenEff);
+    this.overlay.setHiddenNodes(this.markerHiddenNodes());
     this.curves.setHiddenNodes(this.hiddenEff);
     this.ui.updateVisibilityMarks(this);
     this.updateCameraIcons();

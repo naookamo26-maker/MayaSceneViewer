@@ -11,6 +11,8 @@ samples/sample_arm.ma に、次のものを足したもの（再生範囲 1〜24
   * 移動で切り替える表示（IK・FK の切り替えの形。保存時は FK 側を表示）: switch_ctrl.tx（保存時 0）→ sw_cond（condition。
     0.5 より大きければ 1、そうでなければ 0）→ ik_ctrl.v（保存時は非表示）・ik_layer.v（ディスプレイレイヤー。保存時は非表示。
     ik_extra が入っている）、sw_cond → sw_rev（reverse）→ fk_ctrlShape.v（カーブのシェイプ。保存時は表示）
+    形のないコントローラー（ロケーター。リグを動かすので出力に加わる）: ik_loc_grp（保存時は非表示）.v ← sw_cond、
+    その子の ik_loc（.t → ik_loc_jnt.t）と、シェイプの表示が sw_cond で決まる ik_pv（ik_pvShape.v。保存時は非表示。.t → ik_pv_jnt.t）
   * shot_cam: 透視投影のカメラ（焦点距離にキー: 1 → 35mm、24 → 85mm。フィルムバック 36×24mm 相当・フィルムフィット水平）
   * ortho_cam: 平行投影のカメラ（真上から。orthographicWidth 40）
   * レンダーの解像度（defaultResolution）: 1920×1080
@@ -107,6 +109,18 @@ def main():
         'createNode transform -n "ik_extra";',
         '\tsetAttr ".t" -type "double3" -8 0 0 ;',
         *line_shape("ik_extraShape", "ik_extra"),
+        'createNode transform -n "ik_loc_grp";',
+        '\tsetAttr ".v" no;',
+        'createNode transform -n "ik_loc" -p "ik_loc_grp";',
+        '\tsetAttr ".t" -type "double3" -12 8 0 ;',
+        'createNode locator -n "ik_locShape" -p "ik_loc";',
+        '\tsetAttr -k off ".v";',
+        'createNode transform -n "ik_pv";',
+        '\tsetAttr ".t" -type "double3" -12 4 0 ;',
+        'createNode locator -n "ik_pvShape" -p "ik_pv";',
+        '\tsetAttr -k off ".v" no;',
+        'createNode joint -n "ik_loc_jnt";',
+        'createNode joint -n "ik_pv_jnt";',
         'createNode condition -n "sw_cond";',
         '\tsetAttr ".st" 0.5;',
         '\tsetAttr ".op" 2;',
@@ -137,6 +151,10 @@ def main():
         'connectAttr "ik_layer.di" "ik_extra.do";',
         'connectAttr "sw_cond.ocr" "sw_rev.ix";',
         'connectAttr "sw_rev.ox" "fk_ctrlShape.v";',
+        'connectAttr "sw_cond.ocr" "ik_loc_grp.v";',
+        'connectAttr "sw_cond.ocr" "ik_pvShape.v";',
+        'connectAttr "ik_loc.t" "ik_loc_jnt.t";',
+        'connectAttr "ik_pv.t" "ik_pv_jnt.t";',
     ]
     text = body + "\n".join(out) + "\n" + tail.replace("sample_arm.ma", "vis_camera_sample.ma")
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:
