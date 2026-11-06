@@ -15,6 +15,7 @@ import {
 } from './sceneBuilder.js';
 import { base64ToArrayBuffer } from './textures.js';
 import { MapManager, usageFor } from './mapManager.js';
+import { PACKAGE_EXT, openPackage } from './package.js';
 import { JointOverlay } from './jointOverlay.js';
 import { classifyControls } from './controlRoles.js';
 import { fillHeatmap, fillInfluenceBlend, fillSolid, vertexWeights } from './weights.js';
@@ -390,10 +391,22 @@ class ViewerApp {
   loadFile(file) {
     if (/\.(ma|mb)$/i.test(file.name)) {
       this.ui.showError(`${file.name} はブラウザでは直接読めません。\n`
-        + 'python -m ma_viewer export でJSONに変換するか、Qt版のビューア（python -m ma_viewer）で開いてください。');
+        + 'python -m ma_viewer pack でパッケージ（.msv）に変換するか、Qt版のビューア（python -m ma_viewer）で開いてください。');
       return;
     }
     this.ui.showLoading(`${file.name} を読み込み中`);
+    if (PACKAGE_EXT.test(file.name)) {
+      // パッケージ（.msv）: zip をメモリの上で展開する。テクスチャは表示に必要になったときに展開する
+      file.arrayBuffer().then(openPackage).then(({ scene, pkg }) => {
+        if (scene.source && !scene.source.name) scene.source.name = file.name;
+        this.pendingPackage = pkg;
+        setTimeout(() => this.loadScene(scene), 0);
+      }).catch((err) => {
+        this.ui.hideLoading();
+        this.ui.showError(`${file.name} をパッケージ（.msv）として読めませんでした。\n${err.message}`);
+      });
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       try {
@@ -410,6 +423,9 @@ class ViewerApp {
 
   loadScene(data) {
     this.sceneLoading = false;
+    // ブラウザで開いた .msv（同梱のテクスチャを読む）。Qt から届いたシーンは Python から受け取る
+    this.package = this.pendingPackage || null;
+    this.pendingPackage = null;
     if (!this.renderer) return false;
     const t0 = performance.now();
     this.pause();
@@ -841,8 +857,13 @@ class ViewerApp {
     const readViaBridge = this.bridge && this.bridge.readFileBase64
       ? (path) => new Promise((resolve, reject) => this.bridge.readFileBase64(path, (b64) => (b64 ? resolve(base64ToArrayBuffer(b64)) : reject(new Error('Python から受け取れませんでした')))))
       : null;
+    const pkg = this.package;
+    const readPacked = pkg ? (name) => pkg.read(name)
+      : this.bridge && this.bridge.readPackedBase64
+        ? (name) => new Promise((resolve, reject) => this.bridge.readPackedBase64(name, (b64) => (b64 ? resolve(base64ToArrayBuffer(b64)) : reject(new Error('Python から受け取れませんでした')))))
+        : null;
     const errors = [];
-    const started = this.maps.ensure(keys, readViaBridge, { forceBridge: !!this.forceBridgeTextures }, (done, total) => {
+    const started = this.maps.ensure(keys, readViaBridge, { forceBridge: !!this.forceBridgeTextures, readPacked }, (done, total) => {
       this.applyMaterials();
       if (done === total) {
         this.showTextureState();
@@ -852,7 +873,7 @@ class ViewerApp {
       } else {
         this.ui.setMessage(`テクスチャを読み込み中（${done} / ${total}）`, 0);
       }
-    }, (key, s) => errors.push(`${s.info.node}: テクスチャを読み込めませんでした（${s.resolved}）: ${s.message}`));
+    }, (key, s) => errors.push(`${s.info.node}: テクスチャを読み込めませんでした（${s.resolved || s.packed + '（パッケージに同梱）'}）: ${s.message}`));
     if (started) this.ui.setMessage(`テクスチャを読み込み中（0 / ${started}）`, 0);
     this.showTextureState();
     this.applyMaterials();

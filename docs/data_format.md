@@ -328,3 +328,27 @@ p' = Σ wᵢ · p · gm · pmᵢ · Wᵢ · gm⁻¹        Wᵢ はインフル�
 ```
 
 three.js では `SkinnedMesh` を detached モードにし、`bind(skeleton, gm)` と `boneInverses = pm` を指定すると同じ結果になります。
+
+## パッケージ（.msv）
+
+共通 JSON と数値のバイナリ・テクスチャを 1 つの zip にまとめたものです（`ma_viewer/package.py` が書き出し、ビューアは Qt 版とブラウザのどちらでも開けます）。
+
+| 中身 | 内容 |
+|---|---|
+| `manifest.json` | `{"format": "maya-scene-viewer-package", "version": 1, "textures": "albedo" \| "all" \| "none", "textureFormat": "webp" \| "original", "maxSize": 2048, "created": ..., "generator": ...}` |
+| `scene.json` | 共通 JSON（animation を含む）。数値の配列（base64 の `{"dtype", "count", "data"}`）は `{"dtype", "count", "buffer": "bin/data.bin", "offset": バイト位置}` に置き換える |
+| `bin/data.bin` | 数値の配列を並べたリトルエンディアンのバイナリ。各配列の先頭は 4 バイト境界 |
+| `textures/*` | 同梱したテクスチャ（`textures/<textures の番号>.webp`、UDIM は `textures/<番号>.<タイル>.webp`） |
+
+JSON とバイナリは deflate で圧縮し、画像（WebP・PNG・JPEG）は無圧縮で入れます。ZIP64（4 GB 超）には対応していません。
+
+textures の各項目は、次のように書き換えます。`path` などほかのキーはそのままです。
+
+| キー | 内容 |
+|---|---|
+| `packed` | 同梱したテクスチャの zip の中の名前（同梱していなければ null）。UDIM は `tiles[k].packed` にも入れる |
+| `format` | 同梱したものの形式（WebP にしたら `"webp"`） |
+| `resolved` / `url` | null（ファイルではなく、パッケージから読む） |
+| `omitted` | 同梱しなかった理由。`albedo-only`（アルベドだけ入れた）・`none`（入れない設定）・`missing`（元から見つからない）・`unreadable`（読めない・表示できない形式） |
+
+アルベドは、マテリアルの `maps.baseColor`（`texture`）が指すテクスチャです。Python の `ma_viewer.package.read_package(path)` は、数値の配列を base64 の形に戻して、.json を読んだときと同じ dict を返します（`source.packagePath` に .msv の場所を入れます。書き出すときは除きます）。ブラウザでは型付き配列に直接戻します。

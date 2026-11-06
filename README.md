@@ -76,8 +76,9 @@ Maya ASCII（.ma）のモデル形状・ジョイント・スキンウェイト�
 | スタンドアロン | Python 3.9 以降、PySide6 6.5 以降（`pip install -r requirements.txt`） |
 | Maya 内 | Maya 2025 以降（同梱の PySide6 に QtWebEngine が含まれていること） |
 | コマンドライン変換のみ | Python 3.9 以降（追加パッケージ不要） |
+| パッケージ（.msv）のテクスチャを WebP にする | Pillow（`pip install Pillow`。任意。Maya 内なら `mayapy -m pip install Pillow`） |
 
-.ma の解析は純 Python なので、numpy などは不要です。
+.ma の解析は純 Python なので、numpy などは不要です。Pillow がなくてもパッケージは書き出せます（テクスチャを変換せず、元のファイルのまま入れます）。
 
 ## 使い方
 
@@ -89,7 +90,7 @@ python run_viewer.py                 # 空のウィンドウで起動
 python run_viewer.py scene.ma        # ファイルを指定して起動
 ```
 
-起動後は［ファイル］→［開く］（Ctrl+O）を使うか、.ma をウィンドウにドロップして開きます。F5 で同じファイルを読み直します。［ファイル］→［新規シーン］（Ctrl+N）で、表示中のシーンを閉じて何も開いていない状態に戻します（読み込み中は、アニメーションの段階なら中止して戻します）。
+起動後は［ファイル］→［開く］（Ctrl+O）を使うか、.ma・.msv・.json をウィンドウにドロップして開きます。F5 で同じファイルを読み直します。［ファイル］→［新規シーン］（Ctrl+N）で、表示中のシーンを閉じて何も開いていない状態に戻します（読み込み中は、アニメーションの段階なら中止して戻します）。
 
 ### Maya 内
 
@@ -113,13 +114,23 @@ mv.reload_and_show()      # 開発用: コードを読み直してから開く
 
 ```
 python -m ma_viewer info scene.ma              # 内容の概要と警告を表示
-python -m ma_viewer export scene.ma -o out.json   # 共通 JSON に変換（アニメーションも含む。--no-animation で除く）
+python -m ma_viewer pack scene.ma -o out.msv      # パッケージ（.msv）に変換（下の「パッケージ」。.json・.msv からも作れる）
+python -m ma_viewer export scene.ma -o out.json   # 共通 JSON に変換（アニメーションも含む。--no-animation で除く。--pretty で字下げ）
 python -m ma_viewer view scene.ma              # ビューアで開く
 python -m ma_viewer rig scene.ma               # リグの診断（評価できないノードと、IK の極ベクトルなどの上流）。-o で保存
 python -m ma_viewer excerpt scene.ma [ノード名...]   # 指定したノード（省略時は lookAt）とその子孫・接続・1 段上流だけを抜き出す（不具合の報告用）。-o で保存
 python -m ma_viewer node-defs                  # 同梱した自作ノードの定義（ma_viewer/node_defs）の一覧と誤り
 python -m ma_viewer convert-plugin myPlugin.py -o ma_viewer/node_defs/myPlugin.json   # Python のノードプラグインを定義に変換
 ```
+
+**パッケージ（.msv）**: 変換した結果を、共通 JSON より小さい 1 ファイルにまとめます。テクスチャも入るので、別の PC やブラウザでも同じ見た目で開けます。Qt 版は［ファイル］→［パッケージ（.msv）として書き出し…］（Ctrl+Alt+E）です。
+
+- 数値（頂点・ウェイト・アニメーションのキーなど）は、base64 にせずバイナリのまま入れて圧縮します。目安として、共通 JSON の 1/3〜1/10 ほどの大きさになります。
+- テクスチャは、既定ではアルベド（ベースカラー）だけを入れます。`--textures all` ですべてのマップ、`--textures none` で入れません。入れなかったマップは表示されません（マテリアルの値で表示します）。
+- テクスチャは長い辺 2048 px までの WebP にします（`--max-size`・`--quality 80`。ビューアは表示するときも 2048 px までに縮めるので、見た目は変わりません）。アルファ（切り抜き・透明）も残ります。変換には Pillow を使います。Pillow がない場合や `--keep-textures` を付けた場合は、元のファイルのまま入れます。
+- 開くときは、zip をメモリの上で展開します（一時ファイルは作りません）。テクスチャは、表示に必要になったときに展開します。
+- .msv を開いた状態で、さらに .msv に書き出すこともできます（同梱のテクスチャをそのまま移します。入っていないマップは元に戻せません）。共通 JSON に書き出すと、同梱のテクスチャは使えなくなります。
+- 形式は `docs/data_format.md` の「パッケージ（.msv）」に書いています。
 
 **リグの診断**: 再生した姿勢が Maya と違うとき（IK のアップベクターが反転するなど）の原因探しに使います。Qt 版は［表示］→［リグの診断…］です。操作方法のウィンドウと同じく、左に項目の一覧と検索欄、右に選んだ項目を出します（最初は「概要」: 項目ごとの状態と要点。評価できないものを含む項目には ★ を付けます。IK ハンドルのように並ぶ項目は、一覧でハンドルごとに分けて選べます。✓ は緑、★ は赤で示します。［すべてコピー］で全体を文字としてコピーできます）。次の内容を一覧にします。
 
@@ -184,7 +195,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 
 ### ブラウザで見る（確認・不具合調査用）
 
-`ma_viewer/web/index.html` をブラウザで直接開き、［JSON を開く］で `export` した JSON を読み込めます。Qt を使わずに表示部分だけを確認したいときに使います。
+`ma_viewer/web/index.html` をブラウザで直接開き、［ファイルを開く］かドロップで、パッケージ（.msv）か `export` した JSON を読み込めます。Qt を使わずに表示部分だけを確認したいときに使います。.msv ならテクスチャも表示されます（JSON のテクスチャは、書き出した PC のファイルを参照するため、ブラウザの制限や別の PC では表示されないことがあります）。
 
 ## 操作
 
@@ -405,6 +416,7 @@ maya_ma_viewer/
 │  ├─ extract_maya.py     Maya のシーン → 共通 JSON（OpenMaya 2.0）
 │  ├─ mathutil.py         Maya の変換行列（transform / joint）
 │  ├─ schema.py           共通 JSON の定義と検証
+│  ├─ package.py          パッケージ（.msv）の書き出しと読み込み（テクスチャの WebP への変換）
 │  ├─ viewer.py           Qt のウィンドウ・WebEngine 表示・読み込みスレッド・Maya 連携
 │  ├─ help_dialog.py      操作方法のウィンドウ（ヘルプ → 操作方法）
 │  ├─ app.py / cli.py     起動・コマンドライン（--selftest）

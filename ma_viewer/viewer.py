@@ -20,7 +20,8 @@ from .qt_compat import (QAction, QWebChannel, QWebEnginePage, QWebEngineScript, 
 from .resources import index_html  # noqa: E402
 from .resources import APP_NAME  # noqa: E402  ソフト名（ウィンドウのタイトルなど。英語表記）  web 一式の場所（exe 化しても見つかるように探す）
 CHUNK_SIZE = 4 * 1024 * 1024          # runJavaScript 1 回あたりの文字数
-OPENABLE_EXT = (".ma", ".json", ".mb")
+OPENABLE_EXT = (".ma", ".json", ".msv", ".mb")
+DATA_EXT = (".json", ".msv")      # 変換済みのデータ（解析しない。アニメーションも一緒に入っている）
 
 
 class _Cancelled(Exception):
@@ -45,6 +46,8 @@ class Bridge(QtCore.QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.allowed_files = set()   # JS に渡してよいファイル（読み込んだシーンのテクスチャ）
+        self.package_path = None     # 開いている .msv（同梱のテクスチャを渡す）
+        self.package_names = set()   # JS に渡してよい .msv の中の名前
 
     @Slot()
     def jsReady(self):
@@ -100,6 +103,19 @@ class Bridge(QtCore.QObject):
         except Exception:  # noqa: BLE001
             return ""
         return "" if v is None else str(v)
+
+    @Slot(str, result=str)
+    def readPackedBase64(self, name):
+        """.msv に同梱したテクスチャを JS に渡す（zip の中から読む。展開したファイルは作らない）。"""
+        if not self.package_path or name not in self.package_names:
+            self.logSignal.emit("warn", "シーンに含まれないデータの読み込み要求を拒否しました: %s" % name)
+            return ""
+        try:
+            from .package import Package
+            return base64.b64encode(Package(self.package_path).read(name)).decode("ascii")
+        except Exception as exc:  # noqa: BLE001
+            self.logSignal.emit("warn", "同梱のテクスチャを読めません: %s（%s）" % (name, exc))
+            return ""
 
     @Slot(str, result=str)
     def readFileBase64(self, path):
@@ -255,6 +271,12 @@ class ViewerWidget(QtWidgets.QWidget):
         payload: 読み込みスレッドで文字列にしておいたもの（なければここで文字列にする）"""
         self.bridge.allowed_files = {os.path.normcase(os.path.abspath(t["resolved"]))
                                      for t in scene.get("textures") or [] if t.get("resolved")}
+        pkg_path = (scene.get("source") or {}).get("packagePath")
+        self.bridge.package_path = pkg_path
+        self.bridge.package_names = set()
+        if pkg_path:
+            for t in scene.get("textures") or []:
+                self.bridge.package_names.update(x["packed"] for x in [t] + list(t.get("tiles") or []) if x.get("packed"))
         payload = payload or Payload.of(scene)
         self.last_dump_seconds = payload.seconds
         payload = payload.text
@@ -404,7 +426,10 @@ class _LoadWorker(QtCore.QObject):
         t0 = time.time()
         load_animation = None
         try:
-            if self.path.lower().endswith(".json"):
+            if self.path.lower().endswith(".msv"):
+                from .package import read_package
+                scene, _pkg = read_package(self.path)
+            elif self.path.lower().endswith(".json"):
                 from . import schema
                 with open(self.path, encoding="utf-8") as f:
                     scene = json.load(f)
@@ -608,9 +633,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
         # 上部の Qt のツールバーは置かない（開く・再読み込みなどはすべて［ファイル］［Maya］メニューにある）
 
         a_new = self._act("新規シーン", self.new_scene, "Ctrl+N", tip="表示中のシーンを閉じて、何も開いていない状態にする")
-        a_open = self._act("開く…", self.open_dialog, "Ctrl+O", tip=".ma または共通 JSON を開く")
+        a_open = self._act("開く…", self.open_dialog, "Ctrl+O", tip=".ma・パッケージ（.msv）・共通 JSON を開く")
         a_reload = self._act("再読み込み", self.reload, "F5", tip="同じファイルを読み直す")
         a_export = self._act("JSON として書き出し…", self.export_json, "Ctrl+Shift+E")
+        a_export_pkg = self._act("パッケージ（.msv）として書き出し…", self.export_package, "Ctrl+Alt+E",
+                                 tip="数値をバイナリで圧縮し、テクスチャ（既定はアルベドのみ）を WebP で同梱した 1 ファイルにする")
         a_close = self._act("閉じる", self.close, "Ctrl+W")
         self.a_anim = self._act("アニメーションを読み込む", self._toggle_animation, checkable=True,
                                 checked=_settings_bool("loadAnimation", True),
@@ -645,7 +672,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         m = mb.addMenu("ファイル")
         m.addAction(a_new)
         m.addSeparator()
-        for a in (a_open, a_reload, a_export):
+        for a in (a_open, a_reload, a_export_pkg, a_export):
             m.addAction(a)
         m.addSeparator()
         m.addAction(self.a_anim)
@@ -774,7 +801,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
     def open_dialog(self):
         start = os.path.dirname(self.current_path) if self.current_path else ""
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "ファイルを開く", start, "Maya ASCII / 共通 JSON (*.ma *.json);;Maya ASCII (*.ma);;JSON (*.json)")
+            self, "ファイルを開く", start, "Maya ASCII / パッケージ / 共通 JSON (*.ma *.msv *.json);;Maya ASCII (*.ma);;パッケージ (*.msv);;JSON (*.json)")
         if path:
             self.open_file(path)
 
@@ -811,8 +838,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if path.lower().endswith(".mb"):
             self._error("Maya バイナリ (.mb) は読み込めません。Maya で .ma として保存し直してください。")
             return
-        if not path.lower().endswith((".ma", ".json")):
-            self._error(".ma または .json を指定してください。")
+        if not path.lower().endswith((".ma",) + DATA_EXT):
+            self._error(".ma・.msv・.json のどれかを指定してください。")
             return
         if self._thread is not None:
             if self._worker is not None and self._worker.in_animation:
@@ -831,7 +858,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.log("info", "読み込み開始: %s" % path)
         from .load_clock import LoadClock
         self.load_clock = LoadClock(path)
-        self.load_clock.expect_animation = self.a_anim.isChecked() and not path.lower().endswith(".json")
+        self.load_clock.expect_animation = self.a_anim.isChecked() and not path.lower().endswith(DATA_EXT)
 
         self._thread = QtCore.QThread(self)
         self._worker = _LoadWorker(path, animation=self.a_anim.isChecked(), references=self.a_refs.isChecked(),
@@ -859,7 +886,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         clock = getattr(self, "load_clock", None)
         if clock is not None and not clock.finished:
             clock.mark("変換結果のキャッシュから読み込み" if cached else
-                       ("JSON の読み込み" if clock.path.lower().endswith(".json") else "解析・変換"))
+                       (("パッケージの読み込み" if clock.path.lower().endswith(".msv") else "JSON の読み込み")
+                        if clock.path.lower().endswith(DATA_EXT) else "解析・変換"))
             if scene.get("animation"):
                 clock.expect_animation = True              # JSON にアニメーションが入っている
         self.show_scene(scene, ("キャッシュから読み込み %.2f 秒" if cached else "解析 %.2f 秒") % seconds, payload)
@@ -867,7 +895,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.log("info", "変換結果のキャッシュから読み込みました（.ma・リファレンス・テクスチャ・設定が前回と同じため、"
                              "解析を省きました。［ファイル］→［変換結果のキャッシュ］で切り替え）")
         self._anim_scene = scene           # このシーンのアニメーションだけを受け取る
-        if self._worker is not None and self._worker.animation and not self.current_path.lower().endswith(".json"):
+        if self._worker is not None and self._worker.animation and not self.current_path.lower().endswith(DATA_EXT):
             self.viewer.set_animation_status("アニメーションを読み込み中")
 
     @Slot(float, str)
@@ -1068,6 +1096,64 @@ class ViewerWindow(QtWidgets.QMainWindow):
             json.dump(self.current_scene, f, ensure_ascii=False, separators=(",", ":"))
         self.statusBar().showMessage("書き出しました: %s" % path, 6000)
         self.log("info", "書き出しました: %s" % path)
+
+    def export_package(self):
+        """［ファイル］→［パッケージ（.msv）として書き出し］"""
+        title = "パッケージ（.msv）として書き出し"
+        if self.current_scene is None:
+            QtWidgets.QMessageBox.information(self, title, "先にシーンを読み込んでください。")
+            return
+        from . import package
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle(title)
+        form = QtWidgets.QFormLayout(dlg)
+        combo = QtWidgets.QComboBox(dlg)
+        modes = [("albedo", "アルベドのみ（おすすめ）"), ("all", "すべてのマップ"), ("none", "入れない")]
+        for key, label in modes:
+            combo.addItem(label, key)
+        saved = _settings().value("packageTextures", package.DEFAULT_TEXTURES)
+        combo.setCurrentIndex(max(0, [k for k, _ in modes].index(saved) if saved in [k for k, _ in modes] else 0))
+        form.addRow("同梱するテクスチャ", combo)
+        ok_convert, why = package.pillow_status()
+        note = QtWidgets.QLabel("テクスチャは長い辺 %d px までの WebP にします。" % package.DEFAULT_MAX_SIZE if ok_convert
+                                else "テクスチャは元のまま入れます（%s）" % why, dlg)
+        note.setWordWrap(True)
+        form.addRow(note)
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok
+                                             | QtWidgets.QDialogButtonBox.StandardButton.Cancel, dlg)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        form.addRow(buttons)
+        if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        mode = combo.currentData()
+        _settings_set("packageTextures", mode)
+        base = os.path.splitext(self.current_path)[0] + package.EXT if self.current_path else "scene" + package.EXT
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, title, base, "パッケージ (*.msv)")
+        if not path:
+            return
+        if not path.lower().endswith(package.EXT):
+            path += package.EXT
+        src_path = (self.current_scene.get("source") or {}).get("packagePath")
+        if src_path and os.path.normcase(os.path.abspath(src_path)) == os.path.normcase(os.path.abspath(path)):
+            self._error("開いているパッケージと同じファイルには書き出せません。別の名前にしてください。")
+            return
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+        try:
+            source = package.Package(src_path) if src_path and os.path.isfile(src_path) else None
+            r = package.write_package(self.current_scene, path, textures=mode, source=source)
+        except Exception as exc:  # noqa: BLE001
+            QtWidgets.QApplication.restoreOverrideCursor()
+            self.log("error", traceback.format_exc())
+            self._error("書き出せませんでした。\n%s" % exc)
+            return
+        QtWidgets.QApplication.restoreOverrideCursor()
+        size = "%.2f MB" % (r["size"] / 1048576.0)
+        self.statusBar().showMessage("書き出しました: %s（%s）" % (path, size), 6000)
+        self.log("info", "書き出しました: %s（%s・テクスチャ %d 枚%s）"
+                 % (path, size, r["textures"], "・WebP" if r["converted"] else "・元のまま"))
+        for w in r["warnings"]:
+            self.log("warn", w)
 
     # ------------------------------------------------------------------ ドロップ
     @staticmethod
