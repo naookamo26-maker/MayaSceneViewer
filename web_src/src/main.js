@@ -7,6 +7,7 @@ import {
 import { MayaControls } from './mayaControls.js';
 import { combineSelection, makeProjector, normRect, pointHitsRect, polylineHitsRect, selectionModeOf, trianglesHitRect } from './marquee.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+import { installGizmoLocks } from './gizmoLocks.js';
 import { PoseState, fixChannels, hasFixed, identityPose, isIdentityPose, limitPose, nodeChannels, poseFromTransform, poseKey, poseMatrix, poseQuaternion, propagatePoseDelta } from './pose.js';
 import {
   applyPoseSource, hasBindPose, poseBaseMatrix, BASE_COLOR, buildScene, characterRadius, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
@@ -184,6 +185,7 @@ class ViewerApp {
     this.gizmo = new TransformControls(this.camera, canvas);
     this.gizmo.setSpace('local');
     this.gizmo.setSize(DEFAULTS.gizmoSize);
+    installGizmoLocks(this.gizmo);                        // ロックした軸のハンドルは灰色で、つかめない（Maya と同じ）
     this.gizmo.addEventListener('change', () => this.requestRender());
     this.gizmo.addEventListener('dragging-changed', (e) => {
       this.gizmoDragging = e.value;
@@ -267,7 +269,10 @@ class ViewerApp {
       this.canvas.addEventListener('pointerdown', (e) => {
         if (e.button !== 0 || e.altKey || this.controls.dragging) { down = null; return; }
         // ハンドルの上で押したときは選択（ピック）しない
-        const onGizmo = !!(this.gizmo && this.gizmo.object && this.gizmo.enabled && this.gizmo.axis !== null);
+        const onGizmo = !!(this.gizmo && this.gizmo.object && this.gizmo.enabled
+          && (this.gizmo.axis !== null || this.gizmo.lockedAxis !== null));
+        // ロックした軸（灰色）のハンドル: 動かさず、選択も変えない（後ろのものを選んだり、選択を解除したりしない）
+        if (onGizmo && this.gizmo.axis === null) this.showLockedHandleMessage(this.gizmo.lockedAxis);
         down = { x: e.clientX, y: e.clientY, id: e.pointerId, onGizmo, marquee: false };
         if (!onGizmo) { try { this.canvas.setPointerCapture(e.pointerId); } catch { /* 合成イベントなど */ } }
       });
@@ -1789,6 +1794,19 @@ class ViewerApp {
     return { ro: roOf(a.ro), jo: isJoint ? a.jo || null : null, ra: a.ra || null };
   }
 
+  /** ロックした軸（灰色）のハンドルを押したときの説明 */
+  showLockedHandleMessage(axis) {
+    if (this.selected < 0) return;
+    const mode = this.gizmo.mode;
+    const label = { translate: '移動', rotate: '回転', scale: 'スケール' }[mode] || '';
+    const key = { translate: 't', rotate: 'r', scale: 's' }[mode];
+    const locks = (this.lockedOf(this.selected) || {})[key] || [];
+    const names = ['X', 'Y', 'Z'].filter((a, i) => locks[i]).map((a) => `${key}${a.toLowerCase()}`);
+    const axisText = axis === 'E' || axis === 'XYZE' || axis === 'XYZ' ? '' : ` ${axis} `;
+    this.ui.setMessage(`${this.data.nodes[this.selected].name} の${label}${axisText}は Maya でロックされているため動かせません`
+      + `（ロック: ${names.join('・')}）`, 4000);
+  }
+
   /** Maya でロックした移動・回転・スケール（{ t | r | s: [X, Y, Z] } か null） */
   lockedOf(ni) {
     return this.data && this.data.nodes[ni] ? this.data.nodes[ni].locked || null : null;
@@ -2018,11 +2036,10 @@ class ViewerApp {
       this.syncGizmo(true);
       this.gizmo.setMode(tool);
       this.gizmo.setSpace(this.settings.space);
-      // Maya で 3 成分ともロックしたもの（移動・回転・スケール）は、ハンドルの軸を出さない（一部のロックは結果で固定する）
+      // Maya と同じく、ロックした成分（移動・回転・スケール）の軸のハンドルは灰色で表示し、つかめない
+      // （3 成分ともロックならすべて灰色。平面・中央のハンドルは、含む軸がすべてロックのときだけ灰色で、一部なら結果で固定する）
       const locked = this.lockedOf(this.selected);
-      const l = locked && locked[{ translate: 't', rotate: 'r', scale: 's' }[tool]];
-      const all = !!l && l.every(Boolean);
-      this.gizmo.showX = this.gizmo.showY = this.gizmo.showZ = !all;
+      this.gizmo.setLockedAxes(locked && locked[{ translate: 't', rotate: 'r', scale: 's' }[tool]]);
       if (this.gizmo.object !== this.poseProxy) this.gizmo.attach(this.poseProxy);
     }
     this.requestRender();
