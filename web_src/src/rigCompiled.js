@@ -221,7 +221,8 @@ function build(rig, deps, useMath) {
         for (const r of w.reads) rawReads.push(r);
         continue;
       }
-      if (!g || g.dag >= 0 || !CON_TYPES[g.type] || g.def) return `チャンネルの入力（${g ? g.type : '不明'}）`;
+      // コンストレイントが自分も動く transform（dag >= 0。lookAt のグループ・子を持つコンストレイント）でも、出力の計算は同じ
+      if (!g || !CON_TYPES[g.type] || g.def) return `チャンネルの入力（${g ? g.type : '不明'}）`;
       const attr = String(src.attr).replace(/\[\d+\]$/, '');
       if (!CON_TYPES[g.type].has(attr)) return `${g.type} の出力 ${src.attr}`;
       const con = constraintOf(g);

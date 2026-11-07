@@ -683,6 +683,19 @@ class TestStage6(unittest.TestCase):
         self.assertEqual(g["dag"], [n["name"] for n in sc["nodes"]].index("grp"))
         self.assertIn("tx", g["inputs"])
         self.assertIn("tg[0].tt", g["inputs"])
+        # ほかのコンストレイントも transform: 子を持ち、自分の移動が接続で決まるときは DAG ノードとしても評価する
+        body = ('createNode transform -n "tgt";\ncreateNode transform -n "obj";\n'
+                'createNode parentConstraint -n "pc" -p "obj";\n'
+                '\taddAttr -dcb 0 -ci true -k true -sn "w0" -ln "tgtW0" -dv 1 -min 0 -at "double";\n'
+                'createNode joint -n "kid" -p "pc";\n'
+                'connectAttr "tgt.t" "pc.tg[0].tt";\nconnectAttr "tgt.pm" "pc.tg[0].tpm";\n'
+                'connectAttr "pc.w0" "pc.tg[0].tw";\nconnectAttr "obj.pim" "pc.cpim";\n'
+                'connectAttr "pc.ctx" "obj.tx";\nconnectAttr "tgt.ty" "pc.ty";\n')
+        sc, anim = from_text(body)
+        self.assertFalse([x for x in sc["warnings"] if x.startswith("pc: ")], sc["warnings"])
+        g = next(e for e in anim["graph"] if e["name"] == "pc")
+        self.assertEqual(g["dag"], [n["name"] for n in sc["nodes"]].index("pc"))
+        self.assertIn("ty", g["inputs"])
         # ターゲットのないコンストレイントは、その理由を添える
         body = ('createNode joint -n "j";\ncreateNode pointConstraint -n "pc" -p "j";\n'
                 'connectAttr "pc.ctx" "j.tx";\n')

@@ -135,10 +135,12 @@ def _dag_like(n: MaNode) -> bool:
 
 
 def _moving_constraint(n: MaNode) -> bool:
-    """コンストレイントであり、自分も動かされる transform（lookAt。カメラとエイムのグループで、カメラ・エイムの親）。
-    ふつうのコンストレイントは動かされるノードの子で自分は動かないが、lookAt のグループは別のコンストレイントや
-    カーブで動かされることがある"""
-    return n.type == "lookAt" and n.is_dag and not n.is_shape
+    """コンストレイントであり、自分も transform として動きうるもの（Maya のコンストレイントはすべて transform）。
+    ふつうのコンストレイントは動かされるノードの子の葉で、自分は動かない。lookAt（カメラとエイムのグループ）は
+    カメラ・エイムの親で、別のコンストレイントやカーブで動かされることがある。ほかのコンストレイントも子を持ち、
+    自分の移動・回転が接続で決まることがある。グラフでは、出力するノード（子を持つなど）に入っているときだけ
+    DAG の番号も付ける"""
+    return n.type in CONSTRAINT_TYPES and n.is_dag and not n.is_shape
 
 
 # 出力を計算で求めるシェイプ（値はファイルに残らない。ビューアは計算しないので未対応として扱う）。
