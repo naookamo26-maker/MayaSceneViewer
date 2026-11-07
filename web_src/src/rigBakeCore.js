@@ -23,7 +23,8 @@ export function createBaker(anim, nodes) {
   rig.setPlaybackLimit(Number.MAX_SAFE_INTEGER);      // 作ったフレームはすぐ送って捨てるので、上限はなし
   // timing: 評価のプロファイラに出す、ワーカーの中の時間（準備・最初のフレーム）
   return { rig, sentDeps: new Map(), sentReads: new Set(),
-    timing: { createMs: performance.now() - t0, parseMs, clipMs, rigMs, defsMs: rig.defsMs, recvMs: null, firstMs: null } };
+    timing: { createMs: performance.now() - t0, parseMs, clipMs, rigMs, defsMs: rig.defsMs, recvMs: null, firstMs: null,
+      keys: clip.curves.reduce((n, c) => n + c.n, 0) } };
 }
 
 /** 評価器の状態（［このフレームを確かめる］で、ワーカーの中の様子を知らせる） */
@@ -104,6 +105,7 @@ export function bakerTiming(baker) {
   const rig = baker.rig;
   const tm = baker.timing;
   return { createMs: tm.createMs, parseMs: tm.parseMs, clipMs: tm.clipMs, rigMs: tm.rigMs, defsMs: tm.defsMs, recvMs: tm.recvMs ?? null,
+    keys: tm.keys ?? null,
     firstMs: baker.timing.firstMs, planMs: rig.planMs ?? null,
     plan: !!rig.compiledPlan, reason: rig.compiledPlan ? null : (rig.compiledReason || null), retries: rig.deepState.retries,
     interpreted: rig.defsInterpreted ? rig.defsInterpreted.size : 0 };

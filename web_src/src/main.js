@@ -1315,7 +1315,7 @@ class ViewerApp {
     }
     let clip;
     try {
-      clip = new AnimationClip(anim);
+      clip = new AnimationClip(anim, { keepKeyArrays: true });   // キーのデータは型付き配列にしてワーカーに送る
       const bad = clip.nodes.find((ni) => !(ni >= 0 && ni < this.data.nodes.length));
       if (bad !== undefined) throw new Error(`ノード番号 ${bad} がシーンにありません`);
     } catch (err) {
@@ -1339,7 +1339,9 @@ class ViewerApp {
     this.rig = new RigEvaluator(clip, this.data.nodes, (ni) => this.built.nodeObjects[ni].userData.fileMatrix);
     this.rig.setPlaybackLimit(this.settings.playbackCacheMB * MB);
     // ワーカーにも同じアニメーションを渡す（受け取った JSON の文字列があれば、それを渡す。複製より速い）
-    const sent = this.animationText && this.animationText.anim === anim ? this.animationText.text : anim;
+    // 文字列がなければ、キーのデータを型付き配列にしたもの（数のリストのままより、送る・受け取るときの複製がずっと速い）
+    const compact = clip.takeKeyArrays(anim);
+    const sent = this.animationText && this.animationText.anim === anim ? this.animationText.text : compact;
     this.bakers.reset(this.rig, sent, this.data.nodes);
     this.profiler.clear();
     this.animationText = null;

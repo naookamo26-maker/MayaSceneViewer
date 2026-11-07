@@ -321,8 +321,8 @@ test('ワーカーが作り始めるまでの様子: bakeFrames が返す時間�
   assert.ok(t1.parseMs >= 0 && t1.defsMs >= 0, JSON.stringify(t1));
   const text = workerStartText({ firstMs: 2500, waitingMs: null,
     timing: { ...t1, recvMs: 2100, createMs: 1200, parseMs: 400, clipMs: 100, rigMs: 700, defsMs: 500, firstMs: 900, planMs: 300,
-      retries: 4, interpreted: 0 }, sendMs: 1600 });
-  assert.equal(text, '最初の結果が届くまで 2.5 秒・ワーカーの中: 受け取り 2.1 秒・準備 1.2 秒（JSON の読み込み 0.4 秒・アニメーション 0.1 秒・'
+      retries: 4, interpreted: 0, keys: 1234567 }, sendMs: 1600 });
+  assert.equal(text, '最初の結果が届くまで 2.5 秒・ワーカーの中: 受け取り 2.1 秒・準備 1.2 秒（JSON の読み込み 0.4 秒・アニメーション 0.1 秒（キー 1,234,567 個）・'
     + '評価器 0.7 秒（うち自作ノードの定義を関数にする 0.5 秒））・最初のフレーム 0.9 秒（うち専用の評価の計画 0.3 秒）・専用の評価 使う'
     + '・スタックがあふれてやり直した回数 4・アニメーションを送る（画面のスレッド）1.6 秒');
   assert.ok(t1.clipMs >= 0 && t1.rigMs >= t1.defsMs, JSON.stringify(t1));

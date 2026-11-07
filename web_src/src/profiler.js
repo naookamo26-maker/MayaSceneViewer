@@ -484,7 +484,7 @@ export function workerStartText(w) {
     const has = (x) => x !== undefined && x !== null;
     const inner = [];
     if (has(t.parseMs)) inner.push(`JSON の読み込み ${sec(t.parseMs)}`);
-    if (has(t.clipMs)) inner.push(`アニメーション ${sec(t.clipMs)}`);
+    if (has(t.clipMs)) inner.push(`アニメーション ${sec(t.clipMs)}${has(t.keys) ? `（キー ${t.keys.toLocaleString('en-US')} 個）` : ''}`);
     if (has(t.rigMs)) inner.push(`評価器 ${sec(t.rigMs)}（うち自作ノードの定義を関数にする ${sec(t.defsMs || 0)}）`);
     else if (has(t.defsMs)) inner.push(`自作ノードの定義を関数にする ${sec(t.defsMs)}`);
     const recv = has(t.recvMs) ? `受け取り ${sec(t.recvMs)}・` : '';
