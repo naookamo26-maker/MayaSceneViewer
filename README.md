@@ -207,12 +207,15 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 
 `ma_viewer/web/index.html` をブラウザで直接開き、［ファイル］→［ローカルファイルから開く…］かドロップで、パッケージ（.msv）か `export` した JSON を読み込めます。.msv ならテクスチャも表示されます（JSON のテクスチャは、書き出した PC のファイルを参照するため、ブラウザの制限や別の PC では表示されないことがあります）。Chrome・Edge で確認しています。
 
-**1 ファイルの HTML（Teams・Slack などで渡す）**: `python -m ma_viewer build-html` で、CSS と JS を中に入れた 1 つの HTML（約 1.4 MB）を作ります。受け取った人はダウンロードしてブラウザで開くだけで使えます（Python も Maya もいりません）。
+**1 ファイルの HTML（Teams・Slack などで渡す）**: CSS と JS を中に入れた 1 つの HTML（約 1.4 MB）を作ります。受け取った人はダウンロードしてブラウザで開くだけで使えます（Python も Maya もいりません）。配る物を作るときは、exe と同じく `packaging` のスクリプトを使います（出力は `dist/`）。
 
 ```
-python -m ma_viewer build-html -o viewer.html                  # ビューアだけ（開いてから .msv をドロップ）
-python -m ma_viewer build-html --embed scene.msv -o scene.html  # シーンを埋め込む（開くとこのシーンを表示）
+python packaging/build_html.py                        # → dist/MayaSceneViewer.html（ビューアだけ。開いてから .msv をドロップ）
+python packaging/build_html.py --embed scene.msv      # → dist/scene.html（シーンを埋め込む。開くとこのシーンを表示）
+python packaging/build_html.py --embed a.msv --embed b.ma   # → dist/a.html・dist/b.html（1 ファイルにつき 1 つ）
 ```
+
+スクリプトは、ビューアの JS（`ma_viewer/web/viewer.bundle.js`）が `web_src` より古そうなら、Node.js があれば作り直してから HTML を作ります（Node.js がなければ注意を出して、いまの JS のまま作ります）。できた HTML が外のファイルを読んでいないことと、バージョンが入っていることも確かめます。`-o` で出力先を指定できます（`--embed` が 1 つのとき）。同じことは `python -m ma_viewer build-html -o viewer.html`（`--embed scene.msv`）でもできます（こちらは JS の確認をせず、指定した場所に作ります）。
 
 `--embed` は .msv をそのまま埋め込むので、テクスチャ・表示の状態（カメラ・表示設定など）も入ります（大きさは約 1.4 MB ＋ .msv の約 1.34 倍）。.ma・.json を指定したら、先にパッケージにしてから入れます（`--textures` で同梱するテクスチャを選べます。既定はアルベドのみ）。会社の設定によっては、HTML の添付が止められたり、開くときに警告が出たりすることがあります。
 
@@ -428,7 +431,7 @@ python -m ma_viewer build-html --embed scene.msv -o scene.html  # シーンを�
 maya_ma_viewer/
 ├─ run_viewer.py          スタンドアロン起動
 ├─ install_maya.py        Maya へのドラッグ＆ドロップでシェルフに登録
-├─ packaging/             exe 化（PyInstaller の spec・build_exe.py・アイコンを作る make_icon.py）
+├─ packaging/             配る物を作る（exe: PyInstaller の spec・build_exe.py、1 ファイルの HTML: build_html.py、アイコンを作る make_icon.py）
 ├─ requirements.txt
 ├─ ma_viewer/
 │  ├─ ma_reader.py        .ma の字句解析（文の分割・setAttr の解析）
