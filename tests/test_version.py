@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""バージョン表記（ma_viewer/version.py が唯一の元）: 形式・JS（package.json・ビルド済みのビューア）との一致・表示"""
+"""バージョン表記（ma_viewer/version.py が唯一の元）: 形式・JS（package.json・package-lock.json・ビルド済みのビューア）・README との一致・表示"""
 from __future__ import annotations
 
 import io
@@ -32,9 +32,18 @@ class VersionTest(unittest.TestCase):
         """web_src/package.json と、ビルド済みのビューア（viewer.bundle.js）も同じバージョン"""
         with open(os.path.join(ROOT, "web_src", "package.json"), encoding="utf-8") as f:
             self.assertEqual(json.load(f)["version"], __version__, "web_src/package.json の version を合わせる")
+        with open(os.path.join(ROOT, "web_src", "package-lock.json"), encoding="utf-8") as f:
+            lock = json.load(f)
+        self.assertEqual(lock["version"], __version__, "web_src/package-lock.json の version を合わせる")
+        self.assertEqual(lock["packages"][""]["version"], __version__, "web_src/package-lock.json の packages[\"\"] も合わせる")
         with open(os.path.join(ROOT, "ma_viewer", "web", "viewer.bundle.js"), encoding="utf-8") as f:
             bundle = f.read()
         self.assertIn('"%s"' % __version__, bundle, "ビューアを作り直す（cd web_src && node build.mjs）")
+
+    def test_readme(self):
+        """README の「バージョン」の節も同じ（上げ方のルールは CLAUDE.md）"""
+        with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as f:
+            self.assertIn("いまのバージョンは %s です。" % __version__, f.read(), "README の「いまのバージョン」を合わせる")
 
     def test_cli_version(self):
         out = io.StringIO()

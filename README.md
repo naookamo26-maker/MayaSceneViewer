@@ -71,10 +71,10 @@ Maya ASCII（.ma）のモデル形状・ジョイント・スキンウェイト�
 
 ## バージョン
 
-いまのバージョンは 1.0.0 です。形式はセマンティック バージョニング（メジャー.マイナー.パッチ）で、前の版と互換のない変更（前の版で作った .msv が読めなくなるなど）でメジャー、互換を保った機能の追加でマイナー、不具合の修正でパッチを上げます。
+いまのバージョンは 1.1.0 です。形式はセマンティック バージョニング（メジャー.マイナー.パッチ）で、前の版と互換のない変更（前の版で作った .msv が読めなくなるなど）でメジャー、互換を保った機能の追加でマイナー、不具合の修正でパッチを上げます。
 
 - 確認: Qt 版は［ヘルプ］→［バージョン情報…］（起動時のログにも出ます）、ブラウザ版は何も開いていないときの画面、コマンドは `python -m ma_viewer --version`。パッケージ（.msv）の `manifest.json` にも、作ったビューアのバージョン（`generatorVersion`）が入ります。
-- 上げるとき: `ma_viewer/version.py` の `__version__` を変え、`web_src/package.json` の `version` も同じにして、ビューアを作り直します（`cd web_src && node build.mjs`。JS はビルド時に `version.py` から読みます）。`tests/test_version.py` が、ずれていないかを確かめます。
+- 上げるとき（どの変更でどの桁を上げるかは `CLAUDE.md`）: `ma_viewer/version.py` の `__version__` を変え、`web_src/package.json`・`web_src/package-lock.json` の `version` と、この節の「いまのバージョン」も同じにして、ビューアを作り直します（`cd web_src && node build.mjs`。JS はビルド時に `version.py` から読みます）。`tests/test_version.py` が、ずれていないかを確かめます。
 
 ## 必要なもの
 
@@ -441,6 +441,7 @@ maya_ma_viewer/
 ├─ install_maya.py        Maya へのドラッグ＆ドロップでシェルフに登録
 ├─ packaging/             配る物を作る（exe: PyInstaller の spec・build_exe.py、1 ファイルの HTML: build_html.py、アイコンを作る make_icon.py）
 ├─ requirements.txt
+├─ CLAUDE.md              作業のルール（バージョンを上げる条件と手順）
 ├─ ma_viewer/
 │  ├─ ma_reader.py        .ma の字句解析（文の分割・setAttr の解析）
 │  ├─ ma_scene.py         ノード・属性・接続の保持（リファレンスの読み込み・編集の適用も）
