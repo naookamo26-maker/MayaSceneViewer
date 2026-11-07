@@ -117,6 +117,9 @@ def apply_dark_style(app):
     for role in (R.WindowText, R.Text, R.ButtonText):
         pal.setColor(G.Disabled, role, c("#6b737c"))
     app.setPalette(pal)
+    # メニューの区切り線: Fusion は背景より少し暗い色で描くので、暗い背景では見えない。背景より明るい灰色にする
+    from .option_menu import MENU_SEPARATOR_CSS
+    app.setStyleSheet(MENU_SEPARATOR_CSS % "#3d4249")
 
 
 if __name__ == "__main__":

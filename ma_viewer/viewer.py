@@ -631,13 +631,15 @@ class ViewerWindow(QtWidgets.QMainWindow):
     def _build_actions(self):
         mb = self.menuBar()
         # 上部の Qt のツールバーは置かない（開く・再読み込みなどはすべて［ファイル］［Maya］メニューにある）
+        from .option_menu import OptionBoxMenu
 
         a_new = self._act("新規シーン", self.new_scene, "Ctrl+N", tip="表示中のシーンを閉じて、何も開いていない状態にする")
         a_open = self._act("開く…", self.open_dialog, "Ctrl+O", tip=".ma・パッケージ（.msv）・共通 JSON を開く")
         a_reload = self._act("再読み込み", self.reload, "F5", tip="同じファイルを読み直す")
         # 共通 JSON の書き出しはコマンド（python -m ma_viewer export。.msv からも戻せる）で行う
         a_export_pkg = self._act("パッケージ（.msv）として書き出し…", self.export_package, "Ctrl+Shift+E",
-                                 tip="数値をバイナリで圧縮し、テクスチャ（既定はアルベドのみ）を WebP で同梱した 1 ファイルにする")
+                                 tip="前回の設定で、テクスチャ（既定はアルベドのみ）と表示の状態を入れた小さな 1 ファイルにする")
+        self.a_export_pkg = a_export_pkg
         a_close = self._act("閉じる", self.close, "Ctrl+W")
         self.a_anim = self._act("アニメーションを読み込む", self._toggle_animation, checkable=True,
                                 checked=_settings_bool("loadAnimation", True),
@@ -669,15 +671,25 @@ class ViewerWindow(QtWidgets.QMainWindow):
             a.triggered.connect(lambda _c=False, v=size_mb: self.set_scene_cache_limit(v))
             limit_group.addAction(a)
             self.cache_limit_actions[size_mb] = a
-        m = mb.addMenu("ファイル")
+        # ［ファイル］はファイルの操作だけ。読み込みの設定（アニメーション・リファレンス・キャッシュ）は［設定］
+        m = OptionBoxMenu("ファイル", self)
+        mb.addMenu(m)
+        self.file_menu = m
         m.addAction(a_new)
         m.addSeparator()
-        for a in (a_open, a_reload, a_export_pkg):
-            m.addAction(a)
+        m.addAction(a_open)
+        m.addAction(a_reload)
         m.addSeparator()
-        m.addAction(self.a_anim)
-        m.addAction(self.a_refs)
-        mc = m.addMenu("変換結果のキャッシュ")
+        m.addAction(a_export_pkg)
+        m.set_option_box(a_export_pkg, self.export_package_options)
+        m.addSeparator()
+        m.addAction(a_close)
+        ms = QtWidgets.QMenu("設定", self)           # 並びは［ヘルプ］の前（下で追加）
+        self.settings_menu = ms
+        ms.addAction(self.a_anim)
+        ms.addAction(self.a_refs)
+        ms.addSeparator()
+        mc = ms.addMenu("変換結果のキャッシュ")
         mc.addAction(self.a_cache)
         mc.addSeparator()
         mc.addAction(self.a_cache_usage)
@@ -687,8 +699,6 @@ class ViewerWindow(QtWidgets.QMainWindow):
         mc.addAction(a_clear_cache)
         mc.aboutToShow.connect(self._update_cache_usage)
         self.cache_menu = mc
-        m.addSeparator()
-        m.addAction(a_close)
 
         # 元に戻す・やり直し。キー操作はビューア（Web 側）が受け取るので、ここでは表示だけにする
         # （Qt のショートカットにすると、数値入力欄での文字の取り消しまで奪ってしまうため）
@@ -731,6 +741,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         mv.addAction(self._act("開発者ツール", self.viewer.open_dev_tools, "F12"))
         self.viewer.warningsChanged.connect(self._on_warnings_changed)
         self.viewer.showWarningsRequested.connect(self.show_warnings)
+        mb.addMenu(ms)
         mh = mb.addMenu("ヘルプ")
         mh.addAction(self._act("操作方法", self.show_help, "F1"))
 
@@ -893,7 +904,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.show_scene(scene, ("キャッシュから読み込み %.2f 秒" if cached else "解析 %.2f 秒") % seconds, payload)
         if cached:
             self.log("info", "変換結果のキャッシュから読み込みました（.ma・リファレンス・テクスチャ・設定が前回と同じため、"
-                             "解析を省きました。［ファイル］→［変換結果のキャッシュ］で切り替え）")
+                             "解析を省きました。［設定］→［変換結果のキャッシュ］で切り替え）")
         self._anim_scene = scene           # このシーンのアニメーションだけを受け取る
         if self._worker is not None and self._worker.animation and not self.current_path.lower().endswith(DATA_EXT):
             self.viewer.set_animation_status("アニメーションを読み込み中")
@@ -1084,44 +1095,131 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(text.splitlines()[0], 8000)
         self.log("error", text)
 
-    def export_package(self):
-        """［ファイル］→［パッケージ（.msv）として書き出し］"""
-        title = "パッケージ（.msv）として書き出し"
-        if self.current_scene is None:
-            QtWidgets.QMessageBox.information(self, title, "先にシーンを読み込んでください。")
-            return
+    # ---- パッケージ（.msv）の書き出し。項目はいつもの設定で書き出し、右端の ❒ でオプションを開く（Maya と同じ）
+    PACKAGE_TEXTURE_MODES = [("albedo", "アルベドのみ（おすすめ）"), ("all", "すべてのマップ"), ("none", "入れない")]
+    PACKAGE_MAX_SIZES = [(1024, "1024 px"), (2048, "2048 px（おすすめ。ビューアの表示の上限）"), (4096, "4096 px"),
+                         (0, "縮めない")]
+
+    def package_options(self) -> dict:
+        """パッケージの書き出しの設定（前回の設定。なければ既定）"""
         from . import package
+        s = _settings()
+        modes = [k for k, _ in self.PACKAGE_TEXTURE_MODES]
+        textures = s.value("packageTextures", package.DEFAULT_TEXTURES)
+
+        def num(key, default, lo, hi):
+            try:
+                v = int(s.value(key, default))
+            except (TypeError, ValueError):
+                return default
+            return v if lo <= v <= hi else default
+        return {"textures": textures if textures in modes else package.DEFAULT_TEXTURES,
+                "view": _settings_bool("packageView", True),
+                "maxSize": num("packageMaxSize", package.DEFAULT_MAX_SIZE, 0, 16384),
+                "quality": num("packageQuality", package.DEFAULT_QUALITY, 1, 100)}
+
+    def save_package_options(self, opts: dict) -> None:
+        _settings_set("packageTextures", opts["textures"])
+        _settings_set("packageView", bool(opts["view"]))
+        _settings_set("packageMaxSize", int(opts["maxSize"]))
+        _settings_set("packageQuality", int(opts["quality"]))
+
+    def package_options_summary(self, opts: dict) -> str:
+        """設定の要約（ステータスバー・ログ用）"""
+        tex = dict(self.PACKAGE_TEXTURE_MODES)[opts["textures"]].replace("（おすすめ）", "")
+        parts = ["テクスチャ: " + tex]
+        if opts["textures"] != "none":
+            parts.append("最大 %d px" % opts["maxSize"] if opts["maxSize"] else "縮めない")
+            parts.append("品質 %d" % opts["quality"])
+        parts.append("表示の状態あり" if opts["view"] else "表示の状態なし")
+        return "・".join(parts)
+
+    def export_package(self):
+        """［ファイル］→［パッケージ（.msv）として書き出し］: 前回の設定のまま、保存先だけを選んで書き出す"""
+        self._export_package_with(self.package_options())
+
+    def export_package_options(self):
+        """［ファイル］→［パッケージ（.msv）として書き出し］の ❒: 設定を変える（書き出す・設定だけ保存する）"""
+        from . import package
+        title = "パッケージ（.msv）の書き出しのオプション"
+        opts = self.package_options()
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle(title)
         form = QtWidgets.QFormLayout(dlg)
         combo = QtWidgets.QComboBox(dlg)
-        modes = [("albedo", "アルベドのみ（おすすめ）"), ("all", "すべてのマップ"), ("none", "入れない")]
-        for key, label in modes:
+        for key, label in self.PACKAGE_TEXTURE_MODES:
             combo.addItem(label, key)
-        saved = _settings().value("packageTextures", package.DEFAULT_TEXTURES)
-        combo.setCurrentIndex(max(0, [k for k, _ in modes].index(saved) if saved in [k for k, _ in modes] else 0))
+        combo.setCurrentIndex([k for k, _ in self.PACKAGE_TEXTURE_MODES].index(opts["textures"]))
         form.addRow("同梱するテクスチャ", combo)
+        size_combo = QtWidgets.QComboBox(dlg)
+        for v, label in self.PACKAGE_MAX_SIZES:
+            size_combo.addItem(label, v)
+        sizes = [v for v, _ in self.PACKAGE_MAX_SIZES]
+        if opts["maxSize"] not in sizes:
+            size_combo.addItem("%d px" % opts["maxSize"], opts["maxSize"])
+            sizes.append(opts["maxSize"])
+        size_combo.setCurrentIndex(sizes.index(opts["maxSize"]))
+        form.addRow("テクスチャの最大サイズ", size_combo)
+        quality = QtWidgets.QSpinBox(dlg)
+        quality.setRange(1, 100)
+        quality.setValue(opts["quality"])
+        quality.setToolTip("WebP の品質（1〜100。大きいほどきれいで、ファイルが大きい。既定 %d）" % package.DEFAULT_QUALITY)
+        form.addRow("テクスチャの品質", quality)
         ok_convert, why = package.pillow_status()
-        note = QtWidgets.QLabel("テクスチャは長い辺 %d px までの WebP にします。" % package.DEFAULT_MAX_SIZE if ok_convert
+        note = QtWidgets.QLabel("テクスチャは WebP にして入れます（アルファも残します）。" if ok_convert
                                 else "テクスチャは元のまま入れます（%s）" % why, dlg)
         note.setWordWrap(True)
         form.addRow(note)
+
+        def sync():
+            on = combo.currentData() != "none" and ok_convert
+            size_combo.setEnabled(on)
+            quality.setEnabled(on)
+        combo.currentIndexChanged.connect(lambda *_: sync())
+        sync()
         view_box = QtWidgets.QCheckBox("表示の状態を保存する（カメラ・表示設定・非表示・フレーム・ポーズ）", dlg)
-        view_box.setToolTip("開いたときに、いまの見た目で表示する。アニメーションカーブのあるノードのポーズは保存しない。"
-                            "選択は保存しない")
-        view_box.setChecked(_settings_bool("packageView", True))
+        view_box.setToolTip("開いたときに、いまの見た目で表示する。アニメーションカーブのあるノードのポーズと、選択は保存しない")
+        view_box.setChecked(opts["view"])
         form.addRow(view_box)
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok
-                                             | QtWidgets.QDialogButtonBox.StandardButton.Cancel, dlg)
-        buttons.accepted.connect(dlg.accept)
-        buttons.rejected.connect(dlg.reject)
+        # Maya のオプションボックスと同じ並び（OS によって変わらないよう、順に置く）: 書き出し・設定を保存・閉じる
+        buttons = QtWidgets.QHBoxLayout()
+        b_export = QtWidgets.QPushButton("書き出し", dlg)
+        b_save = QtWidgets.QPushButton("設定を保存", dlg)
+        b_save.setToolTip("書き出さずに設定だけ保存して閉じる")
+        b_close = QtWidgets.QPushButton("閉じる", dlg)
+        for b in (b_export, b_save, b_close):
+            b.setAutoDefault(False)
+            buttons.addWidget(b)
+        b_export.setDefault(True)
+        chosen = {"action": None}
+
+        def current():
+            return {"textures": combo.currentData(), "view": view_box.isChecked(),
+                    "maxSize": int(size_combo.currentData()), "quality": int(quality.value())}
+
+        def choose(action):
+            chosen["action"] = action
+            dlg.accept()
+        b_export.clicked.connect(lambda *_: choose("export"))
+        b_save.clicked.connect(lambda *_: choose("save"))
+        b_close.clicked.connect(dlg.reject)
         form.addRow(buttons)
-        if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        self.package_options_dialog = dlg          # テスト用
+        if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted or chosen["action"] is None:
             return
-        mode = combo.currentData()
-        with_view = view_box.isChecked()
-        _settings_set("packageTextures", mode)
-        _settings_set("packageView", with_view)
+        new = current()
+        self.save_package_options(new)
+        if chosen["action"] == "save":
+            self.statusBar().showMessage("書き出しの設定を保存しました: " + self.package_options_summary(new), 6000)
+            return
+        self._export_package_with(new)
+
+    def _export_package_with(self, opts: dict):
+        from . import package
+        title = "パッケージ（.msv）として書き出し"
+        if self.current_scene is None:
+            QtWidgets.QMessageBox.information(self, title, "先にシーンを読み込んでください。")
+            return
         base = os.path.splitext(self.current_path)[0] + package.EXT if self.current_path else "scene" + package.EXT
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, title, base, "パッケージ (*.msv)")
         if not path:
@@ -1133,8 +1231,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self._error("開いているパッケージと同じファイルには書き出せません。別の名前にしてください。")
             return
         scene = self.current_scene
-        if not with_view:
-            self._write_package(scene, path, mode, src_path, None)
+        if not opts["view"]:
+            self._write_package(scene, path, opts, src_path, None)
             return
 
         def got(raw):
@@ -1145,16 +1243,17 @@ class ViewerWindow(QtWidgets.QMainWindow):
                 view = None
             if view is None:
                 self.log("warn", "表示の状態を受け取れなかったため、保存せずに書き出します")
-            self._write_package(scene, path, mode, src_path, view)
+            self._write_package(scene, path, opts, src_path, view)
         self.viewer.run_js("window.mayaViewer && window.mayaViewer.getViewState ? window.mayaViewer.getViewState() : ''",
                            got)
 
-    def _write_package(self, scene, path, mode, src_path, view):
+    def _write_package(self, scene, path, opts, src_path, view):
         from . import package
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
         try:
             source = package.Package(src_path) if src_path and os.path.isfile(src_path) else None
-            r = package.write_package(scene, path, textures=mode, source=source, view=view)
+            r = package.write_package(scene, path, textures=opts["textures"], max_size=opts["maxSize"],
+                                      quality=opts["quality"], source=source, view=view)
         except Exception as exc:  # noqa: BLE001
             QtWidgets.QApplication.restoreOverrideCursor()
             self.log("error", traceback.format_exc())
@@ -1162,12 +1261,14 @@ class ViewerWindow(QtWidgets.QMainWindow):
             return
         QtWidgets.QApplication.restoreOverrideCursor()
         size = "%.2f MB" % (r["size"] / 1048576.0)
-        self.statusBar().showMessage("書き出しました: %s（%s）" % (path, size), 6000)
-        self.log("info", "書き出しました: %s（%s・テクスチャ %d 枚%s%s）"
-                 % (path, size, r["textures"], "・WebP" if r["converted"] else "・元のまま",
-                    "・表示の状態あり" if r["view"] else ""))
+        used = dict(opts, view=bool(r["view"]))
+        summary = self.package_options_summary(used)
+        self.statusBar().showMessage("書き出しました: %s（%s・%s）" % (os.path.basename(path), size, summary), 8000)
+        self.log("info", "書き出しました: %s（%s・%s・同梱したテクスチャ %d 枚%s）"
+                 % (path, size, summary, r["textures"], "・WebP" if r["converted"] else "・元のまま" if r["textures"] else ""))
         for w in r["warnings"]:
             self.log("warn", w)
+
 
     # ------------------------------------------------------------------ ドロップ
     @staticmethod
