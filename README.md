@@ -122,6 +122,7 @@ mv.reload_and_show()      # 開発用: コードを読み直してから開く
 ```
 python -m ma_viewer info scene.ma              # 内容の概要と警告を表示
 python -m ma_viewer pack scene.ma -o out.msv      # パッケージ（.msv）に変換（下の「パッケージ」。.json・.msv からも作れる）
+python -m ma_viewer build-html -o viewer.html     # ビューアを 1 ファイルの HTML にまとめる（--embed scene.msv でシーン入り。「ブラウザで見る」）
 python -m ma_viewer export scene.ma -o out.json   # 共通 JSON に変換（アニメーションも含む。--no-animation で除く。--pretty で字下げ。.msv から戻すこともできる）
 python -m ma_viewer view scene.ma              # ビューアで開く
 python -m ma_viewer rig scene.ma               # リグの診断（評価できないノードと、IK の極ベクトルなどの上流）。-o で保存
@@ -202,9 +203,34 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 
 `selftest.json` の `"ok"` が `true` なら、画面ファイルの読み込み・シーンの表示・WebGL の初期化まで成功しています（`webDir` に、実際に使った画面ファイルの場所が入ります）。
 
-### ブラウザで見る（確認・不具合調査用）
+### ブラウザで見る・人に渡す
 
-`ma_viewer/web/index.html` をブラウザで直接開き、［ファイルを開く］かドロップで、パッケージ（.msv）か `export` した JSON を読み込めます。Qt を使わずに表示部分だけを確認したいときに使います。.msv ならテクスチャも表示されます（JSON のテクスチャは、書き出した PC のファイルを参照するため、ブラウザの制限や別の PC では表示されないことがあります）。
+`ma_viewer/web/index.html` をブラウザで直接開き、［ファイルを開く］かドロップで、パッケージ（.msv）か `export` した JSON を読み込めます。.msv ならテクスチャも表示されます（JSON のテクスチャは、書き出した PC のファイルを参照するため、ブラウザの制限や別の PC では表示されないことがあります）。Chrome・Edge で確認しています。
+
+**1 ファイルの HTML（Teams・Slack などで渡す）**: `python -m ma_viewer build-html` で、CSS と JS を中に入れた 1 つの HTML（約 1.4 MB）を作ります。受け取った人はダウンロードしてブラウザで開くだけで使えます（Python も Maya もいりません）。
+
+```
+python -m ma_viewer build-html -o viewer.html                  # ビューアだけ（開いてから .msv をドロップ）
+python -m ma_viewer build-html --embed scene.msv -o scene.html  # シーンを埋め込む（開くとこのシーンを表示）
+```
+
+`--embed` は .msv をそのまま埋め込むので、テクスチャ・表示の状態（カメラ・表示設定など）も入ります（大きさは約 1.4 MB ＋ .msv の約 1.34 倍）。.ma・.json を指定したら、先にパッケージにしてから入れます（`--textures` で同梱するテクスチャを選べます。既定はアルベドのみ）。会社の設定によっては、HTML の添付が止められたり、開くときに警告が出たりすることがあります。
+
+**URL から開く**: ［URL から開く］か、クエリの `file=` で、Web 上の .msv・JSON を開けます。読めるのは、HTML と同じサーバーに置いたファイルと、ほかのページからの読み込みを許可しているサーバー（CORS）のファイルです。Teams・SharePoint・Slack・Google ドライブなど、ログインが必要な場所のファイルや、この PC 上のファイル（file://）は、ブラウザの制限で読めません（ダウンロードしてドロップしてください）。読めないときは、理由（見つからない・ログインが必要・CORS など）を表示します。
+
+**クエリパラメーター**: URL の後ろに付けて、開いたときの見え方を指定できます（.msv に保存した表示の状態より優先。最初に開いたシーンにだけ入れます）。
+
+| パラメーター | 内容 |
+|---|---|
+| `file=URL` | 開くファイル（.msv・共通 JSON。相対パスなら HTML からの位置） |
+| `frame=24` | フレーム |
+| `camera=shotCam` | シーンのカメラから見る（transform・カメラの名前かパス） |
+| `view=px,py,pz,tx,ty,tz,fov` | 自由視点の位置・注視点・画角（画角は省略可） |
+| `wire=1`・`joints=1`・`curves=1`・`grid=0`・`lighting=flat`・`shading=smooth` など | 表示の設定（.msv の表示の状態と同じ項目。オン・オフは 1 / 0、複数の値は `,` 区切り） |
+
+例: `viewer.html?file=scene.msv&frame=24&wire=1&lighting=flat`
+
+**URL をコピー**: ツールバーの［URL をコピー］で、いまのカメラ・フレーム・表示の設定（と、URL から開いたならそのファイル）を入れた URL をコピーします。Web サーバーに置いた HTML なら、そのまま人に渡せます。ローカルで開いた HTML の場合は、この PC 上の場所を指す URL になるので、`?` 以降を相手の HTML の URL に付けて使ってもらいます。Qt 版にはありません。
 
 ## 操作
 

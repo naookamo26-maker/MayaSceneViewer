@@ -16,6 +16,8 @@ import {
 import { base64ToArrayBuffer } from './textures.js';
 import { MapManager, usageFor } from './mapManager.js';
 import { PACKAGE_EXT, openPackage } from './package.js';
+import { buildShareQuery, fetchFailureMessage, isZip, parseShareQuery } from './share.js';
+import { base64ToBytes } from './arrays.js';
 import { JointOverlay } from './jointOverlay.js';
 import { classifyControls } from './controlRoles.js';
 import { fillHeatmap, fillInfluenceBlend, fillSolid, vertexWeights } from './weights.js';
@@ -402,30 +404,168 @@ class ViewerApp {
       return;
     }
     this.ui.showLoading(`${file.name} を読み込み中`);
-    if (PACKAGE_EXT.test(file.name)) {
+    file.arrayBuffer().then((buf) => this.loadBuffer(file.name, buf, { sourceUrl: null }))
+      .catch((err) => { this.ui.hideLoading(); this.ui.showError(`${file.name} を読めませんでした。\n${err.message}`); });
+  }
+
+  /**
+   * 読み込んだデータ（.msv か共通 JSON）を開く。中身で判定する（.msv は zip）。
+   * opts.sourceUrl: URL から読んだときの URL（［URL をコピー］で file= に入れる）
+   */
+  loadBuffer(name, buffer, opts = {}) {
+    const fail = (what, err) => {
+      this.ui.hideLoading();
+      this.ui.showError(`${name} を${what}として読めませんでした。\n${err.message || err}`);
+      return false;
+    };
+    this.ui.showLoading(`${name} を読み込み中`);
+    if (isZip(buffer)) {
       // パッケージ（.msv）: zip をメモリの上で展開する。テクスチャは表示に必要になったときに展開する
-      file.arrayBuffer().then(openPackage).then(({ scene, pkg }) => {
-        if (scene.source && !scene.source.name) scene.source.name = file.name;
+      return openPackage(buffer).then(({ scene, pkg }) => {
+        if (scene.source && !scene.source.name) scene.source.name = name;
         this.pendingPackage = pkg;
+        this.pendingSourceUrl = opts.sourceUrl || null;
         setTimeout(() => this.loadScene(scene), 0);
-      }).catch((err) => {
-        this.ui.hideLoading();
-        this.ui.showError(`${file.name} をパッケージ（.msv）として読めませんでした。\n${err.message}`);
-      });
+        return true;
+      }).catch((err) => fail('パッケージ（.msv）', err));
+    }
+    try {
+      const data = JSON.parse(new TextDecoder().decode(buffer));
+      if (data.source && !data.source.name) data.source.name = name;
+      this.pendingSourceUrl = opts.sourceUrl || null;
+      setTimeout(() => this.loadScene(data), 0);
+      return Promise.resolve(true);
+    } catch (err) {
+      return Promise.resolve(fail(PACKAGE_EXT.test(name) ? 'パッケージ（.msv）' : 'パッケージ（.msv）・共通 JSON', err));
+    }
+  }
+
+  /**
+   * URL のファイル（.msv・共通 JSON）を開く。読めなければ理由を出す（CORS・見つからない・ログインが必要など）。
+   * ログインが必要な場所（Teams・SharePoint など）や、この PC 上のファイル（file://）は、ブラウザの制限で読めない
+   */
+  async loadUrl(text) {
+    let url;
+    try {
+      url = new URL(String(text).trim(), location.href);
+    } catch (err) {
+      this.ui.showError(`URL として読めません: ${text}`);
+      return false;
+    }
+    const name = decodeURIComponent(url.pathname.split('/').pop() || url.host) || url.href;
+    const fail = (info) => {
+      this.ui.hideLoading();
+      this.ui.showError(fetchFailureMessage({ url: url.href, page: location.href, ...info }));
+      return false;
+    };
+    if (location.protocol === 'https:' && url.protocol === 'http:') return fail({});
+    this.ui.setEmpty(false);
+    this.ui.showLoading(`${name} をダウンロード中`);
+    let res;
+    try {
+      res = await fetch(url.href, { credentials: 'omit' });
+    } catch (err) {
+      return fail({ error: err });
+    }
+    if (!res.ok) return fail({ status: res.status });
+    const type = res.headers.get('content-type') || '';
+    const buffer = await res.arrayBuffer().catch((err) => null);
+    if (!buffer) return fail({ error: new Error('ダウンロードが途中で止まりました') });
+    if (/text\/html/i.test(type) && !isZip(buffer)) return fail({ contentType: type });
+    return this.loadBuffer(name, buffer, { sourceUrl: url.href });
+  }
+
+  /** 表示の設定の既定値（クエリ・URL のコピーで使う項目と型） */
+  viewDefaults() {
+    return Object.fromEntries(VIEW_SETTING_KEYS.map((k) => [k, JSON.parse(JSON.stringify(DEFAULTS[k]))]));
+  }
+
+  /**
+   * ブラウザで開いたとき: HTML に埋め込んだシーン（build-html --embed）か、クエリの file= を開く。
+   * クエリのフレーム・カメラ・表示の設定は、最初に開いたシーンに入れる（.msv に保存した表示の状態より優先）
+   */
+  startFromPage() {
+    if (isQtHost() || typeof location === 'undefined') return;
+    const q = parseShareQuery(location.search, this.viewDefaults());
+    this.queryView = q.view;
+    if (q.invalid.length) this.ui.setMessage(`URL の指定を読めなかったため、使いません: ${q.invalid.join('・')}`, 8000);
+    const embedded = document.getElementById('embedded-package');
+    if (embedded && embedded.textContent.trim()) {
+      const name = embedded.dataset.name || 'scene.msv';
+      this.embedded = true;
+      this.ui.setEmpty(false);
+      this.ui.showLoading(`${name} を読み込み中`);
+      // 少し待って、読み込み中の表示を先に描く
+      setTimeout(() => {
+        try {
+          const bytes = base64ToBytes(embedded.textContent.trim());
+          this.loadBuffer(name, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), { sourceUrl: null });
+        } catch (err) {
+          this.ui.hideLoading();
+          this.ui.showError(`埋め込まれたシーンを読めませんでした。\n${err.message}`);
+        }
+      }, 30);
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const data = JSON.parse(reader.result);
-        if (data.source && !data.source.name) data.source.name = file.name;
-        setTimeout(() => this.loadScene(data), 0);
-      } catch (err) {
-        this.ui.hideLoading();
-        this.ui.showError(`${file.name} を JSON として読めませんでした。\n${err.message}`);
-      }
-    };
-    reader.readAsText(file);
+    if (q.file) this.loadUrl(q.file);
+  }
+
+  /** ［URL をコピー］: いまのカメラ・フレーム・表示の設定をクエリに入れた URL */
+  shareUrl() {
+    const base = location.href.split(/[?#]/)[0];
+    const state = this.viewState();
+    const baseline = this.viewDefaults();
+    const saved = this.data && this.data.savedView && this.data.savedView.settings;
+    if (saved) for (const k of Object.keys(baseline)) if (k in saved) baseline[k] = saved[k];
+    const query = buildShareQuery(state, baseline, { file: this.sourceUrl || null });
+    return query ? `${base}?${query}` : base;
+  }
+
+  async copyShareUrl() {
+    const url = this.shareUrl();
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(url);
+      ok = true;
+    } catch (err) {
+      // クリップボードの API が使えないとき（古いブラウザ・権限）
+      const ta = document.createElement('textarea');
+      ta.value = url;
+      document.body.appendChild(ta);
+      ta.select();
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      ta.remove();
+    }
+    const notes = [];
+    if (this.data && !this.sourceUrl && !this.embedded) notes.push('ファイルは URL に入りません（この PC から開いたため。相手にもファイルを渡してください）');
+    if (location.protocol === 'file:') notes.push('この PC 上の HTML を指す URL です（相手には、? 以降を自分の HTML の URL に付けて開いてもらう）');
+    if (ok) this.ui.setMessage(`URL をコピーしました${notes.length ? '。' + notes.join('。') : ''}`, 10000);
+    else window.prompt('この URL をコピーしてください', url);
+    return url;
+  }
+
+  /** ［URL から開く］のダイアログ */
+  bindShareUi() {
+    const dlg = document.getElementById('url-dialog');
+    const input = document.getElementById('url-input');
+    const open = document.getElementById('btn-open-url');
+    const copy = document.getElementById('btn-copy-url');
+    if (!dlg || !open || !copy) return;
+    open.addEventListener('click', () => {
+      input.value = this.sourceUrl || '';
+      dlg.showModal();
+      input.focus();
+      input.select();
+    });
+    document.getElementById('url-dialog-close').addEventListener('click', () => dlg.close());
+    document.getElementById('url-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      dlg.close();
+      this.loadUrl(text);
+    });
+    copy.addEventListener('click', () => this.copyShareUrl());
   }
 
   loadScene(data) {
@@ -433,6 +573,8 @@ class ViewerApp {
     // ブラウザで開いた .msv（同梱のテクスチャを読む）。Qt から届いたシーンは Python から受け取る
     this.package = this.pendingPackage || null;
     this.pendingPackage = null;
+    this.sourceUrl = this.pendingSourceUrl || null;     // URL から開いたときの URL（［URL をコピー］で使う）
+    this.pendingSourceUrl = null;
     if (!this.renderer) return false;
     const t0 = performance.now();
     this.pause();
@@ -547,6 +689,17 @@ class ViewerApp {
             + (skipped ? `。シーンにないノード ${skipped} 個は飛ばしました` : ''), 6000);
         } catch (err) {
           this.log('warn', '保存された表示の状態を反映できませんでした: ' + (err && err.message || err));
+        }
+      }
+      // URL のクエリの指定（フレーム・カメラ・表示の設定）。最初に開いたシーンにだけ入れる
+      if (this.queryView) {
+        const qv = this.queryView;
+        this.queryView = null;
+        try {
+          const missing = this.applyViewState(qv);
+          this.ui.setMessage('URL の指定で表示しました' + (missing ? '（指定したカメラが見つかりません）' : ''), 6000);
+        } catch (err) {
+          this.log('warn', 'URL の指定を反映できませんでした: ' + (err && err.message || err));
         }
       }
       this.updateToolbarHints();
@@ -2703,7 +2856,11 @@ class ViewerApp {
     const c = v.camera || {};
     const vec = (a) => (Array.isArray(a) && a.length === 3 && a.every(Number.isFinite) ? new Vector3().fromArray(a) : null);
     if (c.mode === 'scene') {
-      const ci = this.cameras.findIndex((x) => this.data.nodes[x.transform] && this.data.nodes[x.transform].path === c.path);
+      // パス（view.json）か、名前（URL の camera=。transform・カメラの名前）で探す
+      const ci = this.cameras.findIndex((x) => {
+        const n = this.data.nodes[x.transform];
+        return (n && (n.path === c.path || n.name === c.path)) || x.name === c.path;
+      });
       if (ci >= 0) {
         this.setCamera(ci, { quiet: true });
         const pos = c.edited && vec(c.edited.position), tgt = c.edited && vec(c.edited.target);
@@ -2815,6 +2972,8 @@ function niceCeil(x) {
 
 // ---------------------------------------------------------------------- 外部 API
 const app = new ViewerApp();
+app.bindShareUi();
+app.startFromPage();
 
 /** obj のワールド行列（親の行列からたどって求める。matrixWorld は書き換えない） */
 function worldMatrixOf(obj, target) {
