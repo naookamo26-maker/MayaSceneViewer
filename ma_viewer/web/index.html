@@ -9,11 +9,17 @@
 <body data-host="browser">
 <div id="app">
   <header id="toolbar" role="toolbar" aria-label="ツール">
-    <div class="tb-group" id="tb-file">
-      <label class="btn" for="file-input" tabindex="0">ファイルを開く</label>
-      <input type="file" id="file-input" accept=".msv,.json,application/json" hidden>
-      <button type="button" class="btn" id="btn-open-url" title="Web 上の .msv・共通 JSON を URL で開く（ログインが必要な場所のファイルは読めません）">URL から開く</button>
-      <button type="button" class="btn" id="btn-copy-url" title="いまのカメラ・フレーム・表示の設定を入れた URL をコピーする（URL から開いたファイルなら、そのファイルも入る）">URL をコピー</button>
+    <div class="tb-group menus" id="tb-file">
+      <div class="menu">
+        <button class="menu-btn" id="btn-file-menu" aria-haspopup="true" aria-expanded="false" aria-controls="menu-file">ファイル <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M1 2.5 4 5.5 7 2.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></button>
+        <div class="menu-panel menu-actions" id="menu-file" hidden>
+          <label class="menu-item" for="file-input" tabindex="0" title="この PC の .msv・共通 JSON を開く（ドロップでも開ける）">ローカルファイルから開く…</label>
+          <input type="file" id="file-input" accept=".msv,.json,application/json" hidden>
+          <button type="button" class="menu-item" id="btn-open-url" title="Web 上の .msv・共通 JSON を URL で開く">URL から開く…</button>
+          <div class="menu-sep"></div>
+          <button type="button" class="menu-item" id="btn-copy-url" title="いまのカメラ・フレーム・表示の設定を入れた URL をコピーする（URL から開いたファイルなら、そのファイルも入る）">URL をコピー</button>
+        </div>
+      </div>
     </div>
     <div class="tb-group" role="group" aria-label="操作">
       <div class="seg" id="opt-tool">
@@ -179,7 +185,7 @@
     </div>
     <div id="empty" class="overlay-msg">
       <p class="lead" data-host-text="qt">.ma ファイルをウィンドウにドロップするか、［ファイル］→［開く］で読み込みます。</p>
-      <p class="lead" data-host-text="browser">パッケージ（.msv）・共通 JSON をドロップするか、［ファイルを開く］・［URL から開く］で読み込みます。</p>
+      <p class="lead" data-host-text="browser">パッケージ（.msv）・共通 JSON をドロップするか、［ファイル］メニューから開きます。</p>
       <p class="muted" data-host-text="browser">.ma は <code>python -m ma_viewer pack scene.ma</code> でパッケージ（テクスチャ入り）に変換できます。</p>
       <p class="muted" id="app-version"></p>
     </div>
@@ -286,11 +292,11 @@
     </div>
   </aside>
 
-  <!-- ［URL から開く］（ブラウザのみ） -->
+  <!-- ［ファイル］→［URL から開く］（ブラウザのみ） -->
   <dialog id="url-dialog" aria-labelledby="url-dialog-title">
     <div class="dlg-head"><h2 id="url-dialog-title">URL から開く</h2><button type="button" class="btn" id="url-dialog-close">閉じる</button></div>
     <form id="url-form" class="dlg-body">
-      <p class="muted">.msv・共通 JSON の URL（https://…）。HTML と同じサーバーに置いたファイルか、ほかのページからの読み込みを許可しているサーバーのファイルを開けます。Teams・SharePoint などログインが必要な場所のファイルは読めません（ダウンロードしてドロップしてください）。</p>
+      <p class="muted">.msv・共通 JSON の URL を入力します。URL によっては開けないものもあります。</p>
       <div class="url-row"><input type="text" id="url-input" placeholder="https://example.com/scene.msv" aria-label="ファイルの URL" autocomplete="url" spellcheck="false" required><button type="submit" class="btn">開く</button></div>
     </form>
   </dialog>

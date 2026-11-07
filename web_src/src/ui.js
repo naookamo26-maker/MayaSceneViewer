@@ -222,9 +222,12 @@ export class UI {
       if (f) this.app.loadFile(f);
       e.target.value = '';
     });
-    document.querySelector('label[for="file-input"]').addEventListener('keydown', (e) => {
+    const fileLabel = document.querySelector('label[for="file-input"]');
+    fileLabel.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file-input').click(); }
     });
+    // ［ファイル］メニューの項目: 選んだらメニューを閉じる（ファイルを選ぶ画面の裏に残さない）
+    fileLabel.addEventListener('click', () => { if (this.closeMenus) this.closeMenus(); });
   }
 
   /** キーボード操作などで変わった設定をツールバーに反映 */

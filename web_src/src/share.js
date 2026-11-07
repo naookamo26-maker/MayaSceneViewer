@@ -120,7 +120,7 @@ export function fetchFailureMessage(info) {
   try { page = new URL(info.page); } catch (e) { page = null; }
   const name = decodeURIComponent(url.pathname.split('/').pop() || url.href);
   const head = `${name} を読み込めませんでした。\n`;
-  const fallback = 'ファイルをダウンロードして、このページにドロップするか［ファイルを開く］で開いてください。';
+  const fallback = 'ファイルをダウンロードして、このページにドロップするか［ファイル］→［ローカルファイルから開く］で開いてください。';
   if (info.status) {
     if (info.status === 404 || info.status === 410) return `${head}ファイルが見つかりません（${info.status}）。URL を確かめてください。\n${url.href}`;
     if (info.status === 401 || info.status === 403) {
@@ -129,11 +129,11 @@ export function fetchFailureMessage(info) {
     return `${head}サーバーがエラーを返しました（${info.status}）。\n${fallback}`;
   }
   if (info.contentType && /text\/html/i.test(info.contentType)) {
-    return `${head}ファイルではなく Web ページ（ログインのページなど）が返りました。Teams・SharePoint・Google ドライブなど、`
+    return `${head}ファイルではなく Web ページ（ログインのページなど）が返りました。`
       + `ログインが必要な場所のファイルは読めません。\n${fallback}`;
   }
   if (url.protocol === 'file:') {
-    return `${head}ブラウザの制限で、この PC 上のファイルは URL では読めません。［ファイルを開く］かドロップで開いてください。`;
+    return `${head}ブラウザの制限で、この PC 上のファイルは URL では読めません。［ファイル］→［ローカルファイルから開く］かドロップで開いてください。`;
   }
   if (page && page.protocol === 'https:' && url.protocol === 'http:') {
     return `${head}https のページから http の URL は読めません（ブラウザが安全でない通信として止めます）。https の URL を指定してください。`;

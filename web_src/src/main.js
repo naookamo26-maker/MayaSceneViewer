@@ -552,6 +552,7 @@ class ViewerApp {
     const copy = document.getElementById('btn-copy-url');
     if (!dlg || !open || !copy) return;
     open.addEventListener('click', () => {
+      if (this.ui.closeMenus) this.ui.closeMenus();
       input.value = this.sourceUrl || '';
       dlg.showModal();
       input.focus();
@@ -565,7 +566,10 @@ class ViewerApp {
       dlg.close();
       this.loadUrl(text);
     });
-    copy.addEventListener('click', () => this.copyShareUrl());
+    copy.addEventListener('click', () => {
+      if (this.ui.closeMenus) this.ui.closeMenus();
+      this.copyShareUrl();
+    });
   }
 
   loadScene(data) {
