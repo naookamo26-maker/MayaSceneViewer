@@ -12,6 +12,8 @@
     <div class="tb-group" id="tb-file">
       <label class="btn" for="file-input" tabindex="0">ファイルを開く</label>
       <input type="file" id="file-input" accept=".msv,.json,application/json" hidden>
+      <button type="button" class="btn" id="btn-open-url" title="Web 上の .msv・共通 JSON を URL で開く（ログインが必要な場所のファイルは読めません）">URL から開く</button>
+      <button type="button" class="btn" id="btn-copy-url" title="いまのカメラ・フレーム・表示の設定を入れた URL をコピーする（URL から開いたファイルなら、そのファイルも入る）">URL をコピー</button>
     </div>
     <div class="tb-group" role="group" aria-label="操作">
       <div class="seg" id="opt-tool">
@@ -177,8 +179,9 @@
     </div>
     <div id="empty" class="overlay-msg">
       <p class="lead" data-host-text="qt">.ma ファイルをウィンドウにドロップするか、［ファイル］→［開く］で読み込みます。</p>
-      <p class="lead" data-host-text="browser">パッケージ（.msv）・共通 JSON をドロップするか、［ファイルを開く］で読み込みます。</p>
+      <p class="lead" data-host-text="browser">パッケージ（.msv）・共通 JSON をドロップするか、［ファイルを開く］・［URL から開く］で読み込みます。</p>
       <p class="muted" data-host-text="browser">.ma は <code>python -m ma_viewer pack scene.ma</code> でパッケージ（テクスチャ入り）に変換できます。</p>
+      <p class="muted" id="app-version"></p>
     </div>
     <!-- 読み込み中の表示。回り続けるアニメーションは使わない（GPU のない環境では再描画が解析の CPU を奪うため）。
          進捗が届いたときだけ更新するバーにする -->
@@ -282,6 +285,15 @@
       </details>
     </div>
   </aside>
+
+  <!-- ［URL から開く］（ブラウザのみ） -->
+  <dialog id="url-dialog" aria-labelledby="url-dialog-title">
+    <div class="dlg-head"><h2 id="url-dialog-title">URL から開く</h2><button type="button" class="btn" id="url-dialog-close">閉じる</button></div>
+    <form id="url-form" class="dlg-body">
+      <p class="muted">.msv・共通 JSON の URL（https://…）。HTML と同じサーバーに置いたファイルか、ほかのページからの読み込みを許可しているサーバーのファイルを開けます。Teams・SharePoint などログインが必要な場所のファイルは読めません（ダウンロードしてドロップしてください）。</p>
+      <div class="url-row"><input type="text" id="url-input" placeholder="https://example.com/scene.msv" aria-label="ファイルの URL" autocomplete="url" spellcheck="false" required><button type="submit" class="btn">開く</button></div>
+    </form>
+  </dialog>
 
   <!-- 警告の一覧（Qt では別ウィンドウ、ブラウザではこのダイアログで表示） -->
   <dialog id="warn-dialog" aria-labelledby="warn-dialog-title">

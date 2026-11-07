@@ -575,6 +575,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self._build_log_dock()
         self._build_actions()
         self.statusBar().showMessage("準備完了")
+        self.log("info", self.version_text())
         if not self.viewer.has_channel:
             self.log("warn", "ビューア→Python の通知が無効です（選択同期は使えません）。")
         if host == "maya":
@@ -744,6 +745,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         mb.addMenu(ms)
         mh = mb.addMenu("ヘルプ")
         mh.addAction(self._act("操作方法", self.show_help, "F1"))
+        mh.addSeparator()
+        mh.addAction(self._act("バージョン情報…", self.show_about))
 
     def _on_history_changed(self, can_undo, can_redo, undo_label, redo_label):
         self.a_undo.setEnabled(can_undo)
@@ -795,6 +798,33 @@ class ViewerWindow(QtWidgets.QMainWindow):
         dlg = show_report(self, "リグの診断 - %s" % os.path.basename(path), text)
         self.rig_report_text = text            # テスト用
         self.rig_report_dialog = dlg
+
+    @staticmethod
+    def version_env() -> str:
+        """動いている環境（Python・PySide6・Qt のバージョン）"""
+        import platform
+        try:
+            import PySide6
+            qt = "PySide6 %s・Qt %s" % (PySide6.__version__, QtCore.qVersion())
+        except Exception:  # noqa: BLE001
+            qt = "Qt %s" % QtCore.qVersion()
+        return "Python %s・%s" % (platform.python_version(), qt)
+
+    @classmethod
+    def version_text(cls) -> str:
+        """ソフト名・バージョンと、動いている環境（ログ用）"""
+        from . import __version__
+        return "%s %s（%s）" % (APP_NAME, __version__, cls.version_env())
+
+    def show_about(self):
+        """［ヘルプ］→［バージョン情報］"""
+        from . import __version__
+        from .package import pillow_status
+        ok, _why = pillow_status()
+        QtWidgets.QMessageBox.about(
+            self, "バージョン情報",
+            "<h3>%s</h3><p>バージョン %s</p><p>%s</p><p>テクスチャの WebP 変換（Pillow）: %s</p>"
+            % (APP_NAME, __version__, self.version_env(), "使える" if ok else "使えない"))
 
     def show_help(self):
         from .help_dialog import show_help

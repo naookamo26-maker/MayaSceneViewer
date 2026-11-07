@@ -335,7 +335,7 @@ three.js では `SkinnedMesh` を detached モードにし、`bind(skeleton, gm)
 
 | 中身 | 内容 |
 |---|---|
-| `manifest.json` | `{"format": "maya-scene-viewer-package", "version": 1, "textures": "albedo" \| "all" \| "none", "textureFormat": "webp" \| "original", "maxSize": 2048, "created": ..., "generator": ...}` |
+| `manifest.json` | `{"format": "maya-scene-viewer-package", "version": 1, "textures": "albedo" \| "all" \| "none", "textureFormat": "webp" \| "original", "maxSize": 2048, "created": ..., "generator": "MayaSceneViewer", "generatorVersion": "1.0.0"}`（generatorVersion は作ったビューアのバージョン） |
 | `scene.json` | 共通 JSON（animation を含む）。数値の配列（base64 の `{"dtype", "count", "data"}`）は `{"dtype", "count", "buffer": "bin/data.bin", "offset": バイト位置}` に置き換える |
 | `bin/data.bin` | 数値の配列を並べたリトルエンディアンのバイナリ。各配列の先頭は 4 バイト境界 |
 | `textures/*` | 同梱したテクスチャ（`textures/<textures の番号>.webp`、UDIM は `textures/<番号>.<タイル>.webp`） |

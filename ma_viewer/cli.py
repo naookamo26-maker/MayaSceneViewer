@@ -5,6 +5,7 @@
   python -m ma_viewer view scene.ma      ファイルを開いてビューアを起動
   python -m ma_viewer export scene.ma -o scene.json   共通 JSON に変換（.msv からも戻せる）
   python -m ma_viewer pack scene.ma -o scene.msv      パッケージ（.msv。小さく、アルベドのテクスチャ入り）に変換
+  python -m ma_viewer build-html -o viewer.html       ビューアを 1 ファイルの HTML にまとめる（--embed scene.msv でシーン入り）
   python -m ma_viewer info scene.ma      内容の概要と警告を表示
   python -m ma_viewer rig scene.ma       リグの診断（評価できないノードと、IK の極ベクトルなどの上流）
   python -m ma_viewer excerpt scene.ma [ノード名...]   指定したノード（省略時は lookAt）の部分だけを抜き出す
@@ -108,6 +109,31 @@ def cmd_pack(args) -> int:
     if not args.quiet:
         for w in scene.get("warnings") or []:
             print("  警告: " + w)
+    return 0
+
+
+def cmd_build_html(args) -> int:
+    """ビューアを 1 ファイルの HTML にまとめる（--embed でシーンを埋め込む）"""
+    from . import html_build
+    t0 = time.time()
+    if args.embed and not os.path.isfile(args.embed):
+        print("ファイルが見つかりません: %s" % args.embed, file=sys.stderr)
+        return 1
+    out = args.output or (os.path.splitext(args.embed)[0] + ".html" if args.embed else "viewer.html")
+    if args.embed and os.path.abspath(out) == os.path.abspath(args.embed):
+        print("入力と同じファイルには書き出せません: %s" % out, file=sys.stderr)
+        return 1
+    say = None if args.quiet else (lambda msg: sys.stderr.write("\r%-60s" % msg[:60]))
+    try:
+        size = html_build.write_html(out, embed=args.embed, textures=args.textures, progress=say)
+    except (ValueError, RuntimeError, OSError) as exc:
+        print("書き出せませんでした: %s" % exc, file=sys.stderr)
+        return 1
+    if say:
+        sys.stderr.write("\r%-60s\r" % "")
+    print("書き出しました: %s（%s・%.2f 秒）" % (out, _mb(size), time.time() - t0))
+    if args.embed:
+        print("  シーンを埋め込みました: %s（開くとこのシーンを表示します）" % os.path.basename(args.embed))
     return 0
 
 
@@ -260,7 +286,9 @@ def _safe_console():
 
 def main(argv=None) -> int:
     _safe_console()
+    from . import __version__
     p = argparse.ArgumentParser(prog="ma_viewer", description="Maya ASCII 簡易ビューア")
+    p.add_argument("-V", "--version", action="version", version="Maya Scene Viewer %s" % __version__)
     sub = p.add_subparsers(dest="cmd")
     pe = sub.add_parser("export", help=".ma・.msv を共通 JSON に変換")
     pe.add_argument("input")
@@ -280,6 +308,12 @@ def main(argv=None) -> int:
     pk.add_argument("--no-animation", action="store_true", help="アニメーションを書き出さない")
     pk.add_argument("--no-view", action="store_true", help="元の .msv の表示の状態（カメラ・表示設定など）を引き継がない")
     pk.add_argument("-q", "--quiet", action="store_true")
+    pb = sub.add_parser("build-html", help="ビューアを CSS・JS 込みの 1 ファイルの HTML にまとめる（Teams・Slack などで渡す用）")
+    pb.add_argument("-o", "--output", help="書き出す HTML（省略時は viewer.html。--embed なら入力と同じ名前）")
+    pb.add_argument("--embed", help="埋め込むシーン（.msv。.ma・.json ならパッケージにしてから入れる）。開くとこのシーンを表示する")
+    pb.add_argument("--textures", choices=("albedo", "all", "none"), default="albedo",
+                    help=".ma・.json を埋め込むときに同梱するテクスチャ（既定 albedo。.msv はそのまま）")
+    pb.add_argument("-q", "--quiet", action="store_true")
     pi = sub.add_parser("info", help="内容の概要を表示")
     pi.add_argument("input")
     pr = sub.add_parser("rig", help="リグの診断（評価できないノードと IK の上流）")
@@ -304,6 +338,8 @@ def main(argv=None) -> int:
         return cmd_export(args)
     if args.cmd == "pack":
         return cmd_pack(args)
+    if args.cmd == "build-html":
+        return cmd_build_html(args)
     if args.cmd == "info":
         return cmd_info(args)
     if args.cmd == "rig":
