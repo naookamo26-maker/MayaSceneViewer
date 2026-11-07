@@ -445,6 +445,18 @@ class ViewerApp {
    * ログインが必要な場所（Teams・SharePoint など）や、この PC 上のファイル（file://）は、ブラウザの制限で読めない
    */
   async loadUrl(text) {
+    // 思わぬ失敗でも黙って止まらず、理由を出す（押しても何も起きないように見えないように）
+    try {
+      return await this.loadUrlInner(text);
+    } catch (err) {
+      this.ui.hideLoading();
+      this.ui.showError(`読み込めませんでした。\n${(err && err.message) || err}`);
+      this.log('error', err && err.stack || err);
+      return false;
+    }
+  }
+
+  async loadUrlInner(text) {
     let url;
     try {
       url = new URL(String(text).trim(), location.href);
@@ -452,7 +464,8 @@ class ViewerApp {
       this.ui.showError(`URL として読めません: ${text}`);
       return false;
     }
-    const name = decodeURIComponent(url.pathname.split('/').pop() || url.host) || url.href;
+    let name = url.pathname.split('/').pop() || url.host || url.href;
+    try { name = decodeURIComponent(name); } catch (err) { /* % の並びが崩れた名前はそのまま */ }
     const fail = (info) => {
       this.ui.hideLoading();
       this.ui.showError(fetchFailureMessage({ url: url.href, page: location.href, ...info }));
@@ -540,8 +553,19 @@ class ViewerApp {
     if (this.data && !this.sourceUrl && !this.embedded) notes.push('ファイルは URL に入りません（この PC から開いたため。相手にもファイルを渡してください）');
     if (location.protocol === 'file:') notes.push('この PC 上の HTML を指す URL です（相手には、? 以降を自分の HTML の URL に付けて開いてもらう）');
     if (ok) this.ui.setMessage(`URL をコピーしました${notes.length ? '。' + notes.join('。') : ''}`, 10000);
-    else window.prompt('この URL をコピーしてください', url);
+    else this.showCopyDialog(url);
     return url;
+  }
+
+  /** クリップボードを使えないとき: URL を選択した状態で見せる（window.prompt はプレビューの枠などで禁止されていることがある） */
+  showCopyDialog(url) {
+    const dlg = document.getElementById('copy-dialog');
+    const input = document.getElementById('copy-input');
+    if (!dlg || !input) return;
+    input.value = url;
+    dlg.showModal();
+    input.focus();
+    input.select();
   }
 
   /** ［URL から開く］のダイアログ */
@@ -559,13 +583,19 @@ class ViewerApp {
       input.select();
     });
     document.getElementById('url-dialog-close').addEventListener('click', () => dlg.close());
-    document.getElementById('url-form').addEventListener('submit', (e) => {
-      e.preventDefault();
+    // フォームの送信は使わない（送信が禁止された枠の中でも動くように）。ボタンと Enter キーで開く
+    const submit = () => {
       const text = input.value.trim();
-      if (!text) return;
+      if (!text) { input.focus(); return; }
       dlg.close();
       this.loadUrl(text);
+    };
+    document.getElementById('url-open').addEventListener('click', submit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submit(); }
     });
+    const copyDlg = document.getElementById('copy-dialog');
+    if (copyDlg) document.getElementById('copy-dialog-close').addEventListener('click', () => copyDlg.close());
     copy.addEventListener('click', () => {
       if (this.ui.closeMenus) this.ui.closeMenus();
       this.copyShareUrl();

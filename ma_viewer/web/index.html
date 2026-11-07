@@ -295,10 +295,21 @@
   <!-- ［ファイル］→［URL から開く］（ブラウザのみ） -->
   <dialog id="url-dialog" aria-labelledby="url-dialog-title">
     <div class="dlg-head"><h2 id="url-dialog-title">URL から開く</h2><button type="button" class="btn" id="url-dialog-close">閉じる</button></div>
-    <form id="url-form" class="dlg-body">
+    <!-- フォームの送信は使わない（チャットツールなどのプレビューの枠では、送信が禁止されていることがあるため）。
+         ボタンのクリックと Enter キーで直接開く -->
+    <div id="url-form" class="dlg-body">
       <p class="muted">.msv・共通 JSON の URL を入力します。URL によっては開けないものもあります。</p>
-      <div class="url-row"><input type="text" id="url-input" placeholder="https://example.com/scene.msv" aria-label="ファイルの URL" autocomplete="url" spellcheck="false" required><button type="submit" class="btn">開く</button></div>
-    </form>
+      <div class="url-row"><input type="text" id="url-input" placeholder="https://example.com/scene.msv" aria-label="ファイルの URL" autocomplete="url" spellcheck="false"><button type="button" class="btn" id="url-open">開く</button></div>
+    </div>
+  </dialog>
+
+  <!-- ［ファイル］→［URL をコピー］でクリップボードを使えないとき（プレビューの枠の中など）: 選択した URL を見せて Ctrl+C でコピーしてもらう -->
+  <dialog id="copy-dialog" aria-labelledby="copy-dialog-title">
+    <div class="dlg-head"><h2 id="copy-dialog-title">URL をコピー</h2><button type="button" class="btn" id="copy-dialog-close">閉じる</button></div>
+    <div class="dlg-body">
+      <p class="muted">自動でコピーできませんでした。Ctrl+C（Mac は ⌘+C）でコピーしてください。</p>
+      <div class="url-row"><input type="text" id="copy-input" aria-label="コピーする URL" readonly spellcheck="false"></div>
+    </div>
   </dialog>
 
   <!-- 警告の一覧（Qt では別ウィンドウ、ブラウザではこのダイアログで表示） -->
