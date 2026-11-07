@@ -1,8 +1,8 @@
 // 評価のプロファイラの画面（ビューポートの上に重ねる、動かせるパネル）。集計は profiler.js。
-//   * フレームの内訳: 1 フレームごとの積み上げ棒（記録した順。右がいちばん新しい）。持ち時間（1000 / fps）の線
+//   * フレームの内訳: 1 フレームごとの積み上げ棒（記録した順。右がいちばん新しい）。フレームバジェット（1000 / fps）の線
 //   * リグの評価の内訳: 種類ごと（何で動くノードか）・経路ごと（専用の評価か、汎用の経路に任せたか、その理由）
 //   * 再生キャッシュとワーカーの状態
-import { PARTS, cacheInfo, formatBytes, planInfo, profilerText } from './profiler.js';
+import { PARTS, SUB_PARTS, cacheInfo, formatBytes, planInfo, profilerText } from './profiler.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -45,6 +45,7 @@ export class ProfilerPanel {
         <ul class="prof-legend" id="prof-legend"></ul>
         <div class="prof-graph-wrap"><canvas id="prof-graph" aria-label="フレームごとの処理の内訳のグラフ"></canvas></div>
         <div id="prof-tip" class="prof-tip"></div>
+        <div id="prof-detail" class="prof-detail"></div>
         <div class="prof-tabs-row">
           <h3>リグの評価の内訳</h3>
           <div class="prof-tabs" role="tablist" aria-label="分け方">
@@ -185,9 +186,20 @@ export class ProfilerPanel {
       parts.push(`記録 ${num(s.frames)} フレーム（キャッシュあり ${num(s.hits)}・なし ${num(s.evaluated)}）`);
       parts.push(`平均 <b>${msText(s.total)}</b>・最大 ${msText(s.max)}`);
       if (s.fps) parts.push(`表示できたフレームレート <b>${s.fps.toFixed(1)} fps</b>`);
-      if (budget) parts.push(`持ち時間 ${msText(budget)}（${clip.fps} fps）`);
+      if (budget) parts.push(`フレームバジェット ${msText(budget)}（${clip.fps} fps）`);
     }
     $('prof-summary').innerHTML = parts.map((x) => `<span>${x}</span>`).join('');
+    // 行列の更新・表示・その他の内訳と、ドローコール・ポリゴン数（記録したフレームの平均）
+    const detail = [];
+    if (s.frames) {
+      detail.push(`<span><b>行列の更新・表示・その他</b>（平均 ${msText(s.avg.scene)}）: `
+        + `${SUB_PARTS.map((p) => `${esc(p.label)} ${msText(s.sub[p.key])}`).join('・')}・その他 ${msText(s.sub.other)}</span>`);
+      if (s.draw) {
+        detail.push(`<span><b>描画</b>（平均 ${msText(s.avg.render)}）: ドローコール ${num(Math.round(s.draw.calls))}・`
+          + `ポリゴン数（三角形） ${num(Math.round(s.draw.triangles))}${s.draw.lines ? `・ライン ${num(Math.round(s.draw.lines))}` : ''}</span>`);
+      }
+    }
+    $('prof-detail').innerHTML = detail.join('');
   }
 
   drawGraph() {
@@ -207,7 +219,7 @@ export class ProfilerPanel {
     const n = this.visibleBars(), first = Math.max(0, fr.length - n);
     const shown = fr.slice(first);
     const totals = shown.map((e) => PARTS.reduce((t, p) => t + (e.parts[p.key] || 0), 0));
-    // 縦の目盛り: 持ち時間の 1.5 倍か、記録の最大（上位の外れ値で潰れないよう 98% 点）の大きいほう
+    // 縦の目盛り: フレームバジェットの 1.5 倍か、記録の最大（上位の外れ値で潰れないよう 98% 点）の大きいほう
     const sorted = [...totals].sort((a, b) => a - b);
     const top = sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.98))] : 0;
     const ymax = niceCeil(Math.max(budget * 1.5, top * 1.1, 1));
@@ -243,13 +255,13 @@ export class ProfilerPanel {
         g.fillRect(x, 0, BAR, 2);
       }
     });
-    // 持ち時間の線
+    // フレームバジェットの線
     const yb = Math.round(y(budget)) + 0.5;
     g.strokeStyle = '#dde1e6'; g.setLineDash([4, 3]); g.lineWidth = 1;
     g.beginPath(); g.moveTo(padL, yb); g.lineTo(w, yb); g.stroke();
     g.setLineDash([]);
     g.fillStyle = '#dde1e6'; g.textAlign = 'right';
-    g.fillText(`持ち時間 ${budget.toFixed(1)} ms`, w - 2, yb - 2);
+    g.fillText(`フレームバジェット ${budget.toFixed(1)} ms`, w - 2, yb - 2);
     g.textAlign = 'left';
   }
 
@@ -264,7 +276,11 @@ export class ProfilerPanel {
     const path = e.path === 'cache' ? 'キャッシュあり' : e.path === 'compiled' ? '専用の評価' : e.path === 'generic' ? `汎用の経路（${e.reason || ''}）` : '';
     const items = PARTS.map((p, i) => [p, i, e.parts[p.key] || 0]).filter(([, , v]) => v > 0.005)
       .map(([p, i, v]) => `<span><i style="background:${PART_COLORS[i]}"></i>${esc(p.label)} ${msText(v)}</span>`);
-    tip.innerHTML = `<b>フレーム ${esc(e.f)}</b>・${esc(path)}・合計 <b>${msText(total)}</b>${e.interval ? `・前のフレームから ${msText(e.interval)}` : ''}<div class="prof-tip-items">${items.join('')}</div>`;
+    const extra = [];
+    if (e.sub) extra.push(`行列の更新・表示の内訳: ${SUB_PARTS.map((p) => `${esc(p.label)} ${msText(e.sub[p.key] || 0)}`).join('・')}`);
+    if (e.draw) extra.push(`ドローコール ${num(e.draw.calls)}・ポリゴン数（三角形） ${num(e.draw.triangles)}`);
+    tip.innerHTML = `<b>フレーム ${esc(e.f)}</b>・${esc(path)}・合計 <b>${msText(total)}</b>${e.interval ? `・前のフレームから ${msText(e.interval)}` : ''}<div class="prof-tip-items">${items.join('')}</div>`
+      + (extra.length ? `<div class="prof-tip-extra">${extra.join('<br>')}</div>` : '');
   }
 
   renderTable() {
@@ -318,12 +334,13 @@ export class ProfilerPanel {
     const t = prof.defTotals();
     note.textContent = `キャッシュなしで評価した ${num(prof.evaluated)} フレームの平均。自作ノード ${num(t.nodes)} 個の合計: `
       + `計算 ${msText(t.compute)}・入力の読み込み ${msText(t.read)}（上流の値を求める時間を含む。ほかの自作ノードの分は除く）。`
-      + `時間の大きい ${num(rows.length)} 個。`;
+      + `時間の大きい ${num(rows.length)} 個。「入力」は 1 回の計算で読んだ異なる入力の数（かっこはコードが読んだ回数。同じ入力は 1 回だけ読みます）。`;
     const max = Math.max(...rows.map((r) => r.ms), 0.0001);
     const body = rows.map((r) => `<tr title="${esc(r.kind)}${r.compiled ? '' : '（関数にしていない）'}">`
       + `<td class="lbl">${esc(r.label)}</td><td class="n">${msText(r.compute)}</td><td class="n">${msText(r.read)}</td>`
+      + `<td class="n">${num(Math.round(r.inputs))}（${num(Math.round(r.reads))}）</td>`
       + `<td class="share"><span class="bar" style="width:${(r.ms / max) * 100}%"></span><span class="pct">${msText(r.ms)}</span></td></tr>`).join('');
-    $('prof-table').innerHTML = `<thead><tr><th>自作ノード</th><th class="n">計算</th><th class="n">読み込み</th><th>合計</th></tr></thead><tbody>${body}</tbody>`;
+    $('prof-table').innerHTML = `<thead><tr><th>自作ノード</th><th class="n">計算</th><th class="n">読み込み</th><th class="n">入力</th><th>合計</th></tr></thead><tbody>${body}</tbody>`;
   }
 
   renderCache() {
