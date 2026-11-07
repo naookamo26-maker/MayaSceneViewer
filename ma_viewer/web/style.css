@@ -783,3 +783,10 @@ body.sequencer-collapsed #sequencer .seq-body { display: none; }
 .prof-detail { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .prof-detail b { color: var(--text); font-weight: 600; }
 .prof-tip-extra { margin-top: 3px; color: var(--text-dim); }
+/* このフレームの確認 */
+.prof-check { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.prof-check ul { margin: 3px 0 0; padding-left: 18px; }
+.prof-check li { margin: 1px 0; overflow-wrap: anywhere; }
+.prof-check .warn { color: #f0c36b; font-weight: 600; }
+.prof-check .ok { color: #7fd29a; font-weight: 600; }
+#prof-check { height: 24px; padding: 0 10px; }

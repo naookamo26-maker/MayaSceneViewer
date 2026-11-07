@@ -1428,6 +1428,82 @@ class ViewerApp {
     return `専用の評価を使えない: ${rig.compiledReason || '理由不明'}`;
   }
 
+  /**
+   * いまのフレームの評価と表示を確かめる（評価のプロファイラの［このフレームを確かめる］）。
+   *   リグ: 同じフレームを、新しい評価器の汎用の経路（基準）・専用の評価・再生キャッシュ（覚えた値）・いま表示している値で
+   *         比べ、違う動くノードを出す
+   *   表示: 表示中のオブジェクトのワールド行列を、親から直接たどって求めた値と比べ、違うものを出す
+   * @returns { frame, posed, rig: [{ label, compared, diff: [{ name, err }] }], display: { checked, diff: [{ name, err }] } }
+   */
+  checkFrame() {
+    if (!this.rig || !this.clip || !this.built) return null;
+    const f = Math.round(this.frame);
+    const nodes = this.data.nodes;
+    const nameOf = (ni) => (nodes[ni] && (nodes[ni].path || nodes[ni].name)) || `ノード ${ni}`;
+    const staticLocal = (ni) => this.built.nodeObjects[ni].userData.fileMatrix;
+    const fresh = (compiled) => {
+      // 再生に使っている AnimationClip とは別に作る（評価の途中の値を共有しない）
+      const clip = new AnimationClip(this.clip.raw);
+      clip.start = this.clip.start; clip.end = this.clip.end;
+      const r = new RigEvaluator(clip, nodes, staticLocal);
+      r.useCompiled = compiled;
+      r.setPlaybackLimit(0);
+      if (compiled) r.evaluate(f, undefined, new Map());           // 1 回目で専用の評価の計画を作る
+      const mats = r.evaluate(f, undefined, new Map());
+      return { mats, path: r.lastPath, reason: r.compiledReason };
+    };
+    const base = fresh(false).mats;                                 // 基準: 汎用の経路
+    const err = (a, b) => {
+      let e = 0;
+      for (let k = 0; k < 16; k++) {
+        const d = Math.abs(a[k] - b[k]) / (1 + Math.abs(b[k]));
+        if (!(d <= e)) e = Number.isNaN(d) ? Infinity : d;
+      }
+      return e;
+    };
+    const compareWith = (label, get) => {
+      const diff = [];
+      let compared = 0;
+      for (const [ni, m] of base) {
+        const x = get(ni);
+        if (!x) continue;
+        compared++;
+        const e = err(x, m.elements);
+        if (e > 1e-6) diff.push({ name: nameOf(ni), err: e });
+      }
+      diff.sort((p, q) => q.err - p.err);
+      return { label, compared, diff };
+    };
+    const rig = [];
+    const c = fresh(true);
+    rig.push(compareWith(c.path === 'compiled' ? '専用の評価' : `専用の評価（使えない: ${c.reason || '不明'}）`, (ni) => c.mats.get(ni) && c.mats.get(ni).elements));
+    const snap = this.rig.snapshots.get(f);
+    if (snap) {
+      const order = new Map([...this.rig.moving].map((ni, i) => [ni, i]));
+      rig.push(compareWith('再生キャッシュ（覚えた値）', (ni) => (order.has(ni) ? snap.mats.subarray(order.get(ni) * 16, order.get(ni) * 16 + 16) : null)));
+    }
+    const posed = !!(this.pose && this.pose.size);
+    if (!posed) rig.push(compareWith('いま表示している値', (ni) => this.built.nodeObjects[ni].userData.fileMatrix.elements));
+    // 表示: 親から直接たどったワールド行列と比べる（非表示のものは計算を省いているので比べない）
+    const diff = [];
+    let checked = 0;
+    const truth = new Matrix4(), chain = [];
+    this.built.root.traverseVisible((o) => {
+      chain.length = 0;
+      for (let p = o; p; p = p.parent) chain.push(p.matrix);
+      truth.copy(chain.pop());
+      while (chain.length) truth.multiply(chain.pop());
+      checked++;
+      const e = err(o.matrixWorld.elements, truth.elements);
+      if (e > 1e-6) {
+        const ni = o.userData && Number.isInteger(o.userData.nodeIndex) ? o.userData.nodeIndex : this.built.nodeObjects.indexOf(o);
+        diff.push({ name: o.name || (ni >= 0 ? nameOf(ni) : o.type), err: e });
+      }
+    });
+    diff.sort((p, q) => q.err - p.err);
+    return { frame: f, posed, rig, display: { checked, diff } };
+  }
+
   /** 評価のプロファイラを開く（Qt:［ウインドウ］→［評価のプロファイラ］、ブラウザ:［ウインドウ］メニュー） */
   showProfiler() {
     if (!this.profilerPanel) this.profilerPanel = new ProfilerPanel(this);

@@ -456,3 +456,17 @@ export function profilerText(prof, ctx) {
   L.push('※ 描画は CPU 側で命令を出す時間で、GPU の処理の時間は含みません。1 ノードの時間は短いため、記録したフレームを通した平均です。');
   return L.join('\n');
 }
+
+/** ［このフレームを確かめる］の結果を文字にする（［テキストでコピー］） */
+export function checkText(r) {
+  if (!r) return '';
+  const L = [`■ このフレームの確認（フレーム ${r.frame}${r.posed ? '。ポーズ確認の追加分あり' : ''}）`];
+  const list = (diff) => diff.slice(0, 30).map((d) => `    ${d.name}（差 ${d.err.toExponential(1)}）`);
+  for (const x of r.rig) {
+    L.push(`  ${x.label}: 動くノード ${x.compared} 個のうち、汎用の経路と違うもの ${x.diff.length} 個`);
+    L.push(...list(x.diff));
+  }
+  L.push(`  表示の行列: 表示中のオブジェクト ${r.display.checked} 個のうち、親からたどった値と違うもの ${r.display.diff.length} 個`);
+  L.push(...list(r.display.diff));
+  return L.join('\n');
+}
