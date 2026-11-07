@@ -100,3 +100,17 @@ test('距離の寸法: 2 つのロケーターの距離 ÷ 6 で box.sx が決�
     assert.ok(Math.abs(sx - d / 6) < 1e-6, `フレーム ${f}: ${sx}`);
   }
 });
+
+test('lookAt のグループ自身がポイント・オリエントコンストレイントで並列のノードに追従する（twist は子のカメラから）', () => {
+  for (const f of [1, 24]) {
+    const rig = at(f);
+    const grp = rig.world(idx('follow_group')), tgt = rig.world(idx('follow_target'));
+    assert.ok(pos(grp).distanceTo(pos(tgt)) < 1e-6, `フレーム ${f}: グループが追従先の位置にある`);
+    for (let i = 0; i < 3; i++) assert.ok(axis(grp, i).angleTo(axis(tgt, i)) < 1e-6, `フレーム ${f}: グループが追従先の向き`);
+    const cam = rig.world(idx('follow_cam')), aim = rig.world(idx('follow_cam_aim'));
+    const look = axis(cam, 2).negate();
+    assert.ok(look.angleTo(pos(aim).sub(pos(cam)).normalize()) < 1e-6, `フレーム ${f}: カメラはエイムを向く`);
+  }
+  // 追従先の tx は 1 → 24 で -30 → -10（グループと子のカメラもついていく）
+  assert.ok(Math.abs(pos(at(24).world(idx('follow_group'))).x + 10) < 1e-6);
+});

@@ -1491,7 +1491,11 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             bind_src[id(n)] = (n.xattrs["bps"], "world", "bps")
 
     # 接続で値が決まる（.ma に値が残っていない）属性
+    from .rig import CONSTRAINT_TYPES, _evaluable
     driven: Dict[int, List[str]] = {}
+    # チャンネルごとの（説明, 評価できるか）。警告では評価できない接続を先に出す（ノード全体が「ファイルに値がない」
+    # 扱いになる原因。コンストレイントのように評価できる接続が先頭に並ぶと、原因が「ほか」に隠れてしまう）
+    driven_detail: Dict[int, List[Tuple[str, bool]]] = {}
     curve_driven = set()                # 接続元がすべてカーブか、評価できるノード（アニメーションで評価する）
     hik_only = set()                    # 接続元がすべて HIKState2SK（HumanIK で動くスケルトン）
     for n in ms.nodes:
@@ -1500,8 +1504,14 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         by_curve = by_hik = True
         for key, (src, sattr) in n.inputs.items():
             if key.split("[")[0].split(".")[0] in _CHANNEL_ATTRS:
-                driven.setdefault(id(n), []).append("%s ← %s（%s）" % (key, src.name, src.type))
-                by_curve = by_curve and key in _CURVE_CHANNELS and src.type in ("animCurveTL", "animCurveTA", "animCurveTU")
+                text = "%s ← %s（%s）" % (key, src.name, src.type)
+                driven.setdefault(id(n), []).append(text)
+                is_curve = key in _CURVE_CHANNELS and src.type in ("animCurveTL", "animCurveTA", "animCurveTU")
+                ok = is_curve or _evaluable(src, graph_info)
+                if not ok and src.type in CONSTRAINT_TYPES:
+                    text += "（ターゲット .tg がつながっていません）"
+                driven_detail.setdefault(id(n), []).append((text, ok))
+                by_curve = by_curve and is_curve
                 by_hik = by_hik and src.type == "HIKState2SK"
         if by_hik and id(n) in driven and id(n) in hik_driven:
             hik_only.add(id(n))         # HumanIK だけで動く（警告は HumanIK の 1 つにまとめる）
@@ -1535,17 +1545,25 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     node_of = {id(x): x for x in ms.nodes}
     for nid, chans in driven.items():
         node = node_of[nid]
-        shown = "、".join(chans[:3]) + (" ほか" if len(chans) > 3 else "")
+        detail = driven_detail[nid]
+        bad = [t for t, ok in detail if not ok] or [t for t, _ok in detail]
+        good = [t for t, ok in detail if ok] if len(bad) < len(detail) else []
+        shown = "、".join(bad[:3]) + (" ほか %d 個" % (len(bad) - 3) if len(bad) > 3 else "")
+        note = ""
+        if good:
+            # 評価できる接続（コンストレイント・カーブなど）もあるが、評価できない接続があるためノード全体が対象になる
+            note = "（%s%s は評価できますが、評価できない接続があるため、このノードはまとめてこの扱いになります）" % (
+                "、".join(good[:2]), " ほか %d 個" % (len(good) - 2) if len(good) > 2 else "")
         if nid in bind_local:
             ctx.local[nid] = bind_local[nid]
         if nid in curve_driven or nid in hik_only:
             continue                    # アニメーションカーブで決まる（アニメーションを読み込むとその値で表示する）・HumanIK
         if nid in bind_local:
-            ms.warn("%s: %s が接続で決まるため、ファイルに値がありません。バインドポーズ（%s）の姿勢で表示します。"
-                    % (node.name, shown, BIND_SOURCE_LABELS[bind_src[nid][2]]), key="#接続で値が決まるノード", limit=20)
+            ms.warn("%s: %s が接続で決まるため、ファイルに値がありません。バインドポーズ（%s）の姿勢で表示します。%s"
+                    % (node.name, shown, BIND_SOURCE_LABELS[bind_src[nid][2]], note), key="#接続で値が決まるノード", limit=20)
         else:
             ms.warn("%s: %s が接続で決まるため、ファイルに値がありません。バインドポーズの情報もないため、"
-                    "既定値（移動 0・回転 0）で表示しています。" % (node.name, shown),
+                    "既定値（移動 0・回転 0）で表示しています。%s" % (node.name, shown, note),
                     key="#接続で値が決まるノード", limit=20)
     ctx.world.clear()
 

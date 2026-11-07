@@ -134,6 +134,15 @@ def _dag_like(n: MaNode) -> bool:
     return n.is_dag and not n.is_shape and n.type not in SUPPORTED_DG and n.node_def is None
 
 
+def _moving_constraint(n: MaNode) -> bool:
+    """コンストレイントであり、自分も transform として動きうるもの（Maya のコンストレイントはすべて transform）。
+    ふつうのコンストレイントは動かされるノードの子の葉で、自分は動かない。lookAt（カメラとエイムのグループ）は
+    カメラ・エイムの親で、別のコンストレイントやカーブで動かされることがある。ほかのコンストレイントも子を持ち、
+    自分の移動・回転が接続で決まることがある。グラフでは、出力するノード（子を持つなど）に入っているときだけ
+    DAG の番号も付ける"""
+    return n.type in CONSTRAINT_TYPES and n.is_dag and not n.is_shape
+
+
 # 出力を計算で求めるシェイプ（値はファイルに残らない。ビューアは計算しないので未対応として扱う）。
 # follicle: サーフェス・メッシュの UV の位置と向き（outTranslate・outRotate）。ribbon のリグで多い
 _COMPUTED_SHAPES = {"follicle", "nurbsSurface", "hairSystem", "nParticle", "particle", "subdiv", "lattice", "baseLattice"}
@@ -346,7 +355,7 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
 
     # 表示するノードのチャンネルの入力
     for n in ms.nodes:
-        if id(n) in keep and _dag_like(n) and n.inputs:
+        if id(n) in keep and (_dag_like(n) or _moving_constraint(n)) and n.inputs:
             need_channels(n)
             srcs = [src for key, (src, _sa) in n.inputs.items() if _base(key) in _CHANNEL_KEYS]
             if srcs and all(_evaluable(s, info) for s in srcs):
@@ -665,7 +674,8 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
     nodes = []
     moving: Set[int] = set()
     for n in order:
-        is_dag = id(n) not in info.dg
+        # lookAt のグループは、コンストレイントの計算（cr の出力）と、transform としての移動・回転の両方を持つ
+        is_dag = id(n) not in info.dg or (_moving_constraint(n) and id(n) in out_index)
         entry = {"id": gid[id(n)], "name": n.name, "type": n.type, "dag": out_index[id(n)] if is_dag else -1}
         if n.node_def is not None:
             entry["def"] = n.node_def.type                # 自作ノードの定義で評価する（animation.nodeDefs）

@@ -6676,7 +6676,7 @@
  "textures":[],
  "warnings":[
   "history_geoShape: 形状データがありません（polySphere1（polySphere） から生成されています。ヒストリを削除して保存してください）",
-  "forearm_twist: tx ← forearm_twist_pointConstraint1（pointConstraint） が接続で決まるため、ファイルに値がありません。バインドポーズ（skinCluster の .pm）の姿勢で表示します。"
+  "forearm_twist: tx ← forearm_twist_pointConstraint1（pointConstraint）（ターゲット .tg がつながっていません） が接続で決まるため、ファイルに値がありません。バインドポーズ（skinCluster の .pm）の姿勢で表示します。"
  ],
  "stats":{
   "nodes":10,
