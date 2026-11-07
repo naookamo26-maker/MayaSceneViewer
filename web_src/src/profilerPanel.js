@@ -50,6 +50,7 @@ export class ProfilerPanel {
           <div class="prof-tabs" role="tablist" aria-label="分け方">
             <button type="button" role="tab" data-mode="type" aria-selected="true">種類ごと</button>
             <button type="button" role="tab" data-mode="path" aria-selected="false">経路ごと</button>
+            <button type="button" role="tab" data-mode="node" aria-selected="false">ノードごと</button>
           </div>
         </div>
         <p class="muted small" id="prof-table-note"></p>
@@ -73,6 +74,13 @@ export class ProfilerPanel {
         this.refresh(true);
       });
     }
+    // ノードごとの表: 行を押すと、そのノードを選ぶ（階層・プロパティで確かめられる）
+    $('prof-table').addEventListener('click', (e) => {
+      const tr = e.target.closest('tr[data-ni]');
+      if (!tr) return;
+      const ni = Number(tr.dataset.ni);
+      if (this.app.built && this.app.built.nodeObjects[ni]) this.app.select(ni);
+    });
     const cv = $('prof-graph');
     cv.addEventListener('pointermove', (e) => {
       const i = this.barAt(e.offsetX);
@@ -269,8 +277,19 @@ export class ProfilerPanel {
       return;
     }
     note.textContent = `キャッシュなしで評価した ${num(prof.evaluated)} フレームの平均。`
-      + (this.mode === 'type' ? '上流のコンストレイント・計算ノード・IK は、最初に読んだノードの時間に入ります。' : '')
+      + (this.mode !== 'path' ? '上流のコンストレイント・計算ノード・IK は、最初に読んだノードの時間に入ります。' : '')
+      + (this.mode === 'node' ? `時間の大きい ${num(rows.length)} 個（行を押すとそのノードを選びます）。` : '')
       + `合計 ${msText(cov.categories)}（リグの評価の時間 ${msText(cov.rig)}）。`;
+    $('prof-table').className = this.mode === 'node' ? 'by-node' : '';
+    if (this.mode === 'node') {
+      const maxShare = Math.max(...rows.map((r) => r.share), 0.0001);
+      const body = rows.map((r) => `<tr data-ni="${r.ni}" class="${r.path === 'generic' ? 'generic' : ''}" title="クリックで選択">`
+        + `<td class="lbl" title="${esc(r.label)}">${esc(r.label)}</td><td class="kind" title="${esc(r.kind)}">${esc(r.kind)}</td>`
+        + `<td class="n">${msText(r.ms)}</td>`
+        + `<td class="share"><span class="bar" style="width:${(r.share / maxShare) * 100}%"></span><span class="pct">${(r.share * 100).toFixed(1)}%</span></td></tr>`).join('');
+      $('prof-table').innerHTML = `<thead><tr><th>ノード</th><th>種類</th><th class="n">1 フレーム</th><th>割合</th></tr></thead><tbody>${body}</tbody>`;
+      return;
+    }
     const shown = rows.slice(0, MAX_ROWS), rest = rows.slice(MAX_ROWS);
     const maxShare = Math.max(...rows.map((r) => r.share), 0.0001);
     const tr = (r) => `<tr class="${r.path === 'generic' ? 'generic' : ''}"><td class="lbl" title="${esc(r.label)}">${esc(r.label)}</td>`

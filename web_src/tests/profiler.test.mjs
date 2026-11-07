@@ -59,6 +59,15 @@ test('記録しても評価の結果は変わらず、種類ごとに専用の�
   const paths = prof.rows('path').map((r) => r.label);
   assert.ok(paths.includes('専用の評価'));
   assert.ok(paths.includes('汎用の経路（理由）'), paths.join(' / '));
+  // ノードごと: 時間の大きい順に、名前と種類。上位 limit 個
+  const byNode = prof.rows('node');
+  assert.ok(byNode.length > 0 && byNode.length <= 100);
+  for (let i = 1; i < byNode.length; i++) assert.ok(byNode[i - 1].ms >= byNode[i].ms, '時間の大きい順');
+  for (const r of byNode) {
+    assert.equal(r.label, d.nodes[r.ni].name);
+    assert.ok(labels.includes(r.kind), `種類は種類ごとの表のどれか: ${r.kind}`);
+  }
+  assert.equal(prof.rows('node', 3).length, 3);
   const share = prof.rows('type').reduce((s, r) => s + r.share, 0);
   assert.ok(Math.abs(share - 1) < 1e-9, '割合の合計は 1');
   // フレームの内訳: 評価・カーブ・描画・その他が入る
@@ -172,7 +181,7 @@ test('文字の結果に、フレームの内訳・種類ごと・経路ごと�
     workers: { available: true, count: 3, cores: 4, frames: 30, perFrame: 2, throughput: 900 },
   });
   for (const want of ['■ フレームの内訳', '■ リグの評価の種類ごと', '■ 評価の経路ごと', '■ 専用の評価の計画', '■ 再生キャッシュ',
-    '■ 再生キャッシュを作るワーカー', 'キーで動くノード', '専用の評価', 'ワーカー 3 個（CPU のコア 4）', '上限ごとに入るフレーム数']) {
+    '■ 再生キャッシュを作るワーカー', '■ ノードごと', 'キーで動くノード', '専用の評価', 'ワーカー 3 個（CPU のコア 4）', '上限ごとに入るフレーム数']) {
     assert.ok(text.includes(want), want);
   }
   for (const p of PARTS) assert.ok(text.includes(p.label), p.label);

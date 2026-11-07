@@ -85,3 +85,25 @@ test('専用に計算できるノードのないリグは、計画を作らず�
     assert.match(b.compiledReason, why, `${name}: ${b.compiledReason}`);
   }
 });
+
+test('動かないジョイントが親のスケールの打ち消しの元を持っても、専用の評価を使い、結果は同じ', () => {
+  // HumanIK の部位に割り当てていない途中のジョイントの形（以前はこのノード 1 つでリグ全体を汎用の経路にしていた）
+  const d = load('static_is_sample.json');
+  const a = makeRig(d, false), b = makeRig(d, true);
+  const frames = framesOf(a);
+  b.evaluate(frames[0]);
+  assert.ok(b.compiledPlan, `計画を作る（${b.compiledReason}）`);
+  assert.deepEqual(b.compiledPlan.delegated, {});
+  const B = d.nodes.findIndex((n) => n.name === 'B');
+  assert.ok(!b.moving.has(B) && b.rest(B) && b.rest(b.rest(B).isNode), 'B は動かず、打ち消しの元（A）にレストの値がある');
+  for (const f of [...frames, 1.5, 12.25, 0, 30]) assert.equal(valuesOf(b, f), valuesOf(a, f), `フレーム ${f}`);
+});
+
+test('専用の評価を使えないときの理由に、原因の中身を入れる', () => {
+  const d = load('nodedef_sample.json');
+  const rig = makeRig(d, true);
+  rig.evaluate(Math.ceil(rig.clip.start));
+  assert.equal(rig.compiledPlan, null);
+  assert.match(rig.compiledReason, /^評価の打ち切り（循環など。計算の順番で結果が変わりうる: .+）$/);
+  assert.ok(rig.compiledReason.includes([...rig.problems][0]), rig.compiledReason);
+});

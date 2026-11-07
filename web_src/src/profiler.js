@@ -18,6 +18,7 @@ export const PARTS = [
 ];
 
 const MAX_FRAMES = 5000;               // 覚えるフレームの数（古いものから捨てる。種類ごとの集計は捨てない）
+export const NODE_ROWS = 100;          // ノードごとの表に出す数（時間の大きい順）
 const CON_RE = /Constraint$|^lookAt$/;
 
 /** 汎用の経路で評価したノードが何で動くか（RigEvaluator の接続から。専用の評価の分類と同じ名前にそろえる） */
@@ -52,6 +53,7 @@ export class EvalProfiler {
     this.frames = [];                  // [{ f, path, parts: { key: ms }, total, interval, reason }]
     this.categories = new Map();       // 種類 → { label, path, nodes: Set, ms }
     this.reasons = new Map();          // 経路（汎用の経路に任せた理由など）→ { label, path, nodes: Set, ms }
+    this.perNode = new Map();          // ノード番号 → { ni, name, label（種類）, path, ms }（ノードごとの表）
     this.evaluated = 0;                // キャッシュを使わずに評価したフレームの数
     this.current = null;
     this.lastShown = 0;
@@ -107,6 +109,7 @@ export class EvalProfiler {
     let cat = this.stepCache.get(s);
     if (!cat) this.stepCache.set(s, cat = stepCategory(plan, s));
     this.addCategory(cat.label, cat.path, s.ni, ms);
+    this.addNode(plan.rig, s.ni, cat.label, cat.path, ms);
     if (cat.path === 'generic') {
       if (this.current) this.current.genericMs += ms;
       this.addReason(`汎用の経路に任せた: ${cat.why}`, 'generic', s.ni, ms);
@@ -121,6 +124,16 @@ export class EvalProfiler {
     let label = this.nodeCache.get(ni);
     if (!label) this.nodeCache.set(ni, label = nodeCategory(rig, ni));
     this.addCategory(label, 'generic', ni, ms);
+    this.addNode(rig, ni, label, 'generic', ms);
+  }
+
+  addNode(rig, ni, label, path, ms) {
+    let e = this.perNode.get(ni);
+    if (!e) {
+      const n = rig.sceneNodes[ni];
+      this.perNode.set(ni, e = { ni, name: (n && (n.name || n.path)) || `ノード ${ni}`, label, path, ms: 0 });
+    }
+    e.ms += ms;
   }
 
   resetCaches(rig) {
@@ -194,8 +207,18 @@ export class EvalProfiler {
     };
   }
 
-  /** 種類ごと（mode = 'type'）・経路ごと（'path'）の行。合計時間の大きい順 */
-  rows(mode) {
+  /**
+   * 種類ごと（mode = 'type'）・経路ごと（'path'）・ノードごと（'node'。上位 limit 個）の行。合計時間の大きい順。
+   * ノードごとの行は { label: ノードの名前, kind: 種類, ni, nodes: 1, ms, share }
+   */
+  rows(mode, limit = NODE_ROWS) {
+    if (mode === 'node') {
+      const all = [...this.perNode.values()];
+      const sum = all.reduce((t, e) => t + e.ms, 0) || 1;
+      const per = this.evaluated || 1;
+      return all.sort((a, b) => b.ms - a.ms).slice(0, limit)
+        .map((e) => ({ label: e.name, kind: e.label, ni: e.ni, path: e.path, nodes: 1, ms: e.ms / per, share: e.ms / sum }));
+    }
     const src = mode === 'path' ? this.reasons : this.categories;
     const all = [...src.values()];
     const sum = all.reduce((s, e) => s + e.ms, 0) || 1;
@@ -256,6 +279,7 @@ const pad = (s, n) => {
   return String(s) + ' '.repeat(Math.max(1, n - w));
 };
 const ms = (v) => `${v.toFixed(2)} ms`;
+const TEXT_NODE_ROWS = 30;             // 文字の結果に出すノードの数
 
 /**
  * 結果を文字にする（［テキストでコピー］）
@@ -283,12 +307,16 @@ export function profilerText(prof, ctx) {
   const hit = split((e) => e.path === 'cache'), miss = split((e) => e.path !== 'cache');
   if (hit !== null) L.push(`  キャッシュありのフレームの平均: ${ms(hit)}`);
   if (miss !== null) L.push(`  キャッシュなしのフレームの平均: ${ms(miss)}`);
-  for (const [mode, title] of [['type', '■ リグの評価の種類ごと（キャッシュなしのフレームの平均）'], ['path', '■ 評価の経路ごと（キャッシュなしのフレームの平均）']]) {
+  for (const [mode, title] of [['type', '■ リグの評価の種類ごと（キャッシュなしのフレームの平均）'], ['path', '■ 評価の経路ごと（キャッシュなしのフレームの平均）'],
+    ['node', `■ ノードごと（時間の大きい ${TEXT_NODE_ROWS} 個。上流の計算は、最初に読んだノードに入る）`]]) {
     L.push('');
     L.push(title);
-    const rows = prof.rows(mode);
+    const rows = prof.rows(mode, TEXT_NODE_ROWS);
     if (!rows.length) L.push('  （キャッシュなしで評価したフレームがありません）');
-    for (const r of rows) L.push(`  ${pad(r.label, 60)}${pad(`${r.nodes} 個`, 10)}${pad(ms(r.ms), 12)}${(r.share * 100).toFixed(1)}%`);
+    for (const r of rows) {
+      if (mode === 'node') L.push(`  ${pad(r.label, 40)}${pad(ms(r.ms), 12)}${pad(`${(r.share * 100).toFixed(1)}%`, 8)}${r.kind}`);
+      else L.push(`  ${pad(r.label, 60)}${pad(`${r.nodes} 個`, 10)}${pad(ms(r.ms), 12)}${(r.share * 100).toFixed(1)}%`);
+    }
   }
   const cov = prof.coverage();
   if (prof.evaluated) L.push(`  （種類ごとの合計 ${ms(cov.categories)} / リグの評価 ${ms(cov.rig)}）`);
