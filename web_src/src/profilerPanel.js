@@ -39,7 +39,7 @@ export class ProfilerPanel {
         </div>
       </div>
       <div class="prof-body">
-        <label class="check prof-bypass" title="覚えたフレームは捨てずに、毎フレーム評価し直して測る（記録を止めると元に戻る）"><input type="checkbox" id="prof-nocache"> 再生キャッシュを使わずに測る</label>
+        <label class="check prof-bypass" title="覚えたフレームは捨てずに、記録中だけ毎フレーム評価し直して測る（既定。リグの評価の内訳を見るため）。キャッシュがあるときの速さを見るときは外す"><input type="checkbox" id="prof-nocache" checked> 再生キャッシュを使わずに測る</label>
         <div id="prof-summary" class="prof-summary"></div>
         <h3>フレームの内訳</h3>
         <ul class="prof-legend" id="prof-legend"></ul>
