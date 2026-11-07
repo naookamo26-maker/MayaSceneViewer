@@ -520,6 +520,8 @@ export class UI {
     tree.textContent = '';
     tree.scrollTop = 0;
     this.treePad = 0;
+    this.treePadW = 0;
+    this.treeMinW = 0;
     this.treePadEl = null;
     this.rows = [];
     this.shownRows = [];
@@ -612,7 +614,8 @@ export class UI {
       // 横幅: 見えていない行の幅は測れないので、名前の長さから見積もったいちばん長い行の幅にそろえる
       let w = 0;
       for (const r of this.rows) w = Math.max(w, 6 + r.depth * 14 + 34 + r.label.length * 7.5 + 26);
-      this.treeTop.style.minWidth = `${Math.ceil(w)}px`;
+      this.treeMinW = Math.ceil(w);
+      this.treeTop.style.minWidth = `${this.treeMinW}px`;
     } else {
       const frag = document.createDocumentFragment();
       for (const r of this.rows) frag.appendChild(this.makeRowEl(r));
@@ -698,6 +701,31 @@ export class UI {
     return row.el.getBoundingClientRect().top - tree.getBoundingClientRect().top;
   }
 
+  /** 行の左右の位置: [字下げの左端（▸）, 名前の右端]（階層の内容の左端から） */
+  rowSpanX(row) {
+    const x0 = 6 + row.depth * 14;                      // style.css の .row の padding-left
+    const name = row.el && row.el.isConnected ? row.el.childNodes[2] : null;
+    let w = row.label.length * 7.5;                     // 描いていない行は名前の長さから
+    if (name) {
+      // 名前の要素は行の幅いっぱいに伸びる（flex: 1）ので、要素ではなく文字の幅を測る
+      const range = document.createRange();
+      range.selectNodeContents(name);
+      const rw = range.getBoundingClientRect().width;
+      if (rw > 0) w = rw + 4;                           // .name の padding-right
+    }
+    return [x0, x0 + 34 + w];                           // ▸・アイコン・間隔（14 + 4 + 12 + 4）のあとに名前
+  }
+
+  /** 行の字下げから名前の終わりまでが見えるように、横にスクロールする（入りきらなければ字下げの左端に合わせる） */
+  scrollToRowX(row) {
+    const tree = $('tree');
+    const [x0, x1] = this.rowSpanX(row);
+    const view = tree.clientWidth - 28;                 // 右端の目のアイコン（.eye）の幅を除く
+    const left = tree.scrollLeft;
+    if (x0 - 6 >= left && x1 <= left + view) return;
+    tree.scrollLeft = Math.max(0, Math.min(x0 - 6, x1 - view));
+  }
+
   /** 画面に見えている一番上の行 */
   topShownRow() {
     const tree = $('tree');
@@ -711,10 +739,20 @@ export class UI {
     if (this.treePadEl) this.treePadEl.style.height = `${this.treePad}px`;
   }
 
+  /** 横の余白: 内容の幅をこの幅（px）以上にする（0 なら行の幅のまま） */
+  setTreePadW(px) {
+    this.treePadW = Math.max(0, Math.ceil(px));
+    if (this.treePadEl) this.treePadEl.style.minWidth = this.treePadW ? `${this.treePadW}px` : '';
+    if (this.treeTop) this.treeTop.style.minWidth = `${Math.max(this.treeMinW, this.treePadW)}px`;
+  }
+
   /** 上へスクロールしたら、要らなくなった下の余白を詰める（表示の下端より下の分だけなので、見えている行は動かない） */
   shrinkTreePad() {
-    if (!this.treePad) return;
     const tree = $('tree');
+    if (this.treePadW && tree.scrollLeft + tree.clientWidth < this.treePadW) {
+      this.setTreePadW(tree.scrollLeft + tree.clientWidth);   // 左へスクロールしたら、右の余白を詰める（見えない所だけ）
+    }
+    if (!this.treePad) return;
     const content = tree.scrollHeight - this.treePad;
     const need = tree.scrollTop + tree.clientHeight - content;
     if (need < this.treePad) {
@@ -731,12 +769,17 @@ export class UI {
   keepRowInPlace(anchor, fn) {
     const tree = $('tree');
     const y0 = this.rowOffset(anchor);
+    const x0 = tree.scrollLeft;
+    // 横: 深い行を閉じると内容の幅が縮み、ブラウザが横のスクロール位置を詰めるので、右に余白を足して保つ
+    if (x0 > 0) this.setTreePadW(Math.max(this.treePadW, x0 + tree.clientWidth));
     fn();
     if (y0 === null) return;
     let row = anchor;
     while (row && row.hidden) row = this.parentRow(row);
     const y1 = this.rowOffset(row);                   // いまのスクロール位置で（詰められていれば、詰めたあとの位置で）
     if (y1 === null) return;
+    tree.scrollLeft = x0;
+    if (row !== anchor) this.scrollToRowX(row);       // 代わりに保つ祖先の行が左に外れていれば、見える所まで
     const want = tree.scrollTop + (y1 - y0);
     const content = tree.scrollHeight - (this.treePad || 0);
     this.setTreePad(want + tree.clientHeight - content);
@@ -747,7 +790,16 @@ export class UI {
 
   /** 行を見える位置にスクロールする（block: 'nearest' | 'center'。scrollIntoView と同じ） */
   scrollToRow(row, block = 'nearest') {
-    if (!this.treeVirtual) { if (row.el) row.el.scrollIntoView({ block }); return; }
+    if (!this.treeVirtual) {
+      if (row.el) {
+        // 縦だけ動かす（scrollIntoView は横も行の左端に合わせてしまう）。横は名前が見えるように
+        const tree = $('tree'), left = tree.scrollLeft;
+        row.el.scrollIntoView({ block, inline: 'nearest' });
+        tree.scrollLeft = left;
+        this.scrollToRowX(row);
+      }
+      return;
+    }
     const i = this.shownRows.indexOf(row);
     if (i < 0) return;
     const tree = $('tree'), h = TREE_ROW_HEIGHT, view = tree.clientHeight || 600;
@@ -756,6 +808,7 @@ export class UI {
     else if (top < tree.scrollTop) tree.scrollTop = top;
     else if (top + h > tree.scrollTop + view) tree.scrollTop = top + h - view;
     this.renderTree();
+    this.scrollToRowX(row);                            // 描いたあと（名前の幅を測れる）に横も
   }
 
   /** rowIndex の行と、その下の階層をすべて開く（open=false なら閉じる） */
