@@ -38,7 +38,7 @@ export function decodeCurve(c) {
  * フレームを評価して、再生キャッシュに入れる値を返す。
  * @param req { frames: 整数のフレーム, poses: [[ノード番号, 行列の 16 要素 | null, 目印]]（RigEvaluator.playbackPoseData） }
  * @returns { frames: [{ f, mats: Float64Array, props, curves: [[グラフの id, カーブ]] }], deps: [[動くノード, ノード…]],
- *   poseReads: [追加分を読んだノード] }。deps・poseReads は前回から増えたものだけ
+ *   poseReads: [追加分を読んだノード], ms: 評価にかかった時間 }。deps・poseReads は前回から増えたものだけ
  */
 export function bakeFrames(baker, req) {
   const { rig } = baker;
@@ -51,6 +51,7 @@ export function bakeFrames(baker, req) {
   }
   const scratch = new Map();
   const frames = [];
+  const t0 = performance.now();
   for (const f of req.frames) {
     rig.evaluate(f, poseOf, scratch, poseKey);
     const cur = rig.current;
@@ -59,6 +60,7 @@ export function bakeFrames(baker, req) {
     for (const gid of rig.curveIds()) rig.curveShape(gid);
     frames.push({ f, mats: cur.mats, props: cur.props, curves: [...cur.curves].map(([g, v]) => [g, encodeCurve(v)]) });
   }
+  const ms = performance.now() - t0;                    // 評価にかかった時間（評価のプロファイラに出す）
   const deps = [];
   for (const [ni, set] of rig.nodeDeps) {
     if (baker.sentDeps.get(ni) === set.size) continue;
@@ -68,7 +70,7 @@ export function bakeFrames(baker, req) {
   const poseReads = [];
   for (const n of rig.poseReads) if (!baker.sentReads.has(n)) { baker.sentReads.add(n); poseReads.push(n); }
   rig.clearPlayback();                                  // 送ったものは捨てる（時間で変わらない値の使い回しは残る）
-  return { frames, deps, poseReads };
+  return { frames, deps, poseReads, ms };
 }
 
 /** bakeFrames の結果（postMessage で受け取ったもの）を、importSnapshots に渡せる形に戻す */

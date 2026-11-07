@@ -35,6 +35,8 @@ import { SequencerPanel, activeShot, shotStarts, shotTime } from './sequencer.js
 import { CurveEditor } from './curveEditor.js';
 import { warningsText } from './warnGroups.js';
 import { BakeWorkers } from './bakeWorkers.js';
+import { EvalProfiler } from './profiler.js';
+import { ProfilerPanel } from './profilerPanel.js';
 
 // ビューアのバージョン（ma_viewer/version.py。ビルド時に build.mjs が埋め込む）
 // eslint-disable-next-line no-undef
@@ -98,6 +100,8 @@ class ViewerApp {
       onError: (message) => this.log('warn', `再生キャッシュのワーカーを使えないため、画面のスレッドで作ります: ${message}`),
     });
     this.history.onChange = (h) => this.historyChanged(h);
+    this.profiler = new EvalProfiler();   // 評価のプロファイラ（記録中だけ計測する。画面は profilerPanel.js）
+    this.profilerPanel = null;            // 最初に開くときに作る
     this.poseDirty = false;
     this.gizmoDragging = false;
     this.bridge = null;
@@ -252,7 +256,11 @@ class ViewerApp {
     if (this.viewCamera >= 0) this.syncViewCamera();
     // 画面上で一定の大きさのコントローラーは、視点に合わせて大きさを決め直す
     if (this.built && this.settings.controls && this.settings.controlSizeMode === 'screen') this.overlay.updateControls();
-    this.renderer.render(this.scene, this.activeCamera());
+    if (this.profiler.recording) {
+      const t = performance.now();
+      this.renderer.render(this.scene, this.activeCamera());
+      this.profiler.addRender(performance.now() - t);
+    } else this.renderer.render(this.scene, this.activeCamera());
   }
 
   /** 描画・ピックに使うカメラ（シーンのカメラから見ているときはその視点） */
@@ -574,6 +582,13 @@ class ViewerApp {
     const input = document.getElementById('url-input');
     const open = document.getElementById('btn-open-url');
     const copy = document.getElementById('btn-copy-url');
+    const profiler = document.getElementById('btn-profiler');
+    if (profiler) {
+      profiler.addEventListener('click', () => {
+        if (this.ui.closeMenus) this.ui.closeMenus();
+        this.showProfiler();
+      });
+    }
     if (!dlg || !open || !copy) return;
     open.addEventListener('click', () => {
       if (this.ui.closeMenus) this.ui.closeMenus();
@@ -776,6 +791,7 @@ class ViewerApp {
     this.clip = null;
     this.rig = null;
     this.bakers.reset(null);
+    this.profiler.clear();
     this.rigCurves = null;
     this.timeline.setClip(null);
     this.curveEditor.setClip(null, null);
@@ -1306,6 +1322,7 @@ class ViewerApp {
     // ワーカーにも同じアニメーションを渡す（受け取った JSON の文字列があれば、それを渡す。複製より速い）
     const sent = this.animationText && this.animationText.anim === anim ? this.animationText.text : anim;
     this.bakers.reset(this.rig, sent, this.data.nodes);
+    this.profiler.clear();
     this.animationText = null;
     const touched = new Set();
     for (const ni of this.rig.moving) {
@@ -1378,12 +1395,46 @@ class ViewerApp {
     return { frame: this.clip.current, handles: list };
   }
 
+  /** 汎用の経路だけで評価したときの理由（評価のプロファイラに出す） */
+  genericReason(posed) {
+    const rig = this.rig;
+    if (!rig) return '';
+    if (posed) return 'ポーズ確認の追加分があるあいだ';
+    if (!rig.useCompiled) return '専用の評価を使わない設定';
+    if (rig.compiledPlan === undefined) return '最初の評価（このあとで専用の評価の計画を作る）';
+    if (rig.ikVariant !== null || rig.aimMode !== null) return '再現チェックの候補を試している';
+    return `専用の評価を使えない: ${rig.compiledReason || '理由不明'}`;
+  }
+
+  /** 評価のプロファイラを開く（Qt:［ウインドウ］→［評価のプロファイラ］、ブラウザ:［ウインドウ］メニュー） */
+  showProfiler() {
+    if (!this.profilerPanel) this.profilerPanel = new ProfilerPanel(this);
+    this.profilerPanel.open();
+  }
+
+  /** 評価のプロファイラに出す、シーンの数 */
+  profilerScene() {
+    const b = this.built;
+    if (!b) return null;
+    return {
+      meshes: b.meshes.length, skinned: b.meshes.filter((e) => e.skinned).length,
+      vertices: b.meshes.reduce((s, e) => s + e.vertexCount, 0), joints: b.jointIndices.length,
+      curves: this.curves.items.filter(Boolean).length, rigCurves: this.rigCurves ? this.rigCurves.length : 0,
+    };
+  }
+
   /** タイムラインを出すか（キーのあるカーブか、frame・time を使う expression があるとき） */
   get hasTimeline() { return !!(this.clip && (this.clip.timeCurves.length || (this.rig && (this.rig.usesTime || this.rig.hasTrax)))); }
 
   /** フレーム f の姿勢にする（ポーズ確認の追加分はそのまま上に重ねる。リグはポーズ確認の結果も使って評価する） */
   applyFrame(f, light = this.playing) {
     if (!this.clip || !this.built) return;
+    // 評価のプロファイラの記録中は、1 フレームの内訳を測る（中で呼び直したときは同じフレームとして測る）
+    const prof = this.profiler.recording && !this.profiler.current ? this.profiler.beginFrame(f) : null;
+    try { this.applyFrameInner(f, light); } finally { if (prof) this.profiler.endFrame(); }
+  }
+
+  applyFrameInner(f, light) {
     if (this.camEdit && f !== this.camEdit.frame) this.endCameraEdit();   // 動かしたカメラの視点は、フレームが変わると戻す
     const frameChanged = f !== this.frame;
     this.frame = f;
@@ -1391,7 +1442,11 @@ class ViewerApp {
     // 作り直す（リグが読まないノード・前と同じ追加分に戻したときは、キャッシュをそのまま使う）
     const posed = this.pose && this.pose.size > 0;
     const poseOf = posed ? (ni) => (this.pose.has(ni) ? poseMatrix(this.pose.get(ni), new Matrix4()) : null) : undefined;
-    const mats = this.rig.evaluate(f, poseOf, undefined, posed ? this.pose.keys : undefined);
+    const pr = this.profiler.current ? this.profiler : null;
+    let tEval = 0, mats;
+    if (pr) { tEval = performance.now(); this.rig.profile = pr; }
+    try { mats = this.rig.evaluate(f, poseOf, undefined, posed ? this.pose.keys : undefined); } finally { this.rig.profile = null; }
+    if (pr) pr.addEval(this.rig, performance.now() - tEval, this.genericReason(posed));
     const mode = this.settings.poseSource;
     const sceneHasBind = hasBindPose(this.built);
     for (const [ni, m] of mats) {
@@ -1408,7 +1463,9 @@ class ViewerApp {
     for (const ni of this.animTouched) this.pose.apply(ni);
     // カーブの形（バインドポーズの表示では変形前の形）
     const bindView = mode === 'bind' && sceneHasBind;
+    let tPart = pr ? performance.now() : 0;
     for (const [ci, gid] of this.rigCurves || []) this.curves.setShape(ci, bindView ? null : this.rig.curveShape(gid));
+    if (pr) { const t = performance.now(); pr.add('curves', t - tPart); tPart = t; }
     // 表示（.v など）・カメラの焦点距離などの、接続で決まる値（姿勢の基準によらず、いまのフレームの値）
     if (this.rig.props.length) {
       const props = this.rig.evaluateProps();
@@ -1418,6 +1475,7 @@ class ViewerApp {
       }
       if (this.applyRigVisibility(props)) this.updateVisibility();
     }
+    if (pr) pr.add('props', performance.now() - tPart);
     this.timeline.setFrame(f);
     this.curveEditor.setFrame(f);
     this.rigBusy = true;
@@ -3024,6 +3082,8 @@ function worldMatrixOf(obj, target) {
 
 window.mayaViewer = {
   version: VERSION,
+  /** 評価のプロファイラを開く（Qt の［ウインドウ］→［評価のプロファイラ］） */
+  showProfiler() { app.showProfiler(); return true; },
   loadScene(data) {
     try {
       const t = performance.now();

@@ -188,7 +188,7 @@ function build(rig, deps, useMath) {
   const delegated = new Map();         // 任せた理由 → 数
   const delegate = (ni, why) => {
     delegated.set(why, (delegated.get(why) || 0) + 1);
-    steps.set(ni, { ni, kind: DELEGATED, world: new Matrix4(), local: null, deps: deps.get(ni) || null });
+    steps.set(ni, { ni, kind: DELEGATED, world: new Matrix4(), local: null, deps: deps.get(ni) || null, why });
   };
   for (const ni of rig.moving) {
     const why = movingStep(ni);
@@ -924,6 +924,10 @@ export function runPlan(plan, f, target) {
   plan.f = f;
   const rig = plan.rig;
   const cache = rig.cache;
+  // 評価のプロファイラの記録中だけ、手順ごとの時間を渡す（profile.step(手順, ms)。手順の中で初めて読んだ
+  // コンストレイント・計算ノード・IK の計算は、その手順の時間に入る）
+  const prof = plan.profile || null;
+  let t0 = prof ? performance.now() : 0;
   for (const s of plan.order) {
     const ni = s.ni;
     if (s.kind === STATIC) {
@@ -944,10 +948,34 @@ export function runPlan(plan, f, target) {
       }
     }
     if (plan.share) cache.world.set(ni, s.world);
+    if (prof) { const t1 = performance.now(); prof.step(plan, s, t1 - t0); t0 = t1; }
   }
   for (const s of plan.moving) {
     const m = target.get(s.ni) || new Matrix4();
     target.set(s.ni, m.copy(s.local));
   }
   return target;
+}
+
+/**
+ * 評価のプロファイラの分類: 計画の手順が何で動くか。{ path: 'compiled'（専用の評価）| 'generic'（汎用の経路に任せた）,
+ * label: 種類, why: 任せた理由（任せたときだけ） }
+ */
+export function stepCategory(plan, s) {
+  if (s.kind === STATIC) return { path: 'compiled', label: '動かないノード（親の行列を掛けるだけ）' };
+  if (s.kind === DELEGATED) return { path: 'generic', label: `汎用の経路に任せたノード（${s.why || '理由不明'}）`, why: s.why || '理由不明' };
+  if (s.ik) {
+    const g = plan.rig.byId.get(s.ik.id);
+    return { path: 'compiled', label: `IK（${(g && g.ik && g.ik.solver) || 'IK'}）で動くジョイント` };
+  }
+  const types = new Set();
+  for (const x of s.inputs || []) {
+    if (x.con) types.add(x.con.type);
+    else if (x.src) {
+      const g = plan.rig.byId.get(x.src.node);
+      types.add(!g ? '計算ノード' : g.dag >= 0 ? 'DAG ノードの直接の接続' : `計算ノード（${g.type}）`);
+    }
+  }
+  if (!types.size) return { path: 'compiled', label: 'キーで動くノード' };
+  return { path: 'compiled', label: `${[...types].sort().join('・')} で動くノード` };
 }

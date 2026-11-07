@@ -8,6 +8,8 @@
   3. 暗い配色（スタンドアロン）でも区切り線が見え、❒ はほかの項目と同じ文字色（ハイライト中はその文字色）で描く
      （明るい配色でも同じ）
   4. オプションの画面: ［設定を保存］で設定だけ保存し、［書き出し］でその設定で書き出す。書き出したら設定をステータスバーに出す
+  5. ［ウインドウ］（ツールバーの［表示］と紛れないよう「表示」から改名）: ログ・警告・リグの診断・評価のプロファイラ・開発者ツール。
+     ［評価のプロファイラ］でビューアの上にパネルが開き、［テキストでコピー］でクリップボードに結果が入る
 """
 from __future__ import annotations
 
@@ -59,7 +61,7 @@ def main() -> int:
 
     # 1 ---------------------------------------------------------------------
     titles = [a.text() for a in win.menuBar().actions()]
-    check(titles == ["ファイル", "編集", "表示", "設定", "ヘルプ"], "メニューの並び: %s" % titles)
+    check(titles == ["ファイル", "編集", "ウインドウ", "設定", "ヘルプ"], "メニューの並び: %s" % titles)
     file_items = [label(a) if not a.isSeparator() else "-" for a in win.file_menu.actions()]
     check(file_items == ["新規シーン", "-", "開く…", "再読み込み", "-", "パッケージ（.msv）として書き出し…", "-", "閉じる"],
           "［ファイル］はファイルの操作だけ: %s" % file_items)
@@ -68,6 +70,10 @@ def main() -> int:
     check(set_items == ["アニメーションを読み込む", "リファレンスを読み込む", "-", "変換結果のキャッシュ"],
           "［設定］に読み込みの設定: %s" % set_items)
     check(win.a_export_pkg.shortcut().toString() == "Ctrl+Shift+E", "書き出しのショートカットは Ctrl+Shift+E のまま")
+    win_menu = next(a.menu() for a in win.menuBar().actions() if a.text() == "ウインドウ")
+    win_items = [label(a) if not a.isSeparator() else "-" for a in win_menu.actions()]
+    check(win_items == ["ログ", "警告", "リグの診断…", "評価のプロファイラ", "-", "開発者ツール"],
+          "［ウインドウ］の項目: %s" % win_items)
 
     # 2・3 -------------------------------------------------------------------
     calls = []
@@ -192,10 +198,27 @@ def main() -> int:
         os.remove(out)
         plan["button"] = "書き出し"
         win.export_package_options()                     # ［書き出し］: その設定で書き出す
-        wait(lambda: os.path.exists(out), step_end)
+        wait(lambda: os.path.exists(out), step_profiler)
+
+    def step_profiler():
+        check(os.path.exists(out), "オプションの画面の［書き出し］で書き出す")
+        QtWidgets.QApplication.clipboard().setText("")
+        win.a_profiler.trigger()
+        state = {}
+        win.viewer.run_js("(() => { const p = document.getElementById('profiler'); if (!p || p.hidden) return 'closed';"
+                          " document.getElementById('prof-copy').click(); return 'open'; })()",
+                          lambda r: state.update(open=r))
+        wait(lambda: state.get("open") and "評価のプロファイラ" in QtWidgets.QApplication.clipboard().text(),
+             lambda: step_profiler_check(state), timeout=10.0)
+
+    def step_profiler_check(state):
+        check(state.get("open") == "open", "［ウインドウ］→［評価のプロファイラ］でパネルが開く: %s" % state)
+        text = QtWidgets.QApplication.clipboard().text()
+        check(text.startswith("評価のプロファイラ") and "■ フレームの内訳" in text,
+              "［テキストでコピー］で結果がクリップボードに入る: %r" % text[:40])
+        step_end()
 
     def step_end():
-        check(os.path.exists(out), "オプションの画面の［書き出し］で書き出す")
         QtWidgets.QDialog.exec = orig_exec
         for k, v in saved.items():
             if v is None:

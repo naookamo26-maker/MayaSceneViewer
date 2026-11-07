@@ -20,6 +20,13 @@
           <button type="button" class="menu-item" id="btn-copy-url" title="いまのカメラ・フレーム・表示の設定を入れた URL をコピーする（URL から開いたファイルなら、そのファイルも入る）">URL をコピー</button>
         </div>
       </div>
+      <!-- ウインドウ（Qt ではメニューバーの［ウインドウ］にあるので出さない） -->
+      <div class="menu">
+        <button class="menu-btn" id="btn-window-menu" aria-haspopup="true" aria-expanded="false" aria-controls="menu-window">ウインドウ <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M1 2.5 4 5.5 7 2.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></button>
+        <div class="menu-panel menu-actions" id="menu-window" hidden data-close-on-pick>
+          <button type="button" class="menu-item" id="btn-profiler" title="再生中の 1 フレームの処理の内訳と、リグの評価の種類ごとの時間・再生キャッシュの状態を表示する">評価のプロファイラ</button>
+        </div>
+      </div>
     </div>
     <div class="tb-group" role="group" aria-label="操作">
       <div class="seg" id="opt-tool">

@@ -130,7 +130,7 @@ def main() -> int:
             t = log_text()
             check("[情報] exprespy" in t and "のコードを解析して評価します" in t, "お知らせ（exprespy を解析した）はログに出す")
             check(not any("のコードを解析して評価します" in w for w in win.viewer.warnings), "お知らせは警告に入れない")
-            check("[警告] 警告 " in t and "件（［表示］→［警告］で、分類ごとの一覧を見られます）" in t, "ログには警告の件数だけ")
+            check("[警告] 警告 " in t and "件（［ウインドウ］→［警告］で、分類ごとの一覧を見られます）" in t, "ログには警告の件数だけ")
             check(not any(("[警告] " + w) in t for w in win.viewer.warnings), "ログに警告を 1 件ずつ流さない")
             win.show_warnings()
             app.processEvents()
