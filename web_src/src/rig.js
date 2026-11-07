@@ -834,7 +834,9 @@ export class RigEvaluator {
     }
     this.dcur = null;
     if (capture) {                                       // 扱えるリグなら、次のフレームから専用の評価にする
+      const tp = performance.now();
       const r = buildPlan(this, capture);
+      this.planMs = performance.now() - tp;              // 計画を作った時間（評価のプロファイラのワーカーの欄）
       this.compiledPlan = r.plan || null;
       this.compiledReason = r.reason || null;
     }

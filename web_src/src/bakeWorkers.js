@@ -7,6 +7,8 @@ import { decodeBaked } from './rigBakeCore.js';
 /* global __RIG_WORKER_SOURCE__ */
 const SOURCE = typeof __RIG_WORKER_SOURCE__ === 'string' ? __RIG_WORKER_SOURCE__ : null;
 const CHUNK = 8;                 // 1 回に頼むフレームの数（小さいほど早く届き、取り込みも細かくなる）
+// ワーカーごとの最初の頼みは 1 フレームにする（最初のフレームは、汎用の経路での評価と専用の評価の計画を作るので重い。
+// 早く結果を届け、2 回目からは専用の評価で CHUNK ずつ作る）
 const START_DELAY = 300;         // 追加分が変わってから作り始めるまでの待ち（ms。ポーズ確認の操作中に作り直し続けないため）
 
 export class BakeWorkers {
@@ -30,7 +32,9 @@ export class BakeWorkers {
 
   /** 評価のプロファイラに出す統計を消す（新しいアニメーションにしたとき） */
   resetStats() {
-    this.stat = { frames: 0, workerMs: 0, wallMs: 0, wallFrames: 0, jobId: -1, jobBase: 0 };
+    // firstMs: 作り始めてから最初の結果を取り込むまで・timing: ワーカーの中の時間（rigBakeCore.js の bakerTiming。最初のフレームが
+    // いちばん遅かったワーカーのもの）
+    this.stat = { frames: 0, workerMs: 0, wallMs: 0, wallFrames: 0, jobId: -1, jobBase: 0, firstMs: null, timing: null, startedAt: null };
   }
 
   /**
@@ -40,7 +44,9 @@ export class BakeWorkers {
   stats() {
     const s = this.stat;
     return {
-      available: this.available, count: this.count, busy: !!this.job,
+      available: this.available, count: this.count, busy: !!this.job, error: this.error || null,
+      firstMs: s.firstMs, waitingMs: s.firstMs === null && s.startedAt !== null ? performance.now() - s.startedAt : null,
+      timing: s.timing,
       cores: (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || null,
       frames: s.frames, perFrame: s.frames ? s.workerMs / s.frames : 0,
       throughput: s.wallMs > 0 ? (s.wallFrames * 1000) / s.wallMs : 0,
@@ -89,6 +95,7 @@ export class BakeWorkers {
       if (!frames.length) return;
       this.job = { id: ++this.jobId, sig: pose.sig, keys: pose.keys, poses: pose.poses, queue: frames.slice(), busy: 0,
         start: performance.now() };
+      if (this.stat.startedAt === null) this.stat.startedAt = this.job.start;
       this.ensureWorkers();
       for (const w of this.workers) this.dispatch(w);
     }, START_DELAY);
@@ -119,15 +126,18 @@ export class BakeWorkers {
     if (w.token !== this.token) {                         // このアニメーションをまだ渡していない
       w.worker.postMessage({ type: 'init', token: this.token, anim: this.init.anim, nodes: this.init.nodes });
       w.token = this.token;
+      w.sent = 0;
     }
     const have = this.rig.layerFor(job.keys);
     const frames = [];
-    while (job.queue.length && frames.length < CHUNK) {
+    const chunk = w.sent ? CHUNK : 1;
+    while (job.queue.length && frames.length < chunk) {
       const f = job.queue.shift();
       if (!(have && have.frames.has(f))) frames.push(f);
     }
     if (!frames.length) { this.finishIfDone(); return; }
     w.busy = true;
+    w.sent++;
     job.busy++;
     w.worker.postMessage({ type: 'bake', token: this.token, job: job.id, sig: job.sig, frames, poses: job.poses });
   }
@@ -179,6 +189,9 @@ export class BakeWorkers {
       if (keys) {
         const r = decodeBaked(m);
         const st = this.stat;
+        if (st.firstMs === null && st.startedAt !== null) st.firstMs = performance.now() - st.startedAt;
+        const tm = m.timing;
+        if (tm && tm.firstMs !== null && (!st.timing || tm.firstMs >= st.timing.firstMs)) st.timing = tm;
         st.frames += r.frames.length;
         st.workerMs += m.ms || 0;
         // 全体の速さ: 作り始めてから、いま取り込んだところまで（ジョブごとの区間を足す）
@@ -206,6 +219,7 @@ export class BakeWorkers {
   fail(message) {
     if (this.broken) return;
     this.broken = true;
+    this.error = message;                            // 評価のプロファイラに出す（使えなくなった理由）
     this.dispose();
     if (this.opts.onError) this.opts.onError(message);
   }

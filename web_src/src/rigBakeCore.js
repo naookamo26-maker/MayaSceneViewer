@@ -11,12 +11,14 @@ import { makeCurve } from './curve.js';
  * @param anim 共通 JSON の animation（オブジェクトか JSON の文字列）  @param nodes 共通 JSON の nodes
  */
 export function createBaker(anim, nodes) {
+  const t0 = performance.now();
   const data = typeof anim === 'string' ? JSON.parse(anim) : anim;
   const clip = new AnimationClip(data);
   const statics = nodes.map((n) => new Matrix4().fromArray(n.matrix));
   const rig = new RigEvaluator(clip, nodes, (ni) => statics[ni]);
   rig.setPlaybackLimit(Number.MAX_SAFE_INTEGER);      // 作ったフレームはすぐ送って捨てるので、上限はなし
-  return { rig, sentDeps: new Map(), sentReads: new Set() };
+  // timing: 評価のプロファイラに出す、ワーカーの中の時間（準備・最初のフレーム）
+  return { rig, sentDeps: new Map(), sentReads: new Set(), timing: { createMs: performance.now() - t0, firstMs: null } };
 }
 
 /** 評価器の状態（［このフレームを確かめる］で、ワーカーの中の様子を知らせる） */
@@ -50,7 +52,7 @@ export function decodeCurve(c) {
  * フレームを評価して、再生キャッシュに入れる値を返す。
  * @param req { frames: 整数のフレーム, poses: [[ノード番号, 行列の 16 要素 | null, 目印]]（RigEvaluator.playbackPoseData） }
  * @returns { frames: [{ f, mats: Float64Array, props, curves: [[グラフの id, カーブ]] }], deps: [[動くノード, ノード…]],
- *   poseReads: [追加分を読んだノード], ms: 評価にかかった時間 }。deps・poseReads は前回から増えたものだけ
+ *   poseReads: [追加分を読んだノード], ms: 評価にかかった時間, timing: bakerTiming }。deps・poseReads は前回から増えたものだけ
  */
 export function bakeFrames(baker, req) {
   const { rig } = baker;
@@ -65,7 +67,9 @@ export function bakeFrames(baker, req) {
   const frames = [];
   const t0 = performance.now();
   for (const f of req.frames) {
+    const tf = baker.timing.firstMs === null ? performance.now() : 0;
     rig.evaluate(f, poseOf, scratch, poseKey);
+    if (tf) baker.timing.firstMs = performance.now() - tf;   // 最初のフレーム（汎用の経路と計画を作る時間を含む）
     const cur = rig.current;
     if (!cur) continue;
     if (rig.props.length) rig.evaluateProps();
@@ -82,7 +86,17 @@ export function bakeFrames(baker, req) {
   const poseReads = [];
   for (const n of rig.poseReads) if (!baker.sentReads.has(n)) { baker.sentReads.add(n); poseReads.push(n); }
   rig.clearPlayback();                                  // 送ったものは捨てる（時間で変わらない値の使い回しは残る）
-  return { frames, deps, poseReads, ms };
+  return { frames, deps, poseReads, ms, timing: bakerTiming(baker) };
+}
+
+/**
+ * ワーカーの中の時間: { createMs: 準備（アニメーションの読み込み・評価器）, firstMs: 最初のフレーム, planMs: 専用の評価の
+ * 計画を作った時間, plan: 専用の評価を使うか, retries: スタックがあふれてやり直した回数 }
+ */
+export function bakerTiming(baker) {
+  const rig = baker.rig;
+  return { createMs: baker.timing.createMs, firstMs: baker.timing.firstMs, planMs: rig.planMs ?? null,
+    plan: !!rig.compiledPlan, retries: rig.deepState.retries };
 }
 
 /** bakeFrames の結果（postMessage で受け取ったもの）を、importSnapshots に渡せる形に戻す */

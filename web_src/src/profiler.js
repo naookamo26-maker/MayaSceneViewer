@@ -443,18 +443,40 @@ export function profilerText(prof, ctx) {
   if (w) {
     L.push('');
     L.push('■ 再生キャッシュを作るワーカー');
-    if (!w.available) L.push('  使っていません（画面のスレッドの空き時間に作ります）');
-    else {
+    if (!w.available) {
+      L.push('  使っていません（画面のスレッドの空き時間に作ります）');
+      if (w.error) L.push(`  理由: ${w.error.split('\n')[0]}`);
+    } else {
       L.push(`  ワーカー ${w.count} 個（CPU のコア ${w.cores || '不明'}）・${w.busy ? '作っています' : '止まっています'}`);
       if (w.frames) {
         L.push(`  読み込んでから作ったフレーム ${w.frames}・1 フレームの評価 ${ms(w.perFrame)}（ワーカーの中）`);
         if (w.throughput) L.push(`  全体の速さ: 1 フレームあたり ${ms(1000 / w.throughput)}（${w.throughput.toFixed(1)} フレーム/秒）`);
       } else L.push('  まだ作っていません');
+      const st = workerStartText(w);
+      if (st) L.push(`  ${st}`);
     }
   }
   L.push('');
   L.push('※ 描画は CPU 側で命令を出す時間で、GPU の処理の時間は含みません。1 ノードの時間は短いため、記録したフレームを通した平均です。');
   return L.join('\n');
+}
+
+/**
+ * ワーカーが作り始めるまでの様子（評価のプロファイラ）: 最初の結果が届くまでの時間と、ワーカーの中の時間
+ * （準備・最初のフレーム・計画・スタックがあふれてやり直した回数）。何もなければ空
+ */
+export function workerStartText(w) {
+  const sec = (x) => `${(x / 1000).toFixed(1)} 秒`;
+  const parts = [];
+  if (w.firstMs !== null && w.firstMs !== undefined) parts.push(`最初の結果が届くまで ${sec(w.firstMs)}`);
+  else if (w.waitingMs !== null && w.waitingMs !== undefined) parts.push(`最初の結果を待っています（${sec(w.waitingMs)}）`);
+  const t = w.timing;
+  if (t) {
+    parts.push(`ワーカーの中: 準備 ${sec(t.createMs)}・最初のフレーム ${sec(t.firstMs)}`
+      + `${t.planMs !== null ? `（うち専用の評価の計画 ${sec(t.planMs)}）` : ''}・専用の評価 ${t.plan ? '使う' : '使わない'}`
+      + `・スタックがあふれてやり直した回数 ${t.retries}`);
+  }
+  return parts.join('・');
 }
 
 /** ［このフレームを確かめる］の結果を文字にする（［テキストでコピー］） */
