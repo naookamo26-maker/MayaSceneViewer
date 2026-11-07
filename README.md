@@ -71,7 +71,7 @@ Maya ASCII（.ma）のモデル形状・ジョイント・スキンウェイト�
 
 ## バージョン
 
-いまのバージョンは 1.6.0 です。形式はセマンティック バージョニング（メジャー.マイナー.パッチ）で、前の版と互換のない変更（前の版で作った .msv が読めなくなるなど）でメジャー、互換を保った機能の追加でマイナー、不具合の修正でパッチを上げます。
+いまのバージョンは 1.6.1 です。形式はセマンティック バージョニング（メジャー.マイナー.パッチ）で、前の版と互換のない変更（前の版で作った .msv が読めなくなるなど）でメジャー、互換を保った機能の追加でマイナー、不具合の修正でパッチを上げます。
 
 - 確認: Qt 版は［ヘルプ］→［バージョン情報…］（起動時のログにも出ます）、ブラウザ版は何も開いていないときの画面、コマンドは `python -m ma_viewer --version`。パッケージ（.msv）の `manifest.json` にも、作ったビューアのバージョン（`generatorVersion`）が入ります。
 - 上げるとき（どの変更でどの桁を上げるかは `CLAUDE.md`）: `ma_viewer/version.py` の `__version__` を変え、`web_src/package.json`・`web_src/package-lock.json` の `version` と、この節の「いまのバージョン」も同じにして、ビューアを作り直します（`cd web_src && node build.mjs`。JS はビルド時に `version.py` から読みます）。`tests/test_version.py` が、ずれていないかを確かめます。
@@ -495,6 +495,7 @@ python tests/qt_skin8_test.py                           # GPU のスキン変形
 python tests/qt_texture_test.py                         # テクスチャの読み込み・向き・透過・ウェイト表示との切り替え
 python tests/qt_maps_test.py                            # フラットライト・マップの単独表示・ノーマルマップ・UDIM（画面の画素で確認）
 python tests/qt_toolbar_test.py                         # ツールバー（アイコンの切り替え・メニューの開閉と状態表示）
+python tests/qt_overlay_test.py                         # ビューポートの中央の表示（起動直後の案内・読み込み中・エラー）が重ならない
 python tests/qt_menu_test.py                            # メニューの構成・書き出しのオプションボックス（❒）・区切り線の色（暗い・明るい配色）・［ウインドウ］→［評価のプロファイラ］
 python tests/qt_warnings_test.py                        # 警告のパネル（ログとタブ切り替え、メニュー・アイコンから開く、読み込み直しで更新、コピー）
 python tests/qt_review_test.py                          # ログの読み込みの経過・ステータスバー 1 列・キャッシュの使用量と上限・警告の分類・リグの診断のウィンドウ
