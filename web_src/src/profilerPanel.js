@@ -1,5 +1,5 @@
 // 評価のプロファイラの画面（ビューポートの上に重ねる、動かせるパネル）。集計は profiler.js。
-//   * フレームの内訳: 1 フレームごとの積み上げ棒（記録した順。右がいちばん新しい）。持ち時間（1000 / fps）の線
+//   * フレームの内訳: 1 フレームごとの積み上げ棒（記録した順。右がいちばん新しい）。フレームバジェット（1000 / fps）の線
 //   * リグの評価の内訳: 種類ごと（何で動くノードか）・経路ごと（専用の評価か、汎用の経路に任せたか、その理由）
 //   * 再生キャッシュとワーカーの状態
 import { PARTS, SUB_PARTS, cacheInfo, formatBytes, planInfo, profilerText } from './profiler.js';
@@ -186,17 +186,17 @@ export class ProfilerPanel {
       parts.push(`記録 ${num(s.frames)} フレーム（キャッシュあり ${num(s.hits)}・なし ${num(s.evaluated)}）`);
       parts.push(`平均 <b>${msText(s.total)}</b>・最大 ${msText(s.max)}`);
       if (s.fps) parts.push(`表示できたフレームレート <b>${s.fps.toFixed(1)} fps</b>`);
-      if (budget) parts.push(`持ち時間 ${msText(budget)}（${clip.fps} fps）`);
+      if (budget) parts.push(`フレームバジェット ${msText(budget)}（${clip.fps} fps）`);
     }
     $('prof-summary').innerHTML = parts.map((x) => `<span>${x}</span>`).join('');
-    // 行列の更新・表示・その他の内訳と、描画の命令の数（記録したフレームの平均）
+    // 行列の更新・表示・その他の内訳と、ドローコール・ポリゴン数（記録したフレームの平均）
     const detail = [];
     if (s.frames) {
       detail.push(`<span><b>行列の更新・表示・その他</b>（平均 ${msText(s.avg.scene)}）: `
         + `${SUB_PARTS.map((p) => `${esc(p.label)} ${msText(s.sub[p.key])}`).join('・')}・その他 ${msText(s.sub.other)}</span>`);
       if (s.draw) {
-        detail.push(`<span><b>描画</b>（平均 ${msText(s.avg.render)}）: 描画の命令 ${num(Math.round(s.draw.calls))} 回・`
-          + `三角形 ${num(Math.round(s.draw.triangles))}${s.draw.lines ? `・線 ${num(Math.round(s.draw.lines))}` : ''}</span>`);
+        detail.push(`<span><b>描画</b>（平均 ${msText(s.avg.render)}）: ドローコール ${num(Math.round(s.draw.calls))}・`
+          + `ポリゴン数（三角形） ${num(Math.round(s.draw.triangles))}${s.draw.lines ? `・ライン ${num(Math.round(s.draw.lines))}` : ''}</span>`);
       }
     }
     $('prof-detail').innerHTML = detail.join('');
@@ -219,7 +219,7 @@ export class ProfilerPanel {
     const n = this.visibleBars(), first = Math.max(0, fr.length - n);
     const shown = fr.slice(first);
     const totals = shown.map((e) => PARTS.reduce((t, p) => t + (e.parts[p.key] || 0), 0));
-    // 縦の目盛り: 持ち時間の 1.5 倍か、記録の最大（上位の外れ値で潰れないよう 98% 点）の大きいほう
+    // 縦の目盛り: フレームバジェットの 1.5 倍か、記録の最大（上位の外れ値で潰れないよう 98% 点）の大きいほう
     const sorted = [...totals].sort((a, b) => a - b);
     const top = sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.98))] : 0;
     const ymax = niceCeil(Math.max(budget * 1.5, top * 1.1, 1));
@@ -255,13 +255,13 @@ export class ProfilerPanel {
         g.fillRect(x, 0, BAR, 2);
       }
     });
-    // 持ち時間の線
+    // フレームバジェットの線
     const yb = Math.round(y(budget)) + 0.5;
     g.strokeStyle = '#dde1e6'; g.setLineDash([4, 3]); g.lineWidth = 1;
     g.beginPath(); g.moveTo(padL, yb); g.lineTo(w, yb); g.stroke();
     g.setLineDash([]);
     g.fillStyle = '#dde1e6'; g.textAlign = 'right';
-    g.fillText(`持ち時間 ${budget.toFixed(1)} ms`, w - 2, yb - 2);
+    g.fillText(`フレームバジェット ${budget.toFixed(1)} ms`, w - 2, yb - 2);
     g.textAlign = 'left';
   }
 
@@ -278,7 +278,7 @@ export class ProfilerPanel {
       .map(([p, i, v]) => `<span><i style="background:${PART_COLORS[i]}"></i>${esc(p.label)} ${msText(v)}</span>`);
     const extra = [];
     if (e.sub) extra.push(`行列の更新・表示の内訳: ${SUB_PARTS.map((p) => `${esc(p.label)} ${msText(e.sub[p.key] || 0)}`).join('・')}`);
-    if (e.draw) extra.push(`描画の命令 ${num(e.draw.calls)} 回・三角形 ${num(e.draw.triangles)}`);
+    if (e.draw) extra.push(`ドローコール ${num(e.draw.calls)}・ポリゴン数（三角形） ${num(e.draw.triangles)}`);
     tip.innerHTML = `<b>フレーム ${esc(e.f)}</b>・${esc(path)}・合計 <b>${msText(total)}</b>${e.interval ? `・前のフレームから ${msText(e.interval)}` : ''}<div class="prof-tip-items">${items.join('')}</div>`
       + (extra.length ? `<div class="prof-tip-extra">${extra.join('<br>')}</div>` : '');
   }

@@ -211,7 +211,7 @@ export class EvalProfiler {
     const c = this.pending;
     if (!this.recording || !c) return;
     c.parts.render = (c.parts.render || 0) + ms;
-    // 描画の命令の数・三角形・線（three.js の renderer.info.render。描画のたびに数え直される）
+    // ドローコール・ポリゴン数（三角形）・ライン（three.js の renderer.info.render。描画のたびに数え直される）
     if (info) c.draw = { calls: info.calls || 0, triangles: info.triangles || 0, lines: info.lines || 0 };
     this.pending = null;
     this.version++;
@@ -235,7 +235,7 @@ export class EvalProfiler {
     }
     const n = fr.length || 1;
     for (const p of PARTS) avg[p.key] /= n;
-    // 行列の更新・表示の内訳（その他 = 全体から内訳を引いた残り）と、描画の命令の数の平均
+    // 行列の更新・表示の内訳（その他 = 全体から内訳を引いた残り）と、ドローコール・ポリゴン数の平均
     const sub = {};
     for (const p of SUB_PARTS) sub[p.key] = fr.reduce((a, e) => a + ((e.sub && e.sub[p.key]) || 0), 0) / n;
     sub.other = Math.max(0, avg.scene - SUB_PARTS.reduce((a, p) => a + sub[p.key], 0));
@@ -380,13 +380,13 @@ export function profilerText(prof, ctx) {
     const c = ctx.scene;
     L.push(`シーン: メッシュ ${c.meshes}・頂点 ${c.vertices}・ジョイント ${c.joints}・カーブ ${c.curves}`);
   }
-  if (ctx.clip) L.push(`再生範囲: ${ctx.clip.start}〜${ctx.clip.end}（${ctx.clip.fps} fps。1 フレームの持ち時間 ${(1000 / ctx.clip.fps).toFixed(1)} ms）`);
+  if (ctx.clip) L.push(`再生範囲: ${ctx.clip.start}〜${ctx.clip.end}（${ctx.clip.fps} fps。フレームバジェット ${(1000 / ctx.clip.fps).toFixed(1)} ms）`);
   L.push('');
   L.push(`■ フレームの内訳（記録 ${s.frames} フレーム: キャッシュあり ${s.hits}・キャッシュなし ${s.evaluated}）`);
   if (s.fps) L.push(`表示できたフレームレート: ${s.fps.toFixed(1)} fps`);
   for (const p of PARTS) L.push(`  ${pad(p.label, 36)}${ms(s.avg[p.key])}`);
   L.push(`  行列の更新・表示・その他の内訳: ${SUB_PARTS.map((p) => `${p.label} ${ms(s.sub[p.key])}`).join('・')}・その他 ${ms(s.sub.other)}`);
-  if (s.draw) L.push(`  描画の命令 ${Math.round(s.draw.calls)} 回・三角形 ${Math.round(s.draw.triangles)}・線 ${Math.round(s.draw.lines)}（1 フレームの平均）`);
+  if (s.draw) L.push(`  ドローコール ${Math.round(s.draw.calls)}・ポリゴン数（三角形） ${Math.round(s.draw.triangles)}・ライン ${Math.round(s.draw.lines)}（1 フレームの平均）`);
   L.push(`  ${pad('合計（平均）', 36)}${ms(s.total)}　最大 ${ms(s.max)}`);
   const split = (pred) => {
     const fr = prof.frames.filter(pred);

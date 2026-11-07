@@ -271,7 +271,7 @@ test('自作ノードは、1 回の計算の中で同じ入力を 1 回だけ読
   assert.ok(profilerText(prof, { rig: rec, clip: rec.clip }).includes('（読む回数 '));
 });
 
-test('行列の更新・表示の内訳と、描画の命令の数を集計する（その他は残り）', () => {
+test('行列の更新・表示の内訳と、ドローコール・ポリゴン数を集計する（その他は残り）', () => {
   const prof = new EvalProfiler();
   prof.start();
   for (let f = 1; f <= 4; f++) {
@@ -291,5 +291,5 @@ test('行列の更新・表示の内訳と、描画の命令の数を集計す�
   assert.equal(s.draw.triangles, 1000);
   const text = profilerText(prof, {});
   assert.ok(text.includes('行列の更新・表示・その他の内訳: 行列のコピー 1.00 ms'), text);
-  assert.ok(text.includes('描画の命令 250 回・三角形 1000'), text);
+  assert.ok(text.includes('ドローコール 250・ポリゴン数（三角形） 1000'), text);
 });
