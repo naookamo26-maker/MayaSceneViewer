@@ -17,6 +17,8 @@ samples/sample_arm.ma に、次のものを足したもの（再生範囲 1〜24
   * nested_group（lookAt）: lookAt のグループに親（cam_rig。移動・回転あり）があり、エイムの位置を成分ごとに
       （tx → tg[0].ttx など）つないだカメラ（nested_cam）。エイムの tx にキー（1: -20 → 24: 20）。
       動かされるノードは cpim の接続元（lookAt の親ではない）
+  * follow_group（lookAt）: lookAt のグループ自身を、並列の follow_target（tx にキー 1: -30 → 24: -10、ry 60）へ
+      ポイント・オリエントコンストレイントで追従させたカメラ（follow_cam。twist は子のカメラの属性から）
   * bad_roll_group（lookAt）: twist を未対応のノード（frameCache）から unitConversion を通してつないだカメラ
       （twist の接続だけを外してファイルの値（0）にし、エイムの向きは求める）
   * distanceDimension1（distanceDimShape）: locStart（原点）と locEnd（tx にキー 1: 3 → 24: 9）の距離 →
@@ -114,6 +116,33 @@ def main():
     conns += c
     out += curve("TL", "nested_cam_aim_translateX", [(1, -20), (24, 20)])
     conns.append('connectAttr "nested_cam_aim_translateX.o" "nested_cam_aim.tx";')
+    # lookAt のグループ自身を、並列の DAG ノード（follow_target）へポイント・オリエントコンストレイントで追従させる
+    # （twist は子のカメラの属性から。lookAt はコンストレイントであり、動かされる transform でもある）
+    out += ['createNode transform -n "follow_target";',
+            '\tsetAttr ".t" -type "double3" -30 5 10 ;',
+            '\tsetAttr ".r" -type "double3" 0 60 0 ;']
+    a, c = camera_and_aim("follow_group", "follow_cam", "follow_cam_aim", 0, cam_roll=True)
+    out += a
+    conns += c
+    out += ['createNode pointConstraint -n "follow_group_pointConstraint1" -p "follow_group";',
+            '\taddAttr -dcb 0 -ci true -k true -sn "w0" -ln "follow_targetW0" -dv 1 -min 0 -at "double";',
+            '\tsetAttr -k on ".w0";',
+            'createNode orientConstraint -n "follow_group_orientConstraint1" -p "follow_group";',
+            '\taddAttr -dcb 0 -ci true -k true -sn "w0" -ln "follow_targetW0" -dv 1 -min 0 -at "double";',
+            '\tsetAttr -k on ".w0";']
+    out += curve("TL", "follow_target_translateX", [(1, -30), (24, -10)])
+    pc, oc = "follow_group_pointConstraint1", "follow_group_orientConstraint1"
+    conns += ['connectAttr "follow_target_translateX.o" "follow_target.tx";']
+    conns += ['connectAttr "%s.ct%s" "follow_group.t%s";' % (pc, a, a) for a in "xyz"]
+    conns += ['connectAttr "follow_group.pim" "%s.cpim";' % pc, 'connectAttr "follow_group.rp" "%s.crp";' % pc,
+              'connectAttr "follow_group.rpt" "%s.crt";' % pc, 'connectAttr "follow_target.t" "%s.tg[0].tt";' % pc,
+              'connectAttr "follow_target.rp" "%s.tg[0].trp";' % pc,
+              'connectAttr "follow_target.rpt" "%s.tg[0].trt";' % pc,
+              'connectAttr "follow_target.pm" "%s.tg[0].tpm";' % pc, 'connectAttr "%s.w0" "%s.tg[0].tw";' % (pc, pc)]
+    conns += ['connectAttr "%s.cr%s" "follow_group.r%s";' % (oc, a, a) for a in "xyz"]
+    conns += ['connectAttr "follow_group.ro" "%s.cro";' % oc, 'connectAttr "follow_group.pim" "%s.cpim";' % oc,
+              'connectAttr "follow_target.r" "%s.tg[0].tr";' % oc, 'connectAttr "follow_target.ro" "%s.tg[0].tro";' % oc,
+              'connectAttr "follow_target.pm" "%s.tg[0].tpm";' % oc, 'connectAttr "%s.w0" "%s.tg[0].tw";' % (oc, oc)]
     out += ['createNode transform -n "roll_ctrl";',
             '\taddAttr -ci true -sn "roll" -ln "roll" -at "doubleAngle";',
             '\tsetAttr -k on ".roll" 20;',

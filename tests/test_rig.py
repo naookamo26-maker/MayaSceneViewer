@@ -666,6 +666,23 @@ class TestStage6(unittest.TestCase):
         self.assertTrue(w[0].startswith("j: rx ← ex1（expression） が接続で決まるため"), w[0])
         self.assertIn("tx ← pc（pointConstraint）", w[0])
         self.assertIn("は評価できますが、評価できない接続があるため", w[0])
+        # lookAt（カメラとエイムのグループ）自身がコンストレイントで動く: 警告を出さず、DAG ノードとしても評価する
+        body = ('createNode transform -n "follow";\ncreateNode lookAt -n "grp";\n'
+                'createNode transform -n "cam" -p "grp";\ncreateNode camera -n "camShape" -p "cam";\n'
+                'createNode transform -n "aim" -p "grp";\n'
+                'createNode pointConstraint -n "pc" -p "grp";\n'
+                '\taddAttr -dcb 0 -ci true -k true -sn "w0" -ln "followW0" -dv 1 -min 0 -at "double";\n'
+                'connectAttr "grp.crx" "cam.rx";\nconnectAttr "cam.pim" "grp.cpim";\nconnectAttr "cam.t" "grp.ct";\n'
+                'connectAttr "aim.t" "grp.tg[0].tt";\nconnectAttr "aim.pm" "grp.tg[0].tpm";\n'
+                'connectAttr "follow.t" "pc.tg[0].tt";\nconnectAttr "follow.pm" "pc.tg[0].tpm";\n'
+                'connectAttr "pc.w0" "pc.tg[0].tw";\nconnectAttr "grp.pim" "pc.cpim";\n'
+                'connectAttr "pc.ctx" "grp.tx";\nconnectAttr "pc.cty" "grp.ty";\nconnectAttr "pc.ctz" "grp.tz";\n')
+        sc, anim = from_text(body)
+        self.assertFalse([x for x in sc["warnings"] if x.startswith("grp: ")], sc["warnings"])
+        g = next(e for e in anim["graph"] if e["name"] == "grp")
+        self.assertEqual(g["dag"], [n["name"] for n in sc["nodes"]].index("grp"))
+        self.assertIn("tx", g["inputs"])
+        self.assertIn("tg[0].tt", g["inputs"])
         # ターゲットのないコンストレイントは、その理由を添える
         body = ('createNode joint -n "j";\ncreateNode pointConstraint -n "pc" -p "j";\n'
                 'connectAttr "pc.ctx" "j.tx";\n')
