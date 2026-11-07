@@ -339,6 +339,14 @@ table.kv td.l { text-align: left; }
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
 }
 .menu-panel[hidden] { display: none; }
+/* 操作の一覧のメニュー（ブラウザの［ファイル］） */
+.menu-panel.menu-actions { width: 210px; padding: 4px; }
+.menu-item {
+  display: block; width: 100%; padding: 6px 10px; border: 0; border-radius: var(--radius);
+  background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.menu-item:hover, .menu-item:focus-visible { background: var(--chrome); outline: none; }
+.menu-actions .menu-sep { margin: 4px 6px; }
 .menu-row { display: grid; grid-template-columns: 124px minmax(0, 1fr); gap: 8px; align-items: center; margin: 5px 0; }
 .menu-row label { color: var(--text-dim); }
 .menu-row select, .menu-row input[type="range"] { width: 100%; }
