@@ -22,6 +22,7 @@ import {
 } from './curve.js';
 import { MATH_DEFAULTS, evaluateMath, mathAngleInput, mathKind, mathOutputs } from './mathNodes.js';
 import { buildPlan, runPlan } from './rigCompiled.js';
+import { mayOverflow, newDeepState, runDeep } from './deepEval.js';
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -423,6 +424,7 @@ export class RigEvaluator {
       try { this.defs.set(t, compileNodeDef(d)); } catch (e) { this.defs.set(t, null); }
     }
     this.problems = new Set();               // 評価中に見つかった問題（循環など）
+    this.deepState = newDeepState();         // 深い再帰でスタックがあふれたときのやり直し（deepEval.js・deep）
     this.profile = null;                     // 評価のプロファイラ（記録中だけ。profiler.js）
     this.bypassCache = false;                // 再生キャッシュを使わずに評価する（評価のプロファイラの「キャッシュを使わずに測る」）
     this.lastPath = null;                    // 直前の evaluate の経路（'cache' 再生キャッシュ / 'compiled' 専用の評価 / 'generic' 汎用の経路）
@@ -823,7 +825,7 @@ export class RigEvaluator {
     for (const ni of this.moving) {
       this.dcur = null;
       const m = target.get(ni) || new Matrix4();
-      m.copy(this.localFile(ni));
+      m.copy(this.deep(() => this.localFile(ni)));
       target.set(ni, m);
       if (store && this.dcur) this.addNodeDeps(ni, this.dcur);
       if (capture) capture.set(ni, this.dcur);
@@ -951,6 +953,8 @@ export class RigEvaluator {
       if (km.deps) this.addDeps(km.deps.get(key));
       return v;
     }
+    // 計算するのがいちばん外側のとき（chan・world などを直接読むときも）は、スタックのあふれをやり直せるようにする（deep）
+    if (!this.deepState.depth) return this.deep(() => this.memo(fm, km, key, compute, fallback, label));
     const outer = this.varying, outerDeps = this.dcur;
     this.varying = false;
     this.dcur = null;
@@ -959,6 +963,11 @@ export class RigEvaluator {
     try {
       v = compute();
       done = true;
+    } catch (e) {
+      // スタックがあふれたら、この値をあとで浅い所から求め直せるようにする（いちばん深い所だけ。deep）
+      const ds = this.deepState;
+      if (ds.depth && ds.at === null && mayOverflow(e)) ds.at = () => this.memo(fm, km, key, compute, fallback, label);
+      throw e;
     } finally {
       const varying = this.varying, deps = this.dcur;
       this.varying = outer || varying;
@@ -975,6 +984,30 @@ export class RigEvaluator {
       }
     }
     return v;
+  }
+
+  /**
+   * fn() を求める。上流へさかのぼる鎖が長くてスタックがあふれたら、いちばん深い所の値を先に求めてやり直す（deepEval.js）。
+   * スタックの小さい Web Worker（再生キャッシュを作る）でも、画面側と同じ値になる
+   */
+  deep(fn) {
+    const st = this.deepState;
+    if (st.depth) return fn();
+    const varying = this.varying, dcur = this.dcur, busy = this.busy.size;
+    const prof = this.profile, defs = prof && prof.defStack ? prof.defStack.length : 0;
+    return runDeep(st, fn, () => {
+      // あふれた所から戻る途中で片付けられなかったもの（計算中の印・状態）を、呼んだときに戻す
+      this.varying = varying;
+      this.dcur = dcur;
+      if (!busy) this.busy.clear();
+      if (prof && prof.defStack) prof.defStack.length = defs;
+      for (const m of Object.values(this.cache)) {
+        for (const [k, v] of m) {
+          if (v === BUSY) m.delete(k);
+          else if (v instanceof Map) for (const [k2, v2] of v) if (v2 === BUSY) v.delete(k2);
+        }
+      }
+    });
   }
 
   /** 循環の防止（キャッシュしない値に使う）。key の計算中にもう一度 key を求めたら fallback を返す */
@@ -1272,7 +1305,7 @@ export class RigEvaluator {
     for (const p of this.props) {
       const values = {};
       for (const [attr, src] of Object.entries(p.inputs || {})) {
-        const v = this.guard(`prop ${p.kind}${p.index}.${attr}`, () => this.source(src), () => undefined);
+        const v = this.deep(() => this.guard(`prop ${p.kind}${p.index}.${attr}`, () => this.source(src), () => undefined));
         if (p.kind === 'place2d' && (attr === 'of' || attr === 're') && Array.isArray(v)) {   // 2 つ組（u, v）
           if (v.length >= 2 && Number.isFinite(v[0]) && Number.isFinite(v[1])) values[attr] = [v[0], v[1]];
           continue;
@@ -1299,7 +1332,7 @@ export class RigEvaluator {
   curveShape(gid) {
     const c = this.current;
     if (c && c.curves.has(gid)) return c.curves.get(gid);
-    const v = this.plug(gid, 'local');
+    const v = this.deep(() => this.plug(gid, 'local'));
     if (c) {
       c.curves.set(gid, v);
       if (v && v.isCurve && !this.countedCurves.has(v)) {   // CV（Vector3）1 個あたり約 64 バイト
@@ -1478,6 +1511,7 @@ export class RigEvaluator {
     try {
       return d.run(io);
     } catch (e) {
+      if (this.deepState.depth && mayOverflow(e)) throw e;    // スタックのあふれは deep がやり直す（値なしにしない）
       this.problems.add(`${g.name}（${g.def}）: ${e.message}`);
       return null;
     }
@@ -1516,6 +1550,7 @@ export class RigEvaluator {
     try {
       return d.run(io);
     } catch (e) {
+      if (this.deepState.depth && mayOverflow(e)) throw e;    // スタックのあふれは deep がやり直す（値なしにしない）
       this.problems.add(`${g.name}（${g.def}）: ${e.message}`);
       return null;
     } finally {
@@ -2066,6 +2101,7 @@ export class RigEvaluator {
         time: this.frame / (this.clip.fps || 24),
       });
     } catch (err) {
+      if (this.deepState.depth && mayOverflow(err)) throw err;  // スタックのあふれは deep がやり直す
       this.problems.add(`expression ${g.name}: ${err.message}`);
       return null;
     }
