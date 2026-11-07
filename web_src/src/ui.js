@@ -73,6 +73,7 @@ const num = (n) => n.toLocaleString('ja-JP');
 export class UI {
   constructor(app) {
     this.app = app;
+    this.emptyWanted = true;                        // 起動直後はシーンがない（案内を出す。syncOverlays）
     this.rows = [];
     this.rowOfNode = new Map();
     this.collapsed = new Set();
@@ -1387,13 +1388,19 @@ export class UI {
     clearTimeout(this.msgTimer);
     if (text && ms) this.msgTimer = setTimeout(() => { $('status-msg').textContent = ''; }, ms);
   }
-  setEmpty(on) { $('empty').hidden = !on; }
+  /**
+   * 起動直後の案内（#empty）・読み込み中（#loading）・エラー（#error）は、どれもビューポートの中央に重ねて出すので、
+   * 1 つだけを出す。案内は、読み込み中でもエラーでもないときだけ出す（setEmpty は「シーンがない」ことを伝えるだけ）
+   */
+  setEmpty(on) { this.emptyWanted = !!on; this.syncOverlays(); }
+  syncOverlays() { $('empty').hidden = !(this.emptyWanted && $('loading').hidden && $('error').hidden); }
   /**
    * 読み込み中の表示。frac（0〜1）があれば全体の進捗のバーに反映する（再描画は呼ばれたときだけ）。
    * subText・subFrac は、いま読んでいるファイルの進み具合（リファレンスがあるときの 2 段目。なければ隠す）
    */
   showLoading(text, frac, subText, subFrac) {
     $('loading').hidden = false;
+    $('error').hidden = true;                       // 前の読み込みの誤りは消す（新しく読み込み始めた）
     $('loading-text').textContent = text || '読み込み中';
     setBar($('loading-bar'), frac);
     $('loading-sub').hidden = !subText;
@@ -1401,8 +1408,15 @@ export class UI {
       $('loading-sub-text').textContent = subText;
       setBar($('loading-sub-bar'), subFrac);
     }
+    this.syncOverlays();
   }
-  hideLoading() { $('loading').hidden = true; }
-  showError(text) { const e = $('error'); e.hidden = false; e.textContent = text; }
-  hideError() { $('error').hidden = true; }
+  hideLoading() { $('loading').hidden = true; this.syncOverlays(); }
+  showError(text) {
+    const e = $('error');
+    e.hidden = false;
+    e.textContent = text;
+    $('loading').hidden = true;                     // 読み込みは終わった（失敗した）
+    this.syncOverlays();
+  }
+  hideError() { $('error').hidden = true; this.syncOverlays(); }
 }

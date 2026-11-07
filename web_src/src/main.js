@@ -35,6 +35,7 @@ import { SequencerPanel, activeShot, shotStarts, shotTime } from './sequencer.js
 import { CurveEditor } from './curveEditor.js';
 import { warningsText } from './warnGroups.js';
 import { BakeWorkers } from './bakeWorkers.js';
+import { bakeFrames, createBaker } from './rigBakeCore.js';
 import { EvalProfiler } from './profiler.js';
 import { ProfilerPanel } from './profilerPanel.js';
 
@@ -1484,6 +1485,30 @@ class ViewerApp {
     }
     const posed = !!(this.pose && this.pose.size);
     if (!posed) rig.push(compareWith('いま表示している値', (ni) => this.built.nodeObjects[ni].userData.fileMatrix.elements));
+    // 原因の切り分け: 画面側の評価器でキャッシュを使わずに評価した値（時間で変わらない値は、読み込み後の最初の評価の
+    // フレームのまま）と、ワーカーと同じ作り方（渡すデータ・評価器）で、このフレームから／再生範囲の先頭から評価した値
+    if (!posed) {
+      const saved = this.rig.bypassCache;
+      this.rig.bypassCache = true;
+      let live;
+      try { live = this.rig.evaluate(f, undefined, new Map()); } finally { this.rig.bypassCache = saved; }
+      rig.push(compareWith('画面側の評価器（キャッシュを使わない）', (ni) => live.get(ni) && live.get(ni).elements));
+      this.rig.evaluate(f, undefined, new Map());   // いまのフレームの評価の状態に戻す
+    }
+    const init = this.bakers && this.bakers.init;
+    if (init) {
+      const byWorker = (frames, label) => {
+        const b = createBaker(init.anim, init.nodes);
+        const r = bakeFrames(b, { frames, poses: [] });
+        const fr = r.frames.find((x) => x.f === f);
+        if (!fr) return;
+        const order = new Map([...b.rig.moving].map((ni, i) => [ni, i]));
+        rig.push(compareWith(label, (ni) => (order.has(ni) ? fr.mats.subarray(order.get(ni) * 16, order.get(ni) * 16 + 16) : null)));
+      };
+      byWorker([f], 'ワーカーと同じ作り方（このフレームから評価）');
+      const start = Math.ceil(this.clip.start);
+      if (start !== f) byWorker([start, f], `ワーカーと同じ作り方（再生範囲の先頭 ${start} から評価）`);
+    }
     // 表示: 親から直接たどったワールド行列と比べる（非表示のものは計算を省いているので比べない）
     const diff = [];
     let checked = 0;
