@@ -16,7 +16,7 @@ import { RigEvaluator } from '../src/rig.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const base = JSON.parse(readFileSync(path.resolve(here, '../../samples/nodedef_sample.json'), 'utf8'));
 const LENGTH = 6000;                                   // 鎖の長さ（小さいスタックでは、あふれる長さ）
-const FRAMES = [1, 2, 7, 12, 24];
+const FRAMES = [1, 2, 3, 4, 7, 12, 24];
 const tx = (f) => 10 * (f - 1) / 23;                   // ctrl.tx のキー（リニア）
 
 /** ctrl.tx → step0 → step1 → … → jA.ty の鎖（o = i * 0.5 + 1）を足したシーン */
@@ -75,8 +75,10 @@ test('スタックの小さいワーカー: あふれてもやり直して、画
     const baker = createBaker(anim, nodes);
     const out = [];
     for (const f of frames) {
+      const r0 = baker.rig.deepState.retries;
       bakeFrames(baker, { frames: [f] });
-      out.push({ f, ty: baker.rig.chan(jA).t[1], path: baker.rig.lastPath });
+      const retries = baker.rig.deepState.retries - r0;   // 再生キャッシュを作る評価のやり直し（下の chan を読む前に数える）
+      out.push({ f, ty: baker.rig.chan(jA).t[1], path: baker.rig.lastPath, retries });
     }
     parentPort.postMessage({ out, info: bakerInfo(baker), retries: baker.rig.deepState.retries, problems: [...baker.rig.problems] });
   `;
@@ -93,4 +95,7 @@ test('スタックの小さいワーカー: あふれてもやり直して、画
   assert.ok(res.info.plan, `専用の評価にならない: ${res.info.reason}`);
   for (const { f, ty, path: p } of res.out) assert.equal(ty, expected(f, LENGTH), `フレーム ${f}（${p}）`);
   assert.ok(res.out.some((o) => o.path === 'compiled'), '専用の評価の経路を通っていない');
+  // やり直した順番を覚えて、次のフレームから深い所を先に求めるので、毎フレームあふれ直さない
+  const late = res.out.slice(-3).map((o) => o.retries);
+  assert.deepEqual(late, [0, 0, 0], `あとのフレームでもやり直している: ${res.out.map((o) => o.retries).join(',')}`);
 });

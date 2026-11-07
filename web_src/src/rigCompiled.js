@@ -587,7 +587,10 @@ function mathReader(plan, constChan, pmOpm) {
       } catch (e) {
         // スタックがあふれたら、この値をあとで浅い所から求め直せるようにする（rig.js の memo と同じ。deep）
         const ds = ad.deepState;
-        if (ds.depth && ds.at === null && mayOverflow(e)) ds.at = () => ad.outputs(id);
+        if (ds.depth && ds.at === null && mayOverflow(e)) {
+          ds.at = () => ad.outputs(id);
+          ds.at.outId = id;                              // 次のフレームから先に求める（rig.js の prewarmDeep）
+        }
         throw e;
       }
       r.outStamp = plan.stamp;
@@ -980,6 +983,7 @@ export function runPlan(plan, f, target) {
   // コンストレイント・計算ノード・IK の計算は、その手順の時間に入る）
   const prof = plan.profile || null;
   let t0 = prof ? performance.now() : 0;
+  if (plan.ad) rig.prewarmDeep(plan.ad);           // 鎖が長くてスタックがあふれた所は、深い所から先に求める
   for (const s of plan.order) {
     const ni = s.ni;
     if (s.kind === STATIC) {
