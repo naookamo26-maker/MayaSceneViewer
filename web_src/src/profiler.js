@@ -54,6 +54,7 @@ export class EvalProfiler {
     this.categories = new Map();       // 種類 → { label, path, nodes: Set, ms }
     this.reasons = new Map();          // 経路（汎用の経路に任せた理由など）→ { label, path, nodes: Set, ms }
     this.perNode = new Map();          // ノード番号 → { ni, name, label（種類）, path, ms }（ノードごとの表）
+    this.perDef = new Map();           // 自作ノード（グラフの id）→ { name, type, compiled, compute, read, calls }
     this.evaluated = 0;                // キャッシュを使わずに評価したフレームの数
     this.current = null;
     this.lastShown = 0;
@@ -125,6 +126,18 @@ export class EvalProfiler {
     if (!label) this.nodeCache.set(ni, label = nodeCategory(rig, ni));
     this.addCategory(label, 'generic', ni, ms);
     this.addNode(rig, ni, label, 'generic', ms);
+  }
+
+  /**
+   * 自作ノード（exprespy など）の 1 回の計算（RigEvaluator.defOutputsProfiled から。記録中だけ）。
+   * compute: 計算そのもの、read: 入力の読み込み（上流の値を求める時間。ほかの自作ノードの分は除く）
+   */
+  defNode(g, d, compute, read) {
+    let e = this.perDef.get(g.id);
+    if (!e) this.perDef.set(g.id, e = { id: g.id, name: g.name, type: g.def, compiled: !!(d && d.compiled), compute: 0, read: 0, calls: 0 });
+    e.compute += compute;
+    e.read += read;
+    e.calls++;
   }
 
   addNode(rig, ni, label, path, ms) {
@@ -212,6 +225,15 @@ export class EvalProfiler {
    * ノードごとの行は { label: ノードの名前, kind: 種類, ni, nodes: 1, ms, share }
    */
   rows(mode, limit = NODE_ROWS) {
+    if (mode === 'def') {
+      // 自作ノード: 計算と入力の読み込みの合計の大きい順（1 フレームあたり）
+      const all = [...this.perDef.values()];
+      const sum = all.reduce((t, e) => t + e.compute + e.read, 0) || 1;
+      const per = this.evaluated || 1;
+      return all.sort((a, b) => (b.compute + b.read) - (a.compute + a.read)).slice(0, limit)
+        .map((e) => ({ label: e.name, kind: e.type, compiled: e.compiled, nodes: 1, compute: e.compute / per, read: e.read / per,
+          ms: (e.compute + e.read) / per, share: (e.compute + e.read) / sum }));
+    }
     if (mode === 'node') {
       const all = [...this.perNode.values()];
       const sum = all.reduce((t, e) => t + e.ms, 0) || 1;
@@ -227,6 +249,14 @@ export class EvalProfiler {
     const per = this.evaluated || 1;
     return all.map((e) => ({ label: e.label, path: e.path, nodes: e.nodes.size, ms: e.ms / per, share: e.ms / sum }))
       .sort((a, b) => b.ms - a.ms);
+  }
+
+  /** 自作ノード全体の、計算と入力の読み込みの合計（1 フレームあたり）と、ノードの数 */
+  defTotals() {
+    let compute = 0, read = 0;
+    for (const e of this.perDef.values()) { compute += e.compute; read += e.read; }
+    const per = this.evaluated || 1;
+    return { nodes: this.perDef.size, compute: compute / per, read: read / per };
   }
 
   /** 評価したフレームの、種類ごとの合計（1 フレームあたり）と、リグの評価の時間（専用 + 汎用）の比較 */
@@ -345,6 +375,15 @@ export function profilerText(prof, ctx) {
   }
   const cov = prof.coverage();
   if (prof.evaluated) L.push(`  （種類ごとの合計 ${ms(cov.categories)} / リグの評価 ${ms(cov.rig)}）`);
+  if (prof.perDef.size) {
+    const t = prof.defTotals();
+    L.push('');
+    L.push(`■ 自作ノード（exprespy など）の計算と入力の読み込み（キャッシュなしのフレームの平均。時間の大きい ${TEXT_NODE_ROWS} 個）`);
+    L.push(`  全体: ${t.nodes} 個・計算 ${ms(t.compute)}・入力の読み込み ${ms(t.read)}`);
+    for (const r of prof.rows('def', TEXT_NODE_ROWS)) {
+      L.push(`  ${pad(r.label, 40)}計算 ${pad(ms(r.compute), 12)}読み込み ${pad(ms(r.read), 12)}${r.kind}${r.compiled ? '' : '（関数にしていない）'}`);
+    }
+  }
   const pi = planInfo(ctx.rig);
   if (pi) {
     L.push('');

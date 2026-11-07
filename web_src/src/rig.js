@@ -1456,6 +1456,8 @@ export class RigEvaluator {
       return null;
     }
     this.varying = true;                           // 定義の計算はいまのフレームを読める
+    const prof = this.profile;
+    if (prof && prof.defNode) return this.defOutputsProfiled(g, d, prof);
     const io = {
       frame: this.frame,
       fps: this.clip.fps || 24,
@@ -1475,6 +1477,41 @@ export class RigEvaluator {
   }
 
   /** 定義のノードの入力の値。角度はラジアン、時間は接続がなければいまのフレーム */
+  /**
+   * 評価のプロファイラの記録中の defOutputs: 計算そのものと、入力の読み込み（上流の値を求める時間を含む）を分けて測る。
+   * 入力の読み込みの中でほかの自作ノードを計算したら、その時間は内側のノードに付ける（外側の読み込みから引く）
+   */
+  defOutputsProfiled(g, d, prof) {
+    const stack = prof.defStack || (prof.defStack = []);
+    const rec = { read: 0, child: 0 };
+    stack.push(rec);
+    const io = {
+      frame: this.frame,
+      fps: this.clip.fps || 24,
+      read: (plug, info) => {
+        const t = performance.now();
+        try { return this.defRead(g, plug, info); } finally { rec.read += performance.now() - t; }
+      },
+      indices: (prefix) => this.defIndices(g, prefix),
+      connected: (plug) => {
+        const keys = Object.keys(g.inputs || {});
+        return keys.some((k) => k === plug || k.startsWith(`${plug}.`) || k.startsWith(`${plug}[`));
+      },
+    };
+    const t0 = performance.now();
+    try {
+      return d.run(io);
+    } catch (e) {
+      this.problems.add(`${g.name}（${g.def}）: ${e.message}`);
+      return null;
+    } finally {
+      const total = performance.now() - t0;
+      stack.pop();
+      if (stack.length) stack[stack.length - 1].child += total;
+      prof.defNode(g, d, total - rec.read, Math.max(0, rec.read - rec.child));
+    }
+  }
+
   defRead(g, plug, info) {
     const inputs = g.inputs || {}, attrs = g.attrs || {};
     if (!info) return inputs[plug] ? this.source(inputs[plug]) : attrs[plug];

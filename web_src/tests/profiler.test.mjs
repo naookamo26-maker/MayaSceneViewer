@@ -216,3 +216,28 @@ test('専用の評価の欄に、自作ノードの定義の数と、計算を J
   const text = profilerText(new EvalProfiler(), { rig, clip: rig.clip });
   assert.ok(text.includes(`自作ノードの定義（exprespy など）: ${pi.defs.total} 種類（計算を JavaScript の関数にした ${pi.defs.total}）`), text);
 });
+
+test('自作ノード（exprespy）ごとに、計算と入力の読み込みを分けて記録し、評価の結果は変わらない', () => {
+  const d = load('exprespy_sample.json');
+  const plain = makeRig(d), rec = makeRig(d);
+  const prof = new EvalProfiler();
+  prof.start();
+  for (const f of framesOf(plain)) {
+    assert.equal(valuesOf(recordFrame(prof, rec, f)), valuesOf(plain.evaluate(f, undefined, new Map())), `フレーム ${f}`);
+  }
+  const defs = d.animation.graph.filter((g) => g.def);
+  const rows = prof.rows('def');
+  assert.ok(rows.length > 0 && rows.length <= defs.length, `${rows.length} 個`);
+  for (const r of rows) {
+    assert.ok(defs.some((g) => g.name === r.label), r.label);
+    assert.ok(r.compute >= 0 && r.read >= 0 && Math.abs(r.ms - (r.compute + r.read)) < 1e-9);
+    assert.equal(r.compiled, true, '関数にした定義');
+  }
+  for (let i = 1; i < rows.length; i++) assert.ok(rows[i - 1].ms >= rows[i].ms, '合計の大きい順');
+  const t = prof.defTotals();
+  assert.equal(t.nodes, prof.perDef.size);
+  assert.equal(prof.defStack.length, 0, '入れ子の記録を閉じる');
+  const text = profilerText(prof, { rig: rec, clip: rec.clip });
+  assert.ok(text.includes('■ 自作ノード（exprespy など）の計算と入力の読み込み'), text);
+  assert.ok(text.includes(rows[0].label));
+});

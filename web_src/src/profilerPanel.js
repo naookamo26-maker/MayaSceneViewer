@@ -51,6 +51,7 @@ export class ProfilerPanel {
             <button type="button" role="tab" data-mode="type" aria-selected="true">種類ごと</button>
             <button type="button" role="tab" data-mode="path" aria-selected="false">経路ごと</button>
             <button type="button" role="tab" data-mode="node" aria-selected="false">ノードごと</button>
+            <button type="button" role="tab" data-mode="def" aria-selected="false" title="exprespy などの自作ノードの、計算そのものと入力の読み込みの時間">自作ノード</button>
           </div>
         </div>
         <p class="muted small" id="prof-table-note"></p>
@@ -276,6 +277,7 @@ export class ProfilerPanel {
       $('prof-table').innerHTML = '';
       return;
     }
+    if (this.mode === 'def') { this.renderDefTable(rows); return; }
     note.textContent = `キャッシュなしで評価した ${num(prof.evaluated)} フレームの平均。`
       + (this.mode !== 'path' ? '上流のコンストレイント・計算ノード・IK は、最初に読んだノードの時間に入ります。' : '')
       + (this.mode === 'node' ? `時間の大きい ${num(rows.length)} 個（行を押すとそのノードを選びます）。` : '')
@@ -301,6 +303,27 @@ export class ProfilerPanel {
       body += tr({ label: `ほか ${rest.length} 種類`, path: '', ...sum });
     }
     $('prof-table').innerHTML = `<thead><tr><th>${this.mode === 'type' ? '種類（何で動くノードか）' : '経路'}</th><th class="n">ノード</th><th class="n">1 フレーム</th><th>割合</th></tr></thead><tbody>${body}</tbody>`;
+  }
+
+  /** 自作ノード（exprespy など）: 計算そのものと、入力の読み込みの時間 */
+  renderDefTable(rows) {
+    const prof = this.app.profiler;
+    const note = $('prof-table-note');
+    $('prof-table').className = 'by-def';
+    if (!rows.length) {
+      note.textContent = '記録したフレームで、自作ノード（exprespy など）を計算していません。';
+      $('prof-table').innerHTML = '';
+      return;
+    }
+    const t = prof.defTotals();
+    note.textContent = `キャッシュなしで評価した ${num(prof.evaluated)} フレームの平均。自作ノード ${num(t.nodes)} 個の合計: `
+      + `計算 ${msText(t.compute)}・入力の読み込み ${msText(t.read)}（上流の値を求める時間を含む。ほかの自作ノードの分は除く）。`
+      + `時間の大きい ${num(rows.length)} 個。`;
+    const max = Math.max(...rows.map((r) => r.ms), 0.0001);
+    const body = rows.map((r) => `<tr title="${esc(r.kind)}${r.compiled ? '' : '（関数にしていない）'}">`
+      + `<td class="lbl">${esc(r.label)}</td><td class="n">${msText(r.compute)}</td><td class="n">${msText(r.read)}</td>`
+      + `<td class="share"><span class="bar" style="width:${(r.ms / max) * 100}%"></span><span class="pct">${msText(r.ms)}</span></td></tr>`).join('');
+    $('prof-table').innerHTML = `<thead><tr><th>自作ノード</th><th class="n">計算</th><th class="n">読み込み</th><th>合計</th></tr></thead><tbody>${body}</tbody>`;
   }
 
   renderCache() {

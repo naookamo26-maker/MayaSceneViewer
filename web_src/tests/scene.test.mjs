@@ -118,7 +118,7 @@ test('バウンディングボックス', () => {
 
 // ---------------------------------------------------------------- ポーズ確認（移動・回転・スケール）
 import { PoseState, poseMatrix, poseFromTransform, identityPose } from '../src/pose.js';
-import { Matrix4, Quaternion } from 'three';
+import { Euler, Matrix4, Quaternion } from 'three';
 
 const nodeIdx = (name) => data.nodes.findIndex((n) => n.name === name);
 const worldPos = (built, i) => new Vector3().setFromMatrixPosition(built.nodeObjects[i].matrixWorld);
@@ -669,4 +669,38 @@ test('コントローラーの目印は 1 つの線分の集まりに、目印�
   assert.equal(g.drawRange.count, counts[1] + counts[2]);
   assert.ok(Math.abs(pos[0] - p.x) < 1e-5, '隠したものは書かない');
   assert.equal(ov.items[0].shown, false);
+});
+
+// ---------------------------------------------------------------------- Skeleton の共有（shareSkeletons）
+
+test('同じバインド行列のスキン付きメッシュは Skeleton を共有し、変形した頂点の位置は共有しないときと同じ', () => {
+  const raw = readFileSync(path.join(samples, 'shared_skin_sample.json'), 'utf8');
+  const build = (share) => {
+    const d = JSON.parse(raw);
+    const built = buildScene(d, { shareSkeletons: share });
+    // ジョイントを曲げる（同じ量）
+    d.nodes.forEach((n, i) => {
+      if (n.type !== 'joint') return;
+      built.nodeObjects[i].matrix.multiply(new Matrix4().makeRotationFromEuler(new Euler(0.1 * (i % 3), 0.05 * i, 0.2)));
+    });
+    built.root.updateMatrixWorld(true);
+    return built;
+  };
+  const a = build(false), b = build(true);
+  const name = (e) => e.name;
+  const skel = (built, n) => built.meshes.find((e) => name(e) === n).skeleton;
+  assert.equal(skel(b, 'm0Shape'), skel(b, 'm1Shape'), 'm0 と m1（同じ鎖の一部が重なる）は共有する');
+  assert.equal(skel(b, 'm0Shape'), skel(b, 'm2Shape'), 'm2（別の鎖・逆順のインフルエンス）も共有する');
+  assert.notEqual(skel(b, 'm0Shape'), skel(b, 'm3Shape'), 'm3（a2 のバインド行列が違う）は共有しない');
+  assert.equal(new Set(b.meshes.map((e) => e.skeleton)).size, 2);
+  assert.equal(new Set(a.meshes.map((e) => e.skeleton)).size, 4);
+  const positions = (built) => built.meshes.map((e) => Array.from({ length: e.vertexCount },
+    (_, v) => vertexWorldPosition(e, v, true, new Vector3()).toArray()));
+  const near = (p, q) => p.every((m, i) => m.every((v, k) => v.every((x, c) => Math.abs(x - q[i][k][c]) < 1e-9)));
+  assert.ok(near(positions(b), positions(a)), '変形した頂点の位置');
+  // 骨の番号を書き直す経路（ウェイトの正規化の切り替え）でも同じ
+  for (const mode of ['none', 'always']) {
+    applySkinNormalization(a, mode); applySkinNormalization(b, mode);
+    assert.ok(near(positions(b), positions(a)), `正規化 ${mode}`);
+  }
 });

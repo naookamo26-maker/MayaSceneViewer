@@ -89,8 +89,64 @@ export function buildScene(data, options = {}) {
     }
     return entry;
   });
+  if (options.shareSkeletons !== false) shareSkeletons(meshes);
   root.updateMatrixWorld(true);
   return { root, nodeObjects, meshes, jointIndices, childrenOf, influenceUsage, materials, defaultMaterial, allMaterials };
+}
+
+const MAX_SHARED_BONES = 65535;                  // 骨の番号は Uint16（skinIndex）
+
+/**
+ * 同じジョイントを同じバインド行列（bindPreMatrix）で使うスキン付きメッシュ同士で、1 つの Skeleton（骨の和集合）を使う。
+ * three.js は Skeleton ごとに毎フレーム骨の行列を計算して GPU に送る（テクスチャの転送）ので、メッシュの数だけあった
+ * 計算と転送を、まとまりの数に減らす。各メッシュの骨の番号（skinIndex・skinIndex1 の表示用の属性）を和集合の番号に
+ * 振り直す（entry.boneRemap: 元のスロット → 和集合の番号）。ウェイトの表示などが使う元のスロット（entry.skin）は変えない。
+ * 変形の結果は同じ（同じ骨の行列 · 同じバインド行列を、同じウェイトで混ぜる）
+ * @returns まとまりの数
+ */
+export function shareSkeletons(meshes) {
+  const groups = [];                             // { bones: [], inverses: [], index: Map(骨 → 番号) }
+  const same = (a, b) => { const x = a.elements, y = b.elements; for (let i = 0; i < 16; i++) if (x[i] !== y[i]) return false; return true; };
+  const fits = (g, sk) => {
+    let add = 0;
+    for (let i = 0; i < sk.bones.length; i++) {
+      const k = g.index.get(sk.bones[i]);
+      if (k === undefined) add++;
+      else if (!same(g.inverses[k], sk.boneInverses[i])) return false;   // 同じジョイントでバインド行列が違う
+    }
+    return g.bones.length + add <= MAX_SHARED_BONES;
+  };
+  for (const e of meshes) {
+    const sk = e.skeleton;
+    if (!sk || !e.skinned) continue;
+    let g = groups.find((x) => fits(x, sk));
+    if (!g) groups.push(g = { bones: [], inverses: [], index: new Map(), entries: [] });
+    const remap = new Uint16Array(sk.bones.length);
+    sk.bones.forEach((b, i) => {
+      let k = g.index.get(b);
+      if (k === undefined) { k = g.bones.length; g.bones.push(b); g.inverses.push(sk.boneInverses[i].clone()); g.index.set(b, k); }
+      remap[i] = k;
+    });
+    e.boneRemap = remap;
+    g.entries.push(e);
+  }
+  for (const g of groups) {
+    if (g.entries.length < 2) { for (const e of g.entries) e.boneRemap = null; continue; }   // 1 つだけなら元のまま
+    const shared = new Skeleton(g.bones, g.inverses);
+    for (const e of g.entries) {
+      const attrs = e.geometry.attributes;
+      for (const name of ['skinIndex', 'skinIndex1']) {
+        const arr = attrs[name].array;
+        for (let i = 0; i < arr.length; i++) arr[i] = e.boneRemap[arr[i]];
+        attrs[name].needsUpdate = true;
+      }
+      e.skeleton.dispose();
+      e.skeleton = shared;
+      e.skinned.bind(shared, e.skinned.bindMatrix);
+      if (e.skinnedWire) e.skinnedWire.bind(shared, e.skinnedWire.bindMatrix);
+    }
+  }
+  return groups.filter((g) => g.entries.length >= 2).length;
 }
 
 export const BASE_COLOR = 0xc9c6c0;
@@ -178,7 +234,10 @@ export function applySkinNormalization(built, mode) {
     const attrs = e.geometry.attributes;
     for (const [name, src] of [['skinWeight', e.skin.skinWeight], ['skinWeight1', e.skin.skinWeight1],
       ['skinIndex', e.skin.skinIndex], ['skinIndex1', e.skin.skinIndex1]]) {
-      attrs[name].array.set(expandToRender(src, 4, e.origOf));
+      const arr = attrs[name].array;
+      arr.set(expandToRender(src, 4, e.origOf));
+      // Skeleton を共有しているメッシュは、骨の番号を和集合の番号に振り直す（shareSkeletons）
+      if (e.boneRemap && name.startsWith('skinIndex')) for (let i = 0; i < arr.length; i++) arr[i] = e.boneRemap[arr[i]];
       attrs[name].needsUpdate = true;
     }
     if (e.skinned) { e.skinned.boundingSphere = null; e.skinned.boundingBox = null; }
@@ -560,7 +619,7 @@ export function disposeScene(built) {
   }
   for (const e of built.meshes) {
     dispose(e.geometry); dispose(e.wireGeometry); dispose(e.wireMaterial);
-    if (e.skeleton) e.skeleton.dispose();
+    if (e.skeleton) dispose(e.skeleton);                 // 共有している Skeleton は 1 回だけ
   }
   built.root.removeFromParent();
 }

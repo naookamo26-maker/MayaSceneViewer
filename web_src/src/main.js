@@ -256,11 +256,21 @@ class ViewerApp {
     if (this.viewCamera >= 0) this.syncViewCamera();
     // 画面上で一定の大きさのコントローラーは、視点に合わせて大きさを決め直す
     if (this.built && this.settings.controls && this.settings.controlSizeMode === 'screen') this.overlay.updateControls();
-    if (this.profiler.recording) {
-      const t = performance.now();
-      this.renderer.render(this.scene, this.activeCamera());
-      this.profiler.addRender(performance.now() - t);
-    } else this.renderer.render(this.scene, this.activeCamera());
+    // three.js は描画のたびにシーンの行列を計算し直し、シーン（matrixAutoUpdate）からすべての子を強制的に計算する。
+    // 直前に afterPoseChange でノードの行列を全部計算したときは、強制せずに描画する（行列を自分で動かすオーバーレイ・
+    // ハンドルなどは、それぞれの matrixAutoUpdate で計算される）。それ以外のときは、これまでどおり強制する
+    const fresh = this.worldFresh;
+    this.worldFresh = false;
+    if (fresh) this.scene.matrixAutoUpdate = false;
+    try {
+      if (this.profiler.recording) {
+        const t = performance.now();
+        this.renderer.render(this.scene, this.activeCamera());
+        this.profiler.addRender(performance.now() - t);
+      } else this.renderer.render(this.scene, this.activeCamera());
+    } finally {
+      this.scene.matrixAutoUpdate = true;
+    }
   }
 
   /** 描画・ピックに使うカメラ（シーンのカメラから見ているときはその視点） */
@@ -641,6 +651,8 @@ class ViewerApp {
       let tm0 = performance.now();
       const mark = (label) => { const t = performance.now(); marks.push([label, t - tm0]); tm0 = t; };
       this.pose = new PoseState(built, data);
+      this.worldNeedsFull = true;            // 読み込んだばかり: 次はシーン全体の行列を計算する
+      this.touchedRoots = null;
       this.edit = null;
       this.history.clear();
       this.poseSourceChosen = false;
@@ -792,6 +804,8 @@ class ViewerApp {
     this.rig = null;
     this.bakers.reset(null);
     this.profiler.clear();
+    this.touchedRoots = null;
+    this.worldNeedsFull = true;
     this.rigCurves = null;
     this.timeline.setClip(null);
     this.curveEditor.setClip(null, null);
@@ -1330,6 +1344,13 @@ class ViewerApp {
       for (const c of this.built.childrenOf[ni]) touched.add(c);
     }
     this.animTouched = [...touched].sort((a, b) => a - b);
+    // フレームを変えたときに行列を計算し直すノード: 動くノード（と子）のうち、祖先に動くノードがないもの（three.js の親で判定）
+    const touchedObjs = new Set(this.animTouched.map((ni) => this.built.nodeObjects[ni]));
+    this.touchedRoots = [...touchedObjs].filter((o) => {
+      for (let p = o.parent; p; p = p.parent) if (touchedObjs.has(p)) return false;
+      return true;
+    });
+    this.worldNeedsFull = true;
     // 保存時の値は、保存したときのフレーム（time1）の値（カーブで決まる値は .ma に残っていないため）。
     // バインドポーズの表示で、バインドポーズの情報がないノードに使う
     for (const [ni, m] of this.rig.evaluate(clip.current, undefined, new Map())) {
@@ -1437,6 +1458,8 @@ class ViewerApp {
   applyFrameInner(f, light) {
     if (this.camEdit && f !== this.camEdit.frame) this.endCameraEdit();   // 動かしたカメラの視点は、フレームが変わると戻す
     const frameChanged = f !== this.frame;
+    // フレームを変えただけなら、動くノードの下だけ行列を計算し直せる（その前に全体を計算してあれば）
+    const partial = frameChanged && !this.worldNeedsFull;
     this.frame = f;
     // ポーズ確認の追加分（なければ渡さない）。ノードごとの目印を渡し、リグの評価は変わったノードの影響を受ける値だけを
     // 作り直す（リグが読まないノード・前と同じ追加分に戻したときは、キャッシュをそのまま使う）
@@ -1479,7 +1502,7 @@ class ViewerApp {
     this.timeline.setFrame(f);
     this.curveEditor.setFrame(f);
     this.rigBusy = true;
-    try { this.afterPoseChange(light); } finally { this.rigBusy = false; }
+    try { this.afterPoseChange(light, partial); } finally { this.rigBusy = false; }
     this.updatePlaybackPose();
     this.updateCacheView();
     this.scheduleBake();
@@ -2324,13 +2347,24 @@ class ViewerApp {
   }
 
   /** @param light 再生中など、パネルの情報の更新を省くとき */
-  afterPoseChange(light = false) {
+  /**
+   * @param partial フレームを変えただけのとき（applyFrame から）: 動くノードの下だけ行列を計算し直す（ほかのノードの行列は
+   *   前の計算のまま正しい）。それ以外（ポーズ確認・設定の変更など、外から呼んだとき）は全体を計算し直す
+   */
+  afterPoseChange(light = false, partial = false) {
     // リグがあれば、ポーズ確認の結果（コントローラーの移動など）でコンストレイント・IK を評価し直す
     if (this.rig && this.rig.hasGraph && !this.rigBusy) {
+      this.worldNeedsFull = true;
       this.applyFrame(this.frame, light);
       return;
     }
-    this.built.root.updateMatrixWorld(true);
+    if (partial && !this.worldNeedsFull && this.touchedRoots) {
+      for (const o of this.touchedRoots) o.updateMatrixWorld(true);
+    } else {
+      this.built.root.updateMatrixWorld(true);
+      this.worldNeedsFull = false;
+    }
+    this.worldFresh = true;                 // 次の描画では、シーン全体の行列を強制的に計算し直さない（render）
     this.overlay.update();
     this.poseDirty = true;
     this.updateMarker();

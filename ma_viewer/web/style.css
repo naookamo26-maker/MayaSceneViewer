@@ -775,3 +775,6 @@ body.sequencer-collapsed #sequencer .seq-body { display: none; }
 #prof-table.by-node td.kind { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #prof-table.by-node tr[data-ni] { cursor: pointer; }
 #prof-table.by-node tr[data-ni]:hover td { background: var(--panel-2); }
+/* 自作ノード: 名前・計算・読み込み・合計 */
+#prof-table.by-def th:nth-child(2), #prof-table.by-def th:nth-child(3) { width: 76px; }
+#prof-table.by-def td.share .bar { max-width: calc(100% - 72px); }
