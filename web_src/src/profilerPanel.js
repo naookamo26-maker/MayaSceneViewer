@@ -389,9 +389,9 @@ export class ProfilerPanel {
   runCheck() {
     const out = $('prof-check-result');
     out.innerHTML = '<span class="muted">確かめています…</span>';
-    setTimeout(() => {                               // 表示を更新してから（大きなシーンでは数秒かかる）
+    setTimeout(async () => {                         // 表示を更新してから（大きなシーンでは数秒かかる）
       let r;
-      try { r = this.app.checkFrame(); } catch (e) { out.textContent = `確かめられませんでした: ${e.message}`; return; }
+      try { r = await this.app.checkFrame(); } catch (e) { out.textContent = `確かめられませんでした: ${e.message}`; return; }
       this.checkResult = r;
       if (!r) { out.textContent = 'アニメーションのあるシーンを開くと使えます。'; return; }
       const list = (diff) => (diff.length

@@ -19,6 +19,18 @@ export function createBaker(anim, nodes) {
   return { rig, sentDeps: new Map(), sentReads: new Set() };
 }
 
+/** 評価器の状態（［このフレームを確かめる］で、ワーカーの中の様子を知らせる） */
+export function bakerInfo(baker) {
+  const rig = baker.rig;
+  const defs = rig.defs ? [...rig.defs.values()] : [];
+  return {
+    plan: !!rig.compiledPlan, reason: rig.compiledReason || null,
+    defsTotal: defs.length, defsCompiled: defs.filter((d) => d && d.compiled).length,
+    problems: rig.problems.size, problem: rig.problems.size ? [...rig.problems][0] : null,
+    canGenerate: (() => { try { return new Function('return 1')() === 1; } catch (e) { return false; } })(),   // eslint-disable-line no-new-func
+  };
+}
+
 /** カーブの形を送れる形にする（CV の Vector3 を平らな配列に） */
 export function encodeCurve(v) {
   if (!v || !v.isCurve) return v;

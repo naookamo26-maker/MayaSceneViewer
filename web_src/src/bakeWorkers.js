@@ -132,8 +132,43 @@ export class BakeWorkers {
     w.worker.postMessage({ type: 'bake', token: this.token, job: job.id, sig: job.sig, frames, poses: job.poses });
   }
 
+  /**
+   * ［このフレームを確かめる］: 実際のワーカーでフレームを評価する。fresh なら新しく起動したワーカー（新しい評価器）、
+   * そうでなければ、いま動いているワーカー（多くのフレームを作ったあとの評価器）。{ frames: [{ f, mats }], info } か null
+   */
+  probe(frames, fresh) {
+    if (this.broken || !this.init || !SOURCE) return Promise.resolve(null);
+    const id = this.probeId = (this.probeId || 0) + 1;
+    return new Promise((resolve) => {
+      const done = (r) => { clearTimeout(timer); resolve(r); };
+      const timer = setTimeout(() => done(null), 120000);
+      if (fresh) {
+        if (!this.url) this.url = URL.createObjectURL(new Blob([SOURCE], { type: 'text/javascript' }));
+        let worker;
+        try { worker = new Worker(this.url); } catch (e) { done(null); return; }
+        worker.onmessage = (e) => {
+          if (e.data.type !== 'probe') return;
+          worker.terminate();
+          done(e.data.frames ? e.data : null);
+        };
+        worker.onerror = () => { worker.terminate(); done(null); };
+        worker.postMessage({ type: 'probe', id, fresh: true, frames, anim: this.init.anim, nodes: this.init.nodes });
+        return;
+      }
+      const w = this.workers.find((x) => x.token === this.token);
+      if (!w) { done(null); return; }
+      (this.probes || (this.probes = new Map())).set(id, (r) => done(r && r.frames ? r : null));
+      w.worker.postMessage({ type: 'probe', id, token: this.token, frames });
+    });
+  }
+
   onMessage(w, m) {
     if (m.type === 'ready') return;
+    if (m.type === 'probe') {                       // ［このフレームを確かめる］の結果（作っている途中の数え方には入れない）
+      const cb = this.probes && this.probes.get(m.id);
+      if (cb) { this.probes.delete(m.id); cb(m); }
+      return;
+    }
     if (m.type === 'error') { this.fail(m.message); return; }
     w.busy = false;
     const job = this.job;
