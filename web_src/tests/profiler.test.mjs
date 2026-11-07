@@ -7,7 +7,7 @@ import path from 'node:path';
 import { Matrix4 } from 'three';
 import { AnimationClip } from '../src/animation.js';
 import { RigEvaluator } from '../src/rig.js';
-import { EvalProfiler, PARTS, cacheInfo, nodeCategory, profilerText } from '../src/profiler.js';
+import { EvalProfiler, PARTS, cacheInfo, nodeCategory, profilerText, uniqueNames } from '../src/profiler.js';
 import { bakeFrames, createBaker } from '../src/rigBakeCore.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -193,4 +193,14 @@ test('ワーカーで作るときも、評価にかかった時間を返す', ()
   const r = bakeFrames(baker, { frames: [1, 2, 3], poses: [] });
   assert.equal(r.frames.length, 3);
   assert.ok(typeof r.ms === 'number' && r.ms >= 0);
+});
+
+test('ノードごとの表: 同じ名前のノードは、区別できるところまで DAG のパスを付ける', () => {
+  const e = (name, dagPath) => ({ name, dagPath });
+  assert.deepEqual(uniqueNames([
+    e('base_F', '|chA|face|base_F'), e('base_F', '|chB|face|base_F'), e('neck', '|chA|neck'), e('head', '|chC|head'),
+  ]), ['chA|face|base_F', 'chB|face|base_F', 'neck', 'head']);
+  // パスでも区別できないとき（同じパス）は、そのまま
+  assert.deepEqual(uniqueNames([e('x', '|a|x'), e('x', '|a|x')]), ['a|x', 'a|x']);
+  assert.deepEqual(uniqueNames([e('n0', '')]), ['n0']);
 });

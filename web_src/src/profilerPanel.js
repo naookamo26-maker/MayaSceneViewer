@@ -284,7 +284,7 @@ export class ProfilerPanel {
     if (this.mode === 'node') {
       const maxShare = Math.max(...rows.map((r) => r.share), 0.0001);
       const body = rows.map((r) => `<tr data-ni="${r.ni}" class="${r.path === 'generic' ? 'generic' : ''}" title="クリックで選択">`
-        + `<td class="lbl" title="${esc(r.label)}">${esc(r.label)}</td><td class="kind" title="${esc(r.kind)}">${esc(r.kind)}</td>`
+        + `<td class="lbl" title="${esc(r.dagPath || r.label)}">${esc(r.label)}</td><td class="kind" title="${esc(r.kind)}">${esc(r.kind)}</td>`
         + `<td class="n">${msText(r.ms)}</td>`
         + `<td class="share"><span class="bar" style="width:${(r.share / maxShare) * 100}%"></span><span class="pct">${(r.share * 100).toFixed(1)}%</span></td></tr>`).join('');
       $('prof-table').innerHTML = `<thead><tr><th>ノード</th><th>種類</th><th class="n">1 フレーム</th><th>割合</th></tr></thead><tbody>${body}</tbody>`;
@@ -319,7 +319,7 @@ export class ProfilerPanel {
     }
     if (ci) {
       items.push(['動くノード', `${num(ci.moving)} 個・キャッシュは 1 フレーム ${formatBytes(ci.perFrame)}`]);
-      items.push(['覚えたフレーム', `${num(ci.frames)} / ${num(ci.range)}・${formatBytes(ci.bytes)}（上限 ${ci.limit ? formatBytes(ci.limit) : 'オフ'}）${ci.full && ci.frames < ci.range ? '・<span class="warn">上限に達しています</span>' : ''}`]);
+      items.push(['覚えたフレーム', `${num(ci.frames)} / ${num(ci.range)}・${formatBytes(ci.bytes)}（上限 ${ci.limit ? formatBytes(ci.limit) : 'オフ'}）${ci.limit > 0 && ci.full && ci.frames < ci.range ? '・<span class="warn">上限に達しています</span>' : ''}`]);
       items.push(['上限ごとに入る数', ci.fits.map(([mb, n]) => `${mb >= 1024 ? mb / 1024 + ' GB' : mb + ' MB'}: ${num(n)}`).join('　')]);
     }
     if (!w.available) items.push(['ワーカー', '使っていません（画面のスレッドの空き時間に作ります）']);
