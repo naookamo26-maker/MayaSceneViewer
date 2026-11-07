@@ -34,11 +34,13 @@ import { CurveEditor } from './curveEditor.js';
 import { warningsText } from './warnGroups.js';
 import { BakeWorkers } from './bakeWorkers.js';
 
-const VERSION = '1.0.0';
+// ビューアのバージョン（ma_viewer/version.py。ビルド時に build.mjs が埋め込む）
+// eslint-disable-next-line no-undef
+const VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0-dev';
 const D2R = Math.PI / 180;
 const DEFAULTS = {
   shading: 'smooth', wire: false, skin: true, joints: false, xray: true, grid: true,   // 骨は初期状態で非表示（J で切り替え）
-  curves: true,                  // NURBS カーブ（コントローラーの形など）
+  curves: false,                 // NURBS カーブ（コントローラーの形など。初期状態は表示しない）
   controls: false,               // カーブの形のないコントローラーの目印（八面体。L で切り替え。初期状態では隠す）
   controlColor: 'role',          // コントローラーの色: 'role'（役割）・'side'（左右）。Maya の描画のオーバーライドの色が優先
   controlSizeMode: 'bone',       // コントローラーの大きさの基準: 'bone'（近くの骨）・'screen'（画面上で一定）
@@ -2819,6 +2821,12 @@ function worldMatrixOf(obj, target) {
   target.copy(obj.matrix);
   for (let p = obj.parent; p; p = p.parent) target.premultiply(p.matrix);
   return target;
+}
+
+// 何も開いていないときの画面に、ソフト名とバージョンを出す
+{
+  const ve = typeof document !== 'undefined' && document.getElementById('app-version');
+  if (ve) ve.textContent = `Maya Scene Viewer ${VERSION}`;
 }
 
 window.mayaViewer = {

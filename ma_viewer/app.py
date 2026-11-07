@@ -32,6 +32,8 @@ def main(argv=None) -> int:
     QtCore.QCoreApplication.setAttribute(QtCore.Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
+    from . import __version__
+    app.setApplicationVersion(__version__)
     icon = icon_path()
     if icon:                            # タイトルバー・タスクバーのアイコン（exe のアイコンは spec で指定）
         app.setWindowIcon(QtGui.QIcon(icon))

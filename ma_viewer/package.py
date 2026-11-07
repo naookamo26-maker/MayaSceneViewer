@@ -32,6 +32,7 @@ import zipfile
 from typing import Callable, Dict, List, Optional, Tuple
 
 from . import schema
+from .version import __version__
 
 EXT = ".msv"
 FORMAT_NAME = "maya-scene-viewer-package"
@@ -288,7 +289,8 @@ def write_package(scene: dict, path: str, textures: str = DEFAULT_TEXTURES, max_
                 _pack_textures(scene_out, textures, packer)
             manifest = {"format": FORMAT_NAME, "version": FORMAT_VERSION, "textures": textures,
                         "textureFormat": "webp" if convert else "original", "maxSize": max_size if convert else None,
-                        "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "generator": "MayaSceneViewer"}
+                        "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "generator": "MayaSceneViewer",
+                        "generatorVersion": __version__}
             say("書き込んでいます")
             zf.writestr(zipfile.ZipInfo("manifest.json", _date_time()),
                         json.dumps(manifest, ensure_ascii=False, indent=1), compress_type=zipfile.ZIP_DEFLATED)

@@ -105,6 +105,7 @@ def main() -> int:
         """コントローラーを動かして切り替える表示: 保存時に隠れていた IK 側（transform・レイヤー）も表示し、FK 側のカーブを隠す。
         目のアイコンで隠したものは、リグが表示にしても隠したまま"""
         sw_js = """JSON.stringify((() => { const app = window.mayaViewer.debug.app;
+            app.setSetting('curves', true);   // カーブ（コントローラーの形）は初期状態では表示しないので、表示して確かめる
             const ni = (n) => app.data.nodes.findIndex((x) => x.name === n);
             const curve = (n) => app.curves.items.find((it) => it && it.entry.name === n).line.visible;
             const marker = (n) => { const h = app.overlay.hiddenNodes; return !(h && h[ni(n)]); };

@@ -260,7 +260,9 @@ def _safe_console():
 
 def main(argv=None) -> int:
     _safe_console()
+    from . import __version__
     p = argparse.ArgumentParser(prog="ma_viewer", description="Maya ASCII 簡易ビューア")
+    p.add_argument("-V", "--version", action="version", version="Maya Scene Viewer %s" % __version__)
     sub = p.add_subparsers(dest="cmd")
     pe = sub.add_parser("export", help=".ma・.msv を共通 JSON に変換")
     pe.add_argument("input")
