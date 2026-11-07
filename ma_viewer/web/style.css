@@ -770,3 +770,8 @@ body.sequencer-collapsed #sequencer .seq-body { display: none; }
 .prof-cache dt { color: var(--text-dim); }
 .prof-cache dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .prof-cache .warn { color: #f0c36b; }
+/* ノードごと: 名前と種類を並べる（種類の列は狭い画面でも省略して収める） */
+#prof-table.by-node th:nth-child(2) { width: auto; } #prof-table.by-node th:nth-child(3) { width: 72px; }
+#prof-table.by-node td.kind { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#prof-table.by-node tr[data-ni] { cursor: pointer; }
+#prof-table.by-node tr[data-ni]:hover td { background: var(--panel-2); }

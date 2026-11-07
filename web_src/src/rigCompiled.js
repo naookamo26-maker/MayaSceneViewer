@@ -74,7 +74,10 @@ export function buildPlan(rig, deps) {
 function build(rig, deps, useMath) {
   const fail = (reason, cycle = false) => ({ reason, cycle: cycle && useMath });
   if (!rig.keepStatic) return fail('時間で変わらない値を使い回さない設定');
-  if (rig.problems.size) return fail('評価の打ち切り（循環など。計算の順番で結果が変わりうる）');
+  if (rig.problems.size) {
+    const list = [...rig.problems];
+    return fail(`評価の打ち切り（循環など。計算の順番で結果が変わりうる: ${list[0]}${list.length > 1 ? ` ほか ${list.length - 1} 件` : ''}）`);
+  }
   const nodes = rig.sceneNodes;
   const staticPlug = (id, attr) => {
     const km = rig.keep.plug.get(id);
@@ -411,12 +414,13 @@ function build(rig, deps, useMath) {
 
   // ---- 計算の順番（親・ターゲット・親のスケールの打ち消しのノードが先）
   const order = [];
-  let restFail = false;                // 動かないノードの材料が扱えない
+  let restFail = null;                 // 動かないノードの材料が扱えない（そのノード番号）
+  let cycleAt = -1;                    // 循環を見つけたノード
   const state = new Map();             // 0 = 調べている途中・1 = 済み
   const visit = (ni) => {
     const st = state.get(ni);
     if (st === 1) return true;
-    if (st === 0) return false;                                         // 循環
+    if (st === 0) { if (cycleAt < 0) cycleAt = ni; return false; }      // 循環
     state.set(ni, 0);
     const p = nodes[ni].parent;
     if (p >= 0 && !visit(p)) return false;
@@ -448,23 +452,35 @@ function build(rig, deps, useMath) {
         // 動かないが、レストの値を持つノード（コンストレイントのターゲット・親のスケールの元）。RigEvaluator は
         // チャンネルの経路で読む: カーブも入力もなければ、レストの値に制限を当てたもので毎フレーム同じ
         const e = rig.clip.byNode.get(ni);
-        if ((e && e.channels.length) || rig.chanInputs(ni).length) { restFail = true; return false; }
+        if ((e && e.channels.length) || rig.chanInputs(ni).length) { restFail = ni; return false; }
         st.cur = { ...st.rest };
         for (const k of VEC_KEYS) if (st.rest[k]) st.cur[k] = st.rest[k].slice();
         clampLimits(st.cur);
+        // 親のスケールの打ち消しの元（レストの値があるもの）は先に計算する（isScaleOf がその値を読む）
         const isn = st.rest.isNode ?? -1;
-        if (isn >= 0 && rig.rest(isn)) { restFail = true; return false; }   // 打ち消しの元がさらにある（扱わない）
+        if (isn >= 0 && rig.rest(isn) && !visit(isn)) return false;
       }
       steps.set(ni, st);
     }
     order.push(steps.get(ni));
     return true;
   };
-  const why = () => (restFail ? '動かないノードのチャンネルの入力' : '計算の順番が決まらない（循環）');
-  for (const ni of rig.moving) if (!visit(ni)) return fail(why(), !restFail);
+  // 理由には、見つけたノードの名前と、同じ条件のノードの数を入れる（どのノードを直せばよいか分かるように）
+  const nameOf = (ni) => (nodes[ni] && (nodes[ni].name || nodes[ni].path)) || `ノード ${ni}`;
+  const why = () => {
+    if (restFail === null) return `計算の順番が決まらない（循環: ${cycleAt >= 0 ? nameOf(cycleAt) : '不明'}）`;
+    let n = 0;
+    nodes.forEach((_, i) => {
+      if (rig.moving.has(i) || !rig.rest(i)) return;
+      const e = rig.clip.byNode.get(i);
+      if ((e && e.channels.length) || rig.chanInputs(i).length) n++;
+    });
+    return `動かないノードのチャンネルの入力（${nameOf(restFail)}${n > 1 ? ` ほか ${n - 1} 個` : ''}）`;
+  };
+  for (const ni of rig.moving) if (!visit(ni)) return fail(why(), restFail === null);
   for (const c of cons.values()) {
-    for (const t of c.targets) if (!visit(t.ni)) return fail(why(), !restFail);
-    if (c.driven >= 0 && !visit(c.driven)) return fail(why(), !restFail);
+    for (const t of c.targets) if (!visit(t.ni)) return fail(why(), restFail === null);
+    if (c.driven >= 0 && !visit(c.driven)) return fail(why(), restFail === null);
   }
   for (const s of order) {
     if (s.kind === STATIC || s.kind === DELEGATED) continue;
