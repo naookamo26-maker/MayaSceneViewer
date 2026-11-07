@@ -98,7 +98,10 @@ class ViewerApp {
     this.bakers = new BakeWorkers({
       onImported: () => this.updateCacheView(),
       onDone: () => this.updateCacheView(),
-      onError: (message) => this.log('warn', `再生キャッシュのワーカーを使えないため、画面のスレッドで作ります: ${message}`),
+      onError: (message) => {
+        this.log('warn', `再生キャッシュのワーカーを使えないため、画面のスレッドで作ります: ${message}`);
+        setTimeout(() => this.scheduleBake(), 0);         // フレームを変えるのを待たずに、画面のスレッドで作り始める
+      },
     });
     this.history.onChange = (h) => this.historyChanged(h);
     this.profiler = new EvalProfiler();   // 評価のプロファイラ（記録中だけ計測する。画面は profilerPanel.js）

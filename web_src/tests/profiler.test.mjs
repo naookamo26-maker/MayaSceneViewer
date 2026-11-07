@@ -7,7 +7,7 @@ import path from 'node:path';
 import { Matrix4 } from 'three';
 import { AnimationClip } from '../src/animation.js';
 import { RigEvaluator } from '../src/rig.js';
-import { EvalProfiler, PARTS, cacheInfo, nodeCategory, profilerText, uniqueNames } from '../src/profiler.js';
+import { EvalProfiler, PARTS, cacheInfo, nodeCategory, profilerText, uniqueNames, workerStartText } from '../src/profiler.js';
 import { bakeFrames, createBaker } from '../src/rigBakeCore.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -305,4 +305,21 @@ test('［このフレームを確かめる］の結果を文字にする', async
   assert.ok(text.includes('専用の評価: 動くノード 10 個のうち、汎用の経路と違うもの 1 個'));
   assert.ok(text.includes('|a|b（差 5.0e-1）'));
   assert.ok(text.includes('表示の行列: 表示中のオブジェクト 30 個のうち、親からたどった値と違うもの 0 個'));
+});
+
+test('ワーカーが作り始めるまでの様子: bakeFrames が返す時間と、その文字', () => {
+  const data = JSON.parse(readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../samples/math_sample.json'), 'utf8'));
+  const baker = createBaker(JSON.stringify(data.animation), data.nodes);
+  const r1 = bakeFrames(baker, { frames: [1] });
+  const t1 = r1.timing;
+  assert.ok(t1.createMs >= 0 && t1.firstMs >= 0 && t1.planMs >= 0, JSON.stringify(t1));
+  assert.equal(t1.plan, true);
+  assert.equal(t1.retries, 0);
+  // 2 回目からも、最初のフレームの時間は変わらない
+  assert.equal(bakeFrames(baker, { frames: [2, 3] }).timing.firstMs, t1.firstMs);
+
+  const text = workerStartText({ firstMs: 2500, waitingMs: null, timing: { ...t1, createMs: 1200, firstMs: 900, planMs: 300, retries: 4 } });
+  assert.equal(text, '最初の結果が届くまで 2.5 秒・ワーカーの中: 準備 1.2 秒・最初のフレーム 0.9 秒（うち専用の評価の計画 0.3 秒）・専用の評価 使う・スタックがあふれてやり直した回数 4');
+  assert.equal(workerStartText({ firstMs: null, waitingMs: 61000, timing: null }), '最初の結果を待っています（61.0 秒）');
+  assert.equal(workerStartText({ firstMs: null, waitingMs: null, timing: null }), '');
 });
