@@ -1458,10 +1458,17 @@ export class RigEvaluator {
     this.varying = true;                           // 定義の計算はいまのフレームを読める
     const prof = this.profile;
     if (prof && prof.defNode) return this.defOutputsProfiled(g, d, prof);
+    // 1 回の計算の中では入力の値は変わらないので、同じ入力は 1 回だけ読む（exprespy のコードで同じ IN[i] を何度も書くと、
+    // その数だけ読み込みが起きていた）。計算は入力の値を書き換えない（代入は複製する）ので、同じ値を渡してよい
+    const seen = new Map();
     const io = {
       frame: this.frame,
       fps: this.clip.fps || 24,
-      read: (plug, info) => this.defRead(g, plug, info),
+      read: (plug, info) => {
+        let v = seen.get(plug);
+        if (v === undefined && !seen.has(plug)) { v = this.defRead(g, plug, info); seen.set(plug, v); }
+        return v;
+      },
       indices: (prefix) => this.defIndices(g, prefix),
       connected: (plug) => {
         const keys = Object.keys(g.inputs || {});
@@ -1483,14 +1490,21 @@ export class RigEvaluator {
    */
   defOutputsProfiled(g, d, prof) {
     const stack = prof.defStack || (prof.defStack = []);
-    const rec = { read: 0, child: 0 };
+    const rec = { read: 0, child: 0, reads: 0 };
     stack.push(rec);
+    const seen = new Map();                        // defOutputs と同じく、同じ入力は 1 回だけ読む
     const io = {
       frame: this.frame,
       fps: this.clip.fps || 24,
       read: (plug, info) => {
+        rec.reads++;
+        if (seen.has(plug)) return seen.get(plug);
         const t = performance.now();
-        try { return this.defRead(g, plug, info); } finally { rec.read += performance.now() - t; }
+        try {
+          const v = this.defRead(g, plug, info);
+          seen.set(plug, v);
+          return v;
+        } finally { rec.read += performance.now() - t; }
       },
       indices: (prefix) => this.defIndices(g, prefix),
       connected: (plug) => {
@@ -1508,7 +1522,7 @@ export class RigEvaluator {
       const total = performance.now() - t0;
       stack.pop();
       if (stack.length) stack[stack.length - 1].child += total;
-      prof.defNode(g, d, total - rec.read, Math.max(0, rec.read - rec.child));
+      prof.defNode(g, d, total - rec.read, Math.max(0, rec.read - rec.child), rec.reads, seen.size);
     }
   }
 

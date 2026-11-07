@@ -6,6 +6,14 @@
 // 種類ごとに、記録したフレームを通して足し合わせて出す（多く記録するほど正確。合計はリグの評価の時間と比べて示す）。
 import { stepCategory } from './rigCompiled.js';
 
+/** 行列の更新・表示・その他（scene）の内訳（その他は scene からこれらを引いた残り） */
+export const SUB_PARTS = [
+  { key: 'matrices', label: '行列のコピー' },
+  { key: 'pose', label: '姿勢の組み立て' },
+  { key: 'world', label: 'ワールド行列の計算' },
+  { key: 'overlay', label: 'ジョイント・コントローラーの表示の更新' },
+];
+
 /** フレームの内訳（グラフの積み上げの順。色はこの順に分類色を割り当てる） */
 export const PARTS = [
   { key: 'cache', label: '再生キャッシュから写す' },
@@ -75,6 +83,12 @@ export class EvalProfiler {
     return this.current;
   }
 
+  /** 行列の更新・表示の内訳の時間を足す（key は SUB_PARTS の key） */
+  sub(key, ms) {
+    const c = this.current;
+    if (c) (c.sub || (c.sub = {}))[key] = ((c.sub && c.sub[key]) || 0) + ms;
+  }
+
   /** 区間の時間を足す（part は PARTS の key） */
   add(part, ms) {
     const c = this.current;
@@ -132,12 +146,17 @@ export class EvalProfiler {
    * 自作ノード（exprespy など）の 1 回の計算（RigEvaluator.defOutputsProfiled から。記録中だけ）。
    * compute: 計算そのもの、read: 入力の読み込み（上流の値を求める時間。ほかの自作ノードの分は除く）
    */
-  defNode(g, d, compute, read) {
+  defNode(g, d, compute, read, reads = 0, inputs = 0) {
     let e = this.perDef.get(g.id);
-    if (!e) this.perDef.set(g.id, e = { id: g.id, name: g.name, type: g.def, compiled: !!(d && d.compiled), compute: 0, read: 0, calls: 0 });
+    if (!e) {
+      this.perDef.set(g.id, e = { id: g.id, name: g.name, type: g.def, compiled: !!(d && d.compiled), compute: 0, read: 0, calls: 0,
+        reads: 0, inputs: 0 });
+    }
     e.compute += compute;
     e.read += read;
     e.calls++;
+    e.reads += reads;                  // コードが入力を読んだ回数（同じ入力も数える）
+    e.inputs += inputs;                // 実際に読んだ入力の数（異なる入力）
   }
 
   addNode(rig, ni, label, path, ms) {
@@ -188,10 +207,12 @@ export class EvalProfiler {
   }
 
   /** 描画（renderer.render）の時間。直前に記録したフレームのものとして足す */
-  addRender(ms) {
+  addRender(ms, info = null) {
     const c = this.pending;
     if (!this.recording || !c) return;
     c.parts.render = (c.parts.render || 0) + ms;
+    // 描画の命令の数・三角形・線（three.js の renderer.info.render。描画のたびに数え直される）
+    if (info) c.draw = { calls: info.calls || 0, triangles: info.triangles || 0, lines: info.lines || 0 };
     this.pending = null;
     this.version++;
   }
@@ -214,8 +235,18 @@ export class EvalProfiler {
     }
     const n = fr.length || 1;
     for (const p of PARTS) avg[p.key] /= n;
+    // 行列の更新・表示の内訳（その他 = 全体から内訳を引いた残り）と、描画の命令の数の平均
+    const sub = {};
+    for (const p of SUB_PARTS) sub[p.key] = fr.reduce((a, e) => a + ((e.sub && e.sub[p.key]) || 0), 0) / n;
+    sub.other = Math.max(0, avg.scene - SUB_PARTS.reduce((a, p) => a + sub[p.key], 0));
+    const drawn = fr.filter((e) => e.draw);
+    const draw = drawn.length ? {
+      calls: drawn.reduce((a, e) => a + e.draw.calls, 0) / drawn.length,
+      triangles: drawn.reduce((a, e) => a + e.draw.triangles, 0) / drawn.length,
+      lines: drawn.reduce((a, e) => a + e.draw.lines, 0) / drawn.length,
+    } : null;
     return {
-      frames: fr.length, hits, evaluated: fr.length - hits, avg, total: total / n, max,
+      frames: fr.length, hits, evaluated: fr.length - hits, avg, sub, draw, total: total / n, max,
       fps: nInterval ? 1000 / (sumInterval / nInterval) : null,
     };
   }
@@ -232,7 +263,8 @@ export class EvalProfiler {
       const per = this.evaluated || 1;
       return all.sort((a, b) => (b.compute + b.read) - (a.compute + a.read)).slice(0, limit)
         .map((e) => ({ label: e.name, kind: e.type, compiled: e.compiled, nodes: 1, compute: e.compute / per, read: e.read / per,
-          ms: (e.compute + e.read) / per, share: (e.compute + e.read) / sum }));
+          ms: (e.compute + e.read) / per, share: (e.compute + e.read) / sum,
+          reads: e.calls ? e.reads / e.calls : 0, inputs: e.calls ? e.inputs / e.calls : 0 }));
     }
     if (mode === 'node') {
       const all = [...this.perNode.values()];
@@ -353,6 +385,8 @@ export function profilerText(prof, ctx) {
   L.push(`■ フレームの内訳（記録 ${s.frames} フレーム: キャッシュあり ${s.hits}・キャッシュなし ${s.evaluated}）`);
   if (s.fps) L.push(`表示できたフレームレート: ${s.fps.toFixed(1)} fps`);
   for (const p of PARTS) L.push(`  ${pad(p.label, 36)}${ms(s.avg[p.key])}`);
+  L.push(`  行列の更新・表示・その他の内訳: ${SUB_PARTS.map((p) => `${p.label} ${ms(s.sub[p.key])}`).join('・')}・その他 ${ms(s.sub.other)}`);
+  if (s.draw) L.push(`  描画の命令 ${Math.round(s.draw.calls)} 回・三角形 ${Math.round(s.draw.triangles)}・線 ${Math.round(s.draw.lines)}（1 フレームの平均）`);
   L.push(`  ${pad('合計（平均）', 36)}${ms(s.total)}　最大 ${ms(s.max)}`);
   const split = (pred) => {
     const fr = prof.frames.filter(pred);
@@ -381,7 +415,8 @@ export function profilerText(prof, ctx) {
     L.push(`■ 自作ノード（exprespy など）の計算と入力の読み込み（キャッシュなしのフレームの平均。時間の大きい ${TEXT_NODE_ROWS} 個）`);
     L.push(`  全体: ${t.nodes} 個・計算 ${ms(t.compute)}・入力の読み込み ${ms(t.read)}`);
     for (const r of prof.rows('def', TEXT_NODE_ROWS)) {
-      L.push(`  ${pad(r.label, 40)}計算 ${pad(ms(r.compute), 12)}読み込み ${pad(ms(r.read), 12)}${r.kind}${r.compiled ? '' : '（関数にしていない）'}`);
+      L.push(`  ${pad(r.label, 40)}計算 ${pad(ms(r.compute), 12)}読み込み ${pad(ms(r.read), 12)}`
+        + `${pad(`入力 ${Math.round(r.inputs)}（読む回数 ${Math.round(r.reads)}）`, 28)}${r.kind}${r.compiled ? '' : '（関数にしていない）'}`);
     }
   }
   const pi = planInfo(ctx.rig);

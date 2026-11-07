@@ -778,3 +778,8 @@ body.sequencer-collapsed #sequencer .seq-body { display: none; }
 /* 自作ノード: 名前・計算・読み込み・合計 */
 #prof-table.by-def th:nth-child(2), #prof-table.by-def th:nth-child(3) { width: 76px; }
 #prof-table.by-def td.share .bar { max-width: calc(100% - 72px); }
+#prof-table.by-def th:nth-child(4) { width: 96px; } #prof-table.by-def th:nth-child(5) { width: 110px; }
+/* 行列の更新・表示の内訳と描画の命令の数（グラフの下） */
+.prof-detail { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.prof-detail b { color: var(--text); font-weight: 600; }
+.prof-tip-extra { margin-top: 3px; color: var(--text-dim); }

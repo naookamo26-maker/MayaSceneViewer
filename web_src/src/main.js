@@ -266,7 +266,7 @@ class ViewerApp {
       if (this.profiler.recording) {
         const t = performance.now();
         this.renderer.render(this.scene, this.activeCamera());
-        this.profiler.addRender(performance.now() - t);
+        this.profiler.addRender(performance.now() - t, this.renderer.info.render);
       } else this.renderer.render(this.scene, this.activeCamera());
     } finally {
       this.scene.matrixAutoUpdate = true;
@@ -1472,11 +1472,13 @@ class ViewerApp {
     if (pr) pr.addEval(this.rig, performance.now() - tEval, this.genericReason(posed));
     const mode = this.settings.poseSource;
     const sceneHasBind = hasBindPose(this.built);
+    let tSub = pr ? performance.now() : 0;
     for (const [ni, m] of mats) {
       const ud = this.built.nodeObjects[ni].userData;
       ud.fileMatrix.copy(m);
       ud.baseMatrix.copy(poseBaseMatrix(ud, mode, sceneHasBind));     // バインドポーズではフレームによらない
     }
+    if (pr) { const t = performance.now(); pr.sub('matrices', t - tSub); tSub = t; }
     // フレームが変わった: キーのあるチャンネルを動かした分はカーブの値に戻し、その姿勢で評価し直す
     if (frameChanged && !(mode === 'bind' && sceneHasBind) && this.revertKeyedPoses()) {   // バインドポーズの表示では戻さない
       this.applyFrame(f, light);
@@ -1484,6 +1486,7 @@ class ViewerApp {
       return;
     }
     for (const ni of this.animTouched) this.pose.apply(ni);
+    if (pr) pr.sub('pose', performance.now() - tSub);
     // カーブの形（バインドポーズの表示では変形前の形）
     const bindView = mode === 'bind' && sceneHasBind;
     let tPart = pr ? performance.now() : 0;
@@ -2358,6 +2361,8 @@ class ViewerApp {
       this.applyFrame(this.frame, light);
       return;
     }
+    const pr = this.profiler.current ? this.profiler : null;
+    let tSub = pr ? performance.now() : 0;
     if (partial && !this.worldNeedsFull && this.touchedRoots) {
       for (const o of this.touchedRoots) o.updateMatrixWorld(true);
     } else {
@@ -2365,7 +2370,9 @@ class ViewerApp {
       this.worldNeedsFull = false;
     }
     this.worldFresh = true;                 // 次の描画では、シーン全体の行列を強制的に計算し直さない（render）
+    if (pr) { const t = performance.now(); pr.sub('world', t - tSub); tSub = t; }
     this.overlay.update();
+    if (pr) pr.sub('overlay', performance.now() - tSub);
     this.poseDirty = true;
     this.updateMarker();
     if (!light && this.picked) this.ui.showVertexInfo(this.vertexInfo());

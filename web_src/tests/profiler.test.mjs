@@ -241,3 +241,55 @@ test('自作ノード（exprespy）ごとに、計算と入力の読み込みを
   assert.ok(text.includes('■ 自作ノード（exprespy など）の計算と入力の読み込み'), text);
   assert.ok(text.includes(rows[0].label));
 });
+
+test('自作ノードは、1 回の計算の中で同じ入力を 1 回だけ読む（回数をプロファイラに出す）', () => {
+  const d = load('exprespy_sample.json');
+  const rig = makeRig(d);
+  const calls = new Map();
+  const orig = rig.defRead.bind(rig);
+  // 専用の評価は rig を土台にした読み方（Object.create）から呼ぶので、原型の側を差し替える
+  const proto = Object.getPrototypeOf(rig);
+  const saved = proto.defRead;
+  proto.defRead = function defRead(g, plug, info) {
+    const k = `${this.frame}|${g.id}|${plug}`;
+    calls.set(k, (calls.get(k) || 0) + 1);
+    return saved.call(this, g, plug, info);
+  };
+  try {
+    for (const f of framesOf(rig)) rig.evaluate(f, undefined, new Map());
+  } finally { proto.defRead = saved; }
+  assert.ok(calls.size > 0);
+  assert.ok([...calls.values()].every((n) => n === 1), '同じ入力を 2 回読まない');
+  void orig;
+  // プロファイラ: 読んだ回数（同じ入力も数える）≥ 異なる入力の数
+  const prof = new EvalProfiler();
+  prof.start();
+  const rec = makeRig(d);
+  for (const f of framesOf(rec)) recordFrame(prof, rec, f);
+  const rows = prof.rows('def');
+  assert.ok(rows.length && rows.every((r) => r.inputs > 0 && r.reads >= r.inputs), JSON.stringify(rows.map((r) => [r.inputs, r.reads])));
+  assert.ok(profilerText(prof, { rig: rec, clip: rec.clip }).includes('（読む回数 '));
+});
+
+test('行列の更新・表示の内訳と、描画の命令の数を集計する（その他は残り）', () => {
+  const prof = new EvalProfiler();
+  prof.start();
+  for (let f = 1; f <= 4; f++) {
+    prof.beginFrame(f);
+    prof.sub('matrices', 1); prof.sub('pose', 2); prof.sub('world', 3); prof.sub('overlay', 0.5);
+    prof.current.t0 -= 10;                     // この区間に 10 ms かかったことにする（scene = 10 − ほかの区間）
+    prof.endFrame();
+    prof.addRender(4, { calls: 100 * f, triangles: 1000, lines: 0 });
+  }
+  const s = prof.summary();
+  assert.equal(s.sub.matrices, 1);
+  assert.equal(s.sub.pose, 2);
+  assert.equal(s.sub.world, 3);
+  assert.equal(s.sub.overlay, 0.5);
+  assert.ok(s.avg.scene >= 10 && Math.abs(s.sub.other - (s.avg.scene - 6.5)) < 1e-9);
+  assert.equal(s.draw.calls, 250);
+  assert.equal(s.draw.triangles, 1000);
+  const text = profilerText(prof, {});
+  assert.ok(text.includes('行列の更新・表示・その他の内訳: 行列のコピー 1.00 ms'), text);
+  assert.ok(text.includes('描画の命令 250 回・三角形 1000'), text);
+});
