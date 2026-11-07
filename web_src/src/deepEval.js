@@ -50,8 +50,10 @@ export function isStackOverflow(e) {
 /**
  * fn を求める。スタックがあふれたら、state.at（いちばん深い所の計算）を先に求めてから、やり直す。
  * onRetry: やり直す前に呼ぶ（計算中の印などを片付ける）。runDeep の中で呼ばれたら、そのまま fn を呼ぶ（外側がやり直す）
+ * 浅い所から求め直した計算が、またその計算の中だけであふれたら（state.at の place・key が同じ。鎖が深いのではなく、
+ * 1 回の計算が大きい）、onStuck(at) に直してもらう（true なら同じ計算をやり直す）。直せなければ、そのエラーを投げる
  */
-export function runDeep(state, fn, onRetry) {
+export function runDeep(state, fn, onRetry, onStuck) {
   if (state.depth) return fn();
   state.depth = 1;
   const todo = [fn];
@@ -71,6 +73,11 @@ export function runDeep(state, fn, onRetry) {
         if (!at || !isStackOverflow(e) || ++n > MAX_RETRIES) throw e;
         state.retries++;
         if (onRetry) onRetry();
+        const top = todo[todo.length - 1];
+        if (top.place !== undefined && at.place === top.place && at.key === top.key) {
+          if (!onStuck || !onStuck(at)) throw e;          // 進まない（同じ計算が、浅い所からでもあふれる）
+          continue;
+        }
         todo.push(at);
       }
     }

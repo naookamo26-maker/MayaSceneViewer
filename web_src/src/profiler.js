@@ -482,7 +482,8 @@ export function workerStartText(w) {
   if (t) {
     parts.push(`ワーカーの中: 準備 ${sec(t.createMs)}・最初のフレーム ${sec(t.firstMs)}`
       + `${t.planMs !== null ? `（うち専用の評価の計画 ${sec(t.planMs)}）` : ''}・専用の評価 ${t.plan ? '使う' : `使わない${t.reason ? `（${t.reason}）` : ''}`}`
-      + `・スタックがあふれてやり直した回数 ${t.retries}`);
+      + `・スタックがあふれてやり直した回数 ${t.retries}`
+      + `${t.interpreted ? `・関数をやめて IR をたどる計算にした自作ノードの定義 ${t.interpreted} 種類（関数ではスタックに収まらない）` : ''}`);
   }
   return parts.join('・');
 }
