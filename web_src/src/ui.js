@@ -408,10 +408,12 @@ export class UI {
       }
       if (e.target.closest('.twisty')) {
         const open = this.collapsed.has(row.key);   // 閉じていれば開く
-        if (e.shiftKey) this.setSubtreeOpen(+rowEl.dataset.row, open);
-        else if (open) this.collapsed.delete(row.key);
-        else this.collapsed.add(row.key);
-        this.applyTreeVisibility();
+        this.keepRowInPlace(row, () => {               // 開閉した行は、画面の同じ高さのまま
+          if (e.shiftKey) this.setSubtreeOpen(+rowEl.dataset.row, open);
+          else if (open) this.collapsed.delete(row.key);
+          else this.collapsed.add(row.key);
+          this.applyTreeVisibility();
+        });
         return;
       }
       // Maya のアウトライナーと同じ: Ctrl+クリックで切り替え、Shift+クリックでリードの行からその行までを選ぶ
@@ -426,7 +428,7 @@ export class UI {
       else this.app.select(row.node, { notify: true, mode });
     });
     // Maya のアウトライナーと同じく、キー操作はマウスが上にあるパネルで受ける（treeKey）
-    tree.addEventListener('scroll', () => this.scheduleTreeRender(), { passive: true });
+    tree.addEventListener('scroll', () => { this.shrinkTreePad(); this.scheduleTreeRender(); }, { passive: true });
     new ResizeObserver(() => this.scheduleTreeRender()).observe(tree);
     tree.addEventListener('pointerenter', () => { this.treeHover = true; });
     tree.addEventListener('pointerleave', () => { this.treeHover = false; });
@@ -457,13 +459,15 @@ export class UI {
     if (k === 'ArrowUp' && i > 0) this.selectRow(shown[i - 1]);
     else if (k === 'ArrowDown' && i < shown.length - 1) this.selectRow(shown[i + 1]);
     else if (k === 'ArrowLeft') {
-      if (cur.hasChildren && !this.collapsed.has(cur.key) && !this.filter) { this.collapsed.add(cur.key); this.applyTreeVisibility(); }
+      if (cur.hasChildren && !this.collapsed.has(cur.key) && !this.filter) {
+        this.keepRowInPlace(cur, () => { this.collapsed.add(cur.key); this.applyTreeVisibility(); });
+      }
       else {
-        const p = cur.mesh >= 0 ? this.rowOfNode.get(cur.node) : this.rowOfNode.get(this.app.data.nodes[cur.node].parent);
+        const p = this.parentRow(cur);
         if (p && !p.hidden) this.selectRow(p);
       }
     } else if (k === 'ArrowRight' && cur.hasChildren) {
-      if (this.collapsed.has(cur.key)) { this.collapsed.delete(cur.key); this.applyTreeVisibility(); }
+      if (this.collapsed.has(cur.key)) this.keepRowInPlace(cur, () => { this.collapsed.delete(cur.key); this.applyTreeVisibility(); });
       else if (shown[i + 1] && shown[i + 1].depth > cur.depth) this.selectRow(shown[i + 1]);
     }
     return true;
@@ -515,6 +519,8 @@ export class UI {
     const tree = $('tree');
     tree.textContent = '';
     tree.scrollTop = 0;
+    this.treePad = 0;
+    this.treePadEl = null;
     this.rows = [];
     this.shownRows = [];
     this.rowOfNode = new Map();
@@ -610,6 +616,11 @@ export class UI {
     } else {
       const frag = document.createDocumentFragment();
       for (const r of this.rows) frag.appendChild(this.makeRowEl(r));
+      // 開閉した行を同じ高さに保つための、下の余白（keepRowInPlace）
+      this.treePadEl = document.createElement('div');
+      this.treePadEl.className = 'tree-spacer';
+      this.treePadEl.style.height = '0px';
+      frag.appendChild(this.treePadEl);
       tree.appendChild(frag);
     }
     this.applyTreeVisibility();
@@ -652,11 +663,11 @@ export class UI {
     const shown = this.shownRows;
     const h = TREE_ROW_HEIGHT, view = tree.clientHeight || 600;
     // 行が減った直後（絞り込み・閉じる）は、スクロール位置が内容の高さを超えていることがあるので収める
-    const top = Math.min(tree.scrollTop, Math.max(0, shown.length * h - view));
+    const top = Math.min(tree.scrollTop, Math.max(0, shown.length * h + (this.treePad || 0) - view));
     const first = Math.max(0, Math.floor(top / h) - 20);
     const last = Math.min(shown.length, Math.ceil((top + view) / h) + 20);
     this.treeTop.style.height = `${first * h}px`;
-    this.treeBottom.style.height = `${(shown.length - last) * h}px`;
+    this.treeBottom.style.height = `${(shown.length - last) * h + (this.treePad || 0)}px`;
     const els = [this.treeTop];
     for (let i = first; i < last; i++) {
       const r = shown[i];
@@ -666,6 +677,72 @@ export class UI {
     els.push(this.treeBottom);
     const cur = tree.children;
     if (cur.length !== els.length || els.some((e, i) => cur[i] !== e)) tree.replaceChildren(...els);
+  }
+
+  /** 行の親の行（メッシュの行は transform の行）。なければ undefined */
+  parentRow(row) {
+    if (row.mesh >= 0) return this.rowOfNode.get(row.node);
+    const n = this.app.data.nodes[row.node];
+    return n && n.parent >= 0 ? this.rowOfNode.get(n.parent) : undefined;
+  }
+
+  /** 行の上端の、階層の表示領域の上端からの高さ（表示していない行は null） */
+  rowOffset(row) {
+    const tree = $('tree');
+    if (!row || row.hidden) return null;
+    if (this.treeVirtual) {
+      const i = this.shownRows.indexOf(row);
+      return i < 0 ? null : i * TREE_ROW_HEIGHT - tree.scrollTop;
+    }
+    if (!row.el) return null;
+    return row.el.getBoundingClientRect().top - tree.getBoundingClientRect().top;
+  }
+
+  /** 画面に見えている一番上の行 */
+  topShownRow() {
+    const tree = $('tree');
+    if (this.treeVirtual) return this.shownRows[Math.min(this.shownRows.length - 1, Math.floor(tree.scrollTop / TREE_ROW_HEIGHT))];
+    return this.shownRows.find((r) => this.rowOffset(r) > -TREE_ROW_HEIGHT / 2);
+  }
+
+  /** 下の余白（px）。表示しきれない分だけ足し、なければ 0 */
+  setTreePad(px) {
+    this.treePad = Math.max(0, Math.ceil(px));
+    if (this.treePadEl) this.treePadEl.style.height = `${this.treePad}px`;
+  }
+
+  /** 上へスクロールしたら、要らなくなった下の余白を詰める（表示の下端より下の分だけなので、見えている行は動かない） */
+  shrinkTreePad() {
+    if (!this.treePad) return;
+    const tree = $('tree');
+    const content = tree.scrollHeight - this.treePad;
+    const need = tree.scrollTop + tree.clientHeight - content;
+    if (need < this.treePad) {
+      this.setTreePad(need);
+      if (this.treeVirtual) this.renderTree();
+    }
+  }
+
+  /**
+   * fn（行の開閉）のあとも、anchor の行を画面の同じ高さに保つ（Maya のアウトライナーで原因を追いやすいように）。
+   * anchor が隠れたら、見えている一番近い祖先の行を保つ。閉じて内容が足りなくなったら、下に余白を足す
+   * （そのままだとブラウザがスクロール位置を詰めて、操作した行が下へずれる）
+   */
+  keepRowInPlace(anchor, fn) {
+    const tree = $('tree');
+    const y0 = this.rowOffset(anchor);
+    fn();
+    if (y0 === null) return;
+    let row = anchor;
+    while (row && row.hidden) row = this.parentRow(row);
+    const y1 = this.rowOffset(row);                   // いまのスクロール位置で（詰められていれば、詰めたあとの位置で）
+    if (y1 === null) return;
+    const want = tree.scrollTop + (y1 - y0);
+    const content = tree.scrollHeight - (this.treePad || 0);
+    this.setTreePad(want + tree.clientHeight - content);
+    if (this.treeVirtual) this.renderTree();           // 下の詰め物の高さに余白を入れてから、スクロールする
+    tree.scrollTop = Math.max(0, want);
+    if (this.treeVirtual) this.renderTree();
   }
 
   /** 行を見える位置にスクロールする（block: 'nearest' | 'center'。scrollIntoView と同じ） */
@@ -712,10 +789,22 @@ export class UI {
 
   /** すべての階層を開く／閉じる */
   setAllOpen(open) {
-    this.collapsed.clear();
-    if (!open) for (const r of this.rows) if (r.hasChildren) this.collapsed.add(r.key);
-    this.applyTreeVisibility();
-    if (open && this.selectedRow && !this.selectedRow.hidden) this.scrollToRow(this.selectedRow, 'nearest');
+    // 見えている選択中の行（なければ一番上に見えている行）を、画面の同じ高さに保つ
+    // （選択中の行が閉じた中に隠れていれば、見えている一番近い祖先の行）
+    const sel = this.selectedRow;
+    let base = sel;
+    while (base && base.hidden) base = this.parentRow(base);
+    const y = base ? this.rowOffset(base) : null;
+    const onScreen = y !== null && y > -TREE_ROW_HEIGHT && y < $('tree').clientHeight;
+    this.keepRowInPlace(onScreen ? base : this.topShownRow(), () => {
+      this.collapsed.clear();
+      if (!open) for (const r of this.rows) if (r.hasChildren) this.collapsed.add(r.key);
+      this.applyTreeVisibility();
+    });
+    if (open && sel && !sel.hidden) {
+      const ys = this.rowOffset(sel);                  // 開いて出てきた選択中の行が画面の外なら、見える所まで
+      if (ys === null || ys < 0 || ys + TREE_ROW_HEIGHT > $('tree').clientHeight) this.scrollToRow(sel, 'nearest');
+    }
   }
 
   applyTreeVisibility() {
