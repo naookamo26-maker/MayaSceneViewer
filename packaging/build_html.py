@@ -5,6 +5,7 @@ python packaging/build_html.py
   前提: なし（Python だけで作れる）。ビューアの JS（ma_viewer/web/viewer.bundle.js）が web_src より古そうなら、
         Node.js があれば作り直す（なければ注意を出して、いまの JS のまま作る。--no-js-check で確かめない）
   出力: dist/MayaSceneViewer.html（ビューアだけ。開いてから .msv をドロップする）
+        dist/ は exe（build_exe.py）と同じ場所: 実行したフォルダの dist/（PyInstaller の既定と同じ決め方）
 
   python packaging/build_html.py --embed scene.msv           → dist/scene.html（シーン入り。開くとそのシーンを表示）
   python packaging/build_html.py --embed a.msv --embed b.ma  → dist/a.html・dist/b.html（1 ファイルにつき 1 つ）
@@ -26,8 +27,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 WEB = os.path.join(ROOT, "ma_viewer", "web")
 WEB_SRC = os.path.join(ROOT, "web_src")
-DIST = os.path.join(ROOT, "dist")
 DEFAULT_NAME = "MayaSceneViewer.html"
+
+
+def dist_dir() -> str:
+    """出力先。exe と同じく、実行したフォルダの dist/（PyInstaller の DEFAULT_DISTPATH と同じ）"""
+    return os.path.join(os.getcwd(), "dist")
 
 
 def _newest(paths):
@@ -84,7 +89,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="ブラウザ版のビューアを 1 ファイルの HTML にする")
     ap.add_argument("--embed", action="append", default=[], metavar="FILE",
                     help="埋め込むシーン（.msv・.ma・.json）。複数指定でき、1 ファイルにつき 1 つの HTML を作る")
-    ap.add_argument("-o", "--output", help="出力先（省略時は dist/。--embed が 2 つ以上なら使えない）")
+    ap.add_argument("-o", "--output", help="出力先（省略時は exe と同じ dist/。--embed が 2 つ以上なら使えない）")
     ap.add_argument("--textures", choices=("albedo", "all", "none"), default="albedo",
                     help=".ma・.json を埋め込むときに同梱するテクスチャ（既定 albedo。.msv はそのまま）")
     ap.add_argument("--no-js-check", action="store_true", help="ビューアの JS が古くないかを確かめない")
@@ -100,8 +105,9 @@ def main(argv=None) -> int:
         return 1
     sys.path.insert(0, ROOT)
     from ma_viewer import html_build
-    jobs = [(None, args.output or os.path.join(DIST, DEFAULT_NAME))] if not args.embed else \
-        [(p, args.output or os.path.join(DIST, os.path.splitext(os.path.basename(p))[0] + ".html")) for p in args.embed]
+    dist = dist_dir()
+    jobs = [(None, args.output or os.path.join(dist, DEFAULT_NAME))] if not args.embed else \
+        [(p, args.output or os.path.join(dist, os.path.splitext(os.path.basename(p))[0] + ".html")) for p in args.embed]
     failed = False
     for embed, out in jobs:
         os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)

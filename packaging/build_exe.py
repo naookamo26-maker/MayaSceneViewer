@@ -3,6 +3,7 @@
 
   前提: pip install pyinstaller
   出力: dist/MayaSceneViewer.exe（Windows）/ dist/MayaSceneViewer（Linux・macOS）
+        dist/ は実行したフォルダの dist/（PyInstaller の既定。1 ファイルの HTML（build_html.py）も同じ場所に出す）
 
 ma_viewer/node_defs/*.json（自作ノードの定義）も同梱する。ビルドの前に検証し、誤りがあれば止める。
 
