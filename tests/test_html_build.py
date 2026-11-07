@@ -72,5 +72,41 @@ class HtmlBuildTest(unittest.TestCase):
         self.assertFalse(os.path.exists(out + ".part"))
 
 
+class BuildScriptTest(unittest.TestCase):
+    """packaging/build_html.py（build_exe.py と同じく、配る物を作るスクリプト）"""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(ROOT, "packaging"))
+        import build_html
+        self.script = build_html
+        self.dir = tempfile.mkdtemp(prefix="build_html_script_")
+
+    def run_script(self, args):
+        out = io.StringIO()
+        with mock.patch("sys.stdout", new=out):
+            code = self.script.main(args + ["--no-js-check"])
+        return code, out.getvalue()
+
+    def test_viewer_and_embed(self):
+        out = os.path.join(self.dir, "viewer.html")
+        code, text = self.run_script(["-o", out])
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.script.verify(out), [])
+        with mock.patch.object(self.script, "DIST", self.dir):
+            code, text = self.run_script(["--embed", TEXTURED_MSV, "--embed", ARM_MA])
+        self.assertEqual(code, 0, text)
+        for name in ("textured_sample.html", "sample_arm.html"):      # 1 ファイルにつき 1 つ、dist/ に
+            with open(os.path.join(self.dir, name), encoding="utf-8") as f:
+                self.assertEqual(_embedded(f.read())[:4], b"PK\x03\x04", name)
+
+    def test_errors(self):
+        self.assertEqual(self.run_script(["--embed", os.path.join(self.dir, "none.msv")])[0], 1)
+        self.assertEqual(self.run_script(["-o", "x.html", "--embed", TEXTURED_MSV, "--embed", ARM_MA])[0], 1)
+        bad = os.path.join(self.dir, "bad.html")
+        with open(bad, "w", encoding="utf-8") as f:
+            f.write('<link rel="stylesheet" href="style.css"><script src="viewer.bundle.js"></script>')
+        self.assertEqual(len(self.script.verify(bad)), 3)
+
+
 if __name__ == "__main__":
     unittest.main()
