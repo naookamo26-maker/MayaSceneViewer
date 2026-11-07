@@ -2,7 +2,7 @@
 //   * フレームの内訳: 1 フレームごとの積み上げ棒（記録した順。右がいちばん新しい）。フレームバジェット（1000 / fps）の線
 //   * リグの評価の内訳: 種類ごと（何で動くノードか）・経路ごと（専用の評価か、汎用の経路に任せたか、その理由）
 //   * 再生キャッシュとワーカーの状態
-import { PARTS, SUB_PARTS, cacheInfo, checkText, formatBytes, planInfo, profilerText, workerStartText } from './profiler.js';
+import { PARTS, SUB_PARTS, cacheInfo, checkText, formatBytes, errorText, planInfo, profilerText, workerStartText } from './profiler.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -369,7 +369,7 @@ export class ProfilerPanel {
     }
     if (!w.available) {
       items.push(['ワーカー', '使っていません（画面のスレッドの空き時間に作ります）']);
-      if (w.error) items.push(['使えない理由', esc(w.error.split('\n')[0])]);
+      if (w.error) items.push(['使えない理由', esc(errorText(w.error))]);
     } else {
       let t = `${w.count} 個（CPU のコア ${w.cores || '不明'}）・${w.busy ? '作っています' : '止まっています'}`;
       if (w.frames) {

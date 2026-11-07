@@ -22,7 +22,7 @@ import {
 } from './curve.js';
 import { MATH_DEFAULTS, evaluateMath, mathAngleInput, mathKind, mathOutputs } from './mathNodes.js';
 import { buildPlan, runPlan } from './rigCompiled.js';
-import { mayOverflow, newDeepState, runDeep } from './deepEval.js';
+import { isStackOverflow, mayOverflow, newDeepState, runDeep, stackNames } from './deepEval.js';
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -131,7 +131,9 @@ const XFORM_KEYS = new Map();
 const CHAN_MODES = { full: 0, fk: 1, t: 2 };
 const NO_INPUTS = [];
 const NO_POSE = () => null;                // ポーズ確認の追加分なし
-const BUSY = Symbol('busy');               // キャッシュの計算中の印（循環の検出）
+const BUSY = Symbol('busy');
+/** 専用の評価をやめた理由（スタックがあふれた所の関数名） */
+const overflowReason = (e) => `計算の鎖が深すぎる（スタックがあふれた: ${stackNames(e && e.stack).join(' ← ') || '場所不明'}）`;               // キャッシュの計算中の印（循環の検出）
 const PLAN = { def: 0, input: 1, component: 2, output: 3, triple: 4, static: 5 };   // plugPlan の種類
 const SNAPSHOT_BASE = 512;                 // 再生キャッシュの 1 フレームの入れ物の大きさ（バイト。目安）
 const OPAQUE = -1;                         // 追加分の目印がノードごとでないとき（版の数など）の印。どの値もこれを読んだことにする
@@ -806,13 +808,24 @@ export class RigEvaluator {
       const store = !!layer && this.roomFor(layer);
       this.lastPath = 'compiled';
       plan.profile = this.profile;                       // 評価のプロファイラの記録中だけ（手順ごとの時間）
-      try { runPlan(plan, f, target); } finally { plan.profile = null; }
-      if (store && !plan.depsAdded) {                    // 追加分を読む依存（計画を作った評価で記録したもの）
-        for (const s of plan.moving) if (s.deps && s.deps.size) this.addNodeDeps(s.ni, s.deps);
-        plan.depsAdded = true;
+      let ok = true;
+      try {
+        runPlan(plan, f, target);
+      } catch (e) {
+        // スタックがあふれた（やり直せない所。スタックの小さい Web Worker で起きる）: 計画をやめて、汎用の経路で評価し直す
+        if (!isStackOverflow(e)) throw e;
+        this.dropPlan(e);
+        ok = false;
+      } finally { plan.profile = null; }
+      if (ok) {
+        if (store && !plan.depsAdded) {                  // 追加分を読む依存（計画を作った評価で記録したもの）
+          for (const s of plan.moving) if (s.deps && s.deps.size) this.addNodeDeps(s.ni, s.deps);
+          plan.depsAdded = true;
+        }
+        if (store) this.storeSnapshot(f, layer, target);
+        return target;
       }
-      if (store) this.storeSnapshot(f, layer, target);
-      return target;
+      this.reset();                                      // 計画が途中まで入れた値を捨てる
     }
     if (layer) this.seeded = this.seed(f, layer);
     const store = !!layer && this.roomFor(layer);
@@ -835,13 +848,25 @@ export class RigEvaluator {
     this.dcur = null;
     if (capture) {                                       // 扱えるリグなら、次のフレームから専用の評価にする
       const tp = performance.now();
-      const r = buildPlan(this, capture);
+      let r;
+      try {
+        r = buildPlan(this, capture);
+      } catch (e) {
+        if (!isStackOverflow(e)) throw e;                // スタックがあふれた: 専用の評価は使わない（汎用の経路のまま）
+        r = { reason: overflowReason(e) };
+      }
       this.planMs = performance.now() - tp;              // 計画を作った時間（評価のプロファイラのワーカーの欄）
       this.compiledPlan = r.plan || null;
       this.compiledReason = r.reason || null;
     }
     if (store) this.storeSnapshot(f, layer, target);
     return target;
+  }
+
+  /** 専用の評価の計算でスタックがあふれた: 計画をやめる（次のフレームから汎用の経路。理由に、あふれた所の関数名を入れる） */
+  dropPlan(e) {
+    this.compiledPlan = null;
+    this.compiledReason = overflowReason(e);
   }
 
   /** フレーム f の動くノードのローカル行列を、再生キャッシュのレイヤー layer に入れる */

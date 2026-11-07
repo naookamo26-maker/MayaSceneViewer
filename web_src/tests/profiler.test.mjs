@@ -323,3 +323,10 @@ test('ワーカーが作り始めるまでの様子: bakeFrames が返す時間�
   assert.equal(workerStartText({ firstMs: null, waitingMs: 61000, timing: null }), '最初の結果を待っています（61.0 秒）');
   assert.equal(workerStartText({ firstMs: null, waitingMs: null, timing: null }), '');
 });
+
+test('ワーカーのエラーを 1 行に（1 行目と、起きた所の関数名）', async () => {
+  const { errorText } = await import('../src/profiler.js');
+  assert.equal(errorText('RangeError: Maximum call stack size exceeded\n    at chanTObj (blob:x:1:2)\n    at Object.dagPlug (blob:x:3:4)\n    at chanTObj (blob:x:1:2)'),
+    'RangeError: Maximum call stack size exceeded（場所: chanTObj ← dagPlug）');
+  assert.equal(errorText('ワーカーのエラー: 何か'), 'ワーカーのエラー: 何か');
+});

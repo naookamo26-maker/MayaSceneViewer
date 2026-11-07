@@ -96,7 +96,7 @@ export function bakeFrames(baker, req) {
 export function bakerTiming(baker) {
   const rig = baker.rig;
   return { createMs: baker.timing.createMs, firstMs: baker.timing.firstMs, planMs: rig.planMs ?? null,
-    plan: !!rig.compiledPlan, retries: rig.deepState.retries };
+    plan: !!rig.compiledPlan, reason: rig.compiledPlan ? null : (rig.compiledReason || null), retries: rig.deepState.retries };
 }
 
 /** bakeFrames の結果（postMessage で受け取ったもの）を、importSnapshots に渡せる形に戻す */
