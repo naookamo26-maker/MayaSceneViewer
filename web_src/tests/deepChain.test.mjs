@@ -99,3 +99,23 @@ test('スタックの小さいワーカー: あふれてもやり直して、画
   const late = res.out.slice(-3).map((o) => o.retries);
   assert.deepEqual(late, [0, 0, 0], `あとのフレームでもやり直している: ${res.out.map((o) => o.retries).join(',')}`);
 });
+
+test('専用の評価でやり直せない所のスタックがあふれたら、計画をやめて汎用の経路で同じ値を求める', () => {
+  const data = JSON.parse(readFileSync(path.resolve(here, '../../samples/math_sample.json'), 'utf8'));
+  const make = () => new RigEvaluator(new AnimationClip(data.animation), data.nodes, (ni) => new Matrix4().fromArray(data.nodes[ni].matrix));
+  const rig = make(), ref = make();
+  ref.useCompiled = false;
+  rig.evaluate(1);
+  assert.ok(rig.compiledPlan, '専用の評価にならない');
+  // 計画の手順を読むとスタックがあふれたことにする（ワーカーの中で、やり直せない所であふれたとき）
+  Object.defineProperty(rig.compiledPlan, 'order', {
+    get() { const e = new RangeError('Maximum call stack size exceeded'); e.stack = `${e.message}\n    at chanTObj (x:1:1)\n    at Object.dagPlug (x:1:1)`; throw e; },
+  });
+  for (const f of [5, 9]) {
+    const got = rig.evaluate(f, undefined, new Map()), want = ref.evaluate(f, undefined, new Map());
+    assert.equal(rig.lastPath, 'generic', `フレーム ${f}`);
+    for (const [ni, m] of want) assert.deepEqual(got.get(ni).elements, m.elements, `フレーム ${f}・ノード ${ni}`);
+  }
+  assert.equal(rig.compiledPlan, null);
+  assert.equal(rig.compiledReason, '計算の鎖が深すぎる（スタックがあふれた: chanTObj ← dagPlug）');
+});

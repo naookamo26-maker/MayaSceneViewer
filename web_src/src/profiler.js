@@ -5,6 +5,7 @@
 // 多くの区間を足すと平均では正しい値に近づく）。1 ノードの評価は数 µs なので、ノードごとの時間は 1 回では測れない。
 // 種類ごとに、記録したフレームを通して足し合わせて出す（多く記録するほど正確。合計はリグの評価の時間と比べて示す）。
 import { stepCategory } from './rigCompiled.js';
+import { stackNames } from './deepEval.js';
 
 /** 行列の更新・表示・その他（scene）の内訳（その他は scene からこれらを引いた残り） */
 export const SUB_PARTS = [
@@ -445,7 +446,7 @@ export function profilerText(prof, ctx) {
     L.push('■ 再生キャッシュを作るワーカー');
     if (!w.available) {
       L.push('  使っていません（画面のスレッドの空き時間に作ります）');
-      if (w.error) L.push(`  理由: ${w.error.split('\n')[0]}`);
+      if (w.error) L.push(`  理由: ${errorText(w.error)}`);
     } else {
       L.push(`  ワーカー ${w.count} 個（CPU のコア ${w.cores || '不明'}）・${w.busy ? '作っています' : '止まっています'}`);
       if (w.frames) {
@@ -461,6 +462,13 @@ export function profilerText(prof, ctx) {
   return L.join('\n');
 }
 
+/** ワーカーのエラー（スタックを含む文字）を 1 行に: 1 行目と、起きた所の関数名 */
+export function errorText(message) {
+  const s = String(message || '');
+  const names = stackNames(s);
+  return `${s.split('\n')[0]}${names.length ? `（場所: ${names.join(' ← ')}）` : ''}`;
+}
+
 /**
  * ワーカーが作り始めるまでの様子（評価のプロファイラ）: 最初の結果が届くまでの時間と、ワーカーの中の時間
  * （準備・最初のフレーム・計画・スタックがあふれてやり直した回数）。何もなければ空
@@ -473,7 +481,7 @@ export function workerStartText(w) {
   const t = w.timing;
   if (t) {
     parts.push(`ワーカーの中: 準備 ${sec(t.createMs)}・最初のフレーム ${sec(t.firstMs)}`
-      + `${t.planMs !== null ? `（うち専用の評価の計画 ${sec(t.planMs)}）` : ''}・専用の評価 ${t.plan ? '使う' : '使わない'}`
+      + `${t.planMs !== null ? `（うち専用の評価の計画 ${sec(t.planMs)}）` : ''}・専用の評価 ${t.plan ? '使う' : `使わない${t.reason ? `（${t.reason}）` : ''}`}`
       + `・スタックがあふれてやり直した回数 ${t.retries}`);
   }
   return parts.join('・');

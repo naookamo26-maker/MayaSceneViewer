@@ -26,6 +26,22 @@ export function mayOverflow(e) {
   return e instanceof RangeError || (!!e && e.name === 'InternalError');
 }
 
+/**
+ * エラーが起きた所の関数名（スタックの先頭から、重ならないものを max 個まで）。スタックがあふれた所を見分けるため
+ * （評価のプロファイラに出す）。取り出せなければ空
+ */
+export function stackNames(stack, max = 6) {
+  const names = [];
+  for (const line of String(stack || '').split('\n')) {
+    // V8: "    at name (url:1:2)" / "    at url:1:2"、Firefox・Safari: "name@url:1:2"
+    const m = /^\s*at\s+(?:new\s+)?([^\s(]+)\s+\(/.exec(line) || /^([^@\s]+)@/.exec(line);
+    const name = m ? m[1].replace(/^.*\./, '') : null;
+    if (name && !names.includes(name)) names.push(name);
+    if (names.length >= max) break;
+  }
+  return names;
+}
+
 /** スタックのあふれのエラーか（やり直す前に、ほかの RangeError と見分ける） */
 export function isStackOverflow(e) {
   return mayOverflow(e) && /call stack|stack size|recursion/i.test(String(e.message));
