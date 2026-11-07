@@ -287,12 +287,14 @@ export function cacheInfo(rig, clip) {
   };
 }
 
-/** 専用の評価の計画の状態 */
+/** 専用の評価の計画の状態（defs: 自作ノードの定義の種類の数と、計算を JavaScript の関数にした数） */
 export function planInfo(rig) {
   if (!rig) return null;
+  const defs = rig.defs ? [...rig.defs.values()] : [];
+  const d = { total: defs.length, compiled: defs.filter((x) => x && x.compiled).length };
   const p = rig.compiledPlan;
-  if (!p) return { used: false, reason: rig.compiledReason || (rig.compiledPlan === undefined ? '最初の評価のあとで作ります' : '不明') };
-  return { used: true, counts: p.counts, delegated: p.delegated };
+  if (!p) return { used: false, reason: rig.compiledReason || (rig.compiledPlan === undefined ? '最初の評価のあとで作ります' : '不明'), defs: d };
+  return { used: true, counts: p.counts, delegated: p.delegated, defs: d };
 }
 
 const pad = (s, n) => {
@@ -353,6 +355,7 @@ export function profilerText(prof, ctx) {
       L.push(`  キーで動く ${c.simple}・入力で動く ${c.driven}（計算ノード ${c.math || 0}）・任せた ${c.delegated}・コンストレイント ${c.constraints}・IK ${c.ik}`);
       for (const [why, n] of Object.entries(pi.delegated || {})) L.push(`  任せた理由: ${why}（${n} 個）`);
     }
+    if (pi.defs.total) L.push(`  自作ノードの定義（exprespy など）: ${pi.defs.total} 種類（計算を JavaScript の関数にした ${pi.defs.compiled}）`);
   }
   const ci = cacheInfo(ctx.rig, ctx.clip);
   if (ci) {

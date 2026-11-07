@@ -313,17 +313,35 @@ export function compileNodeDef(def) {
     }
   };
 
+  const interpret = (io) => {
+    const env = { io, locals: new Map(), outs: {}, steps: 0 };
+    try {
+      runBlock(def.ir || [], env);
+    } catch (e) {
+      if (e === BREAK || e === CONTINUE) fail('break・continue が for の外にあります');
+      throw e;
+    }
+    return expandOutputs(env.outs);
+  };
+  // 計算を JavaScript の関数にする（毎フレーム IR をたどるより速い）。作れなければ null（IR をたどる）
+  const generated = compileEnabled ? generateRunner(def.ir || [], top) : null;
+
   /** 出力（ベクトルは成分のプラグにも入れる） */
+  const componentsOf = new Map();                  // 出力のプラグ → 成分のプラグ（なければ null）。名前で決まるので覚える
   const expandOutputs = (outs) => {
     const out = {};
-    for (const [plug, v] of Object.entries(outs)) {
+    for (const plug in outs) {
+      const v = outs[plug];
       out[plug] = v;
-      const m = /^(.*?)([A-Za-z_]\w*)$/.exec(plug.replace(/\[\d+\]$/, ''));
-      const info = m ? infoOf.get(m[2]) : null;
-      if (info && info.components && isVec(v)) {
+      let comps = componentsOf.get(plug);
+      if (comps === undefined) {
+        const m = /^(.*?)([A-Za-z_]\w*)$/.exec(plug.replace(/\[\d+\]$/, ''));
+        const info = m ? infoOf.get(m[2]) : null;
         // 成分のプラグ: out → outx、配列の要素 out[3] → out[3].outx（Maya と同じ）
-        info.components.forEach((c, k) => { out[componentPlug(plug, c)] = v[k]; });
+        comps = info && info.components ? info.components.map((c) => componentPlug(plug, c)) : null;
+        componentsOf.set(plug, comps);
       }
+      if (comps && isVec(v)) comps.forEach((cp, k) => { out[cp] = v[k]; });
     }
     return out;
   };
@@ -334,16 +352,14 @@ export function compileNodeDef(def) {
     infoOf: (plug) => infoOf.get(plug.split('.').pop().replace(/\[\d+\]$/, '')) || null,
     /** 出力のプラグか（out・out[2]・tg[0].ot・成分の outx） */
     isOutput: (plug) => outputBases.has(plug.split(/[.[]/)[0]),
+    /** 計算を JavaScript の関数にしたか（できなければ、IR をたどって計算する） */
+    compiled: !!generated,
     run(io) {
-      const env = { io, locals: new Map(), outs: {}, steps: 0 };
-      try {
-        runBlock(def.ir || [], env);
-      } catch (e) {
-        if (e === BREAK || e === CONTINUE) fail('break・continue が for の外にあります');
-        throw e;
-      }
-      return expandOutputs(env.outs);
+      if (generated) return expandOutputs(generated(io));
+      return interpret(io);
     },
+    /** IR をたどって計算する（生成した関数と結果を比べるテスト用にも使う） */
+    interpret,
   };
 }
 
@@ -363,3 +379,243 @@ function copyValue(v) {
 
 /** 属性の情報から、角度か（ファイルの値・既定値は度） */
 export function isAngleInfo(info) { return !!(info && info.angle); }
+
+// ---------------------------------------------------------------------- 計算を JavaScript の関数にする
+// IR をたどる計算（compileNodeDef の interpret）と同じ順番で値を求め、同じ補助関数（BIN・FUNCS・num など）を使い、
+// 同じ誤り（同じ文言）を出す。違うのは、式の種類の振り分け・変数の Map・定数の添字の属性名の組み立て・
+// range の配列を、関数を作るときに済ませておくこと。扱わない形（for の外の break など）があれば作らない（null）。
+
+let compileEnabled = true;
+/** 計算を JavaScript の関数にするか（false: いつも IR をたどる。比べるテスト用） */
+export function setNodeDefCompile(on) { compileEnabled = !!on; }
+
+const UNSET = Object.freeze({ unset: true });       // 値をまだ入れていない変数
+// 数どうしなら JavaScript の演算子と同じ結果になる演算（BIN の数の場合と同じ。/ //・% は 0 の確かめがあるので BIN）
+const JS_OPS = { '+': '+', '-': '-', '*': '*', '<': '<', '<=': '<=', '>': '>', '>=': '>=', '==': '===', '!=': '!==' };
+/** 生成した関数が使う補助（IR をたどる計算と同じもの） */
+const H = {
+  fail, num, vec, truthy, copy: copyValue, B: BIN, F: FUNCS, U: UNSET,
+  local: (v, name) => (v === UNSET ? fail(`変数 ${name} に値がまだ入っていません`) : v),
+  neg: (a) => (isVec(a) ? a.map((x) => -x) : -num(a, '符号の反転')),
+  index: (base, iv) => {
+    const i = Math.trunc(num(iv, '添字'));
+    if (isMat(base)) fail('行列に添字は使えません（translation(m) などを使ってください）');
+    const arr = vec(base, '添字');
+    const k = i < 0 ? arr.length + i : i;
+    if (k < 0 || k >= arr.length) fail(`添字 ${i} が範囲外です（${arr.length} 個）`);
+    return arr[k];
+  },
+  comp: (v, k) => {
+    const arr = vec(v, '成分（.x など）');
+    if (k >= arr.length) fail(`成分 .${'xyzw'[k]} はありません（${arr.length} 個）`);
+    return arr[k];
+  },
+  fin: (name, v) => (typeof v === 'number' && !Number.isFinite(v) ? fail(`${name} の結果が数になりません（NaN・無限大）`) : v),
+  sub: (iv) => `[${Math.trunc(num(iv, '添字'))}]`,
+  // 代入先のリスト（添字より先に確かめる）
+  target: (arr0) => vec(arr0 === UNSET ? undefined : arr0, '代入先'),
+  setItem: (arr, iv, value) => {
+    const i = Math.trunc(num(iv, '添字'));
+    if (i < 0 || i >= arr.length) fail(`添字 ${i} が範囲外です`);
+    arr[i] = num(value, '要素');
+  },
+  out: (outs, name) => {
+    if (!(name in outs)) fail(`出力 ${name} に値がまだ入っていません`);
+    return outs[name];
+  },
+  // for x in range(...): 配列を作らずに数える（FUNCS.range と同じ値・同じ誤り）
+  range: (a, b, c) => {
+    let [lo, hi, st] = b === undefined ? [0, a, 1] : [a, b, c ?? 1];
+    lo = Math.trunc(lo); hi = Math.trunc(hi); st = Math.trunc(st);
+    if (!st) fail('range の刻みが 0 です');
+    const count = st > 0 ? Math.ceil((hi - lo) / st) : Math.ceil((lo - hi) / -st);
+    if (count > MAX_STEPS) fail('range が大きすぎます');
+    return [lo, hi, st];
+  },
+};
+
+class NoCodegen extends Error {}
+const giveUp = () => { throw new NoCodegen(); };
+
+/**
+ * IR → 関数 (io) => 出力 { プラグ: 値 }（成分のプラグに分ける前）。作れなければ null
+ * @param top 属性の短い名前 → 属性の情報（compileNodeDef と同じもの）
+ */
+export function generateRunner(ir, top) {
+  if (typeof Function !== 'function') return null;
+  const K = [];                                   // 定数（属性の情報など）
+  const konst = (v) => { K.push(v); return `K[${K.length - 1}]`; };
+  const locals = new Map();                       // 変数の名前 → JS の変数名
+  const localVar = (name) => {
+    if (!locals.has(name)) locals.set(name, `L${locals.size}`);
+    return locals.get(name);
+  };
+  let temps = 0;
+  const temp = () => `T${temps++}`;
+  const str = (v) => JSON.stringify(String(v));
+  const lit = (v) => {
+    if (typeof v === 'number') return Object.is(v, -0) ? '-0' : Number.isFinite(v) ? String(v) : konst(v);
+    if (typeof v === 'boolean') return String(v);
+    return konst(v);
+  };
+
+  // 属性のパス → { name: プラグの名前の式（JS）, info: 最後の属性の情報（定数）}。添字が定数なら名前も定数
+  const plug = (path) => {
+    if (!Array.isArray(path) || !path.length) giveUp();
+    const parts = [];
+    let info = null;
+    let named = false;                            // 名前を 1 つでも付けたか（次の名前の前に . を付ける）
+    path.forEach(([short, idx], k) => {
+      info = k === 0 ? top.get(short) : (info && info.children ? info.children.get(short) : undefined);
+      if (!info) giveUp();                       // 知らない属性（IR をたどる計算と同じ誤りにするため、作らない）
+      const skipParent = k === 0 && info.type === 'compound' && !info.array && path.length > 1;
+      let sub = '';
+      if (idx !== null && idx !== undefined) {
+        if (idx[0] === 'n' && typeof idx[1] === 'number') sub = { text: `[${Math.trunc(idx[1])}]` };
+        else sub = { code: `H.sub(${expr(idx)})` };
+      }
+      if (skipParent) { if (sub && sub.code) parts.push({ code: `(${sub.code}, '')` }); return; }
+      parts.push({ text: (named ? '.' : '') + short });
+      named = true;
+      if (sub) parts.push(sub);
+    });
+    // 添字の式は、IR をたどる計算と同じく左から順に求める
+    const text = parts.every((p) => p.text !== undefined);
+    const name = text ? str(parts.map((p) => p.text).join(''))
+      : parts.map((p) => (p.text !== undefined ? str(p.text) : `(${p.code})`)).join(' + ');
+    return { name, info: konst(info), constant: text };
+  };
+
+  const expr = (e) => {
+    if (!Array.isArray(e)) giveUp();
+    switch (e[0]) {
+      case 'n': return lit(e[1]);
+      case 'v': return `[${e[1].map((x) => `H.num(${expr(x)}, 'リストの要素')`).join(', ')}]`;
+      case 'l': return `H.local(${localVar(e[1])}, ${str(e[1])})`;
+      case 'a': { const p = plug(e[1]); return `io.read(${p.name}, ${p.info})`; }
+      case 'b': {
+        if (e[1] === 'and' || e[1] === 'or') {
+          const t = temp();
+          return e[1] === 'and' ? `((${t} = ${expr(e[2])}), H.truthy(${t}) ? ${expr(e[3])} : ${t})`
+            : `((${t} = ${expr(e[2])}), H.truthy(${t}) ? ${t} : ${expr(e[3])})`;
+        }
+        return binary(e[1], expr(e[2]), expr(e[3]));
+      }
+      case 'ch': {
+        // 項の多い式（数百項の足し算など）を入れ子にしないよう、一時変数に左から順に入れていく
+        const acc = temp();
+        const steps = [`(${acc} = ${expr(e[2][0])})`];
+        for (let k = 0; k < e[1].length; k++) steps.push(`(${acc} = ${binary(e[1][k], acc, expr(e[2][k + 1]))})`);
+        return `(${steps.join(', ')}, ${acc})`;
+      }
+      case 'u': return e[1] === 'not' ? `!H.truthy(${expr(e[2])})` : `H.neg(${expr(e[2])})`;
+      case 'if': return `(H.truthy(${expr(e[1])}) ? ${expr(e[2])} : ${expr(e[3])})`;
+      case 'i': return `H.index(${expr(e[1])}, ${expr(e[2])})`;
+      case 'g': return `H.comp(${expr(e[1])}, ${lit(e[2])})`;
+      case 'c': return call(e[1], e[2]);
+      default: return giveUp();
+    }
+  };
+
+  // 二項演算: 数どうしなら直接計算し、それ以外は BIN（型の確かめ・ベクトル・行列。結果は BIN と同じ）。
+  // 左・右の順に 1 回ずつ求める
+  const binary = (op, a, b) => {
+    if (!BIN[op]) giveUp();
+    const js = JS_OPS[op];
+    if (!js) return `H.B[${str(op)}](${a}, ${b})`;
+    const x = temp(), y = temp();
+    return `((${x} = ${a}), (${y} = ${b}), typeof ${x} === 'number' && typeof ${y} === 'number' ? ${x} ${js} ${y} : H.B[${str(op)}](${x}, ${y}))`;
+  };
+
+  const call = (name, args) => {
+    switch (name) {
+      case 'frame': return 'io.frame';
+      case 'time': return '(io.frame / (io.fps || 24))';
+      case 'indices': case 'count': {
+        if (!args[0] || !Array.isArray(args[0][1])) giveUp();   // 属性のパス（["p", パス]。IR をたどる計算と同じく [1] を使う）
+        const p = plug(args[0][1]);
+        return name === 'count' ? `io.indices(${p.name}).length` : `io.indices(${p.name})`;
+      }
+      case 'connected': {
+        if (!args[0] || !Array.isArray(args[0][1])) giveUp();
+        return `(io.connected(${plug(args[0][1]).name}) ? 1 : 0)`;
+      }
+      default:
+        if (!FUNCS[name]) return `H.fail(${str(`関数 ${name} はありません`)})`;
+        return `H.fin(${str(name)}, H.F[${str(name)}](${args.map(expr).join(', ')}))`;
+    }
+  };
+
+  // 代入: value は求めた値（JS の式。先に一時変数へ入れてから、代入先の添字を求める）
+  const assign = (target, value) => {
+    if (target[0] === 'l') return `${localVar(target[1])} = ${value};`;
+    const t = temp();
+    if (target[0] === 'li') {
+      const a = temp();
+      return `${t} = ${value}; ${a} = H.target(${localVar(target[1])}); H.setItem(${a}, ${expr(target[2])}, ${t});`;
+    }
+    if (target[0] !== 'o') giveUp();
+    const p = plug(target[1]);
+    return `${t} = ${value}; outs[${p.name}] = ${t};`;
+  };
+  const current = (target) => {
+    if (target[0] === 'l') return expr(target);
+    if (target[0] === 'li') return `H.index(H.local(${localVar(target[1])}, ${str(target[1])}), ${expr(target[2])})`;
+    if (target[0] !== 'o') giveUp();
+    return `H.out(outs, ${plug(target[1]).name})`;
+  };
+
+  let loops = 0;
+  const block = (stmts) => {
+    if (!Array.isArray(stmts)) giveUp();
+    return stmts.map((s) => {
+      const head = `if (++S > ${MAX_STEPS}) H.fail('計算の繰り返しが多すぎます（終わらない計算の恐れ）');\n`;
+      switch (s[0]) {
+        case 'set': return head + assign(s[1], `H.copy(${expr(s[2])})`);
+        case 'aug': {
+          return head + assign(s[2], binary(s[1], current(s[2]), expr(s[3])));
+        }
+        case 'if': return `${head}if (H.truthy(${expr(s[1])})) {\n${block(s[2])}\n} else {\n${block(s[3])}\n}`;
+        case 'for': {
+          const v = localVar(s[1]);
+          const it = s[2];
+          loops++;
+          let code;
+          if (Array.isArray(it) && it[0] === 'c' && it[1] === 'range' && it[2].length >= 1 && it[2].length <= 3) {
+            // range: 配列を作らずに数える（値・誤りは FUNCS.range と同じ）
+            const r = temp();
+            const a = it[2].map(expr);
+            const x = temp();
+            code = `${r} = H.range(${a.join(', ')});\n`
+              + `for (let ${x} = ${r}[0]; ${r}[2] > 0 ? ${x} < ${r}[1] : ${x} > ${r}[1]; ${x} += ${r}[2]) {\n${v} = ${x};\n${block(s[3])}\n}`;
+          } else {
+            const x = temp();
+            code = `for (const ${x} of H.vec(${expr(it)}, 'for の繰り返し')) {\n${v} = ${x};\n${block(s[3])}\n}`;
+          }
+          loops--;
+          return head + code;
+        }
+        case 'break': case 'continue':
+          if (!loops) giveUp();                  // for の外（IR をたどる計算と同じ誤りにするため、作らない）
+          return `${head}${s[0]};`;
+        default: return giveUp();
+      }
+    }).join('\n');
+  };
+
+  let body;
+  try {
+    body = block(ir);
+  } catch (e) {
+    return null;                                  // 扱わない形・深すぎる入れ子など（IR をたどって計算する）
+  }
+  const decl = [...locals.values()].map((v) => `${v} = H.U`);
+  for (let i = 0; i < temps; i++) decl.push(`T${i}`);
+  const src = `'use strict';\nlet S = 0;\nconst outs = {};\n${decl.length ? `let ${decl.join(', ')};\n` : ''}${body}\nreturn outs;`;
+  try {
+    const fn = new Function('io', 'H', 'K', src);   // eslint-disable-line no-new-func
+    return (io) => fn(io, H, K);
+  } catch (e) {
+    return null;                                  // 関数を作れない環境（Content-Security-Policy など）
+  }
+}

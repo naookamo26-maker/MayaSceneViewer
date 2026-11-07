@@ -204,3 +204,15 @@ test('ノードごとの表: 同じ名前のノードは、区別できるとこ
   assert.deepEqual(uniqueNames([e('x', '|a|x'), e('x', '|a|x')]), ['a|x', 'a|x']);
   assert.deepEqual(uniqueNames([e('n0', '')]), ['n0']);
 });
+
+test('専用の評価の欄に、自作ノードの定義の数と、計算を JavaScript の関数にした数を出す', async () => {
+  const { planInfo } = await import('../src/profiler.js');
+  const d = load('exprespy_sample.json');
+  const rig = makeRig(d);
+  rig.evaluate(1); rig.evaluate(2);
+  const pi = planInfo(rig);
+  assert.equal(pi.defs.total, Object.keys(d.animation.nodeDefs).length);
+  assert.equal(pi.defs.compiled, pi.defs.total);
+  const text = profilerText(new EvalProfiler(), { rig, clip: rig.clip });
+  assert.ok(text.includes(`自作ノードの定義（exprespy など）: ${pi.defs.total} 種類（計算を JavaScript の関数にした ${pi.defs.total}）`), text);
+});

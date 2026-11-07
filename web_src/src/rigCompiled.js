@@ -568,12 +568,22 @@ function mathReader(plan, constChan, pmOpm) {
     if (r.outStamp !== plan.stamp) { r.out = proto.outputsUncached.call(ad, id); r.outStamp = plan.stamp; }
     return r.out;
   };
+  // 属性名の解析（添字を除いた名前・移動回転スケールか・その成分）は名前で決まるので、名前ごとに 1 回だけ行う
+  const parsed = new Map();
+  const parse = (attr) => {
+    let p = parsed.get(attr);
+    if (!p) {
+      const base = attr.replace(/\[\d+\]$/, '');
+      const trs = TRS_RE.test(base);
+      parsed.set(attr, p = { base, trs, axis: trs && base.length === 2 ? XYZ.indexOf(base[1]) : -1 });
+    }
+    return p;
+  };
+  const comp = (arr, k) => (k >= 0 ? arr[k] : arr);
   ad.dagPlug = function dagPlug(ni, attr) {
-    const base = attr.replace(/\[\d+\]$/, '');
+    const { base, trs, axis } = parse(attr);
     const s = plan.steps.get(ni);
-    if (TRS_RE.test(base)) {
-      const axis = base.length === 2 ? XYZ.indexOf(base[1]) : -1;
-      const comp = (arr, k) => (k >= 0 ? arr[k] : arr);
+    if (trs) {
       if (!rig.rest(ni)) return axis >= 0 ? (base[0] === 's' ? 1 : 0) : (base[0] === 's' ? [1, 1, 1] : [0, 0, 0]);
       let c;
       if (!s) c = constChan.get(ni);

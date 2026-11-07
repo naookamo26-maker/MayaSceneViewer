@@ -40,7 +40,7 @@ export class BakeWorkers {
   stats() {
     const s = this.stat;
     return {
-      available: this.available, count: this.count, busy: !!(this.job || this.timer),
+      available: this.available, count: this.count, busy: !!this.job,
       cores: (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || null,
       frames: s.frames, perFrame: s.frames ? s.workerMs / s.frames : 0,
       throughput: s.wallMs > 0 ? (s.wallFrames * 1000) / s.wallMs : 0,
