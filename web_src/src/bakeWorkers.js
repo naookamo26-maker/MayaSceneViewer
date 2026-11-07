@@ -34,13 +34,13 @@ export class BakeWorkers {
   }
 
   /**
-   * 評価のプロファイラに出す統計: { available, count, cores, frames（作ったフレーム）, perFrame（ワーカーの中の 1 フレームの
+   * 評価のプロファイラに出す統計: { available, count, busy（いま作っている）, cores, frames（読み込んでから作ったフレーム）, perFrame（ワーカーの中の 1 フレームの
    * 評価の時間）, throughput（全体で 1 秒に作れたフレーム数。作り始めてから取り込むまで） }
    */
   stats() {
     const s = this.stat;
     return {
-      available: this.available, count: this.count,
+      available: this.available, count: this.count, busy: !!(this.job || this.timer),
       cores: (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || null,
       frames: s.frames, perFrame: s.frames ? s.workerMs / s.frames : 0,
       throughput: s.wallMs > 0 ? (s.wallFrames * 1000) / s.wallMs : 0,

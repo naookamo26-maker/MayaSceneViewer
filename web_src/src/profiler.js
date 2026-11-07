@@ -368,9 +368,9 @@ export function profilerText(prof, ctx) {
     L.push('■ 再生キャッシュを作るワーカー');
     if (!w.available) L.push('  使っていません（画面のスレッドの空き時間に作ります）');
     else {
-      L.push(`  ワーカー ${w.count} 個（CPU のコア ${w.cores || '不明'}）`);
+      L.push(`  ワーカー ${w.count} 個（CPU のコア ${w.cores || '不明'}）・${w.busy ? '作っています' : '止まっています'}`);
       if (w.frames) {
-        L.push(`  作ったフレーム ${w.frames}・1 フレームの評価 ${ms(w.perFrame)}（ワーカーの中）`);
+        L.push(`  読み込んでから作ったフレーム ${w.frames}・1 フレームの評価 ${ms(w.perFrame)}（ワーカーの中）`);
         if (w.throughput) L.push(`  全体の速さ: 1 フレームあたり ${ms(1000 / w.throughput)}（${w.throughput.toFixed(1)} フレーム/秒）`);
       } else L.push('  まだ作っていません');
     }

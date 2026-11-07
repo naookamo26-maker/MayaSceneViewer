@@ -164,7 +164,7 @@ export class ProfilerPanel {
     if (this.el.hidden) return;
     const prof = this.app.profiler;
     if (this.app.rig) this.app.rig.bypassCache = prof.recording && $('prof-nocache').checked;
-    if (!force && prof.version === this.drawnVersion && !prof.recording) return;
+    // 再生キャッシュとワーカーの欄は、記録していなくても変わる（空き時間・ワーカーで作る）ので、毎回描き直す
     if (!force && prof.version === this.drawnVersion) { this.renderCache(); return; }
     this.drawnVersion = prof.version;
     this.renderSummary();
@@ -324,9 +324,9 @@ export class ProfilerPanel {
     }
     if (!w.available) items.push(['ワーカー', '使っていません（画面のスレッドの空き時間に作ります）']);
     else {
-      let t = `${w.count} 個（CPU のコア ${w.cores || '不明'}）`;
+      let t = `${w.count} 個（CPU のコア ${w.cores || '不明'}）・${w.busy ? '作っています' : '止まっています'}`;
       if (w.frames) {
-        t += `・作ったフレーム ${num(w.frames)}・1 フレームの評価 ${msText(w.perFrame)}（ワーカーの中）`;
+        t += `・読み込んでから作ったフレーム ${num(w.frames)}・1 フレームの評価 ${msText(w.perFrame)}（ワーカーの中）`;
         if (w.throughput) t += `・全体で 1 フレーム ${msText(1000 / w.throughput)}`;
       }
       items.push(['ワーカー', t]);
