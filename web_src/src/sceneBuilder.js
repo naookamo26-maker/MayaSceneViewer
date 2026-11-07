@@ -90,7 +90,10 @@ export function buildScene(data, options = {}) {
     return entry;
   });
   if (options.shareSkeletons !== false) shareSkeletons(meshes);
-  if (options.frustumCulling !== false) for (const e of meshes) setupFrustumCulling(e);
+  if (options.frustumCulling !== false) {
+    for (const e of meshes) setupFrustumCulling(e);
+    buildCullGroups(meshes);
+  }
   root.updateMatrixWorld(true);
   return { root, nodeObjects, meshes, jointIndices, childrenOf, influenceUsage, materials, defaultMaterial, allMaterials };
 }
@@ -152,8 +155,7 @@ export function setupFrustumCulling(e) {
     if (!o) continue;
     o.frustumCulled = true;
     o.intersectsFrustum = function intersectsFrustum(frustum) {
-      const c = e.skinCull;
-      if (!c) return true;                         // 範囲を保証できない
+      if (!e.skinCull || !e.cullGroup) return true;   // 範囲を保証できない
       return frustum.intersectsSphere(skinnedWorldSphere(e, this, _sph));
     };
   }
@@ -206,32 +208,83 @@ export function buildSkinCull(e) {
   return { bones: Int32Array.from(bones), spheres: Float64Array.from(data) };
 }
 
-let cullStamp = 0;
-/** 描画のたびに呼ぶ（骨ごとの拡大率を、1 回の描画の中では 1 回だけ計算するための目印を進める） */
-export function nextCullFrame() { cullStamp++; }
-
-/** 骨のワールド行列の拡大率の上限（1 回の描画の中では骨ごとに覚える） */
-function boneScale(bone) {
-  const u = bone.userData;
-  if (u.cullStamp !== cullStamp) { u.cullStamp = cullStamp; u.cullScale = scaleBound(bone.matrixWorld); }
-  return u.cullScale;
+/**
+ * 視錐台カリングのまとまり: 同じジョイントを使うスキン付きメッシュ（ほぼキャラクター単位）。骨ごとの球（骨のローカル
+ * 空間）を、まとまりのメッシュすべての分を包むように 1 つにしておき、判定のたびの計算を「メッシュの数 × 骨の数」から
+ * 「骨の数」に減らす（メッシュごとに骨の数だけ計算すると、骨の多いシーンではカリングで減る描画より重くなる）。
+ * その代わり、スキン付きメッシュはまとまりごと画面の外のときに描かない。e.cullGroup に入れる
+ */
+export function buildCullGroups(meshes) {
+  const list = meshes.filter((e) => e.skinned && e.skinCull);
+  for (const e of meshes) e.cullGroup = null;
+  // 同じ骨（ジョイントのオブジェクト）を使うメッシュをつなぐ
+  const parent = list.map((_, i) => i);
+  const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+  const owner = new Map();
+  list.forEach((e, i) => {
+    for (const b of e.skinCull.bones) {
+      const bone = e.skeleton.bones[b];
+      const j = owner.get(bone);
+      if (j === undefined) owner.set(bone, i);
+      else { const a = find(i), c = find(j); if (a !== c) parent[a] = c; }
+    }
+  });
+  const groups = new Map();
+  list.forEach((e, i) => {
+    const r = find(i);
+    if (!groups.has(r)) groups.set(r, { entries: [], spheres: new Map() });
+    const g = groups.get(r);
+    g.entries.push(e);
+    const c = e.skinCull;
+    for (let k = 0; k < c.bones.length; k++) {
+      const bone = e.skeleton.bones[c.bones[k]];
+      if (!g.spheres.has(bone)) g.spheres.set(bone, []);
+      g.spheres.get(bone).push(c.spheres[k * 4], c.spheres[k * 4 + 1], c.spheres[k * 4 + 2], c.spheres[k * 4 + 3]);
+    }
+  });
+  for (const g of groups.values()) {
+    const bones = [...g.spheres.keys()];
+    const data = new Float64Array(bones.length * 4);
+    bones.forEach((bone, k) => {
+      const sp = g.spheres.get(bone);
+      // 球を包む球（箱の中心から、いちばん遠い球の端まで）
+      let minx = Infinity, miny = Infinity, minz = Infinity, maxx = -Infinity, maxy = -Infinity, maxz = -Infinity;
+      for (let i = 0; i < sp.length; i += 4) {
+        const r = sp[i + 3];
+        minx = Math.min(minx, sp[i] - r); miny = Math.min(miny, sp[i + 1] - r); minz = Math.min(minz, sp[i + 2] - r);
+        maxx = Math.max(maxx, sp[i] + r); maxy = Math.max(maxy, sp[i + 1] + r); maxz = Math.max(maxz, sp[i + 2] + r);
+      }
+      const cx = (minx + maxx) / 2, cy = (miny + maxy) / 2, cz = (minz + maxz) / 2;
+      let rad = 0;
+      for (let i = 0; i < sp.length; i += 4) {
+        const dx = sp[i] - cx, dy = sp[i + 1] - cy, dz = sp[i + 2] - cz;
+        rad = Math.max(rad, Math.sqrt(dx * dx + dy * dy + dz * dz) + sp[i + 3]);
+      }
+      data[k * 4] = cx; data[k * 4 + 1] = cy; data[k * 4 + 2] = cz; data[k * 4 + 3] = rad * (1 + 1e-9) + 1e-12;
+    });
+    const group = { bones, spheres: data, stamp: -1, cx: 0, cy: 0, cz: 0, radius: 0 };
+    for (const e of g.entries) e.cullGroup = group;
+  }
+  return groups.size;
 }
 
-/** スキン付きメッシュ o のいまの範囲（ワールド空間の球）。e.skinCull を使う */
-export function skinnedWorldSphere(e, o, target = new Sphere()) {
-  const c = e.skinCull, bones = e.skeleton.bones, s = c.spheres, nb = c.bones.length;
-  if (!c.work || c.work.length < nb * 4) c.work = new Float64Array(nb * 4);
-  const w = c.work;
+/** まとまりのいまの範囲（スキンの計算の空間の球）。1 回の描画の中では 1 回だけ計算する */
+function groupSphere(group) {
+  if (group.stamp === cullStamp) return group;
+  group.stamp = cullStamp;
+  const s = group.spheres, nb = group.bones.length;
+  if (!group.work) group.work = new Float64Array(nb * 4);
+  const w = group.work;
   let minx = Infinity, miny = Infinity, minz = Infinity, maxx = -Infinity, maxy = -Infinity, maxz = -Infinity;
   for (let i = 0; i < nb; i++) {
-    const bone = bones[c.bones[i]];
+    const bone = group.bones[i];
     const m = bone.matrixWorld.elements;
     const x = s[i * 4], y = s[i * 4 + 1], z = s[i * 4 + 2];
     // 骨のワールド行列（アフィン）で中心を移す
     const px = m[0] * x + m[4] * y + m[8] * z + m[12];
     const py = m[1] * x + m[5] * y + m[9] * z + m[13];
     const pz = m[2] * x + m[6] * y + m[10] * z + m[14];
-    const r = s[i * 4 + 3] * boneScale(bone);
+    const r = s[i * 4 + 3] * scaleBound(bone.matrixWorld);
     w[i * 4] = px; w[i * 4 + 1] = py; w[i * 4 + 2] = pz; w[i * 4 + 3] = r;
     if (px - r < minx) minx = px - r; if (py - r < miny) miny = py - r; if (pz - r < minz) minz = pz - r;
     if (px + r > maxx) maxx = px + r; if (py + r > maxy) maxy = py + r; if (pz + r > maxz) maxz = pz + r;
@@ -245,10 +298,21 @@ export function skinnedWorldSphere(e, o, target = new Sphere()) {
   }
   // ウェイトの合計の許容差（1e-4）の分、原点からの距離に比例する余裕を足す
   radius += 2e-4 * (Math.sqrt(cx * cx + cy * cy + cz * cz) + radius);
-  // 骨の空間（スキンの計算の空間）→ メッシュの空間（bindMatrixInverse）→ ワールド（matrixWorld）
+  group.cx = cx; group.cy = cy; group.cz = cz; group.radius = radius;
+  return group;
+}
+
+let cullStamp = 0;
+/** 描画のたびに呼ぶ（まとまりの範囲を、1 回の描画の中では 1 回だけ計算するための目印を進める） */
+export function nextCullFrame() { cullStamp++; }
+
+/** スキン付きメッシュ o のいまの範囲（ワールド空間の球）。まとまり（e.cullGroup）の範囲を、このメッシュの空間に移す */
+export function skinnedWorldSphere(e, o, target = new Sphere()) {
+  const g = groupSphere(e.cullGroup);
+  // スキンの計算の空間 → メッシュの空間（bindMatrixInverse）→ ワールド（matrixWorld）
   _w.multiplyMatrices(worldMatrixOf(o), _m4.copy(o.bindMatrixInverse));
-  target.center.set(cx, cy, cz).applyMatrix4(_w);
-  target.radius = radius * scaleBound(_w) * (1 + 1e-6);
+  target.center.set(g.cx, g.cy, g.cz).applyMatrix4(_w);
+  target.radius = g.radius * scaleBound(_w) * (1 + 1e-6);
   return target;
 }
 
@@ -408,6 +472,7 @@ export function applySkinNormalization(built, mode) {
     if (e.skinned && 'skinCull' in e) e.skinCull = buildSkinCull(e);   // 視錐台カリングの範囲を作り直す
     changed++;
   }
+  if (changed && built.meshes.some((e) => 'cullGroup' in e)) buildCullGroups(built.meshes);
   return changed;
 }
 

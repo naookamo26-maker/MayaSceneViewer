@@ -706,7 +706,7 @@ test('同じバインド行列のスキン付きメッシュは Skeleton を共�
 });
 
 // ---------------------------------------------------------------------- 視錐台カリング（setupFrustumCulling）
-import { buildSkinCull, nextCullFrame, skinnedWorldSphere } from '../src/sceneBuilder.js';
+import { buildCullGroups, buildSkinCull, nextCullFrame, skinnedWorldSphere } from '../src/sceneBuilder.js';
 
 test('スキン付きメッシュのカリングの範囲は、ジョイントをどう動かしても変形した頂点をすべて含む', () => {
   const raw = readFileSync(path.join(samples, 'shared_skin_sample.json'), 'utf8');
@@ -727,7 +727,7 @@ test('スキン付きメッシュのカリングの範囲は、ジョイント�
       built.root.updateMatrixWorld(true);
       nextCullFrame();                            // 描画のたびに進める目印（骨ごとの拡大率を計算し直す）
       for (const e of built.meshes) {
-        assert.ok(e.skinCull, `${e.name}: 範囲を作る`);
+        assert.ok(e.skinCull && e.cullGroup, `${e.name}: 範囲を作る`);
         const sph = skinnedWorldSphere(e, e.skinned);
         for (let v = 0; v < e.vertexCount; v++) {
           const p = vertexWorldPosition(e, v, true, new Vector3());
@@ -749,7 +749,9 @@ test('ウェイトの合計が 1 でない（正規化しない）スキン付�
   const i = w.findIndex((x) => x > 0);
   w[i] *= 0.5;
   e.skinCull = buildSkinCull(e);
+  buildCullGroups(built.meshes);
   assert.equal(e.skinCull, null);
+  assert.equal(e.cullGroup, null);
   assert.equal(e.skinned.intersectsFrustum({ intersectsSphere: () => false }), true, '範囲がなければ、いつも描く');
   assert.equal(built.meshes[1].skinned.frustumCulled, true);
   assert.equal(built.meshes[1].staticMesh.frustumCulled, true);
@@ -784,4 +786,33 @@ test('表示用のオブジェクト: 非表示のあいだはワールド行列
   parent.add(off);
   parent.updateMatrixWorld(true);
   assert.deepEqual(off.matrixWorld.elements.slice(12, 15), [7, 2, 13]);
+});
+
+test('カリングのまとまり: 同じジョイントを使うメッシュは 1 つのまとまりになり、骨ごとの計算は 1 回の描画で 1 回', () => {
+  const d = JSON.parse(readFileSync(path.join(samples, 'shared_skin_sample.json'), 'utf8'));
+  const built = buildScene(d);
+  const g = (n) => built.meshes.find((e) => e.name === n).cullGroup;
+  assert.ok(g('m0Shape') && g('m0Shape') === g('m1Shape'), '鎖 A を使う m0・m1 は同じまとまり');
+  assert.equal(g('m0Shape'), g('m3Shape'), 'm3（a0〜a4。バインド行列は違うが同じジョイント）も同じまとまり');
+  assert.notEqual(g('m0Shape'), g('m2Shape'), '鎖 B だけを使う m2 は別のまとまり');
+  // まとまりの骨の数 = 使う骨の数（重なりを 1 回に）
+  assert.equal(g('m0Shape').bones.length, 15);
+  assert.equal(g('m2Shape').bones.length, 10);
+});
+
+test('カリングのまとまり: 骨ごとのまとめた球は、まとまりの各メッシュのその骨の球をすべて包む', () => {
+  const d = JSON.parse(readFileSync(path.join(samples, 'shared_skin_sample.json'), 'utf8'));
+  const built = buildScene(d);
+  let checked = 0;
+  for (const e of built.meshes) {
+    const g = e.cullGroup, c = e.skinCull;
+    for (let k = 0; k < c.bones.length; k++) {
+      const i = g.bones.indexOf(e.skeleton.bones[c.bones[k]]);
+      assert.ok(i >= 0);
+      const d2 = Math.hypot(c.spheres[k * 4] - g.spheres[i * 4], c.spheres[k * 4 + 1] - g.spheres[i * 4 + 1], c.spheres[k * 4 + 2] - g.spheres[i * 4 + 2]);
+      assert.ok(d2 + c.spheres[k * 4 + 3] <= g.spheres[i * 4 + 3], `${e.name} 骨 ${k}`);
+      checked++;
+    }
+  }
+  assert.ok(checked >= 30);
 });
