@@ -38,6 +38,7 @@ import { BakeWorkers } from './bakeWorkers.js';
 import { bakeFrames, createBaker } from './rigBakeCore.js';
 import { EvalProfiler } from './profiler.js';
 import { ProfilerPanel } from './profilerPanel.js';
+import { BATCHED_LAYER, MeshBatches } from './meshBatches.js';
 
 // ビューアのバージョン（ma_viewer/version.py。ビルド時に build.mjs が埋め込む）
 // eslint-disable-next-line no-undef
@@ -234,6 +235,8 @@ class ViewerApp {
     this.scene.add(this.marker);
 
     this.raycaster = new Raycaster();
+    this.raycaster.layers.enable(BATCHED_LAYER);          // まとめて描くメッシュの元のオブジェクトも選べるように
+    this.batches = null;                                  // スキンのないメッシュを材質ごとにまとめて描く（meshBatches.js）
     const vp = document.getElementById('viewport');
     new ResizeObserver(() => this.resize()).observe(vp);
     this.resize();
@@ -268,6 +271,13 @@ class ViewerApp {
     nextCullFrame();                        // スキン付きメッシュの視錐台カリングで、骨ごとの値を計算し直す
     if (fresh) this.scene.matrixAutoUpdate = false;
     try {
+      if (this.batches) {
+        // まとめて描くメッシュに、元のメッシュの表示・ワールド行列・材質を写す。three.js は描画の中で行列を計算するので、
+        // 先に計算してから写し、描画の中では計算し直さない（計算は 1 回のまま）
+        this.scene.updateMatrixWorld();
+        this.batches.sync();
+        this.scene.matrixWorldAutoUpdate = false;
+      }
       if (this.profiler.recording) {
         const t = performance.now();
         this.renderer.render(this.scene, this.activeCamera());
@@ -275,6 +285,7 @@ class ViewerApp {
       } else this.renderer.render(this.scene, this.activeCamera());
     } finally {
       this.scene.matrixAutoUpdate = true;
+      this.scene.matrixWorldAutoUpdate = true;
     }
   }
 
@@ -649,6 +660,9 @@ class ViewerApp {
       const built = buildScene(data);    // ウェイトは常に正規化する
       const buildMs = performance.now() - tb;
       this.scene.add(built.root);
+      this.batches = new MeshBatches(built);         // スキンのないメッシュを材質ごとにまとめて描く（ドローコールを減らす）
+      this.scene.add(this.batches.group);
+      this.updateBatching();
       this.data = data;
       this.built = built;
       // 画面の準備の内訳（ログに出す）
@@ -789,6 +803,7 @@ class ViewerApp {
     this.cameraProps = new Map();
     this.textureToken = (this.textureToken || 0) + 1;   // 読み込み中のテクスチャを無効にする
     if (this.maps) this.maps.reset(null);
+    if (this.batches) { this.batches.dispose(); this.batches = null; }
     if (this.built) disposeScene(this.built);
     this.built = null;
     this.data = null;
@@ -979,9 +994,20 @@ class ViewerApp {
     }
   }
 
+  /**
+   * スキンのないメッシュを材質ごとにまとめて描くか（meshBatches.js）。ウェイトの表示は頂点カラーを書き換えるので、
+   * 元のメッシュで描く。meshBatching: 開発用の切り替え（window.mayaViewer.setMeshBatching）
+   */
+  updateBatching() {
+    if (!this.batches) return;
+    this.batches.setEnabled(this.meshBatching !== false && this.settings.weightMode === 'off');
+    this.requestRender();
+  }
+
   applyWeights() {
     const mode = this.settings.weightMode;
     const on = mode !== 'off';
+    this.updateBatching();
     for (const e of this.built.meshes) {
       const wireColors = on && this.settings.shading === 'none' && !isTemplated(e.data);   // テンプレートは灰色のまま
       if (e.wireMaterial.vertexColors !== wireColors) { e.wireMaterial.vertexColors = wireColors; e.wireMaterial.needsUpdate = true; }
@@ -3243,6 +3269,13 @@ window.mayaViewer = {
   version: VERSION,
   /** 評価のプロファイラを開く（Qt の［ウインドウ］→［評価のプロファイラ］） */
   showProfiler() { app.showProfiler(); return true; },
+  /** 開発用: スキンのないメッシュを材質ごとにまとめて描くか（比べるとき） */
+  setMeshBatching(on) {
+    app.meshBatching = !!on;
+    app.updateBatching();
+    app.render();                                         // すぐ描いて、ドローコールの数を返す
+    return { ...(app.batches ? app.batches.stats() : {}), calls: app.renderer ? app.renderer.info.render.calls : null };
+  },
   loadScene(data) {
     try {
       const t = performance.now();
