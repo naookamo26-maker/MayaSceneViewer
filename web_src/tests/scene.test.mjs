@@ -704,3 +704,84 @@ test('同じバインド行列のスキン付きメッシュは Skeleton を共�
     assert.ok(near(positions(b), positions(a)), `正規化 ${mode}`);
   }
 });
+
+// ---------------------------------------------------------------------- 視錐台カリング（setupFrustumCulling）
+import { buildSkinCull, nextCullFrame, skinnedWorldSphere } from '../src/sceneBuilder.js';
+
+test('スキン付きメッシュのカリングの範囲は、ジョイントをどう動かしても変形した頂点をすべて含む', () => {
+  const raw = readFileSync(path.join(samples, 'shared_skin_sample.json'), 'utf8');
+  for (const share of [true, false]) {
+    const d = JSON.parse(raw);
+    const built = buildScene(d, { shareSkeletons: share });
+    let checked = 0;
+    for (let trial = 0; trial < 6; trial++) {
+      // 回転・移動・不均一なスケール（親子でせん断が生まれる）でジョイントを動かす
+      d.nodes.forEach((n, i) => {
+        if (n.type !== 'joint') return;
+        const o = built.nodeObjects[i];
+        o.matrix.copy(o.userData.baseMatrix).multiply(new Matrix4().compose(
+          new Vector3(0.1 * trial, 0, 0.05 * (i % 4)),
+          new Quaternion().setFromEuler(new Euler(0.3 * trial + i * 0.1, 0.2 * (i % 3), -0.15 * trial)),
+          new Vector3(1 + 0.3 * ((i + trial) % 3), 1, 1 + 0.2 * (trial % 2))));
+      });
+      built.root.updateMatrixWorld(true);
+      nextCullFrame();                            // 描画のたびに進める目印（骨ごとの拡大率を計算し直す）
+      for (const e of built.meshes) {
+        assert.ok(e.skinCull, `${e.name}: 範囲を作る`);
+        const sph = skinnedWorldSphere(e, e.skinned);
+        for (let v = 0; v < e.vertexCount; v++) {
+          const p = vertexWorldPosition(e, v, true, new Vector3());
+          assert.ok(p.distanceTo(sph.center) <= sph.radius, `${e.name} 頂点 ${v}: ${p.distanceTo(sph.center)} > ${sph.radius}`);
+          checked++;
+        }
+      }
+    }
+    assert.ok(checked > 1000);
+  }
+});
+
+test('ウェイトの合計が 1 でない（正規化しない）スキン付きメッシュは、カリングしない', () => {
+  const d = JSON.parse(readFileSync(path.join(samples, 'shared_skin_sample.json'), 'utf8'));
+  const built = buildScene(d);
+  const e = built.meshes[0];
+  // 1 頂点のウェイトを半分にする（表示用の属性）→ 範囲を保証できない
+  const w = e.geometry.attributes.skinWeight.array;
+  const i = w.findIndex((x) => x > 0);
+  w[i] *= 0.5;
+  e.skinCull = buildSkinCull(e);
+  assert.equal(e.skinCull, null);
+  assert.equal(e.skinned.intersectsFrustum({ intersectsSphere: () => false }), true, '範囲がなければ、いつも描く');
+  assert.equal(built.meshes[1].skinned.frustumCulled, true);
+  assert.equal(built.meshes[1].staticMesh.frustumCulled, true);
+});
+
+import { installLeafUpdate, worldMatrixOf as leafWorld } from '../src/sceneBuilder.js';
+import { Object3D } from 'three';
+
+test('表示用のオブジェクト: 非表示のあいだはワールド行列を計算せず、表示に切り替えるか読むときに計算する', () => {
+  const parent = new Object3D();
+  parent.matrixAutoUpdate = false;
+  const leaf = installLeafUpdate(new Object3D());
+  leaf.matrixAutoUpdate = false;
+  parent.add(leaf);
+  const move = (x) => { parent.matrix.makeTranslation(x, 2, 3); parent.updateMatrixWorld(true); };
+  move(1);
+  assert.deepEqual(leaf.matrixWorld.elements, parent.matrixWorld.elements, '単位行列の子は親と同じ');
+  leaf.visible = false;
+  move(5);
+  assert.equal(leaf.matrixWorldNeedsUpdate, true, '非表示のあいだは印だけ付ける');
+  assert.equal(leaf.matrixWorld.elements[12], 1, '計算していない');
+  assert.equal(leafWorld(leaf).elements[12], 1, '非表示のまま読むと、まだ計算しない（読む前に表示を確かめる側の責任）');
+  leaf.visible = true;
+  assert.equal(leafWorld(leaf).elements[12], 5, '表示にして読むと計算する');
+  leaf.visible = false; move(7); leaf.visible = true;
+  parent.updateMatrixWorld(false);                 // 描画の前の、強制しない計算でも直る
+  assert.equal(leaf.matrixWorld.elements[12], 7);
+  // 単位行列でない子は掛け算する
+  const off = installLeafUpdate(new Object3D());
+  off.matrixAutoUpdate = false;
+  off.matrix.makeTranslation(0, 0, 10);
+  parent.add(off);
+  parent.updateMatrixWorld(true);
+  assert.deepEqual(off.matrixWorld.elements.slice(12, 15), [7, 2, 13]);
+});

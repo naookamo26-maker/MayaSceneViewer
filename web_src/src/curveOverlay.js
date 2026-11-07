@@ -4,6 +4,7 @@
 import { BufferGeometry, Color, Float32BufferAttribute, Line, LineBasicMaterial, Vector3 } from 'three';
 import { parseNurbsCurve, pointAt, domain, withCvs } from './curve.js';
 import { TEMPLATE_COLOR, isTemplated } from './displayType.js';
+import { installLeafUpdate, worldMatrixOf } from './sceneBuilder.js';
 
 export const CURVE_COLOR = new Color(0xd3d9e0);          // 色の指定がないカーブ（Maya の既定の濃紺は暗い背景で見えにくく、ジョイントの水色とも分ける）
 const SELECT_COLOR = new Color(0xf2a93b);                // 選択（複数のときはリード）
@@ -74,6 +75,7 @@ export class CurveOverlay {
       line.name = c.name;
       line.userData = { curveIndex: ci, nodeIndex: c.transform };
       line.matrixAutoUpdate = false;
+      installLeafUpdate(line);           // 非表示のあいだはワールド行列を計算しない（カーブは数千本ある）
       parent.add(line);
       const item = { entry: c, line, base: curve, color, node: c.transform, selfVisible: c.visibleSelf ?? c.visible !== false };
       this.items[ci] = item;
@@ -152,7 +154,7 @@ export class CurveOverlay {
       if (!it || !it.line.visible || (nodes && !nodes.has(it.node))) continue;
       const pos = it.line.geometry.getAttribute('position');
       const step = Math.max(1, Math.floor(pos.count / 16));
-      for (let k = 0; k < pos.count; k += step) box.expandByPoint(_v.fromBufferAttribute(pos, k).applyMatrix4(it.line.matrixWorld));
+      for (let k = 0; k < pos.count; k += step) box.expandByPoint(_v.fromBufferAttribute(pos, k).applyMatrix4(worldMatrixOf(it.line)));
     }
     return box;
   }
