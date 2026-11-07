@@ -17,6 +17,7 @@ import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { clampLimits, composeLocalMatrix, decomposeMaya, evaluateCurve, mayaEuler } from './animation.js';
 import { solveIKCore } from './rig.js';
 import { mathKind } from './mathNodes.js';
+import { mayOverflow, newDeepState, runDeep } from './deepEval.js';
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -95,11 +96,20 @@ function build(rig, deps, useMath) {
     }
     return { why: null, reads: [...out.values()] };
   };
+  // 上流が長い鎖でスタックがあふれたら、いちばん深い所を先にたどってやり直す（deepEval.js。walkSource を呼ぶ所）
+  const deepWalk = newDeepState();
   const remember = (key, compute) => {
     const hit = walked.get(key);
     if (hit) return hit;
     walked.set(key, NO_READS);
-    const r = compute();
+    let r;
+    try {
+      r = compute();
+    } catch (e) {
+      walked.delete(key);                                // たどっている途中の印を残さない（やり直しで循環に見えないように）
+      if (deepWalk.depth && deepWalk.at === null && mayOverflow(e)) deepWalk.at = () => remember(key, compute);
+      throw e;
+    }
     walked.set(key, r);
     return r;
   };
@@ -218,7 +228,7 @@ function build(rig, deps, useMath) {
       const g = rig.byId.get(src.node);
       if (g && useMath && !CON_TYPES[g.type]) {
         // 計算ノード・DAG ノードからの接続: 上流をたどって、扱える種類か・読む DAG ノードを調べる
-        const w = walkSource(src);
+        const w = runDeep(deepWalk, () => walkSource(src));
         if (w.why) return w.why;
         inputs.push({ base, axis, src });
         for (const r of w.reads) rawReads.push(r);
@@ -557,7 +567,13 @@ function mathReader(plan, constChan, pmOpm) {
     if (r.stamp !== plan.stamp) { r.fm.clear(); r.stamp = plan.stamp; }
     let v = r.fm.get(attr);
     if (v !== undefined || r.fm.has(attr)) return v;
-    v = proto.plugUncached.call(ad, id, attr);
+    try {
+      v = proto.plugUncached.call(ad, id, attr);
+    } catch (e) {
+      const ds = ad.deepState;                         // ad.outputs と同じ
+      if (ds.depth && ds.at === null && mayOverflow(e)) ds.at = () => ad.plug(id, attr);
+      throw e;
+    }
     r.fm.set(attr, v);
     return v;
   };
@@ -565,7 +581,17 @@ function mathReader(plan, constChan, pmOpm) {
     const ko = rig.keep.out.get(id);
     if (ko !== undefined || rig.keep.out.has(id)) return ko;
     const r = recOf(id);
-    if (r.outStamp !== plan.stamp) { r.out = proto.outputsUncached.call(ad, id); r.outStamp = plan.stamp; }
+    if (r.outStamp !== plan.stamp) {
+      try {
+        r.out = proto.outputsUncached.call(ad, id);
+      } catch (e) {
+        // スタックがあふれたら、この値をあとで浅い所から求め直せるようにする（rig.js の memo と同じ。deep）
+        const ds = ad.deepState;
+        if (ds.depth && ds.at === null && mayOverflow(e)) ds.at = () => ad.outputs(id);
+        throw e;
+      }
+      r.outStamp = plan.stamp;
+    }
     return r.out;
   };
   // 属性名の解析（添字を除いた名前・移動回転スケールか・その成分）は名前で決まるので、名前ごとに 1 回だけ行う
@@ -730,7 +756,7 @@ function channelValues(plan, s, f, cur) {
       v = evaluateCurve(x.curve, f);
       v = x.curve.type === 'TA' ? v * D2R : v;
     } else {
-      if (x.src) v = plan.ad.source(x.src);
+      if (x.src) v = plan.ad.deep(() => plan.ad.source(x.src));      // 長い鎖でもスタックがあふれないように（deep）
       else {
         const c = x.con;
         if (c.stamp !== plan.stamp) evalConstraint(plan, c, f);
@@ -846,7 +872,7 @@ function chanTObj(plan, ni, f) {
     if (x.base !== 't') continue;
     let v;
     if (x.curve) { v = evaluateCurve(x.curve, f); v = x.curve.type === 'TA' ? v * D2R : v; }
-    else if (x.src) v = plan.ad.source(x.src);
+    else if (x.src) v = plan.ad.deep(() => plan.ad.source(x.src));
     else { if (x.con.stamp !== plan.stamp) evalConstraint(plan, x.con, f); v = x.con.out[x.attr]; }
     if (v === undefined) continue;
     if (!out.t) out.t = [0, 0, 0];
@@ -959,7 +985,7 @@ export function runPlan(plan, f, target) {
     if (s.kind === STATIC) {
       s.world.multiplyMatrices(parentWorld(plan, ni), rig.staticLocal(ni));
     } else if (s.kind === DELEGATED) {
-      s.local = rig.localFile(ni);                  // RigEvaluator が計算する（専用に計算した値はキャッシュから読む）
+      s.local = rig.deep(() => rig.localFile(ni));  // RigEvaluator が計算する（専用に計算した値はキャッシュから読む）
       s.world.multiplyMatrices(parentWorld(plan, ni), s.local);
     } else {
       evalChannels(plan, s, f);
