@@ -10,7 +10,7 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { commonLocks, installGizmoLocks } from './gizmoLocks.js';
 import { PoseState, fixChannels, hasFixed, identityPose, isIdentityPose, limitPose, nodeChannels, poseFromTransform, poseKey, poseMatrix, poseQuaternion, propagatePoseDelta } from './pose.js';
 import {
-  applyPoseSource, hasBindPose, poseBaseMatrix, BASE_COLOR, buildScene, characterRadius, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
+  applyPoseSource, hasBindPose, poseBaseMatrix, worldMatrixOf as leafWorldMatrix, nextCullFrame, BASE_COLOR, buildScene, characterRadius, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
   vertexWorldPosition, writeVertexColors,
 } from './sceneBuilder.js';
 import { base64ToArrayBuffer } from './textures.js';
@@ -261,6 +261,7 @@ class ViewerApp {
     // ハンドルなどは、それぞれの matrixAutoUpdate で計算される）。それ以外のときは、これまでどおり強制する
     const fresh = this.worldFresh;
     this.worldFresh = false;
+    nextCullFrame();                        // スキン付きメッシュの視錐台カリングで、骨ごとの値を計算し直す
     if (fresh) this.scene.matrixAutoUpdate = false;
     try {
       if (this.profiler.recording) {
@@ -2045,9 +2046,10 @@ class ViewerApp {
       if (!it || !it.line.visible || out.has(it.node)) continue;
       if (!(force || !(it.entry.unselectable || nodes[it.node].unselectable))) continue;
       const pos = it.line.geometry.getAttribute('position');
+      const lineWorld = leafWorldMatrix(it.line);
       const w = new Float32Array(pos.count * 3);
       for (let k = 0; k < pos.count; k++) {
-        _v2.fromBufferAttribute(pos, k).applyMatrix4(it.line.matrixWorld);
+        _v2.fromBufferAttribute(pos, k).applyMatrix4(lineWorld);
         w[k * 3] = _v2.x; w[k * 3 + 1] = _v2.y; w[k * 3 + 2] = _v2.z;
       }
       if (polylineHitsRect(w, project, rect)) out.add(it.node);
@@ -2805,7 +2807,7 @@ class ViewerApp {
       if (!it || !it.line.visible) continue;
       const pos = it.line.geometry.getAttribute('position');
       const step = Math.max(1, Math.floor(pos.count / 16));
-      for (let k = 0; k < pos.count; k += step) box.expandByPoint(_v2.fromBufferAttribute(pos, k).applyMatrix4(it.line.matrixWorld));
+      for (let k = 0; k < pos.count; k += step) box.expandByPoint(_v2.fromBufferAttribute(pos, k).applyMatrix4(leafWorldMatrix(it.line)));
     }
     const hidden = (ni) => !!(this.hiddenEff && this.hiddenEff[ni]);
     if (this.settings.joints && this.overlay.jointGroup.visible) {

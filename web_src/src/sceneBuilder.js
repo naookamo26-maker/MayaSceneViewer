@@ -2,7 +2,7 @@
 // DOM に依存しないので Node.js 上でもテストできる。
 import {
   BufferAttribute, BufferGeometry, Bone, Color, DetachedBindMode, DoubleSide, Float32BufferAttribute,
-  Group, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, Skeleton, SkinnedMesh,
+  Group, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, Skeleton, SkinnedMesh, Sphere,
   Uint16BufferAttribute, Vector3, Box3,
 } from 'three';
 import { triangulatePolygons, buildWireIndex } from './geometry.js';
@@ -90,8 +90,172 @@ export function buildScene(data, options = {}) {
     return entry;
   });
   if (options.shareSkeletons !== false) shareSkeletons(meshes);
+  if (options.frustumCulling !== false) for (const e of meshes) setupFrustumCulling(e);
   root.updateMatrixWorld(true);
   return { root, nodeObjects, meshes, jointIndices, childrenOf, influenceUsage, materials, defaultMaterial, allMaterials };
+}
+
+/**
+ * 子を持たない表示用のオブジェクト（メッシュ・カーブの線）の行列の計算を軽くする（毎フレーム、数千〜数万個ある）。
+ *   * 親に対する行列が単位行列なら、ワールド行列は親のワールド行列をコピーする（掛け算しない。結果は同じ）
+ *   * 非表示のあいだは計算せず、「更新が必要」の印（matrixWorldNeedsUpdate）だけ付ける。three.js は印の付いたオブジェクトを
+ *     次の描画の前に計算し直すので、表示に切り替えれば正しい行列になる。描画の前に行列を読むところは worldMatrixOf を使う
+ * スキン付きメッシュ（DetachedBindMode）の bindMatrixInverse は bind で決まり変わらないので、計算し直さない
+ */
+const isIdentity = (e) => e[0] === 1 && e[5] === 1 && e[10] === 1 && e[15] === 1 && e[1] === 0 && e[2] === 0 && e[3] === 0
+  && e[4] === 0 && e[6] === 0 && e[7] === 0 && e[8] === 0 && e[9] === 0 && e[11] === 0 && e[12] === 0 && e[13] === 0 && e[14] === 0;
+
+export function installLeafUpdate(o) {
+  o.updateMatrixWorld = function updateMatrixWorld(force) {
+    if (this.children.length) { Object3D.prototype.updateMatrixWorld.call(this, force); return; }   // あとから子を付けたとき
+    if (!this.visible) { this.matrixWorldNeedsUpdate = true; return; }
+    if (this.matrixWorldNeedsUpdate || force) {
+      const p = this.parent;
+      if (!p) this.matrixWorld.copy(this.matrix);
+      else if (isIdentity(this.matrix.elements)) this.matrixWorld.copy(p.matrixWorld);
+      else this.matrixWorld.multiplyMatrices(p.matrixWorld, this.matrix);
+      this.matrixWorldNeedsUpdate = false;
+    }
+  };
+  return o;
+}
+
+// ---------------------------------------------------------------------- 視錐台カリング（画面の外のメッシュを描かない）
+const _m4 = new Matrix4(), _w = new Matrix4(), _cv = new Vector3(), _sph = new Sphere();
+
+/**
+ * 3x3 部分の拡大率の上限（球の半径に掛ける）。列が直交していれば最大の列の長さ（正確）、せん断があれば
+ * フロベニウスノルム（必ず大きめ）
+ */
+function scaleBound(m) {
+  const e = m.elements;
+  const ax = e[0], ay = e[1], az = e[2], bx = e[4], by = e[5], bz = e[6], cx = e[8], cy = e[9], cz = e[10];
+  const la = ax * ax + ay * ay + az * az, lb = bx * bx + by * by + bz * bz, lc = cx * cx + cy * cy + cz * cz;
+  const tol = 1e-6 * Math.max(la, lb, lc, 1e-30);
+  const ortho = Math.abs(ax * bx + ay * by + az * bz) <= tol && Math.abs(ax * cx + ay * cy + az * cz) <= tol
+    && Math.abs(bx * cx + by * cy + bz * cz) <= tol;
+  return Math.sqrt(ortho ? Math.max(la, lb, lc) : la + lb + lc);
+}
+
+/**
+ * メッシュを画面の外なら描かない（three.js の frustumCulled）。動かないメッシュは形の範囲で判定する（three.js のまま）。
+ * スキン付きメッシュは、骨ごとに「その骨が影響する頂点を骨のローカル空間に移した球」を読み込み時に求めておき、
+ * 判定のたびに各骨のいまのワールド行列で移した球を包む球で判定する（頂点はウェイトの合計が 1 の混ぜ合わせなので、
+ * 必ずこの球の中に入る）。ウェイトの合計が 1 でない頂点があるメッシュ（正規化しない設定など）は、範囲を保証できない
+ * ので判定しない（いつも描く）
+ */
+export function setupFrustumCulling(e) {
+  for (const o of [e.staticMesh, e.staticWire]) if (o) o.frustumCulled = true;
+  if (!e.skinned) return;
+  e.skinCull = buildSkinCull(e);
+  for (const o of [e.skinned, e.skinnedWire]) {
+    if (!o) continue;
+    o.frustumCulled = true;
+    o.intersectsFrustum = function intersectsFrustum(frustum) {
+      const c = e.skinCull;
+      if (!c) return true;                         // 範囲を保証できない
+      return frustum.intersectsSphere(skinnedWorldSphere(e, this, _sph));
+    };
+  }
+}
+
+/** 骨ごとの、骨のローカル空間の球（読み込み時・ウェイトを変えたときに作る）。ウェイトの合計が 1 でなければ null */
+export function buildSkinCull(e) {
+  const g = e.geometry, sk = e.skeleton, sm = e.skinned;
+  if (!g || !sk || !sm) return null;
+  const pos = g.attributes.position.array;
+  const sets = [[g.attributes.skinIndex, g.attributes.skinWeight], [g.attributes.skinIndex1, g.attributes.skinWeight1]];
+  const n = g.attributes.position.count;
+  const nb = sk.bones.length;
+  // 骨ごとの変換（骨の逆行列 · bindMatrix）と、骨のローカル空間の点の範囲（箱 → 球）
+  const toBone = new Map();
+  const box = new Map();                           // 骨 → [minx, miny, minz, maxx, maxy, maxz]
+  const pts = new Map();                           // 骨 → 点（球の半径を求める）
+  for (let v = 0; v < n; v++) {
+    let sum = 0;
+    for (const [ia, wa] of sets) {
+      if (!ia || !wa) continue;
+      for (let k = 0; k < 4; k++) {
+        const w = wa.array[v * 4 + k];
+        if (w === 0) continue;
+        if (!(w > 0)) return null;                 // 負のウェイト（範囲を保証できない）
+        sum += w;
+        const b = ia.array[v * 4 + k];
+        if (b >= nb) return null;
+        let m = toBone.get(b);
+        if (!m) toBone.set(b, m = new Matrix4().multiplyMatrices(sk.boneInverses[b], sm.bindMatrix));
+        _cv.set(pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]).applyMatrix4(m);
+        let bx = box.get(b);
+        if (!bx) { box.set(b, bx = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]); pts.set(b, []); }
+        bx[0] = Math.min(bx[0], _cv.x); bx[1] = Math.min(bx[1], _cv.y); bx[2] = Math.min(bx[2], _cv.z);
+        bx[3] = Math.max(bx[3], _cv.x); bx[4] = Math.max(bx[4], _cv.y); bx[5] = Math.max(bx[5], _cv.z);
+        pts.get(b).push(_cv.x, _cv.y, _cv.z);
+      }
+    }
+    if (Math.abs(sum - 1) > 1e-4) return null;     // ウェイトの合計が 1 でない
+  }
+  const bones = [], data = [];
+  for (const [b, bx] of box) {
+    const cx = (bx[0] + bx[3]) / 2, cy = (bx[1] + bx[4]) / 2, cz = (bx[2] + bx[5]) / 2;
+    let r2 = 0;
+    const p = pts.get(b);
+    for (let i = 0; i < p.length; i += 3) r2 = Math.max(r2, (p[i] - cx) ** 2 + (p[i + 1] - cy) ** 2 + (p[i + 2] - cz) ** 2);
+    bones.push(b);
+    data.push(cx, cy, cz, Math.sqrt(r2) * (1 + 1e-6) + 1e-9);
+  }
+  return { bones: Int32Array.from(bones), spheres: Float64Array.from(data) };
+}
+
+let cullStamp = 0;
+/** 描画のたびに呼ぶ（骨ごとの拡大率を、1 回の描画の中では 1 回だけ計算するための目印を進める） */
+export function nextCullFrame() { cullStamp++; }
+
+/** 骨のワールド行列の拡大率の上限（1 回の描画の中では骨ごとに覚える） */
+function boneScale(bone) {
+  const u = bone.userData;
+  if (u.cullStamp !== cullStamp) { u.cullStamp = cullStamp; u.cullScale = scaleBound(bone.matrixWorld); }
+  return u.cullScale;
+}
+
+/** スキン付きメッシュ o のいまの範囲（ワールド空間の球）。e.skinCull を使う */
+export function skinnedWorldSphere(e, o, target = new Sphere()) {
+  const c = e.skinCull, bones = e.skeleton.bones, s = c.spheres, nb = c.bones.length;
+  if (!c.work || c.work.length < nb * 4) c.work = new Float64Array(nb * 4);
+  const w = c.work;
+  let minx = Infinity, miny = Infinity, minz = Infinity, maxx = -Infinity, maxy = -Infinity, maxz = -Infinity;
+  for (let i = 0; i < nb; i++) {
+    const bone = bones[c.bones[i]];
+    const m = bone.matrixWorld.elements;
+    const x = s[i * 4], y = s[i * 4 + 1], z = s[i * 4 + 2];
+    // 骨のワールド行列（アフィン）で中心を移す
+    const px = m[0] * x + m[4] * y + m[8] * z + m[12];
+    const py = m[1] * x + m[5] * y + m[9] * z + m[13];
+    const pz = m[2] * x + m[6] * y + m[10] * z + m[14];
+    const r = s[i * 4 + 3] * boneScale(bone);
+    w[i * 4] = px; w[i * 4 + 1] = py; w[i * 4 + 2] = pz; w[i * 4 + 3] = r;
+    if (px - r < minx) minx = px - r; if (py - r < miny) miny = py - r; if (pz - r < minz) minz = pz - r;
+    if (px + r > maxx) maxx = px + r; if (py + r > maxy) maxy = py + r; if (pz + r > maxz) maxz = pz + r;
+  }
+  const cx = (minx + maxx) / 2, cy = (miny + maxy) / 2, cz = (minz + maxz) / 2;
+  let radius = 0;
+  for (let i = 0; i < nb; i++) {
+    const dx = w[i * 4] - cx, dy = w[i * 4 + 1] - cy, dz = w[i * 4 + 2] - cz;
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz) + w[i * 4 + 3];
+    if (d > radius) radius = d;
+  }
+  // ウェイトの合計の許容差（1e-4）の分、原点からの距離に比例する余裕を足す
+  radius += 2e-4 * (Math.sqrt(cx * cx + cy * cy + cz * cz) + radius);
+  // 骨の空間（スキンの計算の空間）→ メッシュの空間（bindMatrixInverse）→ ワールド（matrixWorld）
+  _w.multiplyMatrices(worldMatrixOf(o), _m4.copy(o.bindMatrixInverse));
+  target.center.set(cx, cy, cz).applyMatrix4(_w);
+  target.radius = radius * scaleBound(_w) * (1 + 1e-6);
+  return target;
+}
+
+/** 表示用のオブジェクトの、いまのワールド行列（非表示のあいだに計算を省いていたら、ここで計算する） */
+export function worldMatrixOf(o) {
+  if (o.matrixWorldNeedsUpdate) o.updateMatrixWorld();
+  return o.matrixWorld;
 }
 
 const MAX_SHARED_BONES = 65535;                  // 骨の番号は Uint16（skinIndex）
@@ -241,6 +405,7 @@ export function applySkinNormalization(built, mode) {
       attrs[name].needsUpdate = true;
     }
     if (e.skinned) { e.skinned.boundingSphere = null; e.skinned.boundingBox = null; }
+    if (e.skinned && 'skinCull' in e) e.skinCull = buildSkinCull(e);   // 視錐台カリングの範囲を作り直す
     changed++;
   }
   return changed;
@@ -511,6 +676,7 @@ function buildMesh(m, meshIndex, nodeObjects, poolMaterials, materialFor, option
   for (const o of [staticMesh, staticWire, skinned, skinnedWire]) {
     if (!o) continue;
     o.matrixAutoUpdate = false;
+    installLeafUpdate(o);
     o.frustumCulled = false;
     o.userData.meshIndex = meshIndex;
     parent.add(o);
@@ -544,9 +710,9 @@ export function renderVertexWorldPosition(entry, rv, useSkin, target) {
   target.fromBufferAttribute(entry.geometry.attributes.position, rv);
   if (useSkin && entry.skinned) {
     entry.skinned.applyBoneTransform(rv, target);
-    return target.applyMatrix4(entry.skinned.matrixWorld);
+    return target.applyMatrix4(worldMatrixOf(entry.skinned));
   }
-  return target.applyMatrix4(entry.staticMesh.matrixWorld);
+  return target.applyMatrix4(worldMatrixOf(entry.staticMesh));
 }
 
 /** 元の頂点 v の現在の位置（スキン適用後・ワールド空間） */
