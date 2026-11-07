@@ -998,6 +998,8 @@ export class RigEvaluator {
       const ds = this.deepState;
       if (ds.depth && ds.at === null && mayOverflow(e)) {
         ds.at = () => this.memo(fm, km, key, compute, fallback, label);
+        ds.at.place = fm;                                  // 同じ計算か（deepEval.js の runDeep が、進まないことを見分ける）
+        ds.at.key = key;
         if (fm === this.cache.out) ds.at.outId = key;      // 計算ノードの出力は、次のフレームから先に求める（prewarmDeep）
       }
       throw e;
@@ -1038,7 +1040,20 @@ export class RigEvaluator {
       if (prof && prof.defStack) prof.defStack.length = defs;
       for (let i = mark; i < marks.length; i += 2) if (marks[i].get(marks[i + 1]) === BUSY) marks[i].delete(marks[i + 1]);
       marks.length = mark;
-    });
+    }, (at) => this.unstick(at));
+  }
+
+  /**
+   * 浅い所から求め直しても、その計算の中だけでスタックがあふれる（deep）: 自作ノードの定義を JavaScript の関数にしたもので
+   * あれば、その定義を IR をたどる計算にする（変数の多い定義の関数は、1 回の呼び出しで使うスタックが大きい）。直したら true
+   */
+  unstick(at) {
+    if (at.outId === undefined) return false;
+    const g = this.byId.get(at.outId);
+    const d = g && g.def ? this.defs.get(g.def) : null;
+    if (!d || !d.fallBack()) return false;
+    (this.defsInterpreted || (this.defsInterpreted = new Set())).add(g.def);   // 評価のプロファイラのワーカーの欄に出す
+    return true;
   }
 
   /**

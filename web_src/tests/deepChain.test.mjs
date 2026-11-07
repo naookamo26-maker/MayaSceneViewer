@@ -119,3 +119,53 @@ test('専用の評価でやり直せない所のスタックがあふれたら�
   assert.equal(rig.compiledPlan, null);
   assert.equal(rig.compiledReason, '計算の鎖が深すぎる（スタックがあふれた: chanTObj ← dagPlug）');
 });
+
+test('関数にするとスタックに収まらない自作ノード（変数が多い）: ワーカーでは IR をたどる計算に切り替えて、正しい値を求める', async () => {
+  const VARS = 40000;
+  const data = structuredClone(base);
+  const anim = data.animation;
+  const dv = anim.graph.find((g) => g.name === 'dv1');
+  for (const g of anim.graph) for (const [k, v] of Object.entries(g.inputs || {})) if (v.node === dv.id) delete g.inputs[k];
+  // s = Σ (i + k)（k = 0 … VARS-1。変数 x0 … を 1 つずつ使う）
+  const a = ['a', [['i', null]]];
+  const ir = [['set', ['l', 's'], ['n', 0]]];
+  for (let k = 0; k < VARS; k++) ir.push(['set', ['l', `x${k}`], ['b', '+', a, ['n', k]]]);
+  for (let k = 0; k < VARS; k++) ir.push(['set', ['l', 's'], ['b', '+', ['l', 's'], ['l', `x${k}`]]]);
+  ir.push(['set', ['o', [['o', null]]], ['b', '*', ['l', 's'], ['n', 1e-9]]]);
+  anim.nodeDefs.manyLocals = {
+    type: 'manyLocals', ir,
+    attributes: [{ name: 'input', short: 'i', type: 'double', default: 0 }, { name: 'output', short: 'o', type: 'double', output: true, default: 0 }],
+  };
+  const ctrl = anim.graph.find((g) => g.name === 'ctrl');
+  const id = Math.max(...anim.graph.map((g) => g.id)) + 1;
+  anim.graph.push({ id, name: 'big', type: 'manyLocals', dag: -1, def: 'manyLocals', inputs: { i: { node: ctrl.id, attr: 'tx' } } });
+  anim.graph.find((g) => g.name === 'jA').inputs.ty = { node: id, attr: 'o' };
+  const want = (f) => { let s = 0; for (let k = 0; k < VARS; k++) s += tx(f) + k; return s * 1e-9; };
+
+  const src = `
+    import { parentPort, workerData } from 'node:worker_threads';
+    import { createBaker, bakeFrames, bakerInfo } from ${JSON.stringify(new URL('../src/rigBakeCore.js', import.meta.url).href)};
+    const { anim, nodes, jA } = workerData;
+    const baker = createBaker(anim, nodes);
+    const out = [];
+    for (const f of [1, 5, 9]) {
+      const r = bakeFrames(baker, { frames: [f] });
+      out.push({ f, ty: baker.rig.chan(jA).t[1], timing: r.timing });
+    }
+    parentPort.postMessage({ out, info: bakerInfo(baker), problems: [...baker.rig.problems] });
+  `;
+  const res = await new Promise((resolve, reject) => {
+    const w = new Worker(new URL(`data:text/javascript,${encodeURIComponent(src)}`), {
+      workerData: { anim: JSON.stringify(anim), nodes: data.nodes, jA },
+      resourceLimits: { stackSizeMb: 1 },
+    });
+    w.once('message', resolve);
+    w.once('error', reject);
+  });
+  assert.deepEqual(res.problems, []);
+  for (const { f, ty } of res.out) assert.equal(ty, want(f), `フレーム ${f}`);
+  const last = res.out[res.out.length - 1].timing;
+  assert.equal(last.interpreted, 1, JSON.stringify(last));
+  assert.ok(last.retries < 10, `やり直しが多すぎる: ${last.retries}`);
+  assert.ok(res.info.plan, `専用の評価にならない: ${res.info.reason}`);
+});

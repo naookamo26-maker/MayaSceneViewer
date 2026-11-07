@@ -325,6 +325,7 @@ export function compileNodeDef(def) {
   };
   // 計算を JavaScript の関数にする（毎フレーム IR をたどるより速い）。作れなければ null（IR をたどる）
   const generated = compileEnabled ? generateRunner(def.ir || [], top) : null;
+  let useGenerated = !!generated;                  // fallBack で IR をたどる計算に切り替える
 
   /** 出力（ベクトルは成分のプラグにも入れる） */
   const componentsOf = new Map();                  // 出力のプラグ → 成分のプラグ（なければ null）。名前で決まるので覚える
@@ -353,10 +354,19 @@ export function compileNodeDef(def) {
     /** 出力のプラグか（out・out[2]・tg[0].ot・成分の outx） */
     isOutput: (plug) => outputBases.has(plug.split(/[.[]/)[0]),
     /** 計算を JavaScript の関数にしたか（できなければ、IR をたどって計算する） */
-    compiled: !!generated,
+    get compiled() { return useGenerated; },
     run(io) {
-      if (generated) return expandOutputs(generated(io));
+      if (useGenerated) return expandOutputs(generated(io));
       return interpret(io);
+    },
+    /**
+     * 関数をやめて、IR をたどる計算にする（変数の多い定義の関数は 1 回の呼び出しで使うスタックが大きく、スタックの小さい
+     * Web Worker では浅い所から呼んでもあふれる。IR をたどる計算はスタックを少しずつ使う）。切り替えたら true
+     */
+    fallBack() {
+      if (!useGenerated) return false;
+      useGenerated = false;
+      return true;
     },
     /** IR をたどって計算する（生成した関数と結果を比べるテスト用にも使う） */
     interpret,

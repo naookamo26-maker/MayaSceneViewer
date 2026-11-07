@@ -107,7 +107,11 @@ function build(rig, deps, useMath) {
       r = compute();
     } catch (e) {
       walked.delete(key);                                // たどっている途中の印を残さない（やり直しで循環に見えないように）
-      if (deepWalk.depth && deepWalk.at === null && mayOverflow(e)) deepWalk.at = () => remember(key, compute);
+      if (deepWalk.depth && deepWalk.at === null && mayOverflow(e)) {
+        deepWalk.at = () => remember(key, compute);
+        deepWalk.at.place = walked;                      // 同じ計算か（deepEval.js の runDeep）
+        deepWalk.at.key = key;
+      }
       throw e;
     }
     walked.set(key, r);
@@ -571,7 +575,11 @@ function mathReader(plan, constChan, pmOpm) {
       v = proto.plugUncached.call(ad, id, attr);
     } catch (e) {
       const ds = ad.deepState;                         // ad.outputs と同じ
-      if (ds.depth && ds.at === null && mayOverflow(e)) ds.at = () => ad.plug(id, attr);
+      if (ds.depth && ds.at === null && mayOverflow(e)) {
+        ds.at = () => ad.plug(id, attr);
+        ds.at.place = r.fm;                            // 同じ計算か（deepEval.js の runDeep）
+        ds.at.key = attr;
+      }
       throw e;
     }
     r.fm.set(attr, v);
@@ -590,6 +598,8 @@ function mathReader(plan, constChan, pmOpm) {
         if (ds.depth && ds.at === null && mayOverflow(e)) {
           ds.at = () => ad.outputs(id);
           ds.at.outId = id;                              // 次のフレームから先に求める（rig.js の prewarmDeep）
+          ds.at.place = recs;                            // 同じ計算か（deepEval.js の runDeep）
+          ds.at.key = id;
         }
         throw e;
       }
