@@ -34,7 +34,8 @@ export class BakeWorkers {
   resetStats() {
     // firstMs: 作り始めてから最初の結果を取り込むまで・timing: ワーカーの中の時間（rigBakeCore.js の bakerTiming。最初のフレームが
     // いちばん遅かったワーカーのもの）
-    this.stat = { frames: 0, workerMs: 0, wallMs: 0, wallFrames: 0, jobId: -1, jobBase: 0, firstMs: null, timing: null, startedAt: null };
+    this.stat = { frames: 0, workerMs: 0, wallMs: 0, wallFrames: 0, jobId: -1, jobBase: 0, firstMs: null, timing: null, startedAt: null,
+      sendMs: 0 };                    // sendMs: アニメーションをワーカーに送るのに、画面のスレッドでかかった時間（複製）
   }
 
   /**
@@ -46,7 +47,7 @@ export class BakeWorkers {
     return {
       available: this.available, count: this.count, busy: !!this.job, error: this.error || null,
       firstMs: s.firstMs, waitingMs: s.firstMs === null && s.startedAt !== null ? performance.now() - s.startedAt : null,
-      timing: s.timing,
+      timing: s.timing, sendMs: s.sendMs,
       cores: (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || null,
       frames: s.frames, perFrame: s.frames ? s.workerMs / s.frames : 0,
       throughput: s.wallMs > 0 ? (s.wallFrames * 1000) / s.wallMs : 0,
@@ -63,6 +64,30 @@ export class BakeWorkers {
     this.rig = rig;
     this.init = rig ? { anim, nodes } : null;
     for (const w of this.workers) w.ready = false;
+    this.warm();
+  }
+
+  /**
+   * ワーカーを起動して、アニメーションを先に渡しておく（ワーカーの準備は重い: 評価器を作り、自作ノードの定義を関数にする。
+   * 最初に頼むときまで待たずに始めると、画面側の残りの読み込み・最初の表示と並んで進む）
+   */
+  warm() {
+    if (this.broken || !this.init || !this.rig) return;
+    this.ensureWorkers();
+    if (this.broken) return;
+    this.stat.startedAt = performance.now();
+    for (const w of this.workers) this.sendInit(w);
+  }
+
+  /** ワーカーに、いまのアニメーションを渡す（まだなら） */
+  sendInit(w) {
+    if (w.token === this.token) return;
+    const t = performance.now();
+    w.worker.postMessage({ type: 'init', token: this.token, anim: this.init.anim, nodes: this.init.nodes,
+      sentAt: performance.timeOrigin + t });
+    this.stat.sendMs += performance.now() - t;
+    w.token = this.token;
+    w.sent = 0;
   }
 
   /** いま作っているものを止める（ワーカーは止めない。処理中のフレームの結果は届けば取り込む） */
@@ -95,7 +120,7 @@ export class BakeWorkers {
       if (!frames.length) return;
       this.job = { id: ++this.jobId, sig: pose.sig, keys: pose.keys, poses: pose.poses, queue: frames.slice(), busy: 0,
         start: performance.now() };
-      if (this.stat.startedAt === null) this.stat.startedAt = this.job.start;
+      if (this.stat.startedAt === null) this.stat.startedAt = this.job.start;   // warm していないとき
       this.ensureWorkers();
       for (const w of this.workers) this.dispatch(w);
     }, START_DELAY);
@@ -123,11 +148,7 @@ export class BakeWorkers {
   dispatch(w) {
     const job = this.job;
     if (this.broken || !job || w.busy) return;
-    if (w.token !== this.token) {                         // このアニメーションをまだ渡していない
-      w.worker.postMessage({ type: 'init', token: this.token, anim: this.init.anim, nodes: this.init.nodes });
-      w.token = this.token;
-      w.sent = 0;
-    }
+    this.sendInit(w);                                     // このアニメーションをまだ渡していなければ渡す
     const have = this.rig.layerFor(job.keys);
     const frames = [];
     const chunk = w.sent ? CHUNK : 1;

@@ -405,6 +405,7 @@ const JS_OPS = { '+': '+', '-': '-', '*': '*', '<': '<', '<=': '<=', '>': '>', '
 /** 生成した関数が使う補助（IR をたどる計算と同じもの） */
 const H = {
   fail, num, vec, truthy, copy: copyValue, B: BIN, F: FUNCS, U: UNSET,
+  over: () => fail('計算の繰り返しが多すぎます（終わらない計算の恐れ）'),   // 文ごとの確かめ（作るコードを短くするため 1 つにまとめる）
   local: (v, name) => (v === UNSET ? fail(`変数 ${name} に値がまだ入っていません`) : v),
   neg: (a) => (isVec(a) ? a.map((x) => -x) : -num(a, '符号の反転')),
   index: (base, iv) => {
@@ -594,7 +595,7 @@ export function generateRunner(ir, top) {
   const block = (stmts) => {
     if (!Array.isArray(stmts)) giveUp();
     return stmts.map((s) => {
-      const head = `if (++S > ${MAX_STEPS}) H.fail('計算の繰り返しが多すぎます（終わらない計算の恐れ）');\n`;
+      const head = `if (++S > ${MAX_STEPS}) H.over();\n`;
       switch (s[0]) {
         case 'set': return head + assign(s[1], `H.copy(${expr(s[2])})`);
         case 'aug': {

@@ -480,13 +480,20 @@ export function workerStartText(w) {
   else if (w.waitingMs !== null && w.waitingMs !== undefined) parts.push(`最初の結果を待っています（${sec(w.waitingMs)}）`);
   const t = w.timing;
   if (t) {
-    const prep = t.parseMs !== undefined && t.parseMs !== null
-      ? `（JSON の読み込み ${sec(t.parseMs)}・自作ノードの定義を関数にする ${sec(t.defsMs || 0)}）` : '';
-    parts.push(`ワーカーの中: 準備 ${sec(t.createMs)}${prep}・最初のフレーム ${sec(t.firstMs)}`
+    // 準備の内訳: JSON の読み込み・アニメーション（AnimationClip）・評価器（RigEvaluator。うち自作ノードの定義を関数にする時間）
+    const has = (x) => x !== undefined && x !== null;
+    const inner = [];
+    if (has(t.parseMs)) inner.push(`JSON の読み込み ${sec(t.parseMs)}`);
+    if (has(t.clipMs)) inner.push(`アニメーション ${sec(t.clipMs)}`);
+    if (has(t.rigMs)) inner.push(`評価器 ${sec(t.rigMs)}（うち自作ノードの定義を関数にする ${sec(t.defsMs || 0)}）`);
+    else if (has(t.defsMs)) inner.push(`自作ノードの定義を関数にする ${sec(t.defsMs)}`);
+    const recv = has(t.recvMs) ? `受け取り ${sec(t.recvMs)}・` : '';
+    parts.push(`ワーカーの中: ${recv}準備 ${sec(t.createMs)}${inner.length ? `（${inner.join('・')}）` : ''}・最初のフレーム ${sec(t.firstMs)}`
       + `${t.planMs !== null ? `（うち専用の評価の計画 ${sec(t.planMs)}）` : ''}・専用の評価 ${t.plan ? '使う' : `使わない${t.reason ? `（${t.reason}）` : ''}`}`
       + `・スタックがあふれてやり直した回数 ${t.retries}`
       + `${t.interpreted ? `・関数をやめて IR をたどる計算にした自作ノードの定義 ${t.interpreted} 種類（関数ではスタックに収まらない）` : ''}`);
   }
+  if (w.sendMs) parts.push(`アニメーションを送る（画面のスレッド）${sec(w.sendMs)}`);
   return parts.join('・');
 }
 
