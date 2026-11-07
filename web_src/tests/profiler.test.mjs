@@ -293,3 +293,16 @@ test('行列の更新・表示の内訳と、ドローコール・ポリゴン�
   assert.ok(text.includes('行列の更新・表示・その他の内訳: 行列のコピー 1.00 ms'), text);
   assert.ok(text.includes('ドローコール 250・ポリゴン数（三角形） 1000'), text);
 });
+
+test('［このフレームを確かめる］の結果を文字にする', async () => {
+  const { checkText } = await import('../src/profiler.js');
+  const text = checkText({
+    frame: 12, posed: false,
+    rig: [{ label: '専用の評価', compared: 10, diff: [{ name: '|a|b', err: 0.5 }] }, { label: '再生キャッシュ（覚えた値）', compared: 10, diff: [] }],
+    display: { checked: 30, diff: [] },
+  });
+  assert.ok(text.includes('■ このフレームの確認（フレーム 12）'));
+  assert.ok(text.includes('専用の評価: 動くノード 10 個のうち、汎用の経路と違うもの 1 個'));
+  assert.ok(text.includes('|a|b（差 5.0e-1）'));
+  assert.ok(text.includes('表示の行列: 表示中のオブジェクト 30 個のうち、親からたどった値と違うもの 0 個'));
+});

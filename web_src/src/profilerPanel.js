@@ -2,7 +2,7 @@
 //   * フレームの内訳: 1 フレームごとの積み上げ棒（記録した順。右がいちばん新しい）。フレームバジェット（1000 / fps）の線
 //   * リグの評価の内訳: 種類ごと（何で動くノードか）・経路ごと（専用の評価か、汎用の経路に任せたか、その理由）
 //   * 再生キャッシュとワーカーの状態
-import { PARTS, SUB_PARTS, cacheInfo, formatBytes, planInfo, profilerText } from './profiler.js';
+import { PARTS, SUB_PARTS, cacheInfo, checkText, formatBytes, planInfo, profilerText } from './profiler.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -57,6 +57,9 @@ export class ProfilerPanel {
         </div>
         <p class="muted small" id="prof-table-note"></p>
         <div class="prof-table-wrap"><table id="prof-table"></table></div>
+        <div class="prof-tabs-row"><h3>このフレームの確認</h3>
+          <button type="button" class="btn" id="prof-check" title="いまのフレームを、汎用の経路・専用の評価・再生キャッシュ・いまの表示で比べ、表示中のオブジェクトの行列も確かめる（表示が壊れて見えるフレームで押す）">このフレームを確かめる</button></div>
+        <div id="prof-check-result" class="prof-check"><span class="muted">表示が壊れて見えるフレームで押すと、リグの評価の経路ごとの違いと、表示の行列の違いを確かめます。</span></div>
         <h3>再生キャッシュとワーカー</h3>
         <div id="prof-cache" class="prof-cache"></div>
       </div>`;
@@ -67,6 +70,7 @@ export class ProfilerPanel {
     $('prof-record').addEventListener('click', () => this.setRecording(!this.app.profiler.recording));
     $('prof-clear').addEventListener('click', () => { this.app.profiler.clear(); this.hover = -1; this.refresh(true); });
     $('prof-copy').addEventListener('click', () => this.copy());
+    $('prof-check').addEventListener('click', () => this.runCheck());
     $('prof-close').addEventListener('click', () => this.close());
     $('prof-nocache').addEventListener('change', (e) => this.setBypass(e.target.checked));
     for (const b of el.querySelectorAll('.prof-tabs [role=tab]')) {
@@ -377,7 +381,27 @@ export class ProfilerPanel {
 
   text() {
     const app = this.app;
-    return profilerText(app.profiler, { scene: app.profilerScene(), clip: app.clip, rig: app.rig, workers: app.bakers.stats() });
+    const t = profilerText(app.profiler, { scene: app.profilerScene(), clip: app.clip, rig: app.rig, workers: app.bakers.stats() });
+    return this.checkResult ? `${t}\n\n${checkText(this.checkResult)}` : t;
+  }
+
+  /** ［このフレームを確かめる］ */
+  runCheck() {
+    const out = $('prof-check-result');
+    out.innerHTML = '<span class="muted">確かめています…</span>';
+    setTimeout(() => {                               // 表示を更新してから（大きなシーンでは数秒かかる）
+      let r;
+      try { r = this.app.checkFrame(); } catch (e) { out.textContent = `確かめられませんでした: ${e.message}`; return; }
+      this.checkResult = r;
+      if (!r) { out.textContent = 'アニメーションのあるシーンを開くと使えます。'; return; }
+      const list = (diff) => (diff.length
+        ? `<ul>${diff.slice(0, 12).map((d) => `<li><span class="lbl">${esc(d.name)}</span> <span class="muted">差 ${d.err.toExponential(1)}</span></li>`).join('')}${diff.length > 12 ? `<li class="muted">ほか ${num(diff.length - 12)} 個</li>` : ''}</ul>` : '');
+      const rows = r.rig.map((x) => `<div><b>${esc(x.label)}</b>: 動くノード ${num(x.compared)} 個のうち、汎用の経路と違うもの `
+        + `<span class="${x.diff.length ? 'warn' : 'ok'}">${num(x.diff.length)} 個</span>${list(x.diff)}</div>`);
+      rows.push(`<div><b>表示の行列</b>: 表示中のオブジェクト ${num(r.display.checked)} 個のうち、親からたどった値と違うもの `
+        + `<span class="${r.display.diff.length ? 'warn' : 'ok'}">${num(r.display.diff.length)} 個</span>${list(r.display.diff)}</div>`);
+      out.innerHTML = `<div class="muted">フレーム ${esc(r.frame)}${r.posed ? '（ポーズ確認の追加分があるため、いまの表示は比べません）' : ''}</div>${rows.join('')}`;
+    }, 30);
   }
 
   async copy() {
