@@ -648,6 +648,30 @@ class TestStage6(unittest.TestCase):
         # 評価できないノードで動くものは、これまでどおり警告する（rig6 の knee_pv）
         self.assertIn("knee_pv: tx ← my_pv_driver", "\n".join(self.scene["warnings"]))
 
+    def test_warning_names_the_unevaluable_input_first(self):
+        """コンストレイント（評価できる）と評価できない接続が混ざったノードの警告は、評価できない接続を先に出す
+        （コンストレイントの tx・ty・tz が先頭に並ぶと、原因が「ほか」に隠れて、コンストレイントが悪く見えていた）"""
+        body = ('createNode transform -n "tgt";\n'
+                'createNode joint -n "j";\n'
+                'createNode pointConstraint -n "pc" -p "j";\n'
+                '\taddAttr -dcb 0 -ci true -k true -sn "w0" -ln "tgtW0" -dv 1 -min 0 -at "double";\n'
+                'createNode expression -n "ex1";\n'
+                'connectAttr "tgt.t" "pc.tg[0].tt";\nconnectAttr "tgt.pm" "pc.tg[0].tpm";\n'
+                'connectAttr "pc.w0" "pc.tg[0].tw";\nconnectAttr "j.pim" "pc.cpim";\n'
+                'connectAttr "pc.ctx" "j.tx";\nconnectAttr "pc.cty" "j.ty";\nconnectAttr "pc.ctz" "j.tz";\n'
+                'connectAttr "ex1.out[0]" "j.rx";\n')
+        sc, _anim = from_text(body)
+        w = [x for x in sc["warnings"] if x.startswith("j: ")]
+        self.assertEqual(len(w), 1, sc["warnings"])
+        self.assertTrue(w[0].startswith("j: rx ← ex1（expression） が接続で決まるため"), w[0])
+        self.assertIn("tx ← pc（pointConstraint）", w[0])
+        self.assertIn("は評価できますが、評価できない接続があるため", w[0])
+        # ターゲットのないコンストレイントは、その理由を添える
+        body = ('createNode joint -n "j";\ncreateNode pointConstraint -n "pc" -p "j";\n'
+                'connectAttr "pc.ctx" "j.tx";\n')
+        sc, _anim = from_text(body)
+        self.assertIn("j: tx ← pc（pointConstraint）（ターゲット .tg がつながっていません）", "\n".join(sc["warnings"]))
+
     def test_custom_transform(self):
         """親も子もない自作ノード（transform らしいもの）は transform として扱い、リグで評価する"""
         self.assertIn("cx_ctrl", self.names)
