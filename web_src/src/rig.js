@@ -423,6 +423,9 @@ export class RigEvaluator {
       try { this.defs.set(t, compileNodeDef(d)); } catch (e) { this.defs.set(t, null); }
     }
     this.problems = new Set();               // 評価中に見つかった問題（循環など）
+    this.profile = null;                     // 評価のプロファイラ（記録中だけ。profiler.js）
+    this.bypassCache = false;                // 再生キャッシュを使わずに評価する（評価のプロファイラの「キャッシュを使わずに測る」）
+    this.lastPath = null;                    // 直前の evaluate の経路（'cache' 再生キャッシュ / 'compiled' 専用の評価 / 'generic' 汎用の経路）
     this.ikVariant = null;                   // 再現チェックで試す IK の解き方の候補（ふだんは null）
     this.aimMode = null;                     // aim と up が平行な aimConstraint の解き方（再現チェックで試す。null = parent）
     this.frame = 0;
@@ -777,11 +780,13 @@ export class RigEvaluator {
     this.poseKeys = poseKeysOf(poseOf, poseKey);
     this.reset();
     this.seeded = 0;
-    const playable = Number.isInteger(f) && this.ikVariant === null && this.aimMode === null && this.playbackLimit > 0
+    // bypassCache: 評価のプロファイラで「キャッシュなし」を測るとき（覚えたフレームは捨てず、読みも書きもしない）
+    const playable = !this.bypassCache && Number.isInteger(f) && this.ikVariant === null && this.aimMode === null && this.playbackLimit > 0
       && this.poseKeys !== null;
     const layer = this.layer = playable ? this.layerFor(this.poseKeys, true) : null;
     const hit = layer ? layer.frames.get(f) : null;
     if (hit) {
+      this.lastPath = 'cache';
       let o = 0;
       for (const ni of this.moving) {
         const m = target.get(ni) || new Matrix4();
@@ -797,7 +802,9 @@ export class RigEvaluator {
     if (compiled && this.compiledPlan) {
       const plan = this.compiledPlan;
       const store = !!layer && this.roomFor(layer);
-      runPlan(plan, f, target);
+      this.lastPath = 'compiled';
+      plan.profile = this.profile;                       // 評価のプロファイラの記録中だけ（手順ごとの時間）
+      try { runPlan(plan, f, target); } finally { plan.profile = null; }
       if (store && !plan.depsAdded) {                    // 追加分を読む依存（計画を作った評価で記録したもの）
         for (const s of plan.moving) if (s.deps && s.deps.size) this.addNodeDeps(s.ni, s.deps);
         plan.depsAdded = true;
@@ -808,6 +815,11 @@ export class RigEvaluator {
     if (layer) this.seeded = this.seed(f, layer);
     const store = !!layer && this.roomFor(layer);
     const capture = compiled && this.compiledPlan === undefined ? new Map() : null;
+    this.lastPath = 'generic';
+    // 評価のプロファイラの記録中だけ、ノードごとの時間を渡す（profile.node(評価器, ノード番号, ms)。上流の値は、
+    // 最初に読んだノードの時間に入る）
+    const prof = this.profile;
+    let t0 = prof ? performance.now() : 0;
     for (const ni of this.moving) {
       this.dcur = null;
       const m = target.get(ni) || new Matrix4();
@@ -815,6 +827,7 @@ export class RigEvaluator {
       target.set(ni, m);
       if (store && this.dcur) this.addNodeDeps(ni, this.dcur);
       if (capture) capture.set(ni, this.dcur);
+      if (prof) { const t1 = performance.now(); prof.node(this, ni, t1 - t0); t0 = t1; }
     }
     this.dcur = null;
     if (capture) {                                       // 扱えるリグなら、次のフレームから専用の評価にする

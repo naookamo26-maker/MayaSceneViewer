@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """リグの診断: 再生がおかしいときに、原因になりそうなノードを探すための一覧を作る。
 
-  python -m ma_viewer rig scene.ma          （Qt 版は［表示］→［リグの診断］）
+  python -m ma_viewer rig scene.ma          （Qt 版は［ウインドウ］→［リグの診断］）
 
 内容:
   * ファイルが読み込むプラグイン（自作ノードの手がかり）

@@ -25,6 +25,26 @@ export class BakeWorkers {
     this.job = null;             // { id, sig, keys, poses, queue: フレーム, busy: 処理中のワーカーの数 }
     this.jobId = 0;
     this.timer = null;
+    this.resetStats();
+  }
+
+  /** 評価のプロファイラに出す統計を消す（新しいアニメーションにしたとき） */
+  resetStats() {
+    this.stat = { frames: 0, workerMs: 0, wallMs: 0, wallFrames: 0, jobId: -1, jobBase: 0 };
+  }
+
+  /**
+   * 評価のプロファイラに出す統計: { available, count, cores, frames（作ったフレーム）, perFrame（ワーカーの中の 1 フレームの
+   * 評価の時間）, throughput（全体で 1 秒に作れたフレーム数。作り始めてから取り込むまで） }
+   */
+  stats() {
+    const s = this.stat;
+    return {
+      available: this.available, count: this.count,
+      cores: (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || null,
+      frames: s.frames, perFrame: s.frames ? s.workerMs / s.frames : 0,
+      throughput: s.wallMs > 0 ? (s.wallFrames * 1000) / s.wallMs : 0,
+    };
   }
 
   get available() { return !this.broken; }
@@ -33,6 +53,7 @@ export class BakeWorkers {
   reset(rig, anim, nodes) {
     this.cancel();
     this.token++;
+    this.resetStats();
     this.rig = rig;
     this.init = rig ? { anim, nodes } : null;
     for (const w of this.workers) w.ready = false;
@@ -66,7 +87,8 @@ export class BakeWorkers {
       this.timer = null;
       const frames = todo();
       if (!frames.length) return;
-      this.job = { id: ++this.jobId, sig: pose.sig, keys: pose.keys, poses: pose.poses, queue: frames.slice(), busy: 0 };
+      this.job = { id: ++this.jobId, sig: pose.sig, keys: pose.keys, poses: pose.poses, queue: frames.slice(), busy: 0,
+        start: performance.now() };
       this.ensureWorkers();
       for (const w of this.workers) this.dispatch(w);
     }, START_DELAY);
@@ -121,6 +143,14 @@ export class BakeWorkers {
       const keys = job && m.job === job.id ? job.keys : null;
       if (keys) {
         const r = decodeBaked(m);
+        const st = this.stat;
+        st.frames += r.frames.length;
+        st.workerMs += m.ms || 0;
+        // 全体の速さ: 作り始めてから、いま取り込んだところまで（ジョブごとの区間を足す）
+        const now = performance.now();
+        if (st.jobId !== job.id) { st.jobId = job.id; st.jobBase = st.wallMs; }
+        st.wallMs = st.jobBase + (now - job.start);
+        st.wallFrames += r.frames.length;
         const n = this.rig.importSnapshots(keys, r.frames, r.deps, r.poseReads);
         if (n < r.frames.length && this.rig.playbackFull) job.queue.length = 0;   // 上限に達した
         if (this.opts.onImported) this.opts.onImported(n);

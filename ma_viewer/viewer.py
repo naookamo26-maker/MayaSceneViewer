@@ -79,6 +79,11 @@ class Bridge(QtCore.QObject):
         """ビューアの操作のメッセージ（Qt ではウィンドウのステータスバーに出す。ms = 0 なら消さない）"""
         self.statusSignal.emit(text, ms)
 
+    @Slot(str)
+    def copyText(self, text):
+        """ビューアの文字をクリップボードにコピーする（評価のプロファイラの［テキストでコピー］）"""
+        QtWidgets.QApplication.clipboard().setText(text)
+
     @Slot(str, str)
     def loadEvent(self, name, detail):
         """読み込みの段階がビューアで終わった（scene: 最初の描画・animation: アニメーションの準備・cache: 再生キャッシュ）"""
@@ -727,7 +732,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
             mm.addAction(self.a_sync)
             mm.addAction(self.a_follow)
 
-        mv = mb.addMenu("表示")
+        mv = mb.addMenu("ウインドウ")
         a_log = self.log_dock.toggleViewAction()
         a_log.setText("ログ")
         a_log.setShortcut(QtGui.QKeySequence("Ctrl+L"))
@@ -739,6 +744,10 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.a_rig = self._act("リグの診断…", self.show_rig_report,
                                tip="評価できないノード（自作ノードなど）と、IK の極ベクトル・ひねりの上流を一覧にする")
         mv.addAction(self.a_rig)
+        self.a_profiler = self._act("評価のプロファイラ", self.show_profiler,
+                                    tip="再生中の 1 フレームの処理の内訳と、リグの評価の種類ごとの時間・再生キャッシュの状態を表示する")
+        mv.addAction(self.a_profiler)
+        mv.addSeparator()
         mv.addAction(self._act("開発者ツール", self.viewer.open_dev_tools, "F12"))
         self.viewer.warningsChanged.connect(self._on_warnings_changed)
         self.viewer.showWarningsRequested.connect(self.show_warnings)
@@ -767,6 +776,10 @@ class ViewerWindow(QtWidgets.QMainWindow):
 
     def copy_warnings(self):
         QtWidgets.QApplication.clipboard().setText(self.viewer.warnings_text if self.viewer.warnings else "")
+
+    def show_profiler(self):
+        """［ウインドウ］→［評価のプロファイラ］: ビューアの上に重ねるパネルを開く（profilerPanel.js）"""
+        self.viewer.run_js("window.mayaViewer && window.mayaViewer.showProfiler()")
 
     def show_rig_report(self):
         """リグの診断（.ma を読み直して、評価できないノードと IK の上流を一覧にする）"""
@@ -963,7 +976,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         for n in anim.get("notes", []):
             self.log("info", n)
         if anim.get("warnings"):
-            self.log("warn", "アニメーションの警告 %d 件（［表示］→［警告］で、分類ごとの一覧を見られます）" % len(anim["warnings"]))
+            self.log("warn", "アニメーションの警告 %d 件（［ウインドウ］→［警告］で、分類ごとの一覧を見られます）" % len(anim["warnings"]))
         amount = "%.1f MB" % (size / 1048576.0) if size >= 1048576 else "%d KB" % max(1, size // 1024)
         msg = "アニメーション: カーブ %s 本・キー %s 個・ノード %s 個（解析 %.2f 秒・転送 %s）" % (
             "{:,}".format(st.get("curves", 0)), "{:,}".format(st.get("keys", 0)), "{:,}".format(st.get("nodes", 0)),
@@ -1088,7 +1101,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         for n in scene.get("notes", []):
             self.log("info", n)
         if scene.get("warnings"):
-            self.log("warn", "警告 %d 件（［表示］→［警告］で、分類ごとの一覧を見られます）" % len(scene["warnings"]))
+            self.log("warn", "警告 %d 件（［ウインドウ］→［警告］で、分類ごとの一覧を見られます）" % len(scene["warnings"]))
         try:
             from .extract_ma import LAST_TIMING
             if LAST_TIMING and (scene.get("source") or {}).get("kind") == "ma":

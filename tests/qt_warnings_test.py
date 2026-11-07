@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""警告のパネル（下部でログとタブ切り替え。［表示］→［警告］・ツールバーの警告アイコン）の確認。
+"""警告のパネル（下部でログとタブ切り替え。［ウインドウ］→［警告］・ツールバーの警告アイコン）の確認。
 
   python tests/qt_warnings_test.py [--shot out_dir]      （画面のない Linux では xvfb-run -a を付ける）
 """
@@ -54,7 +54,7 @@ def main() -> int:
             n = len(win.viewer.warnings)
             check(not r["panel"], "右パネルに警告の欄はない")
             check(not r["hidden"] and r["count"] == str(n) and n >= 1, "ツールバーに件数付きの警告アイコン（%s 件）" % r["count"])
-            check(win.a_warn.text() == "警告（%d 件）" % n, "［表示］メニューに件数: %s" % win.a_warn.text())
+            check(win.a_warn.text() == "警告（%d 件）" % n, "［ウインドウ］メニューに件数: %s" % win.a_warn.text())
             check(win.warn_dock.windowTitle() == "警告（%d 件）" % n, "タブの見出しに件数: %s" % win.warn_dock.windowTitle())
             nxt()
         js(BADGE, got)
