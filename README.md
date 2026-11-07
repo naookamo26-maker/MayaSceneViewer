@@ -207,7 +207,7 @@ dist\MayaSceneViewer.exe samples\sample_arm.ma --selftest --selftest-out selftes
 
 `ma_viewer/web/index.html` をブラウザで直接開き、［ファイル］→［ローカルファイルから開く…］かドロップで、パッケージ（.msv）か `export` した JSON を読み込めます。.msv ならテクスチャも表示されます（JSON のテクスチャは、書き出した PC のファイルを参照するため、ブラウザの制限や別の PC では表示されないことがあります）。Chrome・Edge で確認しています。
 
-**1 ファイルの HTML（Teams・Slack などで渡す）**: CSS と JS を中に入れた 1 つの HTML（約 1.4 MB）を作ります。受け取った人はダウンロードしてブラウザで開くだけで使えます（Python も Maya もいりません）。配る物を作るときは、exe と同じく `packaging` のスクリプトを使います（出力は `dist/`）。
+**1 ファイルの HTML（Teams・Slack などで渡す）**: CSS と JS を中に入れた 1 つの HTML（約 1.4 MB）を作ります。受け取った人はダウンロードしてブラウザで開くだけで使えます（Python も Maya もいりません）。配る物を作るときは、exe と同じく `packaging` のスクリプトを使います（出力は exe と同じ場所: 実行したフォルダの `dist/`）。
 
 ```
 python packaging/build_html.py                        # → dist/MayaSceneViewer.html（ビューアだけ。開いてから .msv をドロップ）

@@ -92,12 +92,24 @@ class BuildScriptTest(unittest.TestCase):
         code, text = self.run_script(["-o", out])
         self.assertEqual(code, 0, text)
         self.assertEqual(self.script.verify(out), [])
-        with mock.patch.object(self.script, "DIST", self.dir):
+        with mock.patch.object(self.script, "dist_dir", lambda: self.dir):
             code, text = self.run_script(["--embed", TEXTURED_MSV, "--embed", ARM_MA])
         self.assertEqual(code, 0, text)
         for name in ("textured_sample.html", "sample_arm.html"):      # 1 ファイルにつき 1 つ、dist/ に
             with open(os.path.join(self.dir, name), encoding="utf-8") as f:
                 self.assertEqual(_embedded(f.read())[:4], b"PK\x03\x04", name)
+
+    def test_same_place_as_exe(self):
+        """出力先は exe と同じ: 実行したフォルダの dist/（PyInstaller の DEFAULT_DISTPATH と同じ決め方）"""
+        here = os.getcwd()
+        try:
+            os.chdir(self.dir)
+            self.assertEqual(self.script.dist_dir(), os.path.join(self.dir, "dist"))
+            code, text = self.run_script([])
+            self.assertEqual(code, 0, text)
+            self.assertTrue(os.path.isfile(os.path.join(self.dir, "dist", "MayaSceneViewer.html")))
+        finally:
+            os.chdir(here)
 
     def test_errors(self):
         self.assertEqual(self.run_script(["--embed", os.path.join(self.dir, "none.msv")])[0], 1)
