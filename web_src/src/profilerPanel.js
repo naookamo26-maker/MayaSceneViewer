@@ -39,7 +39,7 @@ export class ProfilerPanel {
         </div>
       </div>
       <div class="prof-body">
-        <label class="check prof-bypass" title="覚えたフレームは捨てずに、毎フレーム評価し直して測る（記録を止めると元に戻る）"><input type="checkbox" id="prof-nocache"> 再生キャッシュを使わずに測る</label>
+        <label class="check prof-bypass" title="覚えたフレームは捨てずに、記録中だけ毎フレーム評価し直して測る（既定。リグの評価の内訳を見るため）。キャッシュがあるときの速さを見るときは外す"><input type="checkbox" id="prof-nocache" checked> 再生キャッシュを使わずに測る</label>
         <div id="prof-summary" class="prof-summary"></div>
         <h3>フレームの内訳</h3>
         <ul class="prof-legend" id="prof-legend"></ul>
@@ -164,7 +164,7 @@ export class ProfilerPanel {
     if (this.el.hidden) return;
     const prof = this.app.profiler;
     if (this.app.rig) this.app.rig.bypassCache = prof.recording && $('prof-nocache').checked;
-    if (!force && prof.version === this.drawnVersion && !prof.recording) return;
+    // 再生キャッシュとワーカーの欄は、記録していなくても変わる（空き時間・ワーカーで作る）ので、毎回描き直す
     if (!force && prof.version === this.drawnVersion) { this.renderCache(); return; }
     this.drawnVersion = prof.version;
     this.renderSummary();
@@ -284,7 +284,7 @@ export class ProfilerPanel {
     if (this.mode === 'node') {
       const maxShare = Math.max(...rows.map((r) => r.share), 0.0001);
       const body = rows.map((r) => `<tr data-ni="${r.ni}" class="${r.path === 'generic' ? 'generic' : ''}" title="クリックで選択">`
-        + `<td class="lbl" title="${esc(r.label)}">${esc(r.label)}</td><td class="kind" title="${esc(r.kind)}">${esc(r.kind)}</td>`
+        + `<td class="lbl" title="${esc(r.dagPath || r.label)}">${esc(r.label)}</td><td class="kind" title="${esc(r.kind)}">${esc(r.kind)}</td>`
         + `<td class="n">${msText(r.ms)}</td>`
         + `<td class="share"><span class="bar" style="width:${(r.share / maxShare) * 100}%"></span><span class="pct">${(r.share * 100).toFixed(1)}%</span></td></tr>`).join('');
       $('prof-table').innerHTML = `<thead><tr><th>ノード</th><th>種類</th><th class="n">1 フレーム</th><th>割合</th></tr></thead><tbody>${body}</tbody>`;
@@ -319,14 +319,14 @@ export class ProfilerPanel {
     }
     if (ci) {
       items.push(['動くノード', `${num(ci.moving)} 個・キャッシュは 1 フレーム ${formatBytes(ci.perFrame)}`]);
-      items.push(['覚えたフレーム', `${num(ci.frames)} / ${num(ci.range)}・${formatBytes(ci.bytes)}（上限 ${ci.limit ? formatBytes(ci.limit) : 'オフ'}）${ci.full && ci.frames < ci.range ? '・<span class="warn">上限に達しています</span>' : ''}`]);
+      items.push(['覚えたフレーム', `${num(ci.frames)} / ${num(ci.range)}・${formatBytes(ci.bytes)}（上限 ${ci.limit ? formatBytes(ci.limit) : 'オフ'}）${ci.limit > 0 && ci.full && ci.frames < ci.range ? '・<span class="warn">上限に達しています</span>' : ''}`]);
       items.push(['上限ごとに入る数', ci.fits.map(([mb, n]) => `${mb >= 1024 ? mb / 1024 + ' GB' : mb + ' MB'}: ${num(n)}`).join('　')]);
     }
     if (!w.available) items.push(['ワーカー', '使っていません（画面のスレッドの空き時間に作ります）']);
     else {
-      let t = `${w.count} 個（CPU のコア ${w.cores || '不明'}）`;
+      let t = `${w.count} 個（CPU のコア ${w.cores || '不明'}）・${w.busy ? '作っています' : '止まっています'}`;
       if (w.frames) {
-        t += `・作ったフレーム ${num(w.frames)}・1 フレームの評価 ${msText(w.perFrame)}（ワーカーの中）`;
+        t += `・読み込んでから作ったフレーム ${num(w.frames)}・1 フレームの評価 ${msText(w.perFrame)}（ワーカーの中）`;
         if (w.throughput) t += `・全体で 1 フレーム ${msText(1000 / w.throughput)}`;
       }
       items.push(['ワーカー', t]);

@@ -71,10 +71,10 @@ Maya ASCII（.ma）のモデル形状・ジョイント・スキンウェイト�
 
 ## バージョン
 
-いまのバージョンは 1.0.0 です。形式はセマンティック バージョニング（メジャー.マイナー.パッチ）で、前の版と互換のない変更（前の版で作った .msv が読めなくなるなど）でメジャー、互換を保った機能の追加でマイナー、不具合の修正でパッチを上げます。
+いまのバージョンは 1.1.0 です。形式はセマンティック バージョニング（メジャー.マイナー.パッチ）で、前の版と互換のない変更（前の版で作った .msv が読めなくなるなど）でメジャー、互換を保った機能の追加でマイナー、不具合の修正でパッチを上げます。
 
 - 確認: Qt 版は［ヘルプ］→［バージョン情報…］（起動時のログにも出ます）、ブラウザ版は何も開いていないときの画面、コマンドは `python -m ma_viewer --version`。パッケージ（.msv）の `manifest.json` にも、作ったビューアのバージョン（`generatorVersion`）が入ります。
-- 上げるとき: `ma_viewer/version.py` の `__version__` を変え、`web_src/package.json` の `version` も同じにして、ビューアを作り直します（`cd web_src && node build.mjs`。JS はビルド時に `version.py` から読みます）。`tests/test_version.py` が、ずれていないかを確かめます。
+- 上げるとき（どの変更でどの桁を上げるかは `CLAUDE.md`）: `ma_viewer/version.py` の `__version__` を変え、`web_src/package.json`・`web_src/package-lock.json` の `version` と、この節の「いまのバージョン」も同じにして、ビューアを作り直します（`cd web_src && node build.mjs`。JS はビルド時に `version.py` から読みます）。`tests/test_version.py` が、ずれていないかを確かめます。
 
 ## 必要なもの
 
@@ -156,10 +156,10 @@ python -m ma_viewer convert-plugin myPlugin.py -o ma_viewer/node_defs/myPlugin.j
 **評価のプロファイラ**: 再生が遅いときに、どこに時間がかかっているかを調べます。Qt 版は［ウインドウ］→［評価のプロファイラ］、ブラウザ版はツールバーの［ウインドウ］→［評価のプロファイラ］で、ビューポートの上にパネルを開きます（見出しをつかんで動かせます）。［● 記録］を押してから再生する（フレームを動かす）と、次の内容を記録します。記録していないあいだは何も測らないので、再生の速さに影響しません。
 
 - **フレームの内訳**: 1 フレームごとの積み上げ棒（再生キャッシュから写す・専用の評価・汎用の経路・カーブの形・接続で決まる値・行列の更新と表示とその他・描画）と、シーンのフレームレートの持ち時間の線。棒にマウスを乗せると、そのフレームの内訳を出します。記録したフレーム数（キャッシュあり・なし）、平均・最大の時間、表示できたフレームレートも出します。描画は CPU 側で命令を出す時間で、GPU の処理の時間は含みません。
-- **リグの評価の内訳**: キャッシュなしで評価したフレームの平均を、種類ごと（キーで動くノード・parentConstraint で動くノード・IK（ikRPsolver）で動くジョイント・計算ノード（multiplyDivide）で動くノードなど。上流のコンストレイント・計算ノード・IK の計算は、最初に読んだノードの時間に入ります）と、経路ごと（専用の評価・汎用の経路に任せたノードとその理由・汎用の経路だけで評価したときの理由）に、ノードの数・1 フレームの時間・割合で出します。ノードごと（時間の大きい 100 個。名前・種類・時間・割合）にも出し、行を押すとそのノードを選びます（特定のノードが重いのか、多くのノードに分かれているのかを見分けるとき）。1 ノードの評価は数 µs で、ブラウザの時計は 0.1 ms 程度に丸められることがあるため、記録したフレームを通して足し合わせた平均です（多く記録するほど正確。合計をリグの評価の時間と並べて出します）。
+- **リグの評価の内訳**: キャッシュなしで評価したフレームの平均を、種類ごと（キーで動くノード・parentConstraint で動くノード・IK（ikRPsolver）で動くジョイント・計算ノード（multiplyDivide）で動くノードなど。上流のコンストレイント・計算ノード・IK の計算は、最初に読んだノードの時間に入ります）と、経路ごと（専用の評価・汎用の経路に任せたノードとその理由・汎用の経路だけで評価したときの理由）に、ノードの数・1 フレームの時間・割合で出します。ノードごと（時間の大きい 100 個。名前・種類・時間・割合。同じ名前のノードは、区別できるところまで DAG のパスを付ける）にも出し、行を押すとそのノードを選びます（特定のノードが重いのか、多くのノードに分かれているのかを見分けるとき）。1 ノードの評価は数 µs で、ブラウザの時計は 0.1 ms 程度に丸められることがあるため、記録したフレームを通して足し合わせた平均です（多く記録するほど正確。合計をリグの評価の時間と並べて出します）。
 - **再生キャッシュとワーカー**: シーンの数（スキン付きのメッシュ・リグで形が変わるカーブを含む）、専用の評価の計画（汎用の経路に任せた数と理由）、動くノードの数とキャッシュの 1 フレームの大きさ、覚えたフレームの数、上限（128 MB〜2 GB）ごとに入るフレームの数、ワーカーの数と 1 フレームを作る時間（ワーカーの中・全体）。
 
-「再生キャッシュを使わずに測る」をオンにすると、覚えたフレームは捨てずに、記録中だけ毎フレーム評価し直します（キャッシュなしの速さを測るとき）。［テキストでコピー］で結果を文字としてコピーできます。
+「再生キャッシュを使わずに測る」は既定でオンで、覚えたフレームは捨てずに、記録中だけ毎フレーム評価し直します（リグの評価の内訳は、キャッシュなしで評価したフレームからしか出ないため）。キャッシュがあるときに実時間で再生できるか・描画などの重さだけを見るときは外します。［テキストでコピー］で結果を文字としてコピーできます。
 
 **自作ノードの定義**（ツールの配布者向け）: 自作ノード（プラグイン）の中の計算は .ma に書かれていないため、そのままでは評価できません。属性と計算を書いた**定義ファイル**を `ma_viewer/node_defs/` に置いてビューアと一緒に配ると、利用者の環境にプラグインや Maya がなくても、その計算を再現できます（exe にも必ず含めます）。数が不定の配列の属性・compound・ベクトル・行列・角度・時間を扱え、計算は Python の書き方の一部（代入・if・for・関数）で書きます。書き方は [docs/node_definitions.md](docs/node_definitions.md)、確認は `python -m ma_viewer node-defs`。
 Python で書いたノードプラグイン（API 2.0・1.0）は、`python -m ma_viewer convert-plugin myPlugin.py -o ma_viewer/node_defs/myPlugin.json` で定義に変換できます（コードは実行せずに解析します）。変換できないノード（前回の値を覚える・cmds を使う など）は行番号つきで理由を出し、そのノードは書き出しません（[docs/node_definitions.md](docs/node_definitions.md) の「プラグインからの変換」）。
@@ -441,6 +441,7 @@ maya_ma_viewer/
 ├─ install_maya.py        Maya へのドラッグ＆ドロップでシェルフに登録
 ├─ packaging/             配る物を作る（exe: PyInstaller の spec・build_exe.py、1 ファイルの HTML: build_html.py、アイコンを作る make_icon.py）
 ├─ requirements.txt
+├─ CLAUDE.md              作業のルール（バージョンを上げる条件と手順）
 ├─ ma_viewer/
 │  ├─ ma_reader.py        .ma の字句解析（文の分割・setAttr の解析）
 │  ├─ ma_scene.py         ノード・属性・接続の保持（リファレンスの読み込み・編集の適用も）
@@ -515,7 +516,7 @@ python tests/qt_playback_cache_test.py                  # リグの再生キャ�
 
 アニメーションカーブの評価は、Autodesk の animX（Maya と同じ評価をする公開ライブラリ）を書き写した参照実装と `web_src/tests/animx.test.mjs` で比べています。Maya との違いの調査結果と、Maya で評価した値と比べる手順（`tools/maya_anim_curve_check.py`・`tools/compare_anim_curves.py`）は [docs/animation_curves.md](docs/animation_curves.md) にあります。
 
-リグの評価には、どんなグラフでも評価できる汎用の経路（`web_src/src/rig.js` の RigEvaluator）と、扱える種類のノードだけでできたリグを計画どおりに速く計算する専用の評価（`web_src/src/rigCompiled.js`。最初の評価のあとで計画を作り、ポーズ確認の追加分がないあいだ使う）があります。専用の評価は汎用の経路と同じ数式を同じ順番で計算し、結果はビット単位で同じです（`web_src/tests/compiled.test.mjs`。サンプルは `python tools/make_compiled_sample.py`）。キーで動くノードと、parent・point・orient・scale・aim コンストレイント、lookAt（world up がシーンの上・ベクトル・なし）で動くノードと、IK（回転プレーン・シングルチェーン。poleVectorConstraint の極ベクトルを含む。解き方の関数は汎用の経路と共有）で動くジョイントと、計算ノード（multiplyDivide・plusMinusAverage・decomposeMatrix・Maya 2024 以降の計算ノード・自作ノードの定義など。入力だけで出力が決まるもの。計算は汎用の経路のものを、値の読み方だけ差し替えて使う）・DAG ノードの直接の接続で動くノードを専用に計算し、それ以外のノード（スプライン IK・カーブの形を読むノード・expression・形の変わるカーブなど）は汎用の経路に任せて、同じフレームの中で混ぜて計算します（任せた理由と件数は `rig.compiledPlan.delegated`）。専用に計算できるノードがない・評価が循環するリグは汎用の経路だけで評価します（`rig.compiledReason` に理由。原因のノードの名前と、同じ条件のノードの数も入れます。評価のプロファイラの「専用の評価」にも出ます）。動かないノード（HumanIK の部位に割り当てていない途中のジョイントなど）が、親のスケールの打ち消しの元を持っていても、その元を先に計算して専用の評価で扱います（`web_src/tests/compiled.test.mjs`。サンプルは `python tools/make_static_is_sample.py`）。リグの評価の速さは `cd web_src && npm run bench` で測れます（samples/ のアニメーションを全フレーム評価し、1 フレームあたりの時間を 1 周目・2 周目以降・再生キャッシュなし・汎用の経路だけ・時間で変わらない値の使い回しなしに分けて出し、専用の評価を使ったかも出します）。評価の高速化の前後で結果が変わらないことは、`npm run bench -- --save before.json` で変更前の結果を保存し、変更後に `npm run bench -- --check before.json` で確かめます。リグの評価のキャッシュのテストは `web_src/tests/cache.test.mjs` です（キャッシュを使わずに毎回評価した結果と比べる）。評価のプロファイラのテストは `web_src/tests/profiler.test.mjs` です（記録しても評価の結果が変わらないこと・種類ごと・経路ごと・ノードごとの集計・文字の結果）。
+リグの評価には、どんなグラフでも評価できる汎用の経路（`web_src/src/rig.js` の RigEvaluator）と、扱える種類のノードだけでできたリグを計画どおりに速く計算する専用の評価（`web_src/src/rigCompiled.js`。最初の評価のあとで計画を作り、ポーズ確認の追加分がないあいだ使う）があります。専用の評価は汎用の経路と同じ数式を同じ順番で計算し、結果はビット単位で同じです（`web_src/tests/compiled.test.mjs`。サンプルは `python tools/make_compiled_sample.py`）。キーで動くノードと、parent・point・orient・scale・aim コンストレイント、lookAt（world up がシーンの上・ベクトル・なし）で動くノードと、IK（回転プレーン・シングルチェーン。poleVectorConstraint の極ベクトルを含む。解き方の関数は汎用の経路と共有）で動くジョイントと、計算ノード（multiplyDivide・plusMinusAverage・decomposeMatrix・アニメーションレイヤー（animBlendNode・animLayer）・Maya 2024 以降の計算ノード・自作ノードの定義など。入力だけで出力が決まるもの。計算は汎用の経路のものを、値の読み方だけ差し替えて使う）・DAG ノードの直接の接続で動くノードを専用に計算し、それ以外のノード（スプライン IK・カーブの形を読むノード・expression・形の変わるカーブなど）は汎用の経路に任せて、同じフレームの中で混ぜて計算します（任せた理由と件数は `rig.compiledPlan.delegated`）。専用に計算できるノードがない・評価が循環するリグは汎用の経路だけで評価します（`rig.compiledReason` に理由。原因のノードの名前と、同じ条件のノードの数も入れます。評価のプロファイラの「専用の評価」にも出ます）。動かないノード（HumanIK の部位に割り当てていない途中のジョイントなど）が、親のスケールの打ち消しの元を持っていても、その元を先に計算して専用の評価で扱います（`web_src/tests/compiled.test.mjs`。サンプルは `python tools/make_static_is_sample.py`）。リグの評価の速さは `cd web_src && npm run bench` で測れます（samples/ のアニメーションを全フレーム評価し、1 フレームあたりの時間を 1 周目・2 周目以降・再生キャッシュなし・汎用の経路だけ・時間で変わらない値の使い回しなしに分けて出し、専用の評価を使ったかも出します）。評価の高速化の前後で結果が変わらないことは、`npm run bench -- --save before.json` で変更前の結果を保存し、変更後に `npm run bench -- --check before.json` で確かめます。リグの評価のキャッシュのテストは `web_src/tests/cache.test.mjs` です（キャッシュを使わずに毎回評価した結果と比べる）。評価のプロファイラのテストは `web_src/tests/profiler.test.mjs` です（記録しても評価の結果が変わらないこと・種類ごと・経路ごと・ノードごとの集計・文字の結果）。
 
 自作ノードの定義のテストは `tests/test_node_defs.py`（読み込み・検証・シーンへの適用）と `web_src/tests/nodeDef.test.mjs`（評価）です。サンプルとテスト用の定義は `python tools/make_nodedef_sample.py` で作ります（`samples/nodedef_sample_defs.json`。ビューアには同梱しません）。
 ヒストリのあるカーブのテストは `tests/test_curve_history.py`（形の計算・警告・リグの診断）と `web_src/tests/curveHistory.test.mjs`（表示とスプライン IK）です（サンプルは `python tools/make_curve_history_sample.py`）。骨ごとに伸び縮みするスプライン IK（カーブ上の点どうしの距離 → blendColors → multiplyDivide → ジョイントのスケール）と、その下の親のスケールを打ち消す自作ノード（割り当ての segmentScaleCompensate）のテストは `web_src/tests/stretchSpline.test.mjs` と `tests/test_scale_compensation.py` です（サンプルは `python tools/make_stretch_spline_sample.py`）。コンポーネントタグのテストは `tests/test_component_tags.py`（タグと式の読み取り・groupParts による指定・リグの診断）と `web_src/tests/componentTags.test.mjs`（cluster → wire → スプライン IK）です（サンプルは `python tools/make_component_tag_sample.py`）。

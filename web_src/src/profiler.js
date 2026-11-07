@@ -131,7 +131,7 @@ export class EvalProfiler {
     let e = this.perNode.get(ni);
     if (!e) {
       const n = rig.sceneNodes[ni];
-      this.perNode.set(ni, e = { ni, name: (n && (n.name || n.path)) || `ノード ${ni}`, label, path, ms: 0 });
+      this.perNode.set(ni, e = { ni, name: (n && (n.name || n.path)) || `ノード ${ni}`, dagPath: (n && n.path) || '', label, path, ms: 0 });
     }
     e.ms += ms;
   }
@@ -216,8 +216,10 @@ export class EvalProfiler {
       const all = [...this.perNode.values()];
       const sum = all.reduce((t, e) => t + e.ms, 0) || 1;
       const per = this.evaluated || 1;
-      return all.sort((a, b) => b.ms - a.ms).slice(0, limit)
-        .map((e) => ({ label: e.name, kind: e.label, ni: e.ni, path: e.path, nodes: 1, ms: e.ms / per, share: e.ms / sum }));
+      const top = all.sort((a, b) => b.ms - a.ms).slice(0, limit);
+      const names = uniqueNames(top);
+      return top.map((e, i) => ({ label: names[i], kind: e.label, ni: e.ni, path: e.path, dagPath: e.dagPath, nodes: 1,
+        ms: e.ms / per, share: e.ms / sum }));
     }
     const src = mode === 'path' ? this.reasons : this.categories;
     const all = [...src.values()];
@@ -235,6 +237,27 @@ export class EvalProfiler {
     const per = this.evaluated || 1;
     return { rig: rig / per, categories: cats / per };
   }
+}
+
+/**
+ * 表に出すノードの名前。同じ名前のノード（別のキャラクターの同じ名前のジョイントなど）は、区別できるところまで
+ * DAG のパスを後ろから付ける（|char1|head|base_F → head|base_F）
+ */
+export function uniqueNames(entries) {
+  const parts = entries.map((e) => (e.dagPath ? e.dagPath.split('|').filter(Boolean) : [e.name]));
+  const depth = entries.map(() => 1);
+  for (let round = 0; round < 64; round++) {
+    const label = (i) => parts[i].slice(-depth[i]).join('|');
+    const groups = new Map();
+    entries.forEach((_, i) => { const k = label(i); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); });
+    let changed = false;
+    for (const idx of groups.values()) {
+      if (idx.length < 2) continue;
+      for (const i of idx) if (depth[i] < parts[i].length) { depth[i]++; changed = true; }
+    }
+    if (!changed) break;
+  }
+  return entries.map((e, i) => (depth[i] > 1 ? parts[i].slice(-depth[i]).join('|') : e.name));
 }
 
 /** バイト数を読みやすく */
@@ -345,9 +368,9 @@ export function profilerText(prof, ctx) {
     L.push('■ 再生キャッシュを作るワーカー');
     if (!w.available) L.push('  使っていません（画面のスレッドの空き時間に作ります）');
     else {
-      L.push(`  ワーカー ${w.count} 個（CPU のコア ${w.cores || '不明'}）`);
+      L.push(`  ワーカー ${w.count} 個（CPU のコア ${w.cores || '不明'}）・${w.busy ? '作っています' : '止まっています'}`);
       if (w.frames) {
-        L.push(`  作ったフレーム ${w.frames}・1 フレームの評価 ${ms(w.perFrame)}（ワーカーの中）`);
+        L.push(`  読み込んでから作ったフレーム ${w.frames}・1 フレームの評価 ${ms(w.perFrame)}（ワーカーの中）`);
         if (w.throughput) L.push(`  全体の速さ: 1 フレームあたり ${ms(1000 / w.throughput)}（${w.throughput.toFixed(1)} フレーム/秒）`);
       } else L.push('  まだ作っていません');
     }

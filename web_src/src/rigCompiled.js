@@ -41,7 +41,7 @@ const MATH_TYPES = new Set(['unitConversion', 'multiplyDivide', 'plusMinusAverag
   'animBlendNodeAdditiveDL', 'animBlendNodeAdditiveDA', 'animBlendNodeAdditive', 'animBlendNodeAdditiveF',
   'animBlendNodeAdditiveFL', 'animBlendNodeAdditiveFA', 'animBlendNodeAdditiveI16', 'animBlendNodeAdditiveI32',
   'animBlendNodeAdditiveScale', 'animBlendNodeBoolean', 'animBlendNodeEnum', 'animBlendNodeAdditiveRotation',
-  'animCurveUA', 'animCurveUL', 'animCurveUU']);
+  'animCurveUA', 'animCurveUL', 'animCurveUU', 'animLayer']);
 const TRS_RE = /^[trs][xyz]?$/;
 const MATRIX_PLUGS = new Set(['wm', 'worldMatrix', 'wim', 'worldInverseMatrix', 'm', 'matrix', 'xm', 'xformMatrix', 'im', 'inverseMatrix']);
 const PM_PLUGS = new Set(['pm', 'parentMatrix', 'pim', 'parentInverseMatrix']);

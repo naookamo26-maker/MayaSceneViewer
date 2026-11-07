@@ -107,3 +107,14 @@ test('専用の評価を使えないときの理由に、原因の中身を入�
   assert.match(rig.compiledReason, /^評価の打ち切り（循環など。計算の順番で結果が変わりうる: .+）$/);
   assert.ok(rig.compiledReason.includes([...rig.problems][0]), rig.compiledReason);
 });
+
+test('animLayer（ウェイトとミュートだけで出力が決まる）を読むノードも、専用の評価で計算する', () => {
+  const d = load('rig6_sample.json');
+  const a = makeRig(d, false), b = makeRig(d, true);
+  const frames = framesOf(a);
+  b.evaluate(frames[0]);
+  assert.ok(b.compiledPlan, b.compiledReason);
+  assert.ok(d.animation.graph.some((g) => g.type === 'animLayer'), 'animLayer のあるサンプル');
+  assert.ok(!Object.keys(b.compiledPlan.delegated).some((w) => w.includes('animLayer')), JSON.stringify(b.compiledPlan.delegated));
+  for (const f of frames) assert.equal(valuesOf(b, f), valuesOf(a, f), `フレーム ${f}`);
+});
