@@ -422,9 +422,11 @@ export class RigEvaluator {
     this.props = clip.raw.props || [];       // 表示・カメラの属性の接続（evaluateProps）
     // 自作ノードの定義（animation.nodeDefs）: 型 → 評価できる形。定義が壊れていれば、そのノードは評価しない
     this.defs = new Map();
+    const td = performance.now();
     for (const [t, d] of Object.entries(clip.raw.nodeDefs || {})) {
       try { this.defs.set(t, compileNodeDef(d)); } catch (e) { this.defs.set(t, null); }
     }
+    this.defsMs = performance.now() - td;     // 定義を評価できる形にした時間（評価のプロファイラのワーカーの欄）
     this.problems = new Set();               // 評価中に見つかった問題（循環など）
     this.deepState = newDeepState();         // 深い再帰でスタックがあふれたときのやり直し（deepEval.js・deep）
     this.profile = null;                     // 評価のプロファイラ（記録中だけ。profiler.js）

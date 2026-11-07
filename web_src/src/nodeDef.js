@@ -451,17 +451,28 @@ const giveUp = () => { throw new NoCodegen(); };
  * IR → 関数 (io) => 出力 { プラグ: 値 }（成分のプラグに分ける前）。作れなければ null
  * @param top 属性の短い名前 → 属性の情報（compileNodeDef と同じもの）
  */
+/** これより変数の多い定義は、変数を配列にまとめる（generateRunner） */
+const MANY_LOCALS = 256;
+
 export function generateRunner(ir, top) {
   if (typeof Function !== 'function') return null;
   const K = [];                                   // 定数（属性の情報など）
   const konst = (v) => { K.push(v); return `K[${K.length - 1}]`; };
-  const locals = new Map();                       // 変数の名前 → JS の変数名
+  // 変数の名前 → JS の変数名（$L 番号。数が多ければ、あとで配列 V の要素に置き換える）
+  const locals = new Map();
   const localVar = (name) => {
-    if (!locals.has(name)) locals.set(name, `L${locals.size}`);
+    if (!locals.has(name)) locals.set(name, `$L${locals.size}`);
     return locals.get(name);
   };
-  let temps = 0;
-  const temp = () => `T${temps++}`;
+  // 一時変数は、式の入れ子の深さ（depth）と、その式の中の番号（slot）で名前を決める。同じ深さの兄弟の式は、前の式の値を
+  // もう親の一時変数に移し終えているので、同じ名前を使い回せる（式ごとに新しい名前にすると、演算の多い定義では一時変数が
+  // 何万個にもなり、1 回の呼び出しで使うスタックが大きくなって、スタックの小さい Web Worker ではあふれる）。
+  // 深さ 0 は文の中（代入の値・添字）、式は深さ 1 から。for の数え方の変数（R 番号）は本体のあいだ生きるので別に数える
+  const temps = new Set();
+  let depth = 0;
+  const temp = (slot) => { const t = `T${depth}_${slot}`; temps.add(t); return t; };
+  let loopTemps = 0;
+  const loopTemp = () => { const t = `R${loopTemps++}`; temps.add(t); return t; };
   const str = (v) => JSON.stringify(String(v));
   const lit = (v) => {
     if (typeof v === 'number') return Object.is(v, -0) ? '-0' : Number.isFinite(v) ? String(v) : konst(v);
@@ -497,6 +508,10 @@ export function generateRunner(ir, top) {
   };
 
   const expr = (e) => {
+    depth++;
+    try { return exprAt(e); } finally { depth--; }
+  };
+  const exprAt = (e) => {
     if (!Array.isArray(e)) giveUp();
     switch (e[0]) {
       case 'n': return lit(e[1]);
@@ -505,7 +520,7 @@ export function generateRunner(ir, top) {
       case 'a': { const p = plug(e[1]); return `io.read(${p.name}, ${p.info})`; }
       case 'b': {
         if (e[1] === 'and' || e[1] === 'or') {
-          const t = temp();
+          const t = temp(0);
           return e[1] === 'and' ? `((${t} = ${expr(e[2])}), H.truthy(${t}) ? ${expr(e[3])} : ${t})`
             : `((${t} = ${expr(e[2])}), H.truthy(${t}) ? ${t} : ${expr(e[3])})`;
         }
@@ -513,7 +528,7 @@ export function generateRunner(ir, top) {
       }
       case 'ch': {
         // 項の多い式（数百項の足し算など）を入れ子にしないよう、一時変数に左から順に入れていく
-        const acc = temp();
+        const acc = temp(2);                     // binary の 0・1 と別
         const steps = [`(${acc} = ${expr(e[2][0])})`];
         for (let k = 0; k < e[1].length; k++) steps.push(`(${acc} = ${binary(e[1][k], acc, expr(e[2][k + 1]))})`);
         return `(${steps.join(', ')}, ${acc})`;
@@ -533,7 +548,7 @@ export function generateRunner(ir, top) {
     if (!BIN[op]) giveUp();
     const js = JS_OPS[op];
     if (!js) return `H.B[${str(op)}](${a}, ${b})`;
-    const x = temp(), y = temp();
+    const x = temp(0), y = temp(1);
     return `((${x} = ${a}), (${y} = ${b}), typeof ${x} === 'number' && typeof ${y} === 'number' ? ${x} ${js} ${y} : H.B[${str(op)}](${x}, ${y}))`;
   };
 
@@ -559,9 +574,9 @@ export function generateRunner(ir, top) {
   // 代入: value は求めた値（JS の式。先に一時変数へ入れてから、代入先の添字を求める）
   const assign = (target, value) => {
     if (target[0] === 'l') return `${localVar(target[1])} = ${value};`;
-    const t = temp();
+    const t = temp(3);                            // 文の一時変数（深さ 0。値・添字の式は深さ 1 から）
     if (target[0] === 'li') {
-      const a = temp();
+      const a = temp(4);
       return `${t} = ${value}; ${a} = H.target(${localVar(target[1])}); H.setItem(${a}, ${expr(target[2])}, ${t});`;
     }
     if (target[0] !== 'o') giveUp();
@@ -593,13 +608,13 @@ export function generateRunner(ir, top) {
           let code;
           if (Array.isArray(it) && it[0] === 'c' && it[1] === 'range' && it[2].length >= 1 && it[2].length <= 3) {
             // range: 配列を作らずに数える（値・誤りは FUNCS.range と同じ）
-            const r = temp();
+            const r = loopTemp();
             const a = it[2].map(expr);
-            const x = temp();
+            const x = loopTemp();
             code = `${r} = H.range(${a.join(', ')});\n`
               + `for (let ${x} = ${r}[0]; ${r}[2] > 0 ? ${x} < ${r}[1] : ${x} > ${r}[1]; ${x} += ${r}[2]) {\n${v} = ${x};\n${block(s[3])}\n}`;
           } else {
-            const x = temp();
+            const x = loopTemp();
             code = `for (const ${x} of H.vec(${expr(it)}, 'for の繰り返し')) {\n${v} = ${x};\n${block(s[3])}\n}`;
           }
           loops--;
@@ -619,9 +634,13 @@ export function generateRunner(ir, top) {
   } catch (e) {
     return null;                                  // 扱わない形・深すぎる入れ子など（IR をたどって計算する）
   }
-  const decl = [...locals.values()].map((v) => `${v} = H.U`);
-  for (let i = 0; i < temps; i++) decl.push(`T${i}`);
-  const src = `'use strict';\nlet S = 0;\nconst outs = {};\n${decl.length ? `let ${decl.join(', ')};\n` : ''}${body}\nreturn outs;`;
+  // 変数が多ければ、配列 V の要素にする（1 回の呼び出しで使うスタックを小さくする）
+  const many = locals.size > MANY_LOCALS;
+  if (many) body = body.replace(/\$L(\d+)/g, 'V[$1]');
+  const decl = many ? [] : [...locals.values()].map((v) => `${v} = H.U`);
+  for (const t of temps) decl.push(t);
+  const src = `'use strict';\nlet S = 0;\nconst outs = {};\n${many ? `const V = new Array(${locals.size}).fill(H.U);\n` : ''}`
+    + `${decl.length ? `let ${decl.join(', ')};\n` : ''}${body}\nreturn outs;`;
   try {
     const fn = new Function('io', 'H', 'K', src);   // eslint-disable-line no-new-func
     return (io) => fn(io, H, K);

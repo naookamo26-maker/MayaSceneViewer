@@ -120,7 +120,7 @@ test('専用の評価でやり直せない所のスタックがあふれたら�
   assert.equal(rig.compiledReason, '計算の鎖が深すぎる（スタックがあふれた: chanTObj ← dagPlug）');
 });
 
-test('関数にするとスタックに収まらない自作ノード（変数が多い）: ワーカーでは IR をたどる計算に切り替えて、正しい値を求める', async () => {
+test('変数・演算の多い自作ノード: 関数のまま、スタックの小さいワーカーで正しい値を求める（一時変数の使い回し・変数の配列）', async () => {
   const VARS = 40000;
   const data = structuredClone(base);
   const anim = data.animation;
@@ -165,7 +165,29 @@ test('関数にするとスタックに収まらない自作ノード（変数�
   assert.deepEqual(res.problems, []);
   for (const { f, ty } of res.out) assert.equal(ty, want(f), `フレーム ${f}`);
   const last = res.out[res.out.length - 1].timing;
-  assert.equal(last.interpreted, 1, JSON.stringify(last));
-  assert.ok(last.retries < 10, `やり直しが多すぎる: ${last.retries}`);
+  assert.equal(last.interpreted, 0, JSON.stringify(last));
+  assert.equal(res.info.defsCompiled, res.info.defsTotal);
   assert.ok(res.info.plan, `専用の評価にならない: ${res.info.reason}`);
+});
+
+test('関数がスタックに収まらない自作ノード: その定義だけ IR をたどる計算に切り替えて、正しい値を求める', () => {
+  const data = JSON.parse(readFileSync(path.resolve(here, '../../samples/nodedef_sample.json'), 'utf8'));
+  const make = () => new RigEvaluator(new AnimationClip(data.animation), data.nodes, (ni) => new Matrix4().fromArray(data.nodes[ni].matrix));
+  const rig = make(), ref = make();
+  const d = rig.defs.get('angleDouble');
+  assert.ok(d.compiled);
+  // 関数で計算すると、浅い所から呼んでもスタックがあふれることにする（変数の多い定義をスタックの小さいワーカーで呼んだとき）
+  const run = d.run;
+  d.run = function (io) {
+    if (d.compiled) throw new RangeError('Maximum call stack size exceeded');
+    return run.call(d, io);
+  };
+  for (const f of [1, 7, 12]) {
+    const got = rig.evaluate(f, undefined, new Map()), want = ref.evaluate(f, undefined, new Map());
+    for (const [ni, m] of want) assert.deepEqual(got.get(ni).elements, m.elements, `フレーム ${f}・ノード ${ni}`);
+  }
+  assert.equal(d.compiled, false);
+  assert.deepEqual([...rig.defsInterpreted], ['angleDouble']);
+  assert.deepEqual([...rig.problems], [...ref.problems]);
+  assert.ok(rig.deepState.retries < 10, `やり直しが多すぎる: ${rig.deepState.retries}`);
 });

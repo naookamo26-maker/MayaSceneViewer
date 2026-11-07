@@ -13,12 +13,14 @@ import { makeCurve } from './curve.js';
 export function createBaker(anim, nodes) {
   const t0 = performance.now();
   const data = typeof anim === 'string' ? JSON.parse(anim) : anim;
+  const parseMs = performance.now() - t0;
   const clip = new AnimationClip(data);
   const statics = nodes.map((n) => new Matrix4().fromArray(n.matrix));
   const rig = new RigEvaluator(clip, nodes, (ni) => statics[ni]);
   rig.setPlaybackLimit(Number.MAX_SAFE_INTEGER);      // 作ったフレームはすぐ送って捨てるので、上限はなし
   // timing: 評価のプロファイラに出す、ワーカーの中の時間（準備・最初のフレーム）
-  return { rig, sentDeps: new Map(), sentReads: new Set(), timing: { createMs: performance.now() - t0, firstMs: null } };
+  return { rig, sentDeps: new Map(), sentReads: new Set(),
+    timing: { createMs: performance.now() - t0, parseMs, defsMs: rig.defsMs, firstMs: null } };
 }
 
 /** 評価器の状態（［このフレームを確かめる］で、ワーカーの中の様子を知らせる） */
@@ -90,12 +92,14 @@ export function bakeFrames(baker, req) {
 }
 
 /**
- * ワーカーの中の時間: { createMs: 準備（アニメーションの読み込み・評価器）, firstMs: 最初のフレーム, planMs: 専用の評価の
+ * ワーカーの中の時間: { createMs: 準備（アニメーションの読み込み・評価器）, parseMs: そのうち JSON の読み込み, defsMs: そのうち
+ * 自作ノードの定義を評価できる形にした時間, firstMs: 最初のフレーム, planMs: 専用の評価の
  * 計画を作った時間, plan: 専用の評価を使うか, retries: スタックがあふれてやり直した回数 }
  */
 export function bakerTiming(baker) {
   const rig = baker.rig;
-  return { createMs: baker.timing.createMs, firstMs: baker.timing.firstMs, planMs: rig.planMs ?? null,
+  return { createMs: baker.timing.createMs, parseMs: baker.timing.parseMs, defsMs: baker.timing.defsMs,
+    firstMs: baker.timing.firstMs, planMs: rig.planMs ?? null,
     plan: !!rig.compiledPlan, reason: rig.compiledPlan ? null : (rig.compiledReason || null), retries: rig.deepState.retries,
     interpreted: rig.defsInterpreted ? rig.defsInterpreted.size : 0 };
 }
