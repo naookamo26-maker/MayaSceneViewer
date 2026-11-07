@@ -822,6 +822,7 @@ export class RigEvaluator {
     // 最初に読んだノードの時間に入る）
     const prof = this.profile;
     let t0 = prof ? performance.now() : 0;
+    this.prewarmDeep();                                  // 鎖が長くてスタックがあふれた所は、深い所から先に求める
     for (const ni of this.moving) {
       this.dcur = null;
       const m = target.get(ni) || new Matrix4();
@@ -958,7 +959,9 @@ export class RigEvaluator {
     const outer = this.varying, outerDeps = this.dcur;
     this.varying = false;
     this.dcur = null;
-    if (fallback) fm.set(key, BUSY);
+    // 計算中の印は、付けた所を marks に記録する（スタックがあふれて片付けられなかった印を、deep がそこだけ消す）
+    const marks = this.deepState.marks, mark = marks.length;
+    if (fallback) { fm.set(key, BUSY); marks.push(fm, key); }
     let done = false;
     try {
       v = compute();
@@ -966,15 +969,19 @@ export class RigEvaluator {
     } catch (e) {
       // スタックがあふれたら、この値をあとで浅い所から求め直せるようにする（いちばん深い所だけ。deep）
       const ds = this.deepState;
-      if (ds.depth && ds.at === null && mayOverflow(e)) ds.at = () => this.memo(fm, km, key, compute, fallback, label);
+      if (ds.depth && ds.at === null && mayOverflow(e)) {
+        ds.at = () => this.memo(fm, km, key, compute, fallback, label);
+        if (fm === this.cache.out) ds.at.outId = key;      // 計算ノードの出力は、次のフレームから先に求める（prewarmDeep）
+      }
       throw e;
     } finally {
+      if (!done) fm.delete(key);                          // 先に消す（あふれた直後は、このあとの呼び出しが失敗しうる）
+      else marks.length = mark;
       const varying = this.varying, deps = this.dcur;
       this.varying = outer || varying;
       this.dcur = outerDeps;
       this.addDeps(deps);
-      if (!done) fm.delete(key);
-      else {
+      if (done) {
         // 値と、その値が読んだ追加分のノード（deps。追加分を変えたときに捨てる値を見分ける）を覚える
         let m = fm;
         if (!varying && this.keepStatic) { fm.delete(key); m = km; }
@@ -995,19 +1002,28 @@ export class RigEvaluator {
     if (st.depth) return fn();
     const varying = this.varying, dcur = this.dcur, busy = this.busy.size;
     const prof = this.profile, defs = prof && prof.defStack ? prof.defStack.length : 0;
+    const marks = st.marks, mark = marks.length;
     return runDeep(st, fn, () => {
       // あふれた所から戻る途中で片付けられなかったもの（計算中の印・状態）を、呼んだときに戻す
       this.varying = varying;
       this.dcur = dcur;
       if (!busy) this.busy.clear();
       if (prof && prof.defStack) prof.defStack.length = defs;
-      for (const m of Object.values(this.cache)) {
-        for (const [k, v] of m) {
-          if (v === BUSY) m.delete(k);
-          else if (v instanceof Map) for (const [k2, v2] of v) if (v2 === BUSY) v.delete(k2);
-        }
-      }
+      for (let i = mark; i < marks.length; i += 2) if (marks[i].get(marks[i + 1]) === BUSY) marks[i].delete(marks[i + 1]);
+      marks.length = mark;
     });
+  }
+
+  /**
+   * 前のフレームでスタックがあふれて先に求めた計算ノードの出力を、深い所から順に先に求めておく（deepEval.js の order）。
+   * reader: 値を求めるオブジェクト（専用の評価では計画の読み手 plan.ad）
+   */
+  prewarmDeep(reader = this) {
+    const order = this.deepState.order;
+    for (let i = 0; i < order.length; i++) {
+      const id = order[i];
+      reader.deep(() => reader.outputs(id));
+    }
   }
 
   /** 循環の防止（キャッシュしない値に使う）。key の計算中にもう一度 key を求めたら fallback を返す */

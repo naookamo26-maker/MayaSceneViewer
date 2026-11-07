@@ -7,13 +7,15 @@
 //   * runDeep は、あふれたら state.at を浅いスタックから先に求めて（結果はキャッシュに残る）、元の計算をやり直す。
 //     やり直すたびに、さかのぼる鎖が短くなる。計算の順番は同じなので、結果はあふれなかったときと同じ
 //   * runDeep の中（state.depth > 0）では、エラーを受け止めて「値なし」にする所も、あふれのエラーは上へ渡す
+//   * 先に求めた計算ノードの出力（state.at.outId）は、求め終えた順に state.order に覚える。次のフレームからは、評価の初めに
+//     その順で先に求めておく（rig.js の prewarmDeep）。深い所から順に求まっているので、毎フレームあふれ直さない
 
 /** 何回までやり直すか（終わらないときの安全のため） */
 const MAX_RETRIES = 100000;
 
 /** 値を覚える所が使う状態（評価器ごとに 1 つ。評価器を引き継いだオブジェクトも同じものを使う） */
 export function newDeepState() {
-  return { depth: 0, at: null, retries: 0 };
+  return { depth: 0, at: null, retries: 0, order: [], known: new Set(), marks: [] };
 }
 
 /**
@@ -42,8 +44,12 @@ export function runDeep(state, fn, onRetry) {
       state.at = null;
       try {
         const v = todo[todo.length - 1]();
-        todo.pop();
+        const done = todo.pop();
         if (!todo.length) return v;
+        if (done.outId !== undefined && !state.known.has(done.outId)) {   // 先に求めた計算ノードの出力の順番を覚える
+          state.known.add(done.outId);
+          state.order.push(done.outId);
+        }
       } catch (e) {
         const at = state.at;
         if (!at || !isStackOverflow(e) || ++n > MAX_RETRIES) throw e;
