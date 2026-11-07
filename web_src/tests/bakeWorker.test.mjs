@@ -108,3 +108,18 @@ test('上限に達したら途中で止め、動くノードの数が違う結�
   const pose = c.playbackPoseData();
   assert.equal(c.importSnapshots(pose.keys, [{ f: 1, mats: new Float64Array(16), props: null, curves: new Map() }]), 0);
 });
+
+test('キーのデータを型付き配列にして送ったアニメーション（takeKeyArrays）でも、同じ再生キャッシュになる', () => {
+  for (const f of files.slice(0, 8)) {
+    const data = JSON.parse(readFileSync(path.join(dir, f), 'utf8'));
+    const clip = new AnimationClip(data.animation, { keepKeyArrays: true });
+    const compact = structuredClone(clip.takeKeyArrays(data.animation));
+    assert.ok(ArrayBuffer.isView(compact.times) && ArrayBuffer.isView(compact.values), f);
+    assert.equal(clip.takeKeyArrays(data.animation), data.animation, `${f}: 2 回目はそのまま`);
+    const a = createBaker(JSON.stringify(data.animation), structuredClone(data.nodes));
+    const b = createBaker(compact, structuredClone(data.nodes));
+    const frames = [1, 5, 12];
+    const ra = bakeFrames(a, { frames, poses: [] }), rb = bakeFrames(b, { frames, poses: [] });
+    assert.deepEqual(rb.frames.map((x) => [...x.mats]), ra.frames.map((x) => [...x.mats]), f);
+  }
+});

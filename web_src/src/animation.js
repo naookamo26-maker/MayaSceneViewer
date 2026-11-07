@@ -64,8 +64,56 @@ function autoSlope(type, px, x, nx, py, y, ny) {
 }
 
 /** 1 本のカーブを評価できる形にする（接線の傾きと重みを計算する） */
-const F64_PER_KEY = 6;     // prepareCurve の Float64Array の数（t・v・inSlope・outSlope・inW・outW）
+const F64_PER_KEY = 4;     // prepareCurve の Float64Array の数（t・v・inSlope・outSlope。重み inW・outW は重み付きのカーブだけ別に持つ）
+// 重み付きでないカーブの重み（すべて 0。読むだけなので共有する。キーの多いシーンでメモリを減らす）
+let zeroWeights = new Float64Array(0);
+const zeros = (n) => {
+  if (zeroWeights.length < n) zeroWeights = new Float64Array(Math.max(n, zeroWeights.length * 2));
+  return zeroWeights.subarray(0, n);
+};
 const U8_PER_KEY = 3;      // Uint8Array の数（step・tinType・toutType）
+
+/**
+ * 接線の種類 type のキー i の傾き（isIn: 入る側）。prev・next はキーの前後の区間の傾き（なければ 0）
+ */
+function tangentSlope(type, isIn, t, v, i, hasPrev, hasNext, prev, next) {
+  switch (type) {
+    case TANGENT.LINEAR:
+      if (isIn) return hasPrev ? prev : next;
+      return hasNext ? next : prev;
+    case TANGENT.FLAT: case TANGENT.STEP: case TANGENT.STEP_NEXT:
+      return 0;
+    case TANGENT.CLAMPED: {
+      if (!hasPrev || !hasNext) return hasPrev ? prev : next;
+      if (Math.abs(v[i] - v[i - 1]) < EPS || Math.abs(v[i + 1] - v[i]) < EPS) return 0;
+      return (v[i + 1] - v[i - 1]) / Math.max(t[i + 1] - t[i - 1], EPS);
+    }
+    case TANGENT.AUTO: case TANGENT.AUTO_MIX: case TANGENT.AUTO_EASE:
+      if (!hasPrev || !hasNext) return 0;                 // 両端は平ら
+      return autoSlope(type, t[i - 1], t[i], t[i + 1], v[i - 1], v[i], v[i + 1]);
+    case TANGENT.PLATEAU: {                               // 近似（Maya の計算は公開されていない）
+      if (!hasPrev || !hasNext) return 0;                 // 両端は平ら
+      if (prev * next <= 0) return 0;                     // 山・谷は平ら
+      const s = (v[i + 1] - v[i - 1]) / Math.max(t[i + 1] - t[i - 1], EPS);
+      const lim = 3 * Math.min(Math.abs(prev), Math.abs(next));   // 行き過ぎを抑える
+      return Math.sign(s) * Math.min(Math.abs(s), lim);
+    }
+    default:                                              // スプライン・スロー・ファスト・不明
+      if (hasPrev && hasNext) return (v[i + 1] - v[i - 1]) / Math.max(t[i + 1] - t[i - 1], EPS);
+      return hasPrev ? prev : next;
+  }
+}
+
+/** 固定の接線（x, y）を当てた傾きと重み [傾き, 重み]。種類が「固定」のとき、または重み付きのカーブで使う */
+function fixedSlope(type, x, y, slope, weighted) {
+  let w = 0;
+  if (Number.isFinite(x) && Number.isFinite(y) && (type === TANGENT.FIXED || weighted)) {
+    const keepSlope = type === TANGENT.LINEAR || type === TANGENT.FLAT || type === TANGENT.STEP || type === TANGENT.STEP_NEXT;
+    if (!keepSlope && Math.abs(x) > EPS) slope = y / x;
+    if (weighted) w = Math.abs(x);
+  }
+  return [slope, w];
+}
 
 export function prepareCurve(meta, times, values, types, fixedOf, pool = null) {
   const n = meta.count;
@@ -81,68 +129,40 @@ export function prepareCurve(meta, times, values, types, fixedOf, pool = null) {
   for (let i = 0; i < n; i++) { t[i] = times[off + i]; v[i] = values[off + i]; }
   const inSlope = f64();
   const outSlope = f64();
-  const inW = f64();       // 重み付きのときの接線の長さ（フレーム）。0 は既定（区間の長さ）
-  const outW = f64();
+  const weighted = !!meta.weighted;
+  // 重み付きのときの接線の長さ（フレーム）。0 は既定（区間の長さ）。重み付きでなければ、すべて 0（共有の配列）
+  const inW = weighted ? new Float64Array(n) : zeros(n);
+  const outW = weighted ? new Float64Array(n) : zeros(n);
   const step = u8();
   const tinType = u8();     // 接線の種類（.ma の値。カーブエディタの表示用）
   const toutType = u8();
-  const weighted = !!meta.weighted;
-  const secant = (a, b) => (v[b] - v[a]) / Math.max(t[b] - t[a], EPS);
-
-  const computed = (type, i, side) => {
-    const hasPrev = i > 0, hasNext = i < n - 1;
-    const prev = hasPrev ? secant(i - 1, i) : 0;
-    const next = hasNext ? secant(i, i + 1) : 0;
-    switch (type) {
-      case TANGENT.LINEAR:
-        if (side === 'in') return hasPrev ? prev : next;
-        return hasNext ? next : prev;
-      case TANGENT.FLAT: case TANGENT.STEP: case TANGENT.STEP_NEXT:
-        return 0;
-      case TANGENT.CLAMPED: {
-        if (!hasPrev || !hasNext) return hasPrev ? prev : next;
-        if (Math.abs(v[i] - v[i - 1]) < EPS || Math.abs(v[i + 1] - v[i]) < EPS) return 0;
-        return secant(i - 1, i + 1);
-      }
-      case TANGENT.AUTO: case TANGENT.AUTO_MIX: case TANGENT.AUTO_EASE:
-        if (!hasPrev || !hasNext) return 0;                 // 両端は平ら
-        return autoSlope(type, t[i - 1], t[i], t[i + 1], v[i - 1], v[i], v[i + 1]);
-      case TANGENT.PLATEAU: {                               // 近似（Maya の計算は公開されていない）
-        if (!hasPrev || !hasNext) return 0;                 // 両端は平ら
-        if (prev * next <= 0) return 0;                     // 山・谷は平ら
-        const s = secant(i - 1, i + 1);
-        const lim = 3 * Math.min(Math.abs(prev), Math.abs(next));   // 行き過ぎを抑える
-        return Math.sign(s) * Math.min(Math.abs(s), lim);
-      }
-      default:                                              // スプライン・スロー・ファスト・不明
-        if (hasPrev && hasNext) return secant(i - 1, i + 1);
-        return hasPrev ? prev : next;
-    }
-  };
-
+  // キーごとの傾き。前後の区間の傾き（prev・next）はキーごとに 1 回だけ求め、種類が同じなら in の値を out にも使う
+  // （リニアだけは in・out で違う）。結果は種類ごとの計算（tangentSlope）と同じ
+  const hasTypes = types.length > 0, hasFixed = fixedOf.size > 0;
+  const tangent = meta.tangent;
   for (let i = 0; i < n; i++) {
     const k = off + i;
-    const tin = resolveType(types.length ? types[2 * k] : 0, meta.tangent);
-    const tout = resolveType(types.length ? types[2 * k + 1] : 0, meta.tangent);
-    tinType[i] = (types.length ? types[2 * k] : 0) || meta.tangent || TANGENT.AUTO;
-    toutType[i] = (types.length ? types[2 * k + 1] : 0) || meta.tangent || TANGENT.AUTO;
+    const rawIn = hasTypes ? types[2 * k] : 0, rawOut = hasTypes ? types[2 * k + 1] : 0;
+    const tin = resolveType(rawIn, tangent);
+    const tout = resolveType(rawOut, tangent);
+    tinType[i] = rawIn || tangent || TANGENT.AUTO;
+    toutType[i] = rawOut || tangent || TANGENT.AUTO;
     if (tout === TANGENT.STEP) step[i] = STEP_HOLD;
     else if (tout === TANGENT.STEP_NEXT) step[i] = STEP_NEXT;
-    const fx = fixedOf.get(k);
-    for (const side of ['in', 'out']) {
-      const type = side === 'in' ? tin : tout;
-      let slope = computed(type, i, side);
-      let w = 0;
-      const x = fx ? (side === 'in' ? fx[0] : fx[2]) : NaN;
-      const y = fx ? (side === 'in' ? fx[1] : fx[3]) : NaN;
+    const hasPrev = i > 0, hasNext = i < n - 1;
+    const prev = hasPrev ? (v[i] - v[i - 1]) / Math.max(t[i] - t[i - 1], EPS) : 0;
+    const next = hasNext ? (v[i + 1] - v[i]) / Math.max(t[i + 1] - t[i], EPS) : 0;
+    let sIn = tangentSlope(tin, true, t, v, i, hasPrev, hasNext, prev, next);
+    let sOut = tout === tin && tin !== TANGENT.LINEAR ? sIn : tangentSlope(tout, false, t, v, i, hasPrev, hasNext, prev, next);
+    let wIn = 0, wOut = 0;
+    const fx = hasFixed ? fixedOf.get(k) : undefined;
+    if (fx) {
       // 固定の接線（kix など）は、種類が「固定」のとき、または重み付きのカーブで使う
-      if (Number.isFinite(x) && Number.isFinite(y) && (type === TANGENT.FIXED || weighted)) {
-        const keepSlope = type === TANGENT.LINEAR || type === TANGENT.FLAT || type === TANGENT.STEP || type === TANGENT.STEP_NEXT;
-        if (!keepSlope && Math.abs(x) > EPS) slope = y / x;
-        if (weighted) w = Math.abs(x);
-      }
-      if (side === 'in') { inSlope[i] = slope; inW[i] = w; } else { outSlope[i] = slope; outW[i] = w; }
+      [sIn, wIn] = fixedSlope(tin, fx[0], fx[1], sIn, weighted);
+      [sOut, wOut] = fixedSlope(tout, fx[2], fx[3], sOut, weighted);
     }
+    inSlope[i] = sIn; outSlope[i] = sOut;
+    if (weighted) { inW[i] = wIn; outW[i] = wOut; }
   }
   return {
     name: meta.name, type: meta.type, trax: !!meta.trax, n, t, v, inSlope, outSlope, inW, outW, step, weighted, tinType, toutType,
@@ -468,7 +488,8 @@ const AXIS = { x: 0, y: 1, z: 2 };
 
 /** 読み込んだアニメーション。evaluate(フレーム) でノードごとのローカル行列を計算する */
 export class AnimationClip {
-  constructor(anim) {
+  /** @param opts { keepKeyArrays: 型付き配列にしたキーのデータを持っておく（takeKeyArrays で渡す） } */
+  constructor(anim, opts = {}) {
     this.raw = anim;
     this.fps = +anim.fps || 24;
     this.start = +anim.start;
@@ -479,6 +500,8 @@ export class AnimationClip {
     const values = decodeArray(anim.values);
     const types = decodeArray(anim.tangentTypes, Uint8Array);
     const fixed = decodeArray(anim.fixedTangents);
+    // 型付き配列にしたキーのデータ（再生キャッシュのワーカーに送るときに使う。takeKeyArrays で受け取ったら手放す）
+    this.keyArrays = opts.keepKeyArrays ? { times, values, tangentTypes: types, fixedTangents: fixed } : null;
     const fixedOf = new Map();
     for (let i = 0; i + 4 < fixed.length; i += 5) fixedOf.set(fixed[i], [fixed[i + 1], fixed[i + 2], fixed[i + 3], fixed[i + 4]]);
     // カーブごとの配列は、すべてのキーの分をまとめて確保して切り分ける（種類ごとに 1 本。カーブの多いシーンで速い）
@@ -517,6 +540,16 @@ export class AnimationClip {
     this.entries = [...byNode.values()];
     this.byNode = byNode;
     this.matrices = new Map(this.entries.map((e) => [e.node, new Matrix4()]));
+  }
+
+  /**
+   * アニメーション anim を、キーのデータを型付き配列にして返す（再生キャッシュのワーカーに送る。数のリストのままだと、
+   * 送るとき・受け取るときの複製が要素ごとになって遅い）。1 回だけ使える（そのあとは anim をそのまま返す）
+   */
+  takeKeyArrays(anim) {
+    const k = this.keyArrays;
+    this.keyArrays = null;
+    return k ? { ...anim, ...k } : anim;
   }
 
   /** 動くノードの番号 */
