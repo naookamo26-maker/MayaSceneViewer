@@ -316,6 +316,7 @@ export class ProfilerPanel {
         const del = Object.entries(pi.delegated || {}).map(([why, n]) => `${why} ${num(n)}`).join('・');
         items.push(['専用の評価', `キーで動く ${num(c.simple)}・入力で動く ${num(c.driven)}・汎用の経路に任せた ${num(c.delegated)}${del ? `（${esc(del)}）` : ''}`]);
       }
+      if (pi.defs.total) items.push(['自作ノードの定義', `${num(pi.defs.total)} 種類（exprespy など）・計算を JavaScript の関数にした ${num(pi.defs.compiled)}`]);
     }
     if (ci) {
       items.push(['動くノード', `${num(ci.moving)} 個・キャッシュは 1 フレーム ${formatBytes(ci.perFrame)}`]);
