@@ -1436,7 +1436,7 @@ class ViewerApp {
    *   表示: 表示中のオブジェクトのワールド行列を、親から直接たどって求めた値と比べ、違うものを出す
    * @returns { frame, posed, rig: [{ label, compared, diff: [{ name, err }] }], display: { checked, diff: [{ name, err }] } }
    */
-  checkFrame() {
+  async checkFrame() {
     if (!this.rig || !this.clip || !this.built) return null;
     const f = Math.round(this.frame);
     const nodes = this.data.nodes;
@@ -1508,6 +1508,16 @@ class ViewerApp {
       byWorker([f], 'ワーカーと同じ作り方（このフレームから評価）');
       const start = Math.ceil(this.clip.start);
       if (start !== f) byWorker([start, f], `ワーカーと同じ作り方（再生範囲の先頭 ${start} から評価）`);
+      // 実際のワーカー（別のスレッド）で評価した値と、ワーカーの中の状態（exprespy などを関数にできたか・専用の評価・問題）
+      const order = new Map([...this.rig.moving].map((ni, i) => [ni, i]));
+      const info = (x) => (x ? `（自作ノードを関数にした ${x.defsCompiled}/${x.defsTotal}${x.canGenerate ? '' : '・関数を作れない'}・`
+        + `専用の評価 ${x.plan ? '使う' : `使わない: ${x.reason || '不明'}`}${x.problems ? `・問題 ${x.problems} 件: ${x.problem}` : ''}）` : '');
+      for (const [fresh, label] of [[true, '実際のワーカー（新しく起動して、このフレームを評価）'], [false, '実際のワーカー（いま動いているもの）']]) {
+        const r = await this.bakers.probe([f], fresh);
+        const fr = r && r.frames.find((x) => x.f === f);
+        if (!fr) { rig.push({ label: `${label}: 使えません`, compared: 0, diff: [] }); continue; }
+        rig.push(compareWith(label + info(r.info), (ni) => (order.has(ni) ? fr.mats.subarray(order.get(ni) * 16, order.get(ni) * 16 + 16) : null)));
+      }
     }
     // 表示: 親から直接たどったワールド行列と比べる（非表示のものは計算を省いているので比べない）
     const diff = [];
