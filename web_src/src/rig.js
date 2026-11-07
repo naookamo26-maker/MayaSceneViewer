@@ -990,7 +990,8 @@ export class RigEvaluator {
     this.dcur = null;
     // 計算中の印は、付けた所を marks に記録する（スタックがあふれて片付けられなかった印を、deep がそこだけ消す）
     const marks = this.deepState.marks, mark = marks.length;
-    if (fallback) { fm.set(key, BUSY); marks.push(fm, key); }
+    // 先に記録してから印を付ける（印を付けたあと、記録する前にスタックがあふれると、片付けられない印が残って循環に見える）
+    if (fallback) { marks.push(fm, key); fm.set(key, BUSY); }
     let done = false;
     try {
       v = compute();

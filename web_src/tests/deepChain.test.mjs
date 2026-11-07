@@ -191,3 +191,38 @@ test('関数がスタックに収まらない自作ノード: その定義だけ
   assert.deepEqual([...rig.problems], [...ref.problems]);
   assert.ok(rig.deepState.retries < 10, `やり直しが多すぎる: ${rig.deepState.retries}`);
 });
+
+test('圧縮したワーカー（ビューアと同じ minify）でも、どのスタックの大きさでも計算中の印が残らない（循環に見えない）', async () => {
+  // 圧縮すると関数の形が変わり、スタックがあふれる場所も変わる。印を付けたあと記録する前にあふれると、片付けられない印が
+  // 残って循環に見えていた（スタックの大きさで起きたり起きなかったりするので、いくつかの大きさで試す）
+  const { buildSync } = await import('esbuild');
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const os = await import('node:os');
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'msv-min-'));
+  const out = path.join(dir, 'core.min.mjs');
+  try {
+    buildSync({ entryPoints: [path.resolve(here, '../src/rigBakeCore.js')], bundle: true, format: 'esm', minify: true, outfile: out,
+      platform: 'neutral', mainFields: ['module', 'main'], logLevel: 'silent' });
+    const src = `
+      import { parentPort, workerData } from 'node:worker_threads';
+      import { createBaker, bakeFrames } from ${JSON.stringify(new URL(`file://${out}`).href)};
+      const b = createBaker(workerData.anim, workerData.nodes);
+      const plans = [];
+      for (const fr of [[1], [2, 3, 4, 5, 6, 7, 8, 9], [10, 11, 12]]) plans.push(bakeFrames(b, { frames: fr, poses: [] }).timing.plan);
+      parentPort.postMessage({ plans, problems: [...b.rig.problems] });
+    `;
+    for (const mb of [0.75, 1, 1.25, 1.5, 1.75, 2]) {
+      const res = await new Promise((resolve, reject) => {
+        const w = new Worker(new URL(`data:text/javascript,${encodeURIComponent(src)}`), {
+          workerData: { anim: JSON.stringify(scene.animation), nodes: scene.nodes }, resourceLimits: { stackSizeMb: mb },
+        });
+        w.once('message', resolve);
+        w.once('error', reject);
+      });
+      assert.deepEqual(res.problems, [], `スタック ${mb} MB`);
+      assert.deepEqual(res.plans, [true, true, true], `スタック ${mb} MB`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

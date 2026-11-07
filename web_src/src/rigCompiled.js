@@ -101,9 +101,9 @@ function build(rig, deps, useMath) {
   const remember = (key, compute) => {
     const hit = walked.get(key);
     if (hit) return hit;
-    walked.set(key, NO_READS);
     let r;
     try {
+      walked.set(key, NO_READS);                         // try の中で付ける（あふれたら、下で必ず消す）
       r = compute();
     } catch (e) {
       walked.delete(key);                                // たどっている途中の印を残さない（やり直しで循環に見えないように）

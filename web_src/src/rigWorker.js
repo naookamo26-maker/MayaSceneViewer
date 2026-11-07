@@ -8,7 +8,10 @@ self.onmessage = (e) => {
   const m = e.data;
   try {
     if (m.type === 'init') {
+      // 受け取り: 画面のスレッドが送ってから、ここに届くまで（複製を受け取る時間・ワーカーの起動を含む）
+      const recvMs = m.sentAt ? performance.timeOrigin + performance.now() - m.sentAt : null;
       baker = createBaker(m.anim, m.nodes);
+      baker.timing.recvMs = recvMs;
       token = m.token;
       self.postMessage({ type: 'ready', token });
     } else if (m.type === 'probe') {
