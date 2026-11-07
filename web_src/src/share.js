@@ -129,7 +129,7 @@ export function fetchFailureMessage(info) {
     return `${head}サーバーがエラーを返しました（${info.status}）。\n${fallback}`;
   }
   if (info.contentType && /text\/html/i.test(info.contentType)) {
-    return `${head}ファイルではなく Web ページ（ログインのページなど）が返りました。Teams・SharePoint・Google ドライブなど、`
+    return `${head}ファイルではなく Web ページ（ログインのページなど）が返りました。`
       + `ログインが必要な場所のファイルは読めません。\n${fallback}`;
   }
   if (url.protocol === 'file:') {
