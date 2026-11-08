@@ -843,3 +843,66 @@ test('平らな一覧のワールド行列の計算（updateWorldList）は、up
     });
   }
 });
+
+test('変わった所だけのワールド行列の計算（updateWorldListDirty）: 印の付いたノードとその子孫だけ計算し、全体を計算したのとビット単位で同じ', async () => {
+  const { buildWorldList, updateWorldList, updateWorldListDirty } = await import('../src/sceneBuilder.js');
+  const { Euler } = await import('three');
+  for (const name of ['batch_sample.json', 'rig6_sample.json']) {
+    const data = JSON.parse(readFileSync(path.resolve(here, '../../samples', name), 'utf8'));
+    const a = buildScene(structuredClone(data)), b = buildScene(structuredClone(data));
+    const lb = buildWorldList(b.root.children);
+    updateWorldList(lb);
+    // 一覧の中の位置と、子孫の範囲（ends）
+    lb.forEach((o, i) => {
+      let k = 0;
+      o.traverse(() => k++);
+      assert.equal(lb.ends[i], i + k, `${name}: ${o.name} の子孫の範囲`);
+    });
+    const at = new Map(lb.map((o, i) => [o, i]));
+    const dirty = new Uint8Array(lb.length);
+    for (let round = 1; round <= 3; round++) {
+      // 一部のノードだけ動かす（両方のシーンで同じに）
+      let moved = 0;
+      [a, b].forEach((built, side) => built.nodeObjects.forEach((o, i) => {
+        if ((i + round) % 4) return;
+        o.matrix.makeRotationFromEuler(new Euler(0.1 * i * round, -0.05 * i, 0.02)).setPosition(i * 0.3, round, 0.5);
+        if (side === 1) { dirty[at.get(o)] = 1; moved++; }
+      }));
+      for (const o of a.root.children) o.updateMatrixWorld(true);
+      const n = updateWorldListDirty(lb, dirty);
+      assert.ok(moved > 0 && n < lb.length, `${name}: 一部だけ計算する（${n} / ${lb.length}）`);
+      assert.ok(dirty.every((v) => v === 0), '印は消す');
+      const la = [];
+      a.root.traverse((o) => la.push(o));
+      const lb2 = [];
+      b.root.traverse((o) => lb2.push(o));
+      la.forEach((o, i) => {
+        if (o.matrixWorldNeedsUpdate) return;
+        o.matrixWorld.elements.forEach((v, k) => assert.ok(Object.is(lb2[i].matrixWorld.elements[k], v), `${name}: ${round} 回目 ${o.name} の ${k}`));
+      });
+    }
+  }
+});
+
+test('非表示で後回しにした葉は覚えておき、表示になったら flushLeaves で計算する（シーン全体をたどらずに描くとき）', async () => {
+  const { buildWorldList, updateWorldList, flushLeaves, pendingLeaves, disposeScene } = await import('../src/sceneBuilder.js');
+  const data = JSON.parse(readFileSync(path.resolve(here, '../../samples/batch_sample.json'), 'utf8'));
+  const built = buildScene(data);
+  const e = built.meshes.find((m) => m.staticMesh.matrix.elements[0] === 1);
+  const mesh = e.staticMesh;
+  mesh.visible = false;
+  const list = buildWorldList(built.root.children);
+  const parent = mesh.parent;
+  parent.matrix.makeTranslation(7, 0, 0);
+  updateWorldList(list);
+  assert.ok(mesh.matrixWorldNeedsUpdate && pendingLeaves.has(mesh), '非表示の葉は印を付けて覚える');
+  flushLeaves();
+  assert.ok(pendingLeaves.has(mesh), '非表示のあいだは計算しない');
+  mesh.visible = true;
+  flushLeaves();
+  assert.ok(!mesh.matrixWorldNeedsUpdate && !pendingLeaves.has(mesh));
+  const want = parent.matrixWorld.clone().multiply(mesh.matrix);
+  assert.deepEqual(mesh.matrixWorld.elements, want.elements);
+  disposeScene(built);
+  assert.equal(pendingLeaves.size, 0, 'シーンを消したら忘れる');
+});

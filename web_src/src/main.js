@@ -10,7 +10,7 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { commonLocks, installGizmoLocks } from './gizmoLocks.js';
 import { PoseState, fixChannels, hasFixed, identityPose, isIdentityPose, limitPose, nodeChannels, poseFromTransform, poseKey, poseMatrix, poseQuaternion, propagatePoseDelta } from './pose.js';
 import {
-  applyPoseSource, hasBindPose, poseBaseMatrix, worldMatrixOf as leafWorldMatrix, nextCullFrame, buildWorldList, updateWorldList, BASE_COLOR, buildScene, characterRadius, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
+  applyPoseSource, hasBindPose, poseBaseMatrix, worldMatrixOf as leafWorldMatrix, nextCullFrame, buildWorldList, updateWorldList, updateWorldListDirty, flushLeaves, BASE_COLOR, buildScene, characterRadius, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
   vertexWorldPosition, writeVertexColors,
 } from './sceneBuilder.js';
 import { base64ToArrayBuffer } from './textures.js';
@@ -269,28 +269,35 @@ class ViewerApp {
     // 画面上で一定の大きさのコントローラーは、視点に合わせて大きさを決め直す
     if (this.built && this.settings.controls && this.settings.controlSizeMode === 'screen') this.overlay.updateControls();
     // three.js は描画のたびにシーンの行列を計算し直し、シーン（matrixAutoUpdate）からすべての子を強制的に計算する。
-    // 直前に afterPoseChange でノードの行列を全部計算したときは、強制せずに描画する（行列を自分で動かすオーバーレイ・
-    // ハンドルなどは、それぞれの matrixAutoUpdate で計算される）。それ以外のときは、これまでどおり強制する
+    // 描画の前に自分で計算し、描画の中では計算し直さない（まとめて描くメッシュに、元のメッシュのワールド行列を写すため）。
+    //   * 直前に afterPoseChange でノードの行列を計算したとき（fresh）は、ノードの木（built.root）はたどらない（数万個を
+    //     たどるだけで数 ms かかる）。非表示のあいだ後回しにした葉のうち、表示になったものだけ計算する（flushLeaves）。
+    //     ほかの子（オーバーレイ・ハンドル・カメラなど）は、それぞれの matrixAutoUpdate で計算する
+    //   * それ以外のときは、これまでどおりシーン全体を強制的に計算する
     const fresh = this.worldFresh;
     this.worldFresh = false;
+    const recording = this.profiler.recording;
+    const t0 = recording ? performance.now() : 0;
     nextCullFrame();                        // スキン付きメッシュの視錐台カリングで、骨ごとの値を計算し直す
-    if (fresh) this.scene.matrixAutoUpdate = false;
     try {
-      if (this.batches || this.skinBatches) {
-        // まとめて描くメッシュに、元のメッシュの表示・ワールド行列・材質を写す。three.js は描画の中で行列を計算するので、
-        // 先に計算してから写し、描画の中では計算し直さない（計算は 1 回のまま）
+      const root = this.built ? this.built.root : null;
+      if (fresh && root && root.parent === this.scene) {
+        for (const c of this.scene.children) if (c !== root) c.updateMatrixWorld();
+        flushLeaves();
+      } else {
         this.scene.updateMatrixWorld();
-        if (this.batches) this.batches.sync();
-        if (this.skinBatches) this.skinBatches.sync();
-        this.scene.matrixWorldAutoUpdate = false;
+        this.worldTrusted = false;          // フレームごとの計算で覚えた行列は使わない（updateWorldPartial）
       }
-      if (this.profiler.recording) {
-        const t = performance.now();
+      // まとめて描くメッシュに、元のメッシュの表示・ワールド行列・材質を写す
+      if (this.batches) this.batches.sync();
+      if (this.skinBatches) this.skinBatches.sync();
+      this.scene.matrixWorldAutoUpdate = false;
+      if (recording) {
+        const t1 = performance.now();
         this.renderer.render(this.scene, this.activeCamera());
-        this.profiler.addRender(performance.now() - t, this.renderer.info.render);
+        this.profiler.addRender(performance.now() - t1, this.renderer.info.render, t1 - t0);
       } else this.renderer.render(this.scene, this.activeCamera());
     } finally {
-      this.scene.matrixAutoUpdate = true;
       this.scene.matrixWorldAutoUpdate = true;
     }
   }
@@ -1407,6 +1414,7 @@ class ViewerApp {
       return true;
     });
     this.worldList = buildWorldList(this.touchedRoots);   // 親が先の平らな一覧（フレームごとのワールド行列の計算）
+    this.trackWorld();
     this.worldNeedsFull = true;
     // 保存時の値は、保存したときのフレーム（time1）の値（カーブで決まる値は .ma に残っていないため）。
     // バインドポーズの表示で、バインドポーズの情報がないノードに使う
@@ -1620,8 +1628,28 @@ class ViewerApp {
   applyFrame(f, light = this.playing) {
     if (!this.clip || !this.built) return;
     // 評価のプロファイラの記録中は、1 フレームの内訳を測る（中で呼び直したときは同じフレームとして測る）
-    const prof = this.profiler.recording && !this.profiler.current ? this.profiler.beginFrame(f) : null;
+    const prof = this.profiler.recording && !this.profiler.current ? this.profiler.beginFrame(f, this.preparingReason()) : null;
     try { this.applyFrameInner(f, light); } finally { if (prof) this.profiler.endFrame(); }
+  }
+
+  /**
+   * 評価のプロファイラの記録を始めた・止めた。記録中は再生キャッシュを作らない（ワーカーと CPU を取り合うと、測る値が
+   * 大きくなる。作り終えていないときに記録すると跳ねていた）。止めたら続きを作る
+   */
+  setProfilerRecording(on) {
+    this.bakers.setPaused(on);
+    if (!on && this.rig) this.scheduleBake();
+  }
+
+  /**
+   * 評価のプロファイラで、いまのフレームを集計から除く理由（準備中。なければ null）。テクスチャの読み込み中と、読み終えた
+   * 直後（GPU への転送・シェーダーの作り直しで描画が重い）。再生キャッシュは、記録中は作らない（scheduleBake）
+   */
+  preparingReason() {
+    const m = this.maps;
+    if (m && m.loading > 0) return 'テクスチャの読み込み中';
+    if (m && m.lastDone && performance.now() - m.lastDone < 1000) return 'テクスチャを読み終えた直後';
+    return null;
   }
 
   applyFrameInner(f, light) {
@@ -1798,6 +1826,7 @@ class ViewerApp {
     const step = (deadline) => {
       this.bakeHandle = null;
       if (rig !== this.rig || !this.clip || rig.playbackFull) return;
+      if (this.profiler.recording) return;     // 評価のプロファイラの記録中は作らない（止めたら作り直しを頼む: setProfilerRecording）
       const have = rig.snapshots;
       const todo = this.bakeOrder((f) => have.has(f));
       if (!todo.length) return;
@@ -2544,6 +2573,51 @@ class ViewerApp {
     if (this.bridge && this.bridge.historyChanged) this.bridge.historyChanged(h.canUndo, h.canRedo, h.undoLabel, h.redoLabel);
   }
 
+  /**
+   * フレームごとのワールド行列の計算の準備（一覧を作り直したとき）。動くノード（animTouched）の一覧の中の位置と、
+   * 前に計算したときのローカル行列を覚える所を作る
+   */
+  trackWorld() {
+    const wl = this.worldList;
+    this.worldTrusted = false;
+    if (!wl) { this.worldTrack = null; return; }
+    const at = new Map(wl.map((o, i) => [o, i]));
+    const objs = [], idx = [];
+    for (const ni of this.animTouched) {
+      const o = this.built.nodeObjects[ni], i = at.get(o);
+      if (i !== undefined) { objs.push(o); idx.push(i); }
+    }
+    this.worldTrack = { objs, idx: Int32Array.from(idx), prev: new Float64Array(objs.length * 16), dirty: new Uint8Array(wl.length) };
+  }
+
+  /**
+   * 動くノードの下のワールド行列を計算し直す（フレームを変えただけのとき）。前のフレームからローカル行列が変わった
+   * ノードとその子孫だけ（ほかは前の計算のまま正しい。キーが平らなコントローラーなど）。覚えた行列が当てにならないとき
+   * （ほかの所でワールド行列を計算した: worldTrusted が false）は、一覧のすべてを計算する。計算した数を返す
+   */
+  updateWorldPartial() {
+    const wl = this.worldList, t = this.worldTrack;
+    const { objs, idx, prev, dirty } = t;
+    if (!this.worldTrusted) {
+      for (let k = 0; k < objs.length; k++) prev.set(objs[k].matrix.elements, k * 16);
+      dirty.fill(0);
+      updateWorldList(wl);
+      this.worldTrusted = true;
+      return wl.length;
+    }
+    for (let k = 0; k < objs.length; k++) {
+      const e = objs[k].matrix.elements, o = k * 16;
+      for (let j = 0; j < 16; j++) {
+        if (prev[o + j] !== e[j]) {
+          prev.set(e, o);
+          dirty[idx[k]] = 1;
+          break;
+        }
+      }
+    }
+    return updateWorldListDirty(wl, dirty);
+  }
+
   /** @param light 再生中など、パネルの情報の更新を省くとき */
   /**
    * @param partial フレームを変えただけのとき（applyFrame から）: 動くノードの下だけ行列を計算し直す（ほかのノードの行列は
@@ -2559,12 +2633,16 @@ class ViewerApp {
     const pr = this.profiler.current ? this.profiler : null;
     let tSub = pr ? performance.now() : 0;
     if (partial && !this.worldNeedsFull && this.touchedRoots) {
-      // 動くノードの下だけ。木をたどらずに、親が先の平らな一覧で計算する（同じ結果で約 4 倍速い。sceneBuilder.js）
-      if (this.worldList) updateWorldList(this.worldList);
-      else for (const o of this.touchedRoots) o.updateMatrixWorld(true);
+      // 動くノードの下だけ。木をたどらずに、親が先の平らな一覧で計算する（sceneBuilder.js）。前のフレームから
+      // ローカル行列が変わったノードの下だけ（updateWorldPartial）
+      if (this.worldList) {
+        const n = this.updateWorldPartial();
+        if (pr) pr.count('world', n, this.worldList.length);
+      } else for (const o of this.touchedRoots) o.updateMatrixWorld(true);
     } else {
       this.built.root.updateMatrixWorld(true);
       this.worldNeedsFull = false;
+      this.worldTrusted = false;
     }
     this.worldFresh = true;                 // 次の描画では、シーン全体の行列を強制的に計算し直さない（render）
     if (pr) { const t = performance.now(); pr.sub('world', t - tSub); tSub = t; }
@@ -2575,7 +2653,7 @@ class ViewerApp {
     if (!light && this.picked) this.ui.showVertexInfo(this.vertexInfo());
     if (!light && this.selected >= 0) this.ui.showNodeInfo(this.nodeInfo(this.selected));
     if (!light) this.updateToolbarHints();
-    if (!this.gizmoDragging) this.syncGizmo();
+    if (!this.gizmoDragging) this.syncGizmo(false, true);
     this.requestRender();
   }
 
@@ -2608,10 +2686,14 @@ class ViewerApp {
   }
 
   /** 代理オブジェクトを、選択ノードの基準フレームと現在の追加分に合わせる */
-  syncGizmo(force = false) {
+  /** @param worldReady ノードのワールド行列を計算したばかり（afterPoseChange から。シーン全体を計算し直さない） */
+  syncGizmo(force = false, worldReady = false) {
     if (!this.gizmo || this.selected < 0 || !this.pose) return;
     if (!force && !this.gizmo.object) return;
-    this.built.root.updateMatrixWorld(true);
+    if (!worldReady) {
+      this.built.root.updateMatrixWorld(true);
+      this.worldTrusted = false;            // フレームごとの計算で覚えた行列は使わない（updateWorldPartial）
+    }
     this.pose.frameMatrix(this.selected, this.poseFrame.matrix);
     const p = this.pose.get(this.selected);
     this.poseProxy.position.fromArray(p.t);
@@ -2646,6 +2728,7 @@ class ViewerApp {
   gizmoGroupStart() {
     if (!this.pose || this.selection.length < 2 || this.selected < 0) return null;
     this.built.root.updateMatrixWorld(true);
+    this.worldTrusted = false;              // フレームごとの計算で覚えた行列は使わない（updateWorldPartial）
     const others = this.gizmoNodes().slice(1)
       .map((ni) => ({ ni, start: this.pose.get(ni), frame: this.pose.frameMatrix(ni, new Matrix4()) }));
     if (!others.length) return null;
@@ -2998,6 +3081,7 @@ class ViewerApp {
       for (let v = 0; v < e.vertexCount; v += step) box.expandByPoint(vertexWorldPosition(e, v, this.settings.skin, _v2));
     }
     this.built.root.updateMatrixWorld(true);
+    this.worldTrusted = false;              // フレームごとの計算で覚えた行列は使わない（updateWorldPartial）
     for (const it of this.curves.items) {                // 表示中のカーブ（ツールバーでカーブを隠していれば含めない）
       if (!it || !it.line.visible) continue;
       const pos = it.line.geometry.getAttribute('position');
