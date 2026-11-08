@@ -340,6 +340,7 @@ test('いろいろな追加分を行き来しても、毎回新しく評価し�
   }
 });
 
+const AFFINE_OTHERS = (e) => [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14].map((k) => e[k]);
 test('再生キャッシュの行列は 12 個ずつ持ち（最後の行 0, 0, 0, 1 を省く）、読むとビット単位で同じ。最後の行が違えば 16 個ずつ', async () => {
   const { packSnapshotMats, readSnapshotMat, snapshotStride } = await import('../src/rig.js');
   const a = new Matrix4().makeRotationX(0.3).setPosition(1.5, -2, 3e-7);
@@ -360,4 +361,13 @@ test('再生キャッシュの行列は 12 個ずつ持ち（最後の行 0, 0, 
   assert.equal(snapshotStride(full, 2), 16);
   assert.deepEqual([...readSnapshotMat(full, 16, 1, new Matrix4()).elements], [...p.elements]);
   assert.equal(snapshotStride(new Float64Array(20), 2), 0, '数が合わない');
+  // 最後の行が丸めの誤差だけ違う（コンストレイントの計算などで 1 が 0.9999999999999998 になる）ときも 12 個ずつ。読むと 0, 0, 0, 1
+  const c = a.clone();
+  c.elements[15] = 0.9999999999999998;
+  c.elements[3] = -0;
+  const near = packSnapshotMats(new Map([[4, c], [7, b]]), moving);
+  assert.equal(snapshotStride(near, 2), 12);
+  const back = readSnapshotMat(near, 12, 0, new Matrix4()).elements;
+  assert.deepEqual([back[3], back[7], back[11], back[15]], [0, 0, 0, 1]);
+  assert.deepEqual(AFFINE_OTHERS(back), AFFINE_OTHERS(c.elements));
 });

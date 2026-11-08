@@ -346,7 +346,8 @@ export function cacheInfo(rig, clip) {
   for (let f = Math.ceil(clip.start); f <= clip.end; f++) { range++; if (L && L.frames.has(f)) have++; }
   return {
     moving: rig.moving.size, perFrame, frames: have, range, bytes: st.bytes, limit: st.limit, full: st.full,
-    fits: CACHE_LIMITS_MB.map((mb) => [mb, Math.min(range, Math.floor((mb * 1024 * 1024) / Math.max(1, perFrame)))]),
+    // 上限ごとに入るフレームの数（再生範囲で頭打ちにしない。範囲の短いシーンでも、ほかのシーンの見積もりに使えるように）
+    fits: CACHE_LIMITS_MB.map((mb) => [mb, Math.floor((mb * 1024 * 1024) / Math.max(1, perFrame))]),
   };
 }
 
@@ -438,7 +439,7 @@ export function profilerText(prof, ctx) {
     L.push('■ 再生キャッシュ');
     L.push(`  動くノード ${ci.moving} 個・1 フレーム ${formatBytes(ci.perFrame)}`);
     L.push(`  覚えたフレーム ${ci.frames} / ${ci.range}・${formatBytes(ci.bytes)}（上限 ${ci.limit ? formatBytes(ci.limit) : 'オフ'}）`);
-    L.push(`  上限ごとに入るフレーム数: ${ci.fits.map(([mb, n]) => `${mb >= 1024 ? mb / 1024 + 'GB' : mb + 'MB'} ${n}`).join('・')}`);
+    L.push(`  上限ごとに入るフレーム数（再生範囲は ${ci.range} フレーム）: ${ci.fits.map(([mb, n]) => `${mb >= 1024 ? mb / 1024 + 'GB' : mb + 'MB'} ${n}`).join('・')}`);
   }
   const w = ctx.workers;
   if (w) {

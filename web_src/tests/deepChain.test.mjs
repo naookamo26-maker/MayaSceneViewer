@@ -226,3 +226,45 @@ test('圧縮したワーカー（ビューアと同じ minify）でも、どの�
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('深い親子の階層（ジョイント 300 個の鎖）: 汎用の経路でも、覚えた順番で先に求めて、毎フレームやり直さない', () => {
+  // 入れ子の上限（deepEval.js の DEEP_LIMIT）を超えるのは、ワールド行列・ローカル行列・チャンネルの値の鎖。これらも覚えて
+  // 先に求める。先に求めている途中で新しく覚えたものは、その項目の手前に入る（次のフレームで深いものから順になる）
+  const d = JSON.parse(readFileSync(path.resolve(here, '../../samples/math_sample.json'), 'utf8'));
+  const anim = d.animation;
+  const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  const curve = anim.curves.findIndex((c) => c.type === 'TA');
+  let id = Math.max(...anim.graph.map((g) => g.id)) + 1, parent = -1;
+  for (let k = 0; k < 300; k++) {
+    const ni = d.nodes.length;
+    d.nodes.push({ name: `deep${k}`, path: `|deep${k}`, type: 'joint', parent, matrix: I, worldMatrix: I, inheritsTransform: true, visible: true,
+      attrs: { t: [1, 0, 0], r: [0, 0, 0], s: [1, 1, 1], ro: 'xyz' } });
+    anim.nodes.push({ node: ni, joint: true, ro: 0, t: [1, 0, 0], r: [0, 0, 0], s: [1, 1, 1], ra: [0, 0, 0], jo: [0, 0, 0] });
+    anim.channels.push({ node: ni, attr: 'rz', curve });
+    anim.graph.push({ id: id++, name: `deep${k}`, type: 'joint', dag: ni, inputs: {} });
+    parent = ni;
+  }
+  const dm = id++;
+  anim.graph.push({ id: dm, name: 'deepDm', type: 'decomposeMatrix', dag: -1, inputs: { imat: { node: id - 2, attr: 'wm' } } });
+  const tgt = d.nodes.length;
+  d.nodes.push({ name: 'deepTgt', path: '|deepTgt', type: 'transform', parent: -1, matrix: I, worldMatrix: I, inheritsTransform: true, visible: true,
+    attrs: { t: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1], ro: 'xyz' } });
+  anim.nodes.push({ node: tgt, joint: false, ro: 0, t: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1], ra: [0, 0, 0] });
+  anim.graph.push({ id: id++, name: 'deepTgt', type: 'transform', dag: tgt, inputs: { t: { node: dm, attr: 'ot' } } });
+  const make = (compiled) => {
+    const rig = new RigEvaluator(new AnimationClip(anim), d.nodes, (ni) => new Matrix4().fromArray(d.nodes[ni].matrix));
+    rig.useCompiled = compiled;
+    return rig;
+  };
+  const generic = make(false), compiled = make(true);
+  const retries = [];
+  for (let f = 1; f <= 8; f++) {
+    const r0 = generic.deepState.retries;
+    const a = generic.evaluate(f, undefined, new Map()), b = compiled.evaluate(f, undefined, new Map());
+    retries.push(generic.deepState.retries - r0);
+    assert.deepEqual(a.get(tgt).elements, b.get(tgt).elements, `フレーム ${f}`);
+  }
+  assert.ok(retries[0] > 0, 'あふれていない（鎖を長くする）');
+  assert.deepEqual(retries.slice(2), [0, 0, 0, 0, 0, 0], `あとのフレームでもやり直している: ${retries.join(',')}`);
+  assert.deepEqual([...generic.problems], []);
+});

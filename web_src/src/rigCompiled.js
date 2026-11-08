@@ -17,7 +17,7 @@ import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { clampLimits, composeLocalMatrix, decomposeMaya, evaluateCurve, mayaEuler } from './animation.js';
 import { solveIKCore } from './rig.js';
 import { mathKind } from './mathNodes.js';
-import { enterDeep, leaveDeep, mayOverflow, newDeepState, runDeep } from './deepEval.js';
+import { enterDeep, leaveDeep, mayOverflow, newDeepState, runDeep, useOrder } from './deepEval.js';
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -1045,6 +1045,7 @@ export function runPlan(plan, f, target) {
   // コンストレイント・計算ノード・IK の計算は、その手順の時間に入る）
   const prof = plan.profile || null;
   let t0 = prof ? performance.now() : 0;
+  useOrder(rig.deepState, 'plan');                 // 専用の評価で覚えた順番（汎用の経路の順番は使わない。二重に求めないように）
   if (plan.ad) rig.prewarmDeep(plan.ad);           // 鎖が長くてスタックがあふれた所は、深い所から先に求める
   for (const s of plan.order) {
     const ni = s.ni;
