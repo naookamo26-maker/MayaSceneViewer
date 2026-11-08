@@ -102,7 +102,8 @@ export function buildScene(data, options = {}) {
  * 子を持たない表示用のオブジェクト（メッシュ・カーブの線）の行列の計算を軽くする（毎フレーム、数千〜数万個ある）。
  *   * 親に対する行列が単位行列なら、ワールド行列は親のワールド行列をコピーする（掛け算しない。結果は同じ）
  *   * 非表示のあいだは計算せず、「更新が必要」の印（matrixWorldNeedsUpdate）だけ付ける。three.js は印の付いたオブジェクトを
- *     次の描画の前に計算し直すので、表示に切り替えれば正しい行列になる。描画の前に行列を読むところは worldMatrixOf を使う
+ *     次の描画の前に計算し直すので、表示に切り替えれば正しい行列になる。描画の前に行列を読むところは worldMatrixOf を使う。
+ *     シーン全体をたどらずに描くとき（main.js の render）のために、印を付けたものを pendingLeaves に覚える（flushLeaves）
  * スキン付きメッシュ（DetachedBindMode）の bindMatrixInverse は bind で決まり変わらないので、計算し直さない
  */
 const isIdentity = (e) => e[0] === 1 && e[5] === 1 && e[10] === 1 && e[15] === 1 && e[1] === 0 && e[2] === 0 && e[3] === 0
@@ -112,7 +113,7 @@ export function installLeafUpdate(o) {
   o.leafUpdate = true;                                  // updateWorldList が同じ扱いをする印
   o.updateMatrixWorld = function updateMatrixWorld(force) {
     if (this.children.length) { Object3D.prototype.updateMatrixWorld.call(this, force); return; }   // あとから子を付けたとき
-    if (!this.visible) { this.matrixWorldNeedsUpdate = true; return; }
+    if (!this.visible) { this.matrixWorldNeedsUpdate = true; pendingLeaves.add(this); return; }
     if (this.matrixWorldNeedsUpdate || force) {
       const p = this.parent;
       if (!p) this.matrixWorld.copy(this.matrix);
@@ -126,13 +127,42 @@ export function installLeafUpdate(o) {
 
 // ---------------------------------------------------------------------- フレームごとのワールド行列の計算（平らな一覧）
 /**
+ * 非表示のあいだ計算を後回しにした葉（installLeafUpdate・updateWorldList が覚える）。シーン全体をたどらずに描くときは、
+ * 描画の前に flushLeaves で、表示になったものだけ計算する
+ */
+export const pendingLeaves = new Set();
+
+/**
+ * pendingLeaves のうち、表示になったものの行列を計算する（親のワールド行列は計算済みであること）。
+ * 印が消えたもの（ほかで計算した）・シーンから外したものは忘れる
+ */
+export function flushLeaves() {
+  for (const o of pendingLeaves) {
+    if (!o.matrixWorldNeedsUpdate || !o.parent) { pendingLeaves.delete(o); continue; }
+    if (!o.visible) continue;
+    o.updateMatrixWorld();
+    pendingLeaves.delete(o);
+  }
+}
+
+/**
  * roots とその子孫を、親が先・子があとの順に並べた一覧（updateWorldList）。three.js の updateMatrixWorld(true) は木を
- * 再帰でたどるので、オブジェクトの数が多いと、掛け算よりたどる手間のほうが大きい（1 個あたり約 200ns。一覧なら約 50ns）。
- * 一覧を作ったあとに子を足したり外したりしたら、作り直すこと
+ * 再帰でたどるので、オブジェクトの数が多いと、掛け算よりたどる手間のほうが大きい。
+ * list.ends[i]: i の子孫の範囲の終わり（i の子孫は i + 1 〜 ends[i] - 1）。list.auto[i]: 自分で行列を組み立てる
+ * （matrixAutoUpdate。いつも計算し直す）。一覧を作ったあとに子を足したり外したりしたら、作り直すこと
  */
 export function buildWorldList(roots) {
-  const list = [];
-  for (const r of roots) r.traverse((o) => list.push(o));
+  const list = [], ends = [];
+  const visit = (o) => {
+    const i = list.length;
+    list.push(o);
+    ends.push(0);
+    for (const c of o.children) visit(c);
+    ends[i] = list.length;
+  };
+  for (const r of roots) visit(r);
+  list.ends = Int32Array.from(ends);
+  list.auto = Uint8Array.from(list, (o) => (o.matrixAutoUpdate ? 1 : 0));
   return list;
 }
 
@@ -141,12 +171,35 @@ export function buildWorldList(roots) {
  * multiplyMatrices と同じなので、ビット単位で同じ）。一覧の先頭の親のワールド行列は、計算済みであること
  */
 export function updateWorldList(list) {
-  for (let i = 0; i < list.length; i++) {
+  updateWorldRange(list, 0, list.length);
+}
+
+/**
+ * 一覧のうち、印（dirty[i]。ローカル行列が変わった）の付いたものとその子孫だけ計算する（ほかは前の計算のまま正しい）。
+ * 自分で行列を組み立てるもの（list.auto）は、いつも計算する。印は消す。計算した数を返す
+ */
+export function updateWorldListDirty(list, dirty) {
+  const ends = list.ends, auto = list.auto, n = list.length;
+  let count = 0;
+  for (let i = 0; i < n;) {
+    if (dirty[i] || auto[i]) {
+      const e = ends[i];
+      updateWorldRange(list, i, e);
+      dirty.fill(0, i, e);
+      count += e - i;
+      i = e;
+    } else i++;
+  }
+  return count;
+}
+
+function updateWorldRange(list, from, to) {
+  for (let i = from; i < to; i++) {
     const o = list[i];
     if (o.matrixAutoUpdate) o.updateMatrix();
     if (o.leafUpdate && !o.children.length) {
       // 子を持たない表示用のオブジェクト（installLeafUpdate と同じ）: 非表示なら「更新が必要」の印だけ。単位行列ならコピー
-      if (!o.visible) { o.matrixWorldNeedsUpdate = true; continue; }
+      if (!o.visible) { o.matrixWorldNeedsUpdate = true; pendingLeaves.add(o); continue; }
       const p = o.parent;
       if (!p) o.matrixWorld.copy(o.matrix);
       else if (isIdentity(o.matrix.elements)) o.matrixWorld.copy(p.matrixWorld);
@@ -924,4 +977,5 @@ export function disposeScene(built) {
     if (e.skeleton) dispose(e.skeleton);                 // 共有している Skeleton は 1 回だけ
   }
   built.root.removeFromParent();
+  pendingLeaves.clear();
 }

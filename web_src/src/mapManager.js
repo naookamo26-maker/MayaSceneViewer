@@ -28,12 +28,15 @@ export class MapManager {
     this.state = new Map();     // key → { status, ti, tile, info, decoded, via, textures: Map, message }
     this.token = 0;
     this.data = null;
+    this.loading = 0;           // 読み込み中の枚数（評価のプロファイラが、読み込み中のフレームを集計から除くため）
+    this.lastDone = 0;          // 最後に読み終えた時刻（performance.now()。読み終えた直後は、GPU への転送などで描画が重い）
   }
 
   reset(data) {
     for (const s of this.state.values()) for (const t of s.textures.values()) t.dispose();
     this.state.clear();
     this.token++;
+    this.loading = 0;
     this.data = data;
     this.uv = new Map();        // テクスチャ番号 → { repeat: [u, v], offset: [u, v] }（いまの値）
     (data && data.textures || []).forEach((t, ti) => {
@@ -125,6 +128,7 @@ export class MapManager {
       jobs.push([key, s]);
     }
     let done = 0;
+    this.loading += jobs.length;
     for (const [key, s] of jobs) {
       const load = s.packed
         ? (opts && opts.readPacked
@@ -143,6 +147,8 @@ export class MapManager {
         if (onError) onError(key, s);
       }).finally(() => {
         if (token !== this.token) return;
+        this.loading--;
+        this.lastDone = performance.now();
         done++;
         if (onProgress) onProgress(done, jobs.length);
       });

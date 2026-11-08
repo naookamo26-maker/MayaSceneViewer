@@ -27,7 +27,14 @@ export class BakeWorkers {
     this.job = null;             // { id, sig, keys, poses, queue: フレーム, busy: 処理中のワーカーの数 }
     this.jobId = 0;
     this.timer = null;
+    this.paused = false;         // 止めている（評価のプロファイラの記録中。CPU を取り合うと、測る値が大きくなる）
     this.resetStats();
+  }
+
+  /** 作るのを止める・続ける（止めているあいだは、新しいフレームを頼まない。頼んだ分は受け取る） */
+  setPaused(on) {
+    this.paused = !!on;
+    if (!this.paused && this.job) for (const w of this.workers) this.dispatch(w);
   }
 
   /** 評価のプロファイラに出す統計を消す（新しいアニメーションにしたとき） */
@@ -151,7 +158,7 @@ export class BakeWorkers {
   /** 空いているワーカーに、次のフレームを頼む */
   dispatch(w) {
     const job = this.job;
-    if (this.broken || !job || w.busy) return;
+    if (this.broken || !job || w.busy || this.paused) return;
     this.sendInit(w);                                     // このアニメーションをまだ渡していなければ渡す
     const have = this.rig.layerFor(job.keys);
     const frames = [];

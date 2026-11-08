@@ -41,7 +41,7 @@ test('記録しても評価の結果は変わらず、種類ごとに専用の�
   const d = load('compiled_sample.json');
   const plain = makeRig(d), rec = makeRig(d);
   const prof = new EvalProfiler();
-  prof.start();
+  prof.start(0);
   for (const f of framesOf(plain)) {
     assert.equal(valuesOf(recordFrame(prof, rec, f)), valuesOf(plain.evaluate(f, undefined, new Map())), `フレーム ${f}`);
   }
@@ -85,7 +85,7 @@ test('汎用の経路に任せたノードは、任せた理由ごとに分け�
   const d = load('stretch_spline_sample.json');
   const rig = makeRig(d);
   const prof = new EvalProfiler();
-  prof.start();
+  prof.start(0);
   for (const f of framesOf(rig)) recordFrame(prof, rig, f);
   assert.ok(rig.compiledPlan, rig.compiledReason);
   const why = Object.keys(rig.compiledPlan.delegated);
@@ -105,7 +105,7 @@ test('汎用の経路だけで評価するときは、ノードを何で動く�
   const d = load('compiled_sample.json');
   const rig = makeRig(d, { compiled: false });
   const prof = new EvalProfiler();
-  prof.start();
+  prof.start(0);
   for (const f of framesOf(rig)) recordFrame(prof, rig, f, '専用の評価を使わない設定');
   assert.ok(prof.frames.every((e) => e.path === 'generic' && e.reason === '専用の評価を使わない設定'));
   const paths = prof.rows('path');
@@ -125,7 +125,7 @@ test('再生キャッシュのフレームはコピーとして数え、キャ�
   for (const f of frames) rig.evaluate(f);                     // キャッシュを作る
   const have = rig.snapshots.size;
   const prof = new EvalProfiler();
-  prof.start();
+  prof.start(0);
   for (const f of frames) recordFrame(prof, rig, f);
   assert.ok(prof.frames.every((e) => e.path === 'cache' && e.parts.cache >= 0 && !e.parts.compiled));
   assert.equal(prof.evaluated, 0);
@@ -159,7 +159,7 @@ test('記録していないあいだは何も測らない', () => {
   prof.endFrame();
   prof.addRender(2);
   assert.equal(prof.frames.length, 0);
-  prof.start();
+  prof.start(0);
   prof.beginFrame(1);
   prof.endFrame();
   prof.stop();
@@ -175,7 +175,7 @@ test('文字の結果に、フレームの内訳・種類ごと・経路ごと�
   const d = load('compiled_sample.json');
   const rig = makeRig(d, { limit: 64 * 1024 * 1024 });
   const prof = new EvalProfiler();
-  prof.start();
+  prof.start(0);
   for (const f of framesOf(rig)) recordFrame(prof, rig, f);
   const text = profilerText(prof, {
     scene: { meshes: 1, vertices: 8, joints: 3, curves: 0 }, clip: rig.clip, rig,
@@ -222,7 +222,7 @@ test('自作ノード（exprespy）ごとに、計算と入力の読み込みを
   const d = load('exprespy_sample.json');
   const plain = makeRig(d), rec = makeRig(d);
   const prof = new EvalProfiler();
-  prof.start();
+  prof.start(0);
   for (const f of framesOf(plain)) {
     assert.equal(valuesOf(recordFrame(prof, rec, f)), valuesOf(plain.evaluate(f, undefined, new Map())), `フレーム ${f}`);
   }
@@ -264,7 +264,7 @@ test('自作ノードは、1 回の計算の中で同じ入力を 1 回だけ読
   void orig;
   // プロファイラ: 読んだ回数（同じ入力も数える）≥ 異なる入力の数
   const prof = new EvalProfiler();
-  prof.start();
+  prof.start(0);
   const rec = makeRig(d);
   for (const f of framesOf(rec)) recordFrame(prof, rec, f);
   const rows = prof.rows('def');
@@ -274,7 +274,7 @@ test('自作ノードは、1 回の計算の中で同じ入力を 1 回だけ読
 
 test('行列の更新・表示の内訳と、ドローコール・ポリゴン数を集計する（その他は残り）', () => {
   const prof = new EvalProfiler();
-  prof.start();
+  prof.start(0);
   for (let f = 1; f <= 4; f++) {
     prof.beginFrame(f);
     prof.sub('matrices', 1); prof.sub('pose', 2); prof.sub('world', 3); prof.sub('overlay', 0.5);
@@ -336,4 +336,65 @@ test('ワーカーのエラーを 1 行に（1 行目と、起きた所の関数
   assert.equal(errorText('RangeError: Maximum call stack size exceeded\n    at chanTObj (blob:x:1:2)\n    at Object.dagPlug (blob:x:3:4)\n    at chanTObj (blob:x:1:2)'),
     'RangeError: Maximum call stack size exceeded（場所: chanTObj ← dagPlug）');
   assert.equal(errorText('ワーカーのエラー: 何か'), 'ワーカーのエラー: 何か');
+});
+
+test('記録を始めた直後の数フレームは準備として集計に入れない（評価はする）。準備中のフレームは記録するが集計に入れない', async () => {
+  const { WARM_FRAMES } = await import('../src/profiler.js');
+  const d = load('compiled_sample.json');
+  const rig = makeRig(d);
+  const frames = framesOf(rig);
+  const prof = new EvalProfiler();
+  prof.start();
+  assert.ok(WARM_FRAMES > 0);
+  for (let k = 0; k < WARM_FRAMES; k++) recordFrame(prof, rig, frames[k % frames.length]);
+  let s = prof.summary();
+  assert.equal(prof.frames.length, 0, '準備のフレームは覚えない');
+  assert.equal(s.warmed, WARM_FRAMES);
+  assert.equal(prof.rows('type').length, 0, '種類ごとの集計にも入れない');
+  assert.equal(prof.evaluated, 0);
+  // 準備のあと: 集計に入る
+  recordFrame(prof, rig, frames[0]);
+  assert.equal(prof.frames.length, 1);
+  assert.ok(prof.rows('type').length > 0);
+  const typed = prof.rows('type').reduce((a, r) => a + r.ms, 0);
+  // 準備中（テクスチャの読み込み中など）: 記録するが（グラフに出す）、集計・種類ごとの表には入れない
+  prof.beginFrame(frames[1], 'テクスチャの読み込み中');
+  rig.profile = prof;
+  try { rig.evaluate(frames[1], undefined, new Map()); } finally { rig.profile = null; }
+  prof.addEval(rig, 50, '理由');
+  prof.endFrame();
+  prof.addRender(30, null, 5);
+  s = prof.summary();
+  assert.equal(prof.frames.length, 2);
+  assert.equal(prof.frames[1].prep, 'テクスチャの読み込み中');
+  assert.equal(s.frames, 1);
+  assert.equal(s.prep, 1);
+  assert.ok(s.max < 50, '準備中のフレームは最大にも入れない');
+  assert.equal(prof.rows('type').reduce((a, r) => a + r.ms, 0), typed);
+  assert.equal(prof.evaluated, 1);
+  const text = profilerText(prof, {});
+  assert.ok(text.includes(`集計から除いたフレーム: 記録を始めた直後（準備） ${WARM_FRAMES}・準備中（テクスチャの読み込み中など） 1`), text);
+  // 止めて始め直すと、また準備のフレームから
+  prof.stop();
+  prof.start();
+  recordFrame(prof, rig, frames[2]);
+  assert.equal(prof.frames.length, 2);
+});
+
+test('描画の準備（行列の確認・まとめたメッシュへの写し）は描画に足して別にも示す。ワールド行列を計算した数の平均', () => {
+  const prof = new EvalProfiler();
+  prof.start(0);
+  for (let f = 1; f <= 2; f++) {
+    prof.beginFrame(f);
+    prof.count('world', 100 * f, 1000);
+    prof.endFrame();
+    prof.addRender(4, { calls: 10, triangles: 10, lines: 0 }, 1);
+  }
+  const s = prof.summary();
+  assert.equal(s.avg.render, 5);
+  assert.equal(s.renderPrep, 1);
+  assert.deepEqual(s.world, { n: 150, total: 1000 });
+  const text = profilerText(prof, {});
+  assert.ok(text.includes('ワールド行列の計算 0.00 ms（150 / 1000 個）'), text);
+  assert.ok(text.includes('描画のうち、準備（行列の確認・まとめて描くメッシュへの写し）: 1.00 ms'), text);
 });

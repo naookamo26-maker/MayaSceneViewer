@@ -137,6 +137,7 @@ export class ProfilerPanel {
   setRecording(on) {
     const p = this.app.profiler;
     if (on) p.start(); else p.stop();
+    this.app.setProfilerRecording(on);
     if (!on) this.setBypass(false, true);
     else if ($('prof-nocache').checked) this.setBypass(true);
     const b = $('prof-record');
@@ -185,9 +186,16 @@ export class ProfilerPanel {
     const budget = clip ? 1000 / clip.fps : null;
     const parts = [];
     if (!this.app.rig) parts.push('アニメーションのあるシーンを開くと使えます。');
-    else if (!s.frames) parts.push(prof.recording ? '記録中: 再生するか、フレームを動かしてください。' : '［● 記録］を押してから再生すると、1 フレームごとの内訳を記録します。');
-    else {
+    else if (!s.frames && !s.prep) {
+      parts.push(prof.recording ? (s.warmed ? `記録中: 始めの ${num(s.warmed)} フレームは準備のため集計に入れていません。続けて再生してください。`
+        : '記録中: 再生するか、フレームを動かしてください。') : '［● 記録］を押してから再生すると、1 フレームごとの内訳を記録します。');
+    } else {
       parts.push(`記録 ${num(s.frames)} フレーム（キャッシュあり ${num(s.hits)}・なし ${num(s.evaluated)}）`);
+      // 集計に入れなかったフレーム（記録を始めた直後の準備・テクスチャの読み込み中など）
+      const left = [];
+      if (s.warmed) left.push(`記録を始めた直後の ${num(s.warmed)} フレーム`);
+      if (s.prep) left.push(`準備中（テクスチャの読み込み中など）の ${num(s.prep)} フレーム`);
+      if (left.length) parts.push(`<span class="muted">集計から除いた: ${left.join('・')}</span>`);
       parts.push(`平均 <b>${msText(s.total)}</b>・最大 ${msText(s.max)}`);
       if (s.fps) parts.push(`表示できたフレームレート <b>${s.fps.toFixed(1)} fps</b>`);
       if (budget) parts.push(`フレームバジェット ${msText(budget)}（${clip.fps} fps）`);
@@ -196,10 +204,12 @@ export class ProfilerPanel {
     // 行列の更新・表示・その他の内訳と、ドローコール・ポリゴン数（記録したフレームの平均）
     const detail = [];
     if (s.frames) {
+      const sub = (p) => `${esc(p.label)} ${msText(s.sub[p.key])}`
+        + (p.key === 'world' && s.world ? `（${num(Math.round(s.world.n))} / ${num(s.world.total)} 個）` : '');
       detail.push(`<span><b>行列の更新・表示・その他</b>（平均 ${msText(s.avg.scene)}）: `
-        + `${SUB_PARTS.map((p) => `${esc(p.label)} ${msText(s.sub[p.key])}`).join('・')}・その他 ${msText(s.sub.other)}</span>`);
+        + `${SUB_PARTS.map(sub).join('・')}・その他 ${msText(s.sub.other)}</span>`);
       if (s.draw) {
-        detail.push(`<span><b>描画</b>（平均 ${msText(s.avg.render)}）: ドローコール ${num(Math.round(s.draw.calls))}・`
+        detail.push(`<span><b>描画</b>（平均 ${msText(s.avg.render)}。うち準備 ${msText(s.renderPrep)}）: ドローコール ${num(Math.round(s.draw.calls))}・`
           + `ポリゴン数（三角形） ${num(Math.round(s.draw.triangles))}${s.draw.lines ? `・ライン ${num(Math.round(s.draw.lines))}` : ''}</span>`);
       }
     }
@@ -242,6 +252,7 @@ export class ProfilerPanel {
     shown.forEach((e, k) => {
       const x = padL + k * (BAR + GAP);
       let base = 0;
+      g.globalAlpha = e.skip ? 0.3 : 1;            // 準備中（集計に入れない）のフレームは薄く
       PARTS.forEach((p, i) => {
         const v = e.parts[p.key] || 0;
         if (v <= 0) return;
@@ -250,6 +261,7 @@ export class ProfilerPanel {
         g.fillRect(x, y1, BAR, Math.max(0.5, y0 - y1));
         base += v;
       });
+      g.globalAlpha = 1;
       if (first + k === this.hover) {
         g.strokeStyle = '#dde1e6'; g.lineWidth = 1;
         g.strokeRect(x - 1.5, y(base) - 1.5, BAR + 3, plotH - y(base) + 1.5);
@@ -282,7 +294,10 @@ export class ProfilerPanel {
       .map(([p, i, v]) => `<span><i style="background:${PART_COLORS[i]}"></i>${esc(p.label)} ${msText(v)}</span>`);
     const extra = [];
     if (e.sub) extra.push(`行列の更新・表示の内訳: ${SUB_PARTS.map((p) => `${esc(p.label)} ${msText(e.sub[p.key] || 0)}`).join('・')}`);
+    if (e.counts && e.counts.world) extra.push(`ワールド行列を計算した数 ${num(e.counts.world[0])} / ${num(e.counts.world[1])}`);
+    if (e.renderPrep) extra.push(`描画の準備（行列の確認・まとめて描くメッシュへの写し） ${msText(e.renderPrep)}`);
     if (e.draw) extra.push(`ドローコール ${num(e.draw.calls)}・ポリゴン数（三角形） ${num(e.draw.triangles)}`);
+    if (e.skip) extra.push(`<span class="warn">${esc(e.prep || '準備中')}のため、集計に入れていません</span>`);
     tip.innerHTML = `<b>フレーム ${esc(e.f)}</b>・${esc(path)}・合計 <b>${msText(total)}</b>${e.interval ? `・前のフレームから ${msText(e.interval)}` : ''}<div class="prof-tip-items">${items.join('')}</div>`
       + (extra.length ? `<div class="prof-tip-extra">${extra.join('<br>')}</div>` : '');
   }
@@ -372,7 +387,7 @@ export class ProfilerPanel {
       items.push(['ワーカー', '使っていません（画面のスレッドの空き時間に作ります）']);
       if (w.error) items.push(['使えない理由', esc(errorText(w.error))]);
     } else {
-      let t = `${w.count} 個（CPU のコア ${w.cores || '不明'}）・${w.busy ? '作っています' : '止まっています'}`;
+      let t = `${w.count} 個（CPU のコア ${w.cores || '不明'}）・${app.bakers.paused && app.bakers.job ? '記録中は作るのを止めています' : w.busy ? '作っています' : '止まっています'}`;
       if (w.frames) {
         t += `・読み込んでから作ったフレーム ${num(w.frames)}・1 フレームの評価 ${msText(w.perFrame)}（ワーカーの中）`;
         if (w.throughput) t += `・全体で 1 フレーム ${msText(1000 / w.throughput)}`;

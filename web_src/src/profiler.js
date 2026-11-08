@@ -26,6 +26,11 @@ export const PARTS = [
   { key: 'render', label: '描画（CPU 側）' },
 ];
 
+/**
+ * 記録を始めてから、集計に入れないフレームの数。記録中だけ通る計測の処理は、始めの数フレームは機械語になっておらず、
+ * 種類の分類も初めて求めるので、いつもの 2〜5 倍かかる（記録を始めた直後に跳ねる）。計算はするので、そのあとは正しく測れる
+ */
+export const WARM_FRAMES = 5;
 const MAX_FRAMES = 5000;               // 覚えるフレームの数（古いものから捨てる。種類ごとの集計は捨てない）
 export const NODE_ROWS = 100;          // ノードごとの表に出す数（時間の大きい順）
 const CON_RE = /Constraint$|^lookAt$/;
@@ -65,6 +70,8 @@ export class EvalProfiler {
     this.perNode = new Map();          // ノード番号 → { ni, name, label（種類）, path, ms }（ノードごとの表）
     this.perDef = new Map();           // 自作ノード（グラフの id）→ { name, type, compiled, compute, read, calls }
     this.evaluated = 0;                // キャッシュを使わずに評価したフレームの数
+    this.warmLeft = this.warmStart ?? WARM_FRAMES;   // 集計に入れない、準備のフレームの残り（WARM_FRAMES）
+    this.warmed = 0;                   // 準備として除いたフレームの数
     this.current = null;
     this.lastShown = 0;
     this.stepCache = new WeakMap();    // 計画の手順 → 分類
@@ -73,15 +80,29 @@ export class EvalProfiler {
     this.version = (this.version || 0) + 1;
   }
 
-  start() { this.recording = true; this.lastShown = 0; this.version++; }
+  /** @param warm 集計に入れない始めのフレームの数（WARM_FRAMES） */
+  start(warm = WARM_FRAMES) { this.recording = true; this.lastShown = 0; this.warmLeft = this.warmStart = warm; this.version++; }
   stop() { this.recording = false; this.current = null; this.version++; }
 
   // ---------------------------------------------------------------- 1 フレーム
-  /** フレームの処理を始める（記録中でなければ null を返し、何もしない） */
-  beginFrame(f) {
+  /**
+   * フレームの処理を始める（記録中でなければ null を返し、何もしない）。
+   * @param prep 準備中（テクスチャの読み込み中など）なら、その説明。そのフレームは記録するが、集計には入れない
+   */
+  beginFrame(f, prep = null) {
     if (!this.recording) return null;
-    this.current = { f, path: null, parts: {}, total: 0, interval: 0, genericMs: 0, reason: null, t0: performance.now() };
+    const skip = this.warmLeft > 0 ? 'warm' : prep ? 'prep' : null;
+    this.current = { f, path: null, parts: {}, total: 0, interval: 0, genericMs: 0, reason: null, t0: performance.now(), skip, prep };
     return this.current;
+  }
+
+  /** いまのフレームを集計に入れないか（準備のフレーム・準備中） */
+  get skipping() { return !!(this.current && this.current.skip); }
+
+  /** 数の記録（key: いまは 'world' だけ。計算した数 n・全体 total） */
+  count(key, n, total) {
+    const c = this.current;
+    if (c) (c.counts || (c.counts = {}))[key] = [n, total];
   }
 
   /** 行列の更新・表示の内訳の時間を足す（key は SUB_PARTS の key） */
@@ -105,10 +126,11 @@ export class EvalProfiler {
     if (!c) return;
     c.path = rig.lastPath;
     if (rig.lastPath === 'cache') { this.add('cache', ms); return; }
-    this.evaluated++;
+    if (!c.skip) this.evaluated++;
     if (rig.lastPath === 'generic') {
       this.add('generic', ms);
       c.reason = reason;
+      if (c.skip) return;
       const e = this.addReason(`汎用の経路（${reason}）`, 'generic', null, ms);
       for (const ni of rig.moving) e.nodes.add(ni);
       return;
@@ -124,10 +146,11 @@ export class EvalProfiler {
     if (this.cacheRig !== plan.rig) this.resetCaches(plan.rig);
     let cat = this.stepCache.get(s);
     if (!cat) this.stepCache.set(s, cat = stepCategory(plan, s));
+    if (cat.path === 'generic' && this.current) this.current.genericMs += ms;
+    if (this.skipping) return;
     this.addCategory(cat.label, cat.path, s.ni, ms);
     this.addNode(plan.rig, s.ni, cat.label, cat.path, ms);
     if (cat.path === 'generic') {
-      if (this.current) this.current.genericMs += ms;
       this.addReason(`汎用の経路に任せた: ${cat.why}`, 'generic', s.ni, ms);
     } else {
       this.addReason('専用の評価', 'compiled', s.ni, ms);
@@ -139,6 +162,7 @@ export class EvalProfiler {
     if (this.cacheRig !== rig) this.resetCaches(rig);
     let label = this.nodeCache.get(ni);
     if (!label) this.nodeCache.set(ni, label = nodeCategory(rig, ni));
+    if (this.skipping) return;
     this.addCategory(label, 'generic', ni, ms);
     this.addNode(rig, ni, label, 'generic', ms);
   }
@@ -148,6 +172,7 @@ export class EvalProfiler {
    * compute: 計算そのもの、read: 入力の読み込み（上流の値を求める時間。ほかの自作ノードの分は除く）
    */
   defNode(g, d, compute, read, reads = 0, inputs = 0) {
+    if (this.skipping) return;
     let e = this.perDef.get(g.id);
     if (!e) {
       this.perDef.set(g.id, e = { id: g.id, name: g.name, type: g.def, compiled: !!(d && d.compiled), compute: 0, read: 0, calls: 0,
@@ -200,6 +225,14 @@ export class EvalProfiler {
     this.lastShown = now;
     delete c.t0;
     delete c.genericMs;
+    this.current = null;
+    if (c.skip === 'warm') {           // 準備のフレーム: 覚えない（描画の時間も入れない）
+      this.warmLeft--;
+      this.warmed++;
+      this.pending = null;
+      this.version++;
+      return;
+    }
     this.frames.push(c);
     if (this.frames.length > MAX_FRAMES) this.frames.splice(0, this.frames.length - MAX_FRAMES);
     this.pending = c;                  // 次の描画の時間を入れる
@@ -207,11 +240,15 @@ export class EvalProfiler {
     this.version++;
   }
 
-  /** 描画（renderer.render）の時間。直前に記録したフレームのものとして足す */
-  addRender(ms, info = null) {
+  /**
+   * 描画の時間。直前に記録したフレームのものとして足す。ms: renderer.render、prep: その前の準備（行列の確認・
+   * まとめて描くメッシュへの写し）。描画（CPU 側）には両方を足す
+   */
+  addRender(ms, info = null, prep = 0) {
     const c = this.pending;
     if (!this.recording || !c) return;
-    c.parts.render = (c.parts.render || 0) + ms;
+    c.parts.render = (c.parts.render || 0) + ms + prep;
+    c.renderPrep = (c.renderPrep || 0) + prep;
     // ドローコール・ポリゴン数（三角形）・ライン（three.js の renderer.info.render。描画のたびに数え直される）
     if (info) c.draw = { calls: info.calls || 0, triangles: info.triangles || 0, lines: info.lines || 0 };
     this.pending = null;
@@ -221,7 +258,8 @@ export class EvalProfiler {
   // ---------------------------------------------------------------- 集計
   /** フレームの内訳の平均など */
   summary() {
-    const fr = this.frames;
+    const fr = this.frames.filter((e) => !e.skip);       // 準備中のフレームは集計に入れない
+    const prep = this.frames.length - fr.length;
     const avg = {};
     for (const p of PARTS) avg[p.key] = 0;
     let total = 0, hits = 0, sumInterval = 0, nInterval = 0, max = 0;
@@ -241,13 +279,18 @@ export class EvalProfiler {
     for (const p of SUB_PARTS) sub[p.key] = fr.reduce((a, e) => a + ((e.sub && e.sub[p.key]) || 0), 0) / n;
     sub.other = Math.max(0, avg.scene - SUB_PARTS.reduce((a, p) => a + sub[p.key], 0));
     const drawn = fr.filter((e) => e.draw);
+    const renderPrep = fr.reduce((a, e) => a + (e.renderPrep || 0), 0) / n;
+    // ワールド行列を計算した数（前のフレームから変わったノードの下だけ）の平均
+    const wc = fr.filter((e) => e.counts && e.counts.world);
+    const world = wc.length ? { n: wc.reduce((a, e) => a + e.counts.world[0], 0) / wc.length, total: wc[wc.length - 1].counts.world[1] } : null;
     const draw = drawn.length ? {
       calls: drawn.reduce((a, e) => a + e.draw.calls, 0) / drawn.length,
       triangles: drawn.reduce((a, e) => a + e.draw.triangles, 0) / drawn.length,
       lines: drawn.reduce((a, e) => a + e.draw.lines, 0) / drawn.length,
     } : null;
     return {
-      frames: fr.length, hits, evaluated: fr.length - hits, avg, sub, draw, total: total / n, max,
+      frames: fr.length, hits, evaluated: fr.length - hits, avg, sub, draw, total: total / n, max, prep, warmed: this.warmed,
+      renderPrep, world,
       fps: nInterval ? 1000 / (sumInterval / nInterval) : null,
     };
   }
@@ -295,7 +338,7 @@ export class EvalProfiler {
   /** 評価したフレームの、種類ごとの合計（1 フレームあたり）と、リグの評価の時間（専用 + 汎用）の比較 */
   coverage() {
     let rig = 0, cats = 0;
-    for (const e of this.frames) if (e.path !== 'cache') rig += (e.parts.compiled || 0) + (e.parts.generic || 0);
+    for (const e of this.frames) if (!e.skip && e.path !== 'cache') rig += (e.parts.compiled || 0) + (e.parts.generic || 0);
     for (const e of this.categories.values()) cats += e.ms;
     const per = this.evaluated || 1;
     return { rig: rig / per, categories: cats / per };
@@ -386,12 +429,17 @@ export function profilerText(prof, ctx) {
   L.push('');
   L.push(`■ フレームの内訳（記録 ${s.frames} フレーム: キャッシュあり ${s.hits}・キャッシュなし ${s.evaluated}）`);
   if (s.fps) L.push(`表示できたフレームレート: ${s.fps.toFixed(1)} fps`);
+  if (s.warmed || s.prep) {
+    L.push(`  集計から除いたフレーム: 記録を始めた直後（準備） ${s.warmed}・準備中（テクスチャの読み込み中など） ${s.prep}`);
+  }
   for (const p of PARTS) L.push(`  ${pad(p.label, 36)}${ms(s.avg[p.key])}`);
-  L.push(`  行列の更新・表示・その他の内訳: ${SUB_PARTS.map((p) => `${p.label} ${ms(s.sub[p.key])}`).join('・')}・その他 ${ms(s.sub.other)}`);
+  const subText = (p) => `${p.label} ${ms(s.sub[p.key])}` + (p.key === 'world' && s.world ? `（${Math.round(s.world.n)} / ${s.world.total} 個）` : '');
+  L.push(`  行列の更新・表示・その他の内訳: ${SUB_PARTS.map(subText).join('・')}・その他 ${ms(s.sub.other)}`);
+  if (s.draw) L.push(`  描画のうち、準備（行列の確認・まとめて描くメッシュへの写し）: ${ms(s.renderPrep)}`);
   if (s.draw) L.push(`  ドローコール ${Math.round(s.draw.calls)}・ポリゴン数（三角形） ${Math.round(s.draw.triangles)}・ライン ${Math.round(s.draw.lines)}（1 フレームの平均）`);
   L.push(`  ${pad('合計（平均）', 36)}${ms(s.total)}　最大 ${ms(s.max)}`);
   const split = (pred) => {
-    const fr = prof.frames.filter(pred);
+    const fr = prof.frames.filter((e) => !e.skip && pred(e));
     if (!fr.length) return null;
     return fr.reduce((a, e) => a + PARTS.reduce((t, p) => t + (e.parts[p.key] || 0), 0), 0) / fr.length;
   };
