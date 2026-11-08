@@ -181,7 +181,11 @@ export function compileExpression(src) {
     const tok = toks[p++];
     switch (tok.t) {
       case 'num': { const v = tok.v; return { f: () => v, int: tok.int }; }
-      case 'I': { const k = tok.v; return { f: (c) => c.input(k), int: false }; }
+      case 'I': {
+        // 入力は式の実行中に変わらないので、番号ごとに最初の 1 回だけ読む（同じ入力を何度も使う式が多い）
+        const k = tok.v;
+        return { f: (c) => { const v = c.ins[k]; return v !== undefined ? v : (c.ins[k] = c.input(k)); }, int: false };
+      }
       case 'O': { const k = tok.v; return { f: (c) => c.out.get(k) || 0, int: false }; }
       case 'var': {
         const name = tok.v;
@@ -307,7 +311,7 @@ export function compileExpression(src) {
   return {
     outputs: [...outputs].sort((a, b) => a - b),
     run(env) {
-      const ctx = { vars: new Map(), out: new Map(), input: env.input, frame: env.frame, time: env.time };
+      const ctx = { vars: new Map(), out: new Map(), ins: [], input: env.input, frame: env.frame, time: env.time };
       for (const s of program) s(ctx);
       return ctx;
     },

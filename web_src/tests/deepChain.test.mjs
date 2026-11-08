@@ -268,3 +268,43 @@ test('深い親子の階層（ジョイント 300 個の鎖）: 汎用の経路�
   assert.deepEqual(retries.slice(2), [0, 0, 0, 0, 0, 0], `あとのフレームでもやり直している: ${retries.join(',')}`);
   assert.deepEqual([...generic.problems], []);
 });
+
+test('スプライン IK のカーブを動かすノードが深い階層の下: やり直したフレームのあとも、専用の評価でカーブが止まらない', () => {
+  // 専用の評価で、任せたノード（スプライン IK のジョイント）を求める途中にワールド行列の鎖であふれると、その計算を覚えて
+  // 次のフレームから先に求める（prewarmDeep）。先に求めるときに、計画の読み手（plan.ad）の memo で RigEvaluator の計算を
+  // 呼んでいたため、「時間で変わる」の印を読み手が見ず、クラスターのハンドルのワールド行列を時間で変わらない値（keep）に
+  // 入れていた（以後のフレームで、カーブとスプライン IK のジョイントがそのフレームの形で止まる）
+  const d = JSON.parse(readFileSync(path.resolve(here, '../../samples/stretch_spline_sample.json'), 'utf8'));
+  const anim = d.animation;
+  const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  let id = Math.max(...anim.graph.map((g) => g.id)) + 1, parent = -1;
+  for (let k = 0; k < 150; k++) {
+    const ni = d.nodes.length;
+    d.nodes.push({ name: `deep${k}`, path: `|deep${k}`, type: 'joint', parent, matrix: I, worldMatrix: I, inheritsTransform: true, visible: true,
+      attrs: { t: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1], ro: 'xyz' } });
+    anim.nodes.push({ node: ni, joint: true, ro: 0, t: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1], ra: [0, 0, 0], jo: [0, 0, 0] });
+    anim.channels.push({ node: ni, attr: 'rz', curve: 0 });
+    anim.graph.push({ id: id++, name: `deep${k}`, type: 'joint', dag: ni, inputs: {} });
+    parent = ni;
+  }
+  const handle = d.nodes.findIndex((nd) => nd.name === 'sb_clHandle');
+  d.nodes[handle].parent = parent;                         // クラスターのハンドルを深い階層の下へ
+  const joints = [0, 1, 2, 3, 4].map((i) => d.nodes.findIndex((nd) => nd.name === `sb_${i}`));
+  const make = (compiled) => {
+    const rig = new RigEvaluator(new AnimationClip(anim), d.nodes, (ni) => new Matrix4().fromArray(d.nodes[ni].matrix));
+    rig.useCompiled = compiled;
+    rig.setPlaybackLimit(0);
+    return rig;
+  };
+  const compiled = make(true);
+  for (let f = 1; f <= 12; f++) {
+    const b = compiled.evaluate(f, undefined, new Map());
+    const a = make(false).evaluate(f, undefined, new Map());   // 正解: フレームごとに新しい評価器（汎用の経路）
+    for (const ni of joints) {
+      a.get(ni).elements.forEach((v, k) => assert.ok(Math.abs(v - b.get(ni).elements[k]) < 1e-9,
+        `フレーム ${f}: ${d.nodes[ni].name}[${k}] ${b.get(ni).elements[k]} ≠ ${v}`));
+    }
+  }
+  assert.ok(compiled.compiledPlan, `専用の評価にならない: ${compiled.compiledReason}`);
+  assert.ok(compiled.deepState.retries > 0, 'あふれていない（階層を深くする）');
+});

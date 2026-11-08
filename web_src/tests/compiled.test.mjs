@@ -131,3 +131,19 @@ test('ノード単位の計算の順番が循環しても、循環の中のノ�
   for (const f of [...frames, ...frames.slice().reverse(), 3.5]) assert.equal(valuesOf(b, f), valuesOf(a, f), `フレーム ${f}`);
   assert.deepEqual([...b.problems], []);
 });
+
+test('expression（入力とフレームだけで出力が決まる）で動くノードも、専用の評価で計算し、ビット単位で同じ', () => {
+  // ctrl_sample: frame を読む式（expr_wave → e_jnt1）と、入力・変数・if を使う式（expr_logic → e_jnt2）
+  const d = load('ctrl_sample.json');
+  const a = makeRig(d, false), b = makeRig(d, true);
+  const frames = framesOf(a);
+  b.evaluate(frames[0]);
+  assert.ok(b.compiledPlan, b.compiledReason);
+  assert.ok(!Object.keys(b.compiledPlan.delegated).some((w) => w.includes('expression')), JSON.stringify(b.compiledPlan.delegated));
+  for (const name of ['e_jnt1', 'e_jnt2']) {
+    const ni = d.nodes.findIndex((n) => n.name === name);
+    assert.notEqual(b.compiledPlan.steps.get(ni).kind, 3, `${name} は任せない`);
+  }
+  // 前後に飛ぶ順・途中のフレームでも（frame を読む式は、フレームごとに値が変わる）
+  for (const f of [...frames, ...[...frames].reverse(), 1.5, 7.25]) assert.equal(valuesOf(b, f), valuesOf(a, f), `フレーム ${f}`);
+});
