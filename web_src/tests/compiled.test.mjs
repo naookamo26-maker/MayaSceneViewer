@@ -118,3 +118,16 @@ test('animLayer（ウェイトとミュートだけで出力が決まる）を�
   assert.ok(!Object.keys(b.compiledPlan.delegated).some((w) => w.includes('animLayer')), JSON.stringify(b.compiledPlan.delegated));
   for (const f of frames) assert.equal(valuesOf(b, f), valuesOf(a, f), `フレーム ${f}`);
 });
+
+test('ノード単位の計算の順番が循環しても、循環の中のノードを任せて専用の評価にし、ビット単位で同じ', () => {
+  // 前提: python tools/make_order_cycle_sample.py。tx は ty の移動（コンストレイント）を、ty は回転の入力の tx を読む
+  const d = load('order_cycle_sample.json');
+  const a = makeRig(d, false), b = makeRig(d, true);
+  const frames = framesOf(a);
+  b.evaluate(frames[0]);
+  assert.ok(b.compiledPlan, `計画を作る（${b.compiledReason}）`);
+  const delegated = b.compiledPlan.order.filter((s) => s.why).map((s) => [d.nodes[s.ni].name, s.why]);
+  assert.deepEqual(delegated, [['ty', '計算の順番の循環の中のノード']]);
+  for (const f of [...frames, ...frames.slice().reverse(), 3.5]) assert.equal(valuesOf(b, f), valuesOf(a, f), `フレーム ${f}`);
+  assert.deepEqual([...b.problems], []);
+});
