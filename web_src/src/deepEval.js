@@ -7,8 +7,9 @@
 //   * runDeep は、あふれたら state.at を浅いスタックから先に求めて（結果はキャッシュに残る）、元の計算をやり直す。
 //     やり直すたびに、さかのぼる鎖が短くなる。計算の順番は同じなので、結果はあふれなかったときと同じ
 //   * runDeep の中（state.depth > 0）では、エラーを受け止めて「値なし」にする所も、あふれのエラーは上へ渡す
-//   * 先に求めた計算のうち、次のフレームでも同じものを求められるもの（state.at.warm: 計算ノードの出力・属性の値）は、
-//     求め終えた順に state.order に覚える。次のフレームからは、評価の初めにその順で先に求めておく（rig.js の prewarmDeep）。
+//   * 先に求めた計算のうち、次のフレームでも同じものを求められるもの（state.at.warm: 計算ノードの出力・属性の値・
+//     ワールド行列などの値）は、求め終えた順に state.order に覚える（汎用の経路と専用の評価とで別に。useOrder）。
+//     次のフレームからは、評価の初めにその順で先に求めておく（rig.js の prewarmDeep）。
 //     深い所から順に求まっているので、毎フレームあふれ直さない
 //   * 本物のスタックの限界までは行かない: 値を覚える所の入れ子が DEEP_LIMIT 段を超えたら、あふれたのと同じエラー（DEEP_ERROR）を
 //     投げて、同じようにやり直す。スタックの残りが少ない所では、正規表現の機械語へのコンパイルなどがエラーにならずに
@@ -25,7 +26,16 @@ export const DEEP_ERROR = new RangeError('Maximum call stack size exceeded（評
 
 /** 値を覚える所が使う状態（評価器ごとに 1 つ。評価器を引き継いだオブジェクトも同じものを使う） */
 export function newDeepState() {
-  return { depth: 0, at: null, retries: 0, order: [], known: new Set(), marks: [], level: 0 };
+  const orders = { generic: { order: [], known: new Set() }, plan: { order: [], known: new Set() } };
+  return { depth: 0, at: null, retries: 0, orders, order: orders.generic.order, known: orders.generic.known, marks: [], level: 0,
+    insertAt: -1 };                              // insertAt: 先に求めている途中に覚えた順番を入れる位置（-1 なら最後）
+}
+
+/** 覚える順番を、経路（'generic' 汎用の経路・'plan' 専用の評価）のものにする */
+export function useOrder(state, name) {
+  const o = state.orders[name];
+  state.order = o.order;
+  state.known = o.known;
 }
 
 /** 値を計算する前に呼ぶ（入れ子の段数を数え、上限を超えたら DEEP_ERROR）。計算のあと必ず leaveDeep を呼ぶこと */
@@ -87,7 +97,9 @@ export function runDeep(state, fn, onRetry, onStuck) {
         const w = done.warm;                       // 先に求めた計算の順番を覚える（{ key, id, attr }。attr がなければ出力）
         if (w && !state.known.has(w.key)) {
           state.known.add(w.key);
-          state.order.push(w);
+          // 先に求めている途中（prewarmDeep）なら、いま求めている項目の手前に入れる（次のフレームで、深いものから順になる）
+          if (state.insertAt >= 0) state.order.splice(state.insertAt++, 0, w);
+          else state.order.push(w);
         }
       } catch (e) {
         const at = state.at;

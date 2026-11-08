@@ -365,7 +365,8 @@ export class ProfilerPanel {
     if (ci) {
       items.push(['動くノード', `${num(ci.moving)} 個・キャッシュは 1 フレーム ${formatBytes(ci.perFrame)}`]);
       items.push(['覚えたフレーム', `${num(ci.frames)} / ${num(ci.range)}・${formatBytes(ci.bytes)}（上限 ${ci.limit ? formatBytes(ci.limit) : 'オフ'}）${ci.limit > 0 && ci.full && ci.frames < ci.range ? '・<span class="warn">上限に達しています</span>' : ''}`]);
-      items.push(['上限ごとに入る数', ci.fits.map(([mb, n]) => `${mb >= 1024 ? mb / 1024 + ' GB' : mb + ' MB'}: ${num(n)}`).join('　')]);
+      items.push(['上限ごとに入る数', `${ci.fits.map(([mb, n]) => `${mb >= 1024 ? mb / 1024 + ' GB' : mb + ' MB'}: ${num(n)}`).join('　')}`
+        + `（再生範囲は ${num(ci.range)} フレーム）`]);
     }
     if (!w.available) {
       items.push(['ワーカー', '使っていません（画面のスレッドの空き時間に作ります）']);

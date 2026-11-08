@@ -22,7 +22,7 @@ import {
 } from './curve.js';
 import { MATH_DEFAULTS, evaluateMath, mathAngleInput, mathKind, mathOutputs } from './mathNodes.js';
 import { buildPlan, runPlan } from './rigCompiled.js';
-import { enterDeep, isStackOverflow, leaveDeep, mayOverflow, newDeepState, runDeep, stackNames } from './deepEval.js';
+import { enterDeep, isStackOverflow, leaveDeep, mayOverflow, newDeepState, runDeep, stackNames, useOrder } from './deepEval.js';
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -133,10 +133,14 @@ const NO_INPUTS = [];
 const NO_POSE = () => null;                // ポーズ確認の追加分なし
 const BUSY = Symbol('busy');
 
-// ---- 再生キャッシュの行列の並び。ローカル行列は移動・回転・スケール（とせん断）でできていて、最後の行がいつも 0, 0, 0, 1 なので、
-// 残りの 12 個だけを持つ（値は同じ。キャッシュが 25% 小さくなる）。最後の行が違う行列があるフレームは 16 個ずつ持つ
+// ---- 再生キャッシュの行列の並び。ローカル行列は移動・回転・スケール（とせん断）でできていて、最後の行が 0, 0, 0, 1 なので、
+// 残りの 12 個だけを持つ（キャッシュが 25% 小さくなる）。コンストレイントの計算などで、最後の行が丸めの誤差だけ違う
+// （1 が 0.9999999999999998 になるなど）ことがあるので、AFFINE_TOL 以内なら 12 個にして、読むときは 0, 0, 0, 1 に戻す
+// （違いは 1e-16 ほど。親の移動に掛かる影響も見た目には出ない）。それより違う行列があるフレームは 16 個ずつ持つ
 const AFFINE = [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14];       // 持つ要素（列優先の Matrix4.elements の番号）
-const isAffine = (e) => Object.is(e[3], 0) && Object.is(e[7], 0) && Object.is(e[11], 0) && Object.is(e[15], 1);
+const AFFINE_TOL = 1e-12;
+const isAffine = (e) => Math.abs(e[3]) <= AFFINE_TOL && Math.abs(e[7]) <= AFFINE_TOL && Math.abs(e[11]) <= AFFINE_TOL
+  && Math.abs(e[15] - 1) <= AFFINE_TOL;
 
 /** 動くノード（moving の順）のローカル行列（target）を、再生キャッシュの並びにする */
 export function packSnapshotMats(target, moving) {
@@ -898,6 +902,7 @@ export class RigEvaluator {
     // 最初に読んだノードの時間に入る）
     const prof = this.profile;
     let t0 = prof ? performance.now() : 0;
+    useOrder(this.deepState, 'generic');                 // 汎用の経路で覚えた順番
     this.prewarmDeep();                                  // 鎖が長くてスタックがあふれた所は、深い所から先に求める
     for (const ni of this.moving) {
       this.dcur = null;
@@ -1065,9 +1070,14 @@ export class RigEvaluator {
         ds.at = () => this.memo(fm, km, key, compute, fallback, label);
         ds.at.place = fm;                                  // 同じ計算か（deepEval.js の runDeep が、進まないことを見分ける）
         ds.at.key = key;
-        // 計算ノードの出力・属性の値は、次のフレームから先に求める（prewarmDeep）
+        // 次のフレームから先に求める（prewarmDeep）: 計算ノードの出力・属性の値・そのほかの値（ワールド行列・チャンネルなど。
+        // どのキャッシュの値かと、求め方 compute を覚える。compute はノードの番号などしか使わないので、次のフレームでも使える）
         if (fm === this.cache.out) ds.at.warm = { key: `o${key}`, id: key, attr: null };
         else if (fm.ownerId !== undefined) ds.at.warm = { key: `p${fm.ownerId}.${key}`, id: fm.ownerId, attr: key };
+        else {
+          const map = Object.keys(this.cache).find((n) => this.cache[n] === fm);
+          if (map) ds.at.warm = { key: `${map}|${key}`, map, k: key, compute, fallback, label };
+        }
       }
       throw e;
     } finally {
@@ -1129,11 +1139,18 @@ export class RigEvaluator {
    * reader: 値を求めるオブジェクト（専用の評価では計画の読み手 plan.ad）
    */
   prewarmDeep(reader = this) {
-    const order = this.deepState.order;
-    for (let i = 0; i < order.length; i++) {
-      const w = order[i];
-      if (w.attr === null) reader.deep(() => reader.outputs(w.id));
-      else reader.deep(() => reader.plug(w.id, w.attr));
+    const st = this.deepState, order = st.order;
+    try {
+      for (let i = 0; i < order.length; i++) {
+        st.insertAt = i;                                 // ここで新しく覚えたものは、この項目の手前に入る
+        const w = order[i];
+        if (w.map) reader.deep(() => reader.memo(reader.cache[w.map], reader.keep[w.map], w.k, w.compute, w.fallback, w.label));
+        else if (w.attr === null) reader.deep(() => reader.outputs(w.id));
+        else reader.deep(() => reader.plug(w.id, w.attr));
+        i = st.insertAt;                                 // 手前に入った分だけ進める（いまの項目の位置）
+      }
+    } finally {
+      st.insertAt = -1;
     }
   }
 
