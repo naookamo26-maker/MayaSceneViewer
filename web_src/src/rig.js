@@ -132,6 +132,44 @@ const CHAN_MODES = { full: 0, fk: 1, t: 2 };
 const NO_INPUTS = [];
 const NO_POSE = () => null;                // ポーズ確認の追加分なし
 const BUSY = Symbol('busy');
+
+// ---- 再生キャッシュの行列の並び。ローカル行列は移動・回転・スケール（とせん断）でできていて、最後の行がいつも 0, 0, 0, 1 なので、
+// 残りの 12 個だけを持つ（値は同じ。キャッシュが 25% 小さくなる）。最後の行が違う行列があるフレームは 16 個ずつ持つ
+const AFFINE = [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14];       // 持つ要素（列優先の Matrix4.elements の番号）
+const isAffine = (e) => Object.is(e[3], 0) && Object.is(e[7], 0) && Object.is(e[11], 0) && Object.is(e[15], 1);
+
+/** 動くノード（moving の順）のローカル行列（target）を、再生キャッシュの並びにする */
+export function packSnapshotMats(target, moving) {
+  let affine = true;
+  for (const ni of moving) if (!isAffine(target.get(ni).elements)) { affine = false; break; }
+  const stride = affine ? 12 : 16;
+  const mats = new Float64Array(moving.size * stride);
+  let o = 0;
+  for (const ni of moving) {
+    const e = target.get(ni).elements;
+    if (affine) for (let k = 0; k < 12; k++) mats[o + k] = e[AFFINE[k]];
+    else for (let k = 0; k < 16; k++) mats[o + k] = e[k];
+    o += stride;
+  }
+  return mats;
+}
+
+/** 再生キャッシュの並びの、1 つの行列の数の個数（12 か 16。count: 動くノードの数）。どちらでもなければ 0 */
+export function snapshotStride(mats, count) {
+  if (mats.length === count * 12) return 12;
+  if (mats.length === count * 16) return 16;
+  return 0;
+}
+
+/** 再生キャッシュの並びの i 番目の行列を m に入れる */
+export function readSnapshotMat(mats, stride, i, m) {
+  const o = i * stride;
+  if (stride === 16) return m.fromArray(mats, o);
+  const e = m.elements;
+  for (let k = 0; k < 12; k++) e[AFFINE[k]] = mats[o + k];
+  e[3] = 0; e[7] = 0; e[11] = 0; e[15] = 1;
+  return m;
+}
 /** 専用の評価をやめた理由（スタックがあふれた所の関数名） */
 const overflowReason = (e) => `計算の鎖が深すぎる（スタックがあふれた: ${stackNames(e && e.stack).join(' ← ') || '場所不明'}）`;               // キャッシュの計算中の印（循環の検出）
 const PLAN = { def: 0, input: 1, component: 2, output: 3, triple: 4, static: 5 };   // plugPlan の種類
@@ -499,7 +537,7 @@ export class RigEvaluator {
     this.layer = null;                       // いまのフレームの評価に使ったレイヤー
     this.play = null;                        // 再生で使う追加分 { poseOf, key, keys }（setPlaybackPose。null = いまの追加分）
     this.snapshotBytes = 0;                  // 再生キャッシュの大きさ（全レイヤー。カーブの形・属性の値を含む目安）
-    this.frameBytes = this.moving.size * 128 + SNAPSHOT_BASE;   // 1 フレームの大きさの見込み（覚えたフレームの最大）
+    this.frameBytes = this.moving.size * 96 + SNAPSHOT_BASE;    // 1 フレームの大きさの見込み（12 個ずつ。覚えたフレームの最大）
     this.countedCurves = new WeakSet();      // 大きさを数えたカーブの値（時間で変わらない形は全フレームで同じものを使う）
     this.playbackLimit = 512 * 1024 * 1024;
     this.current = null;                     // いまのフレームの再生キャッシュ（覚えないフレームは null）
@@ -766,15 +804,16 @@ export class RigEvaluator {
     if (!best || bestAffected.size >= this.moving.size) return 0;
     const local = this.cache.local;
     const deps = local.deps || (local.deps = new Map());
-    let n = 0, o = 0;
+    let n = 0, i = 0;
+    const stride = snapshotStride(best.mats, this.moving.size);
     for (const ni of this.moving) {
       if (!bestAffected.has(ni)) {
-        local.set(ni, new Matrix4().fromArray(best.mats, o));
+        local.set(ni, readSnapshotMat(best.mats, stride, i, new Matrix4()));
         const d = this.nodeDeps.get(ni);
         if (d && d.size) deps.set(ni, new Set(d));          // nodeDeps はあとで足すので、変えない複製にする
         n++;
       }
-      o += 16;
+      i++;
     }
     return n;
   }
@@ -815,12 +854,12 @@ export class RigEvaluator {
     const hit = layer ? layer.frames.get(f) : null;
     if (hit) {
       this.lastPath = 'cache';
-      let o = 0;
+      const stride = snapshotStride(hit.mats, this.moving.size);
+      let i = 0;
       for (const ni of this.moving) {
         const m = target.get(ni) || new Matrix4();
-        m.fromArray(hit.mats, o);
+        readSnapshotMat(hit.mats, stride, i++, m);
         target.set(ni, m);
-        o += 16;
       }
       this.current = hit;
       return target;
@@ -895,9 +934,7 @@ export class RigEvaluator {
 
   /** フレーム f の動くノードのローカル行列を、再生キャッシュのレイヤー layer に入れる */
   storeSnapshot(f, layer, target) {
-    const mats = new Float64Array(this.moving.size * 16);
-    let o = 0;
-    for (const ni of this.moving) { target.get(ni).toArray(mats, o); o += 16; }
+    const mats = packSnapshotMats(target, this.moving);
     this.current = { mats, props: null, curves: new Map(), bytes: 0, layer };
     layer.frames.set(f, this.current);
     this.addSnapshotBytes(this.current, mats.byteLength + SNAPSHOT_BASE);
@@ -972,7 +1009,7 @@ export class RigEvaluator {
     let n = 0;
     for (const fr of frames) {
       if (!Number.isInteger(fr.f) || L.frames.has(fr.f)) continue;
-      if (fr.mats.length !== this.moving.size * 16) continue;          // 動くノードの数が違う（別のリグの結果）
+      if (!snapshotStride(fr.mats, this.moving.size)) continue;       // 動くノードの数が違う（別のリグの結果）
       if (!this.roomFor(L)) break;
       const snap = { mats: fr.mats, props: fr.props || null, curves: fr.curves || new Map(), bytes: 0, layer: L };
       L.frames.set(fr.f, snap);

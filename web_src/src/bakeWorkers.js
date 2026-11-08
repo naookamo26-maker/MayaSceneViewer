@@ -110,16 +110,20 @@ export class BakeWorkers {
    * 再生で使う追加分（pose = RigEvaluator.playbackPoseData()）の再生キャッシュを作る。todo() は、いま足りないフレーム。
    * 同じ追加分を作っている途中なら続ける。違えば、少し待ってから作り直す
    */
-  request(pose, todo) {
+  request(pose, todo, reorder = false) {
     if (this.broken || !this.rig) return false;
-    if (this.job && this.job.sig === pose.sig) return true;          // 作っている途中（再生中もそのまま続ける）
+    if (this.job && this.job.sig === pose.sig) {                       // 作っている途中（再生中もそのまま続ける）
+      // いまの位置が飛んだら、残りの順番を並べ替える（いまワーカーが作っているフレームは除く）
+      if (reorder) this.job.queue = todo().filter((f) => !this.job.inflight.has(f));
+      return true;
+    }
     this.cancel();
     this.timer = setTimeout(() => {
       this.timer = null;
       const frames = todo();
       if (!frames.length) return;
       this.job = { id: ++this.jobId, sig: pose.sig, keys: pose.keys, poses: pose.poses, queue: frames.slice(), busy: 0,
-        start: performance.now() };
+        start: performance.now(), inflight: new Set() };      // inflight: ワーカーが作っているフレーム
       if (this.stat.startedAt === null) this.stat.startedAt = this.job.start;   // warm していないとき
       this.ensureWorkers();
       for (const w of this.workers) this.dispatch(w);
@@ -160,6 +164,8 @@ export class BakeWorkers {
     w.busy = true;
     w.sent++;
     job.busy++;
+    w.frames = frames;
+    for (const f of frames) job.inflight.add(f);
     w.worker.postMessage({ type: 'bake', token: this.token, job: job.id, sig: job.sig, frames, poses: job.poses });
   }
 
@@ -203,7 +209,10 @@ export class BakeWorkers {
     if (m.type === 'error') { this.fail(m.message); return; }
     w.busy = false;
     const job = this.job;
-    if (job && m.job === job.id) job.busy--;
+    if (job && m.job === job.id) {
+      job.busy--;
+      for (const f of w.frames || []) job.inflight.delete(f);
+    }
     if (m.type === 'baked' && m.token === this.token && this.rig) {
       // 届いた結果は、作ったときの追加分のレイヤーに入れる（いまの追加分と違っても、その追加分の正しい値）
       const keys = job && m.job === job.id ? job.keys : null;
