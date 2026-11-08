@@ -264,6 +264,7 @@ function defaultsOf(type) {
 const NOTHING = () => undefined;
 const NULL = () => null;
 const TIME_RE = /\b(frame|time)\b/;       // expression が時間を読むか
+const OUT_ATTR = Array.from({ length: 64 }, (_, k) => `out[${k}]`);   // expression の出力の属性の名前（よく使う番号）
 // 値のキャッシュ（chan のキーは ni · 3 + モード、plug は id → 属性 → 値）
 const emptyCache = () => ({ chan: new Map(), posed: new Map(), local: new Map(), world: new Map(), plug: new Map(), out: new Map(), ik: new Map() });
 
@@ -1156,7 +1157,8 @@ export class RigEvaluator {
         else if (fm.ownerId !== undefined) ds.at.warm = { key: `p${fm.ownerId}.${key}`, id: fm.ownerId, attr: key };
         else {
           const map = Object.keys(this.cache).find((n) => this.cache[n] === fm);
-          if (map) ds.at.warm = { key: `${map}|${key}`, map, k: key, compute, fallback, label };
+          // self: 求めた評価器（compute はその評価器のメソッドを呼ぶ。時間で変わるかの印も同じ評価器で見る）
+          if (map) ds.at.warm = { key: `${map}|${key}`, map, k: key, compute, fallback, label, self: this };
         }
       }
       throw e;
@@ -1223,7 +1225,12 @@ export class RigEvaluator {
       for (let i = 0; i < order.length; i++) {
         st.insertAt = i;                                 // ここで新しく覚えたものは、この項目の手前に入る
         const w = order[i];
-        if (w.map) reader.deep(() => reader.memo(reader.cache[w.map], reader.keep[w.map], w.k, w.compute, w.fallback, w.label));
+        if (w.map) {
+          // 覚えたときと同じ評価器で求める（compute はその評価器を this にした関数。別の読み手の memo で求めると、
+          // compute が付けた「時間で変わる」の印を読み手が見ず、時間で変わる値を keep に入れてしまう）
+          const s = w.self || reader;
+          s.deep(() => s.memo(s.cache[w.map], s.keep[w.map], w.k, w.compute, w.fallback, w.label));
+        }
         else if (w.attr === null) reader.deep(() => reader.outputs(w.id));
         else reader.deep(() => reader.plug(w.id, w.attr));
         i = st.insertAt;                                 // 手前に入った分だけ進める（いまの項目の位置）
@@ -2352,7 +2359,8 @@ export class RigEvaluator {
     let compiled = this.derived.programs.get(g);
     if (compiled === undefined) {
       try {
-        compiled = { program: compileExpression(g.expr || ''), problem: null };
+        // 時間を読むか・入力の属性の名前は式で決まるので、最初の 1 回だけ求める
+        compiled = { program: compileExpression(g.expr || ''), problem: null, time: TIME_RE.test(g.expr || ''), inAttr: [] };
       } catch (err) {
         compiled = { program: null, problem: err.message };
       }
@@ -2362,11 +2370,12 @@ export class RigEvaluator {
       this.problems.add(`expression ${g.name} を解釈できません: ${compiled.problem}`);
       return null;
     }
-    if (TIME_RE.test(g.expr || '')) this.varying = true;
+    if (compiled.time) this.varying = true;
+    const inAttr = compiled.inAttr, id = g.id;
     let res;
     try {
       res = compiled.program.run({
-        input: (k) => this.num(g.id, `in[${k}]`, 0),
+        input: (k) => this.num(id, inAttr[k] || (inAttr[k] = `in[${k}]`), 0),
         frame: this.frame,
         time: this.frame / (this.clip.fps || 24),
       });
@@ -2376,7 +2385,7 @@ export class RigEvaluator {
       return null;
     }
     const o = {};
-    for (const [k, v] of res.out) if (Number.isFinite(v)) o[`out[${k}]`] = v;
+    for (const [k, v] of res.out) if (Number.isFinite(v)) o[OUT_ATTR[k] || `out[${k}]`] = v;
     return o;
   }
 

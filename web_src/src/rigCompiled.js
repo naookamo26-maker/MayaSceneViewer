@@ -42,7 +42,7 @@ const MATH_TYPES = new Set(['unitConversion', 'multiplyDivide', 'plusMinusAverag
   'animBlendNodeAdditiveDL', 'animBlendNodeAdditiveDA', 'animBlendNodeAdditive', 'animBlendNodeAdditiveF',
   'animBlendNodeAdditiveFL', 'animBlendNodeAdditiveFA', 'animBlendNodeAdditiveI16', 'animBlendNodeAdditiveI32',
   'animBlendNodeAdditiveScale', 'animBlendNodeBoolean', 'animBlendNodeEnum', 'animBlendNodeAdditiveRotation',
-  'animCurveUA', 'animCurveUL', 'animCurveUU', 'animLayer']);
+  'animCurveUA', 'animCurveUL', 'animCurveUU', 'animLayer', 'expression']);
 const TRS_RE = /^[trs][xyz]?$/;
 const MATRIX_PLUGS = new Set(['wm', 'worldMatrix', 'wim', 'worldInverseMatrix', 'm', 'matrix', 'xm', 'xformMatrix', 'im', 'inverseMatrix']);
 const PM_PLUGS = new Set(['pm', 'parentMatrix', 'pim', 'parentInverseMatrix']);
@@ -599,6 +599,10 @@ function mathReader(plan, constChan, pmOpm) {
   const rig = plan.rig;
   const proto = Object.getPrototypeOf(rig);
   const ad = Object.create(rig);
+  // 読み手の上で値を覚える所（RigEvaluator の memo。world・chan など）は、時間で変わらない値（keep）に入れない。
+  // 読み手の plug・outputs・dagPlug は計画の値を返し、「時間で変わる」の印（varying）を付けないので、時間で変わる値を
+  // keep に入れて以後のフレームで使い回してしまう（スプライン IK のカーブが止まるなど）。このフレームの値として覚える
+  ad.keepStatic = false;
   // ノードごとの記録: 時間で変わらない値（RigEvaluator の keep）と、このフレームの値（stamp が違えば捨てる）
   const recs = new Map();
   const recOf = (id) => {
