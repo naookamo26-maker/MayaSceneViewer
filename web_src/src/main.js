@@ -10,7 +10,7 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { commonLocks, installGizmoLocks } from './gizmoLocks.js';
 import { PoseState, fixChannels, hasFixed, identityPose, isIdentityPose, limitPose, nodeChannels, poseFromTransform, poseKey, poseMatrix, poseQuaternion, propagatePoseDelta } from './pose.js';
 import {
-  applyPoseSource, hasBindPose, poseBaseMatrix, worldMatrixOf as leafWorldMatrix, nextCullFrame, BASE_COLOR, buildScene, characterRadius, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
+  applyPoseSource, hasBindPose, poseBaseMatrix, worldMatrixOf as leafWorldMatrix, nextCullFrame, buildWorldList, updateWorldList, BASE_COLOR, buildScene, characterRadius, computeBounds, disposeScene, originalVertex, renderVertexWorldPosition, validateScene,
   vertexWorldPosition, writeVertexColors,
 } from './sceneBuilder.js';
 import { base64ToArrayBuffer } from './textures.js';
@@ -38,7 +38,7 @@ import { BakeWorkers } from './bakeWorkers.js';
 import { bakeFrames, createBaker } from './rigBakeCore.js';
 import { EvalProfiler } from './profiler.js';
 import { ProfilerPanel } from './profilerPanel.js';
-import { BATCHED_LAYER, MeshBatches } from './meshBatches.js';
+import { BATCHED_LAYER, MeshBatches, SkinBatches } from './meshBatches.js';
 
 // ビューアのバージョン（ma_viewer/version.py。ビルド時に build.mjs が埋め込む）
 // eslint-disable-next-line no-undef
@@ -241,6 +241,7 @@ class ViewerApp {
     this.raycaster = new Raycaster();
     this.raycaster.layers.enable(BATCHED_LAYER);          // まとめて描くメッシュの元のオブジェクトも選べるように
     this.batches = null;                                  // スキンのないメッシュを材質ごとにまとめて描く（meshBatches.js）
+    this.skinBatches = null;                              // 同じ骨・同じ材質のスキン付きメッシュをまとめて描く（meshBatches.js）
     const vp = document.getElementById('viewport');
     new ResizeObserver(() => this.resize()).observe(vp);
     this.resize();
@@ -275,11 +276,12 @@ class ViewerApp {
     nextCullFrame();                        // スキン付きメッシュの視錐台カリングで、骨ごとの値を計算し直す
     if (fresh) this.scene.matrixAutoUpdate = false;
     try {
-      if (this.batches) {
+      if (this.batches || this.skinBatches) {
         // まとめて描くメッシュに、元のメッシュの表示・ワールド行列・材質を写す。three.js は描画の中で行列を計算するので、
         // 先に計算してから写し、描画の中では計算し直さない（計算は 1 回のまま）
         this.scene.updateMatrixWorld();
-        this.batches.sync();
+        if (this.batches) this.batches.sync();
+        if (this.skinBatches) this.skinBatches.sync();
         this.scene.matrixWorldAutoUpdate = false;
       }
       if (this.profiler.recording) {
@@ -676,12 +678,17 @@ class ViewerApp {
       this.pose = new PoseState(built, data);
       this.worldNeedsFull = true;            // 読み込んだばかり: 次はシーン全体の行列を計算する
       this.touchedRoots = null;
+      this.worldList = null;
       this.edit = null;
       this.history.clear();
       this.poseSourceChosen = false;
       applyPoseSource(built, this.settings.poseSource);
       this.pose.reapplyAll();
       built.root.updateMatrixWorld(true);
+      // 同じ骨・同じ材質のスキン付きメッシュをまとめて描く（ワールド行列を計算したあと。meshBatches.js）
+      this.skinBatches = new SkinBatches(built);
+      this.scene.add(this.skinBatches.group);
+      this.updateBatching();
       this.curves.build(built, data.curves);
       this.initVisibility();
       mark('姿勢');
@@ -808,6 +815,7 @@ class ViewerApp {
     this.textureToken = (this.textureToken || 0) + 1;   // 読み込み中のテクスチャを無効にする
     if (this.maps) this.maps.reset(null);
     if (this.batches) { this.batches.dispose(); this.batches = null; }
+    if (this.skinBatches) { this.skinBatches.dispose(); this.skinBatches = null; }
     if (this.built) disposeScene(this.built);
     this.built = null;
     this.data = null;
@@ -829,6 +837,7 @@ class ViewerApp {
     this.bakers.reset(null);
     this.profiler.clear();
     this.touchedRoots = null;
+    this.worldList = null;
     this.worldNeedsFull = true;
     this.rigCurves = null;
     this.timeline.setClip(null);
@@ -908,6 +917,7 @@ class ViewerApp {
         break;
       case 'skin':
         this.applyShading();
+        this.updateBatching();                           // スキン付きメッシュのまとめは、スキンを表示しているときだけ
         this.poseDirty = true;
         this.updateMarker();
         if (this.picked) this.ui.showVertexInfo(this.vertexInfo());
@@ -1008,8 +1018,10 @@ class ViewerApp {
    * 元のメッシュで描く。meshBatching: 開発用の切り替え（window.mayaViewer.setMeshBatching）
    */
   updateBatching() {
-    if (!this.batches) return;
-    this.batches.setEnabled(this.meshBatching !== false && this.settings.weightMode === 'off');
+    const on = this.meshBatching !== false && this.settings.weightMode === 'off';
+    if (this.batches) this.batches.setEnabled(on);
+    // スキン付きメッシュは、スキンを表示しているときだけ（スキンの表示をやめると、動かないメッシュとして描く）
+    if (this.skinBatches) this.skinBatches.setEnabled(on && !!this.settings.skin);
     this.requestRender();
   }
 
@@ -1394,6 +1406,7 @@ class ViewerApp {
       for (let p = o.parent; p; p = p.parent) if (touchedObjs.has(p)) return false;
       return true;
     });
+    this.worldList = buildWorldList(this.touchedRoots);   // 親が先の平らな一覧（フレームごとのワールド行列の計算）
     this.worldNeedsFull = true;
     // 保存時の値は、保存したときのフレーム（time1）の値（カーブで決まる値は .ma に残っていないため）。
     // バインドポーズの表示で、バインドポーズの情報がないノードに使う
@@ -2546,7 +2559,9 @@ class ViewerApp {
     const pr = this.profiler.current ? this.profiler : null;
     let tSub = pr ? performance.now() : 0;
     if (partial && !this.worldNeedsFull && this.touchedRoots) {
-      for (const o of this.touchedRoots) o.updateMatrixWorld(true);
+      // 動くノードの下だけ。木をたどらずに、親が先の平らな一覧で計算する（同じ結果で約 4 倍速い。sceneBuilder.js）
+      if (this.worldList) updateWorldList(this.worldList);
+      else for (const o of this.touchedRoots) o.updateMatrixWorld(true);
     } else {
       this.built.root.updateMatrixWorld(true);
       this.worldNeedsFull = false;
@@ -3312,7 +3327,8 @@ window.mayaViewer = {
     app.meshBatching = !!on;
     app.updateBatching();
     app.render();                                         // すぐ描いて、ドローコールの数を返す
-    return { ...(app.batches ? app.batches.stats() : {}), calls: app.renderer ? app.renderer.info.render.calls : null };
+    return { ...(app.batches ? app.batches.stats() : {}), skin: app.skinBatches ? app.skinBatches.stats() : null,
+      calls: app.renderer ? app.renderer.info.render.calls : null };
   },
   loadScene(data) {
     try {
