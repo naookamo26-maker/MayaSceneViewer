@@ -48,6 +48,7 @@ const MATRIX_PLUGS = new Set(['wm', 'worldMatrix', 'wim', 'worldInverseMatrix', 
 const PM_PLUGS = new Set(['pm', 'parentMatrix', 'pim', 'parentInverseMatrix']);
 const IDENTITY = new Matrix4();
 const STATIC = 0, SIMPLE = 1, DRIVEN = 2, DELEGATED = 3;
+const MAX_CYCLE_CUTS = 256;            // 計算の順番の循環を、ノードを任せて断つ回数の上限
 
 const _e = new Euler(), _v = new Vector3(), _s = new Vector3(), _m = new Matrix4(), _q = new Quaternion();
 const eulerQuat = (deg, order, target) => target.setFromEuler(_e.set(deg[0] * D2R, deg[1] * D2R, deg[2] * D2R, THREE_ORDER[order] || 'ZYX'));
@@ -430,12 +431,19 @@ function build(rig, deps, useMath) {
   const order = [];
   let restFail = null;                 // 動かないノードの材料が扱えない（そのノード番号）
   let cycleAt = -1;                    // 循環を見つけたノード
+  let cycle = null;                    // 循環のノードの並び（たどっている途中のノードのうち、cycleAt から先）
+  const stack = [];                    // たどっている途中のノード
+  const staticAdded = [];              // visit が足した動かないノードの手順（順番を決め直すときに消す）
   const state = new Map();             // 0 = 調べている途中・1 = 済み
   const visit = (ni) => {
     const st = state.get(ni);
     if (st === 1) return true;
-    if (st === 0) { if (cycleAt < 0) cycleAt = ni; return false; }      // 循環
+    if (st === 0) {                                                     // 循環
+      if (cycleAt < 0) { cycleAt = ni; cycle = stack.slice(stack.lastIndexOf(ni)); }
+      return false;
+    }
     state.set(ni, 0);
+    stack.push(ni);
     const p = nodes[ni].parent;
     if (p >= 0 && !visit(p)) return false;
     const s = steps.get(ni);
@@ -458,6 +466,7 @@ function build(rig, deps, useMath) {
       }
     }
     state.set(ni, 1);
+    stack.pop();
     if (!s) {
       const opm = opmOf(ni);
       if (opm === undefined) return false;
@@ -475,6 +484,7 @@ function build(rig, deps, useMath) {
         if (isn >= 0 && rig.rest(isn) && !visit(isn)) return false;
       }
       steps.set(ni, st);
+      staticAdded.push(ni);
     }
     order.push(steps.get(ni));
     return true;
@@ -482,7 +492,12 @@ function build(rig, deps, useMath) {
   // 理由には、見つけたノードの名前と、同じ条件のノードの数を入れる（どのノードを直せばよいか分かるように）
   const nameOf = (ni) => (nodes[ni] && (nodes[ni].name || nodes[ni].path)) || `ノード ${ni}`;
   const why = () => {
-    if (restFail === null) return `計算の順番が決まらない（循環: ${cycleAt >= 0 ? nameOf(cycleAt) : '不明'}）`;
+    if (restFail === null) {
+      // 循環のノードの並び（多ければ先頭から 6 個）。IK のチェーンのジョイントだけの循環は、任せられずに残る
+      const names = cycle && cycle.length ? cycle.map(nameOf) : [cycleAt >= 0 ? nameOf(cycleAt) : '不明'];
+      const shown = names.length > 6 ? [...names.slice(0, 6), `ほか ${names.length - 6} 個`] : names;
+      return `計算の順番が決まらない（循環: ${shown.join(' → ')}）`;
+    }
     let n = 0;
     nodes.forEach((_, i) => {
       if (rig.moving.has(i) || !rig.rest(i)) return;
@@ -491,10 +506,31 @@ function build(rig, deps, useMath) {
     });
     return `動かないノードのチャンネルの入力（${nameOf(restFail)}${n > 1 ? ` ほか ${n - 1} 個` : ''}）`;
   };
-  for (const ni of rig.moving) if (!visit(ni)) return fail(why(), restFail === null);
-  for (const c of cons.values()) {
-    for (const t of c.targets) if (!visit(t.ni)) return fail(why(), restFail === null);
-    if (c.driven >= 0 && !visit(c.driven)) return fail(why(), restFail === null);
+  const runOrder = () => {
+    order.length = 0;
+    state.clear();
+    stack.length = 0;
+    restFail = null;
+    cycleAt = -1;
+    cycle = null;
+    for (const ni of staticAdded) steps.delete(ni);
+    staticAdded.length = 0;
+    for (const ni of rig.moving) if (!visit(ni)) return false;
+    for (const c of cons.values()) {
+      for (const t of c.targets) if (!visit(t.ni)) return false;
+      if (c.driven >= 0 && !visit(c.driven)) return false;
+    }
+    return true;
+  };
+  // ノード単位の順番に循環があっても、属性単位では順番が決まることがある（あるノードの回転を読み、そのノードが自分の
+  // 別の属性を読む、など。RigEvaluator は属性ごとに求めるので計算できる）。循環の中のノードを 1 つ RigEvaluator に任せて
+  // （IK のチェーンのジョイントは任せない）、順番を決め直す。任せたノードは、読むノードの値を自分で求める
+  for (let cuts = 0; !runOrder(); cuts++) {
+    const pick = restFail === null && cycle && cuts < MAX_CYCLE_CUTS
+      ? cycle.find((x) => { const st = steps.get(x); return st && rig.moving.has(x) && (st.kind === SIMPLE || st.kind === DRIVEN) && !st.ik; })
+      : undefined;
+    if (pick === undefined) return fail(why(), restFail === null);
+    delegate(pick, '計算の順番の循環の中のノード');
   }
   for (const s of order) {
     if (s.kind === STATIC || s.kind === DELEGATED) continue;

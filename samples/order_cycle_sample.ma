@@ -1,0 +1,41 @@
+//Maya ASCII 2024 scene
+//Name: order_cycle_sample.ma
+requires maya "2024";
+currentUnit -l centimeter -a degree -t film;
+createNode joint -n "z";
+	setAttr ".t" -type "double3" 0 0 0 ;
+createNode joint -n "ty";
+	setAttr ".t" -type "double3" 2 0 0 ;
+createNode joint -n "tx";
+	setAttr ".t" -type "double3" -2 0 0 ;
+createNode joint -n "childY" -p "ty";
+	setAttr ".t" -type "double3" 0 1 0 ;
+createNode animCurveTL -n "z_tx";
+	setAttr -s 3 ".ktv[0:2]"  1 0 12 3 24 -2;
+createNode animCurveTL -n "z_ty";
+	setAttr -s 2 ".ktv[0:1]"  1 0 24 4;
+createNode animCurveTL -n "childY_tz";
+	setAttr -s 2 ".ktv[0:1]"  1 0 24 2;
+createNode pointConstraint -n "ty_pc" -p "ty";
+	addAttr -dcb 0 -ci true -k true -sn "w0" -ln "zW0" -dv 1 -min 0 -at "double";
+	setAttr -k on ".w0" 1;
+createNode script -n "sceneConfigurationScriptNode";
+	setAttr ".b" -type "string" "playbackOptions -min 1 -max 24 -ast 1 -aet 24 ";
+	setAttr ".st" 6;
+connectAttr "z_tx.o" "z.tx";
+connectAttr "z_ty.o" "z.ty";
+connectAttr "childY_tz.o" "childY.tz";
+connectAttr "ty_pc.w0" "ty_pc.tg[0].tw";
+connectAttr "z.t" "ty_pc.tg[0].tt";
+connectAttr "z.rp" "ty_pc.tg[0].trp";
+connectAttr "z.rpt" "ty_pc.tg[0].trt";
+connectAttr "z.pm" "ty_pc.tg[0].tpm";
+connectAttr "ty.pim" "ty_pc.cpim";
+connectAttr "ty.rp" "ty_pc.crp";
+connectAttr "ty.rpt" "ty_pc.crt";
+connectAttr "ty_pc.ctx" "ty.tx";
+connectAttr "ty_pc.cty" "ty.ty";
+connectAttr "ty_pc.ctz" "ty.tz";
+connectAttr "ty.tx" "tx.rz";
+connectAttr "tx.rz" "ty.rx";
+// End of order_cycle_sample.ma
