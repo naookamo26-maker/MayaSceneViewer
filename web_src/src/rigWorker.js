@@ -23,7 +23,8 @@ self.onmessage = (e) => {
     } else if (m.type === 'bake') {
       if (!baker || m.token !== token) { self.postMessage({ type: 'skipped', token: m.token, job: m.job }); return; }
       const r = bakeFrames(baker, m);
-      self.postMessage({ type: 'baked', token, job: m.job, keysSig: m.sig, ...r }, r.frames.map((fr) => fr.mats.buffer));
+      // 変化のないフレームは同じデータを共有するので、移すバッファは重ねない
+      self.postMessage({ type: 'baked', token, job: m.job, keysSig: m.sig, ...r }, [...new Set(r.frames.map((fr) => fr.mats.buffer))]);
     }
   } catch (err) {
     self.postMessage({ type: 'error', token: m.token, job: m.job, message: String((err && err.stack) || err) });

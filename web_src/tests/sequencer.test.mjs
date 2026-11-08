@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { activeShot, bakeOrder, sequenceSceneFrames, shotStarts, shotTime } from '../src/sequencer.js';
+import { activeShot, bakeOrder, sequenceCachedRuns, sequenceSceneFrames, shotStarts, shotTime } from '../src/sequencer.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const data = JSON.parse(readFileSync(path.resolve(here, '../../samples/sequencer_sample.json'), 'utf8'));
@@ -68,4 +68,14 @@ test('bakeOrder: いまのフレームから再生範囲の終わり → 先頭�
   assert.deepEqual(bakeOrder({ ...base, follow: true }, () => false), [31, 32, 4, 5, 6, 30, 7, 8, 1, 2, 3]);
   assert.deepEqual(bakeOrder({ ...base, follow: true }, (f) => f % 2 === 0), [31, 5, 7, 1, 3]);
   assert.deepEqual(bakeOrder({ ...base, sequence: null, follow: true }, () => false), [5, 6, 7, 8, 1, 2, 3, 4]);
+});
+
+test('sequenceCachedRuns: シーケンスのフレームのうち、ショットのシーンのフレームがキャッシュにある範囲（整数でないフレームは除く）', () => {
+  const shots = [
+    { track: 1, sequenceStartFrame: 1, sequenceEndFrame: 4, startFrame: 101, endFrame: 104, scale: 1 },
+    { track: 1, sequenceStartFrame: 5, sequenceEndFrame: 8, startFrame: 102, endFrame: 103.5, scale: 2 },   // 半フレームずつ
+  ];
+  const have = new Set([101, 102, 103, 104]);
+  assert.deepEqual(sequenceCachedRuns(shots, 1, 10, (f) => have.has(f)), [[1, 5], [7, 7]]);
+  assert.deepEqual(sequenceCachedRuns(shots, 1, 10, () => false), []);
 });

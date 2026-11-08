@@ -368,6 +368,8 @@ table.kv td.l { text-align: left; }
 .choices.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; }
 .choices.grid button { border-radius: var(--radius); }
 .choices.grid.cols3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.choices.grid.cols2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.choices.grid.cols2 button { text-align: center; }
 .choices.grid.cols3 button { text-align: center; }
 .choices.list { flex-direction: column; gap: 2px; }
 .choices.list button { border-color: transparent; background: none; border-radius: var(--radius); padding-left: 24px; position: relative; }
@@ -672,6 +674,8 @@ body.sequencer-collapsed #sequencer .seq-body { display: none; }
 .seq-ruler-row, .seq-row { display: flex; align-items: stretch; }
 .seq-track-label { flex: none; width: 72px; padding: 0 8px; color: var(--text-dim); font-size: 11px; display: flex; align-items: center; }
 #seq-ruler { position: relative; flex: 1; height: 20px; margin-right: 10px; border-bottom: 1px solid var(--line); }
+/* 再生キャッシュにあるフレーム（シーンのタイムラインと同じ緑の帯。ルーラーの下端） */
+#seq-cache { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 3px; pointer-events: none; }
 .seq-tick { position: absolute; top: 3px; padding-left: 3px; border-left: 1px solid var(--line); color: var(--text-dim); font-size: 10px; line-height: 14px; }
 .seq-row { height: 40px; margin-top: 4px; }
 .seq-lane { position: relative; flex: 1; margin-right: 10px; background: var(--chrome); border-radius: var(--radius); }

@@ -123,3 +123,19 @@ test('キーのデータを型付き配列にして送ったアニメーショ�
     assert.deepEqual(rb.frames.map((x) => [...x.mats]), ra.frames.map((x) => [...x.mats]), f);
   }
 });
+
+test('ワーカーと同じ作り方で 32 ビット（f32）: Float32Array で送り、取り込める', () => {
+  const data = JSON.parse(readFileSync(path.join(dir, 'rig6_mapped.json'), 'utf8'));
+  const rig = mainRig(data);
+  rig.setCachePrecision(true);
+  const baker = createBaker(JSON.stringify(data.animation), structuredClone(data.nodes));
+  const msg = structuredClone(bakeFrames(baker, { frames: [1, 2, 3], poses: [], f32: true }));
+  assert.ok(msg.frames.every((fr) => fr.mats instanceof Float32Array));
+  const r = decodeBaked(msg);
+  assert.equal(rig.importSnapshots(rig.playbackPoseData().keys, r.frames, r.deps, r.poseReads), 3);
+  const ref = mainRig(data);
+  const want = ref.evaluate(2, undefined, new Map());
+  const got = rig.evaluate(2, undefined, new Map());
+  assert.equal(rig.lastPath, 'cache');
+  for (const [ni, m] of want) m.elements.forEach((v, k) => assert.ok(Math.abs(got.get(ni).elements[k] - v) <= 1e-6 * (1 + Math.abs(v)), `${ni}・${k}`));
+});

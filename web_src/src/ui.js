@@ -265,7 +265,7 @@ export class UI {
     // メニュー名の横に、既定と違う設定を表示する
     const VIEW = { baseColor: 'ベースカラー', normal: '法線', roughness: 'ラフネス', metalness: 'メタリック', ao: 'AO', emissive: 'エミッシブ', opacity: '不透明度' };
     const viewState = [st.lighting === 'flat' ? 'フラットライト' : '', st.shading === 'none' ? 'ワイヤーのみ' : st.shading === 'flat' ? 'フラット' : '',
-      st.playbackCacheMB === 0 ? 'キャッシュなし' : '']
+      st.playbackCacheMB === 0 ? 'キャッシュなし' : '', st.playbackCachePrecision === 'float64' ? 'キャッシュ 64 ビット' : '']
       .filter(Boolean).join('・');
     $('menu-view-state').textContent = viewState;
     $('menu-maps-state').textContent = st.mapView !== 'combined' ? VIEW[st.mapView] || '' : '';
