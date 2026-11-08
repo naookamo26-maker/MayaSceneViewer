@@ -816,3 +816,30 @@ test('カリングのまとまり: 骨ごとのまとめた球は、まとまり
   }
   assert.ok(checked >= 30);
 });
+
+test('平らな一覧のワールド行列の計算（updateWorldList）は、updateMatrixWorld(true) とビット単位で同じ。非表示の葉は印だけ', async () => {
+  const { buildWorldList, updateWorldList } = await import('../src/sceneBuilder.js');
+  for (const name of ['shared_skin_sample.json', 'batch_sample.json', 'rig6_sample.json']) {
+    const data = JSON.parse(readFileSync(path.resolve(here, '../../samples', name), 'utf8'));
+    const a = buildScene(structuredClone(data)), b = buildScene(structuredClone(data));
+    // 行列を動かす（回転・移動・スケール）。一部の葉は非表示にする
+    for (const built of [a, b]) {
+      built.nodeObjects.forEach((o, i) => {
+        o.matrix.makeRotationFromEuler(new Euler(0.1 * i, -0.05 * i, 0.02 * i)).scale(new Vector3(1, 1 + 0.01 * i, 1)).setPosition(i * 0.3, -i * 0.1, 0.5);
+      });
+      built.meshes.forEach((e, i) => { if (i % 3 === 0) e.staticWire.visible = false; });
+    }
+    for (const o of a.root.children) o.updateMatrixWorld(true);
+    updateWorldList(buildWorldList(b.root.children));
+    const la = [], lb = [];
+    a.root.traverse((o) => la.push(o));
+    b.root.traverse((o) => lb.push(o));
+    assert.equal(la.length, lb.length);
+    la.forEach((o, i) => {
+      const p = lb[i];
+      assert.equal(p.matrixWorldNeedsUpdate, o.matrixWorldNeedsUpdate, `${name}: ${o.name} の印`);
+      if (o.matrixWorldNeedsUpdate) return;                    // 非表示の葉（計算しない）
+      o.matrixWorld.elements.forEach((v, k) => assert.ok(Object.is(p.matrixWorld.elements[k], v), `${name}: ${o.name} の ${k}`));
+    });
+  }
+});

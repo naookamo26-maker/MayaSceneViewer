@@ -124,3 +124,63 @@ test('材質が 1 つのメッシュにしか使われていなければ、ま�
   assert.equal(batches.batches.length, 0);
   for (const e of built.meshes) assert.equal(e.staticMesh.layers.mask, 1);
 });
+
+// ---------------------------------------------------------------------- スキン付きメッシュ（SkinBatches）
+// 前提: python tools/make_shared_skin_sample.py（samples/shared_skin_sample.json。m0〜m2 は骨を共有、m3 は別の骨）
+test('スキン付きメッシュ: 同じ骨・材質のものをまとめ、骨で動かした頂点の位置が元のメッシュと同じ。非表示・親を動かしたものは外す', async () => {
+  const { SkinBatches } = await import('../src/meshBatches.js');
+  const { vertexWorldPosition } = await import('../src/sceneBuilder.js');
+  const { applyBoneTransform8 } = await import('../src/skinning8.js');
+  const data = JSON.parse(readFileSync(path.resolve(here, '../../samples/shared_skin_sample.json'), 'utf8'));
+  const built = buildScene(data);
+  built.root.updateMatrixWorld(true);
+  const sb = new SkinBatches(built);
+  const byName = (n) => built.meshes.find((e) => e.name === `${n}Shape`);
+  assert.equal(sb.batches.length, 1, 'm0〜m2（骨を共有）が 1 つにまとまる');
+  assert.deepEqual([...sb.state.keys()].map((e) => e.name).sort(), ['m0Shape', 'm1Shape', 'm2Shape']);
+  // 骨を動かす
+  built.nodeObjects.forEach((o, i) => { if (o.isBone) o.matrix.multiply(new Matrix4().makeRotationZ(0.05 * (i % 5))); });
+  built.root.updateMatrixWorld(true);
+  sb.sync();
+  const b = sb.batches[0];
+  assert.equal(b.members.size, 3);
+  for (const e of b.members) assert.equal(e.skinned.layers.mask, 1 << BATCHED_LAYER, e.name);
+  // 三角形の頂点ごとに、まとめたメッシュの位置と元のメッシュの位置を比べる
+  const mesh = b.mesh, pos = mesh.geometry.attributes.position;
+  for (const p of b.pieces) {
+    const src = p.e.geometry.index.array;
+    for (let i = 0; i < p.count; i += 7) {
+      const mv = b.full[p.start + i];
+      const got = applyBoneTransform8(mesh, mv, new Vector3().fromBufferAttribute(pos, mv)).applyMatrix4(mesh.matrixWorld);
+      const want = vertexWorldPosition(p.e, p.e.origOf[src[i]], true, new Vector3());
+      assert.ok(got.distanceTo(want) < 1e-4, `${p.e.name} の ${i}: ${got.toArray()} と ${want.toArray()}`);
+    }
+  }
+  const tris = () => mesh.geometry.drawRange.count;
+  const all = tris();
+  // 非表示にすると外す（三角形が減る）。戻すとまた入る
+  byName('m1').skinned.visible = false;
+  sb.sync();
+  assert.equal(b.members.size, 2);
+  assert.equal(tris(), all - b.pieces.find((p) => p.e === byName('m1')).count);
+  assert.equal(byName('m1').skinned.layers.mask, 1, '外したメッシュは元のまま描く');
+  byName('m1').skinned.visible = true;
+  sb.sync();
+  assert.equal(tris(), all);
+  // 親（メッシュの transform）を動かすと、M · B⁻¹ が変わるので外す
+  const m2 = byName('m2');
+  m2.skinned.parent.matrix.makeTranslation(0, 0, 1);
+  m2.skinned.parent.updateMatrixWorld(true);
+  sb.sync();
+  assert.ok(!b.members.has(m2));
+  assert.equal(m2.skinned.layers.mask, 1);
+  // 何度も出入りするメッシュは、まとめなくなる
+  const m0 = byName('m0');
+  for (let k = 0; k < 10; k++) { m0.skinned.visible = k % 2 === 1; sb.sync(); }
+  assert.ok(sb.state.get(m0).never);
+  m0.skinned.visible = true;
+  sb.sync();
+  assert.ok(!b.members.has(m0));
+  sb.dispose();
+  for (const e of built.meshes) if (e.skinned) assert.equal(e.skinned.layers.mask, 1);
+});
