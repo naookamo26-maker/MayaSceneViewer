@@ -412,10 +412,50 @@ export function setNodeDefCompile(on) { compileEnabled = !!on; }
 const UNSET = Object.freeze({ unset: true });       // 値をまだ入れていない変数
 // 数どうしなら JavaScript の演算子と同じ結果になる演算（BIN の数の場合と同じ。/ //・% は 0 の確かめがあるので BIN）
 const JS_OPS = { '+': '+', '-': '-', '*': '*', '<': '<', '<=': '<=', '>': '>', '>=': '>=', '==': '===', '!=': '!==' };
+// ---- 足し算・引き算の長い鎖（ch）で、項が「値 × 定数」「定数 × 値」「値」「定数」のもの（exprespy でよく使う、入力 × 係数を
+// 数百個足したもの）。項の値をまとめて受け取り、小さな関数でまとめて計算する（大きい定義の関数は最適化されないが、この関数は
+// 何度も呼ばれるのですぐ最適化される）。計算の順番は鎖のままなので、結果はビット単位で同じ。数でない値があれば、生成した
+// コードと同じ順番・同じ計算（BIN）にする（誤りも同じ）
+const LIN_VC = 0, LIN_CV = 1, LIN_V = 2, LIN_C = 3;
+
+/** spec: { kinds: 項の種類, coefs: 定数, ops: 項の前の演算（1 = 足す・-1 = 引く。最初は 0） }、vals: 値のある項の値（順に） */
+function linearSum(spec, vals) {
+  const { kinds, coefs, ops } = spec;
+  let acc = 0, vi = 0;
+  for (let k = 0; k < kinds.length; k++) {
+    const kind = kinds[k];
+    let term;
+    if (kind === LIN_C) term = coefs[k];
+    else {
+      const v = vals[vi++];
+      if (typeof v !== 'number') return linearSumSlow(spec, vals);
+      term = kind === LIN_V ? v : kind === LIN_VC ? v * coefs[k] : coefs[k] * v;
+    }
+    acc = k === 0 ? term : ops[k] > 0 ? acc + term : acc - term;
+  }
+  return acc;
+}
+
+/** linearSum の、数でない値があるとき（生成したコードの binary と同じ計算） */
+function linearSumSlow(spec, vals) {
+  const { kinds, coefs, ops } = spec;
+  const bin = (op, a, b) => (typeof a === 'number' && typeof b === 'number'
+    ? (op === '+' ? a + b : op === '-' ? a - b : a * b) : BIN[op](a, b));
+  let acc, vi = 0;
+  for (let k = 0; k < kinds.length; k++) {
+    const kind = kinds[k];
+    const term = kind === LIN_C ? coefs[k] : kind === LIN_V ? vals[vi++]
+      : kind === LIN_VC ? bin('*', vals[vi++], coefs[k]) : bin('*', coefs[k], vals[vi++]);
+    acc = k === 0 ? term : bin(ops[k] > 0 ? '+' : '-', acc, term);
+  }
+  return acc;
+}
+
 /** 生成した関数が使う補助（IR をたどる計算と同じもの） */
 const H = {
   fail, num, vec, truthy, copy: copyValue, B: BIN, F: FUNCS, U: UNSET,
   over: () => fail('計算の繰り返しが多すぎます（終わらない計算の恐れ）'),   // 文ごとの確かめ（作るコードを短くするため 1 つにまとめる）
+  lin: linearSum,
   local: (v, name) => (v === UNSET ? fail(`変数 ${name} に値がまだ入っていません`) : v),
   neg: (a) => (isVec(a) ? a.map((x) => -x) : -num(a, '符号の反転')),
   index: (base, iv) => {
@@ -535,6 +575,37 @@ export function generateRunner(ir, top) {
     depth++;
     try { return exprAt(e); } finally { depth--; }
   };
+  // 定数の項（数・符号を反転した数）の値。でなければ undefined
+  const constOf = (e) => {
+    if (!Array.isArray(e)) return undefined;
+    if (e[0] === 'n' && typeof e[1] === 'number') return e[1];
+    if (e[0] === 'u' && e[1] !== 'not' && Array.isArray(e[2]) && e[2][0] === 'n' && typeof e[2][1] === 'number') return -e[2][1];
+    return undefined;
+  };
+  /** 足し算・引き算の長い鎖を linearSum にする（H.lin）。当てはまらなければ null */
+  const linearChain = (e) => {
+    const ops = e[1], terms = e[2];
+    if (!Array.isArray(ops) || !Array.isArray(terms) || terms.length < 4 || terms.length !== ops.length + 1) return null;
+    if (!ops.every((op) => op === '+' || op === '-')) return null;
+    const kinds = new Int8Array(terms.length), coefs = new Float64Array(terms.length), signs = new Int8Array(terms.length);
+    const values = [];
+    let scaled = 0;
+    terms.forEach((t, k) => {
+      signs[k] = k === 0 ? 0 : ops[k - 1] === '+' ? 1 : -1;
+      const c = constOf(t);
+      if (c !== undefined) { kinds[k] = LIN_C; coefs[k] = c; return; }
+      if (Array.isArray(t) && t[0] === 'b' && t[1] === '*') {
+        const cb = constOf(t[3]), ca = constOf(t[2]);
+        if (cb !== undefined) { kinds[k] = LIN_VC; coefs[k] = cb; values.push(t[2]); scaled++; return; }
+        if (ca !== undefined) { kinds[k] = LIN_CV; coefs[k] = ca; values.push(t[3]); scaled++; return; }
+      }
+      kinds[k] = LIN_V;
+      values.push(t);
+    });
+    if (scaled * 2 < terms.length) return null;     // 係数の項が少なければ、ふつうに計算する
+    // 値の式は鎖と同じ順に求める（配列の要素は左から順）
+    return `H.lin(${konst({ kinds, coefs, ops: signs })}, [${values.map((x) => expr(x)).join(', ')}])`;
+  };
   const exprAt = (e) => {
     if (!Array.isArray(e)) giveUp();
     switch (e[0]) {
@@ -567,6 +638,8 @@ export function generateRunner(ir, top) {
         return binary(e[1], expr(e[2]), expr(e[3]));
       }
       case 'ch': {
+        const lin = linearChain(e);              // 入力 × 係数を足したもの（H.lin）
+        if (lin) return lin;
         // 項の多い式（数百項の足し算など）を入れ子にしないよう、一時変数に左から順に入れていく
         const acc = temp(2);                     // binary の 0・1 と別
         const steps = [`(${acc} = ${expr(e[2][0])})`];
