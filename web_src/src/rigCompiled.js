@@ -17,7 +17,7 @@ import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { clampLimits, composeLocalMatrix, decomposeMaya, evaluateCurve, mayaEuler } from './animation.js';
 import { solveIKCore } from './rig.js';
 import { mathKind } from './mathNodes.js';
-import { mayOverflow, newDeepState, runDeep } from './deepEval.js';
+import { enterDeep, leaveDeep, mayOverflow, newDeepState, runDeep } from './deepEval.js';
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -103,8 +103,11 @@ function build(rig, deps, useMath) {
     const hit = walked.get(key);
     if (hit) return hit;
     let r;
+    let entered = false;
     try {
       walked.set(key, NO_READS);                         // try の中で付ける（あふれたら、下で必ず消す）
+      enterDeep(deepWalk);                               // 入れ子の段数を数える（deepEval.js）
+      entered = true;
       r = compute();
     } catch (e) {
       walked.delete(key);                                // たどっている途中の印を残さない（やり直しで循環に見えないように）
@@ -114,6 +117,8 @@ function build(rig, deps, useMath) {
         deepWalk.at.key = key;
       }
       throw e;
+    } finally {
+      if (entered) leaveDeep(deepWalk);
     }
     walked.set(key, r);
     return r;
@@ -607,16 +612,22 @@ function mathReader(plan, constChan, pmOpm) {
     if (r.stamp !== plan.stamp) { r.fm.clear(); r.stamp = plan.stamp; }
     let v = r.fm.get(attr);
     if (v !== undefined || r.fm.has(attr)) return v;
+    let entered = false;
     try {
+      enterDeep(ad.deepState);                           // 入れ子の段数を数える（deepEval.js）
+      entered = true;
       v = proto.plugUncached.call(ad, id, attr);
     } catch (e) {
       const ds = ad.deepState;                         // ad.outputs と同じ
       if (ds.depth && ds.at === null && mayOverflow(e)) {
         ds.at = () => ad.plug(id, attr);
+        ds.at.warm = { key: `p${id}.${attr}`, id, attr };   // 次のフレームから先に求める（rig.js の prewarmDeep）
         ds.at.place = r.fm;                            // 同じ計算か（deepEval.js の runDeep）
         ds.at.key = attr;
       }
       throw e;
+    } finally {
+      if (entered) leaveDeep(ad.deepState);
     }
     r.fm.set(attr, v);
     return v;
@@ -626,18 +637,23 @@ function mathReader(plan, constChan, pmOpm) {
     if (ko !== undefined || rig.keep.out.has(id)) return ko;
     const r = recOf(id);
     if (r.outStamp !== plan.stamp) {
+      let entered = false;
       try {
+        enterDeep(ad.deepState);                         // 入れ子の段数を数える（deepEval.js）
+        entered = true;
         r.out = proto.outputsUncached.call(ad, id);
       } catch (e) {
         // スタックがあふれたら、この値をあとで浅い所から求め直せるようにする（rig.js の memo と同じ。deep）
         const ds = ad.deepState;
         if (ds.depth && ds.at === null && mayOverflow(e)) {
           ds.at = () => ad.outputs(id);
-          ds.at.outId = id;                              // 次のフレームから先に求める（rig.js の prewarmDeep）
+          ds.at.warm = { key: `o${id}`, id, attr: null };   // 次のフレームから先に求める（rig.js の prewarmDeep）
           ds.at.place = recs;                            // 同じ計算か（deepEval.js の runDeep）
           ds.at.key = id;
         }
         throw e;
+      } finally {
+        if (entered) leaveDeep(ad.deepState);
       }
       r.outStamp = plan.stamp;
     }

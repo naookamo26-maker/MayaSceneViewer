@@ -22,7 +22,7 @@ import {
 } from './curve.js';
 import { MATH_DEFAULTS, evaluateMath, mathAngleInput, mathKind, mathOutputs } from './mathNodes.js';
 import { buildPlan, runPlan } from './rigCompiled.js';
-import { isStackOverflow, mayOverflow, newDeepState, runDeep, stackNames } from './deepEval.js';
+import { enterDeep, isStackOverflow, leaveDeep, mayOverflow, newDeepState, runDeep, stackNames } from './deepEval.js';
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -234,15 +234,37 @@ const IRREGULAR = {
   parentConstraint: { ...REST_T, ...REST_R },
 };
 
-/** まとめた属性 base の成分の属性の名前（c1 → c1r・c1g・c1b、dwuv → dwux・dwuy・dwuz） */
-function componentsOf(type, base) {
+/**
+ * 種類と属性名だけで決まる値を覚える（関数 fn(type, attr)）。正規表現を使う関数を、属性を初めて読むとき（計算ノードの鎖を
+ * さかのぼる深い所）に何度も呼ぶと、よく使う正規表現を機械語にするコンパイルがスタックの残りの少ない所で起き、
+ * エラーにならずにプロセスごと止まることがある（V8）。覚えておけば、種類と属性名ごとに最初の 1 回だけになる
+ */
+function byTypeAttr(fn) {
+  const cache = new Map();
+  return (type, attr) => {
+    const key = `${type}\u0000${attr}`;
+    let v = cache.get(key);
+    if (v === undefined && !cache.has(key)) { v = fn(type, attr); cache.set(key, v); }
+    return v;
+  };
+}
+
+/** まとめた属性 base の成分の属性の名前（c1 → c1r・c1g・c1b、dwuv → dwux・dwuy・dwuz）。返す配列は書き換えないこと */
+const componentsOf = byTypeAttr(componentsOfUncached);
+function componentsOfUncached(type, base) {
   const t = IRREGULAR[type];
   if (t && t[base]) return t[base];
   return suffixesOf(type, base).map((s) => base + s);
 }
 
-/** 成分の属性の名前 → [まとめた名前, 番号]（ox → ['o', 0]、dwuy → ['dwuv', 1]）。成分でなければ null */
-function componentOf(type, attr) {
+/** 成分の属性の名前 → [まとめた名前, 番号]（ox → ['o', 0]、dwuy → ['dwuv', 1]）。成分でなければ null。書き換えないこと */
+const componentOf = byTypeAttr(componentOfUncached);
+/** 計算結果の属性なら、添字を除いた名前（ws[0] → ws）。そうでなければ null */
+const outputBaseOf = byTypeAttr((type, attr) => {
+  const re = outputsOf(type);
+  return re && re.test(attr) ? attr.replace(/\[\d+\]$/, '') : null;
+});
+function componentOfUncached(type, attr) {
   const t = IRREGULAR[type];
   if (t) {
     for (const base in t) {
@@ -993,7 +1015,10 @@ export class RigEvaluator {
     // 先に記録してから印を付ける（印を付けたあと、記録する前にスタックがあふれると、片付けられない印が残って循環に見える）
     if (fallback) { marks.push(fm, key); fm.set(key, BUSY); }
     let done = false;
+    let entered = false;
     try {
+      enterDeep(this.deepState);                          // 入れ子の段数を数える（上限を超えたら、あふれたのと同じ扱い）
+      entered = true;
       v = compute();
       done = true;
     } catch (e) {
@@ -1003,10 +1028,13 @@ export class RigEvaluator {
         ds.at = () => this.memo(fm, km, key, compute, fallback, label);
         ds.at.place = fm;                                  // 同じ計算か（deepEval.js の runDeep が、進まないことを見分ける）
         ds.at.key = key;
-        if (fm === this.cache.out) ds.at.outId = key;      // 計算ノードの出力は、次のフレームから先に求める（prewarmDeep）
+        // 計算ノードの出力・属性の値は、次のフレームから先に求める（prewarmDeep）
+        if (fm === this.cache.out) ds.at.warm = { key: `o${key}`, id: key, attr: null };
+        else if (fm.ownerId !== undefined) ds.at.warm = { key: `p${fm.ownerId}.${key}`, id: fm.ownerId, attr: key };
       }
       throw e;
     } finally {
+      if (entered) leaveDeep(this.deepState);
       if (!done) fm.delete(key);                          // 先に消す（あふれた直後は、このあとの呼び出しが失敗しうる）
       else marks.length = mark;
       const varying = this.varying, deps = this.dcur;
@@ -1051,8 +1079,8 @@ export class RigEvaluator {
    * あれば、その定義を IR をたどる計算にする（変数の多い定義の関数は、1 回の呼び出しで使うスタックが大きい）。直したら true
    */
   unstick(at) {
-    if (at.outId === undefined) return false;
-    const g = this.byId.get(at.outId);
+    if (!at.warm || at.warm.attr !== null) return false;
+    const g = this.byId.get(at.warm.id);
     const d = g && g.def ? this.defs.get(g.def) : null;
     if (!d || !d.fallBack()) return false;
     (this.defsInterpreted || (this.defsInterpreted = new Set())).add(g.def);   // 評価のプロファイラのワーカーの欄に出す
@@ -1066,8 +1094,9 @@ export class RigEvaluator {
   prewarmDeep(reader = this) {
     const order = this.deepState.order;
     for (let i = 0; i < order.length; i++) {
-      const id = order[i];
-      reader.deep(() => reader.outputs(id));
+      const w = order[i];
+      if (w.attr === null) reader.deep(() => reader.outputs(w.id));
+      else reader.deep(() => reader.plug(w.id, w.attr));
     }
   }
 
@@ -1421,7 +1450,7 @@ export class RigEvaluator {
   /** グラフのノードの属性の値（接続 → 計算結果 → ファイルの値 → 既定値） */
   plug(id, attr) {
     let fm = this.cache.plug.get(id);
-    if (!fm) this.cache.plug.set(id, fm = new Map());
+    if (!fm) { this.cache.plug.set(id, fm = new Map()); fm.ownerId = id; }   // ownerId: やり直しの印（memo）
     let km = this.keep.plug.get(id);
     if (!km) this.keep.plug.set(id, km = new Map());
     return this.memo(fm, km, attr, () => this.plugUncached(id, attr), NOTHING, () => `plug ${id}.${attr}`);
@@ -1463,12 +1492,17 @@ export class RigEvaluator {
     let plan = plans.get(attr);
     if (plan) return plan;
     const inputs = g.inputs || {};
+    if (g.def) {                                           // 自作ノード（成分などは定義が扱う）
+      plan = { kind: PLAN.def };
+      plans.set(attr, plan);
+      return plan;
+    }
     const comp = componentOf(g.type, attr);                // 成分（ox → o の 0 番目）
     const names = componentsOf(g.type, attr);              // まとめた属性の成分（o → ox・oy・oz）
-    if (g.def) plan = { kind: PLAN.def };
-    else if (inputs[attr]) plan = { kind: PLAN.input, src: inputs[attr] };
+    const outBase = outputBaseOf(g.type, attr);
+    if (inputs[attr]) plan = { kind: PLAN.input, src: inputs[attr] };
     else if (comp && inputs[comp[0]]) plan = { kind: PLAN.component, src: inputs[comp[0]], index: comp[1] };
-    else if (outputsOf(g.type) && outputsOf(g.type).test(attr)) plan = { kind: PLAN.output, base: attr.replace(/\[\d+\]$/, '') };
+    else if (outBase !== null) plan = { kind: PLAN.output, base: outBase };
     else if (names.some((x) => inputs[x])) plan = { kind: PLAN.triple, names, def: this.staticValue(g, attr) };
     else plan = { kind: PLAN.static };
     plans.set(attr, plan);

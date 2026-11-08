@@ -347,12 +347,22 @@ export function compileNodeDef(def) {
     return out;
   };
 
+  const infoCache = new Map(), outputCache = new Map();
   return {
     type: def.type,
     top,
-    infoOf: (plug) => infoOf.get(plug.split('.').pop().replace(/\[\d+\]$/, '')) || null,
+    // プラグの名前ごとに結果を覚える（正規表現を、計算ノードの鎖をさかのぼる深い所で何度も使わないため。rig.js の byTypeAttr）
+    infoOf: (plug) => {
+      let v = infoCache.get(plug);
+      if (v === undefined) infoCache.set(plug, v = infoOf.get(plug.split('.').pop().replace(/\[\d+\]$/, '')) || null);
+      return v;
+    },
     /** 出力のプラグか（out・out[2]・tg[0].ot・成分の outx） */
-    isOutput: (plug) => outputBases.has(plug.split(/[.[]/)[0]),
+    isOutput: (plug) => {
+      let v = outputCache.get(plug);
+      if (v === undefined) outputCache.set(plug, v = outputBases.has(plug.split(/[.[]/)[0]));
+      return v;
+    },
     /** 計算を JavaScript の関数にしたか（できなければ、IR をたどって計算する） */
     get compiled() { return useGenerated; },
     run(io) {
@@ -452,8 +462,12 @@ const giveUp = () => { throw new NoCodegen(); };
  * IR → 関数 (io) => 出力 { プラグ: 値 }（成分のプラグに分ける前）。作れなければ null
  * @param top 属性の短い名前 → 属性の情報（compileNodeDef と同じもの）
  */
-/** これより変数の多い定義は、変数を配列にまとめる（generateRunner） */
-const MANY_LOCALS = 256;
+/**
+ * 変数と覚えた入力が合わせてこれより多い定義は、配列にまとめる（generateRunner）。ふつうの変数のほうがずっと速い
+ * （大きい定義の関数は最適化されず、ベースラインのまま動くので、配列の読み書きがそのまま手間になる）が、1 回の呼び出しで
+ * 使うスタックが大きくなる
+ */
+const REG_LIMIT = 3000;
 
 export function generateRunner(ir, top) {
   if (typeof Function !== 'function') return null;
@@ -472,6 +486,15 @@ export function generateRunner(ir, top) {
   const temps = new Set();
   let depth = 0;
   const temp = (slot) => { const t = `T${depth}_${slot}`; temps.add(t); return t; };
+  // 必ず値が入っている変数・必ず読んだ入力（評価の順に追いかける。条件の中（if・for・三項・and/or の右）では増やさない）。
+  // これらは「値が入っているか」を確かめずに使う
+  let cond = 0;
+  const defLocals = new Set(), defReads = new Set();
+  const readSlots = new Map();                    // 名前が定数の入力 → 覚えた値の番号（$Q 番号）
+  const readSlot = (name) => {
+    if (!readSlots.has(name)) readSlots.set(name, readSlots.size);
+    return readSlots.get(name);
+  };
   let loopTemps = 0;
   const loopTemp = () => { const t = `R${loopTemps++}`; temps.add(t); return t; };
   const str = (v) => JSON.stringify(String(v));
@@ -517,13 +540,29 @@ export function generateRunner(ir, top) {
     switch (e[0]) {
       case 'n': return lit(e[1]);
       case 'v': return `[${e[1].map((x) => `H.num(${expr(x)}, 'リストの要素')`).join(', ')}]`;
-      case 'l': return `H.local(${localVar(e[1])}, ${str(e[1])})`;
-      case 'a': { const p = plug(e[1]); return `io.read(${p.name}, ${p.info})`; }
+      case 'l': {                                // 値が入っていれば、確かめの関数を呼ばない
+        const v = localVar(e[1]);
+        if (defLocals.has(v)) return v;          // 必ず値が入っている
+        return `(${v} !== U ? ${v} : H.local(${v}, ${str(e[1])}))`;
+      }
+      case 'a': {
+        const p = plug(e[1]);
+        if (!p.constant) return `io.read(${p.name}, ${p.info})`;
+        // 名前が定数の入力は、最初に読んだ値を覚えて使う（1 回の計算の中では入力の値は変わらない。展開した exprespy では
+        // 同じ入力を何万回も読む）
+        const k = readSlot(p.name), r = `$Q${k}`;
+        if (defReads.has(k)) return r;            // 必ず読んである
+        if (cond === 0) { defReads.add(k); return `(${r} = io.read(${p.name}, ${p.info}))`; }   // ここで必ず読む
+        return `(${r} !== U ? ${r} : (${r} = io.read(${p.name}, ${p.info})))`;
+      }
       case 'b': {
         if (e[1] === 'and' || e[1] === 'or') {
           const t = temp(0);
-          return e[1] === 'and' ? `((${t} = ${expr(e[2])}), H.truthy(${t}) ? ${expr(e[3])} : ${t})`
-            : `((${t} = ${expr(e[2])}), H.truthy(${t}) ? ${t} : ${expr(e[3])})`;
+          const a = expr(e[2]);
+          cond++;                                // 右は求めないことがある
+          const b = expr(e[3]);
+          cond--;
+          return e[1] === 'and' ? `((${t} = ${a}), H.truthy(${t}) ? ${b} : ${t})` : `((${t} = ${a}), H.truthy(${t}) ? ${t} : ${b})`;
         }
         return binary(e[1], expr(e[2]), expr(e[3]));
       }
@@ -535,7 +574,13 @@ export function generateRunner(ir, top) {
         return `(${steps.join(', ')}, ${acc})`;
       }
       case 'u': return e[1] === 'not' ? `!H.truthy(${expr(e[2])})` : `H.neg(${expr(e[2])})`;
-      case 'if': return `(H.truthy(${expr(e[1])}) ? ${expr(e[2])} : ${expr(e[3])})`;
+      case 'if': {
+        const c = expr(e[1]);
+        cond++;                                  // どちらか一方だけ求める
+        const a = expr(e[2]), b = expr(e[3]);
+        cond--;
+        return `(H.truthy(${c}) ? ${a} : ${b})`;
+      }
       case 'i': return `H.index(${expr(e[1])}, ${expr(e[2])})`;
       case 'g': return `H.comp(${expr(e[1])}, ${lit(e[2])})`;
       case 'c': return call(e[1], e[2]);
@@ -592,16 +637,31 @@ export function generateRunner(ir, top) {
   };
 
   let loops = 0;
-  const block = (stmts) => {
+  const block = (stmts) => blockParts(stmts).join('\n');
+  // 文ごとのコード（一番外側の文は、大きい定義で関数を塊に分けるときの境目にする）
+  const blockParts = (stmts) => {
     if (!Array.isArray(stmts)) giveUp();
     return stmts.map((s) => {
       const head = `if (++S > ${MAX_STEPS}) H.over();\n`;
       switch (s[0]) {
-        case 'set': return head + assign(s[1], `H.copy(${expr(s[2])})`);
-        case 'aug': {
-          return head + assign(s[2], binary(s[1], current(s[2]), expr(s[3])));
+        case 'set': {                            // 代入は複製する（数なら複製の関数を呼ばない）
+          const t = temp(5);
+          const code = head + assign(s[1], `((${t} = ${expr(s[2])}), typeof ${t} === 'number' ? ${t} : H.copy(${t}))`);
+          if (s[1][0] === 'l' && cond === 0) defLocals.add(localVar(s[1][1]));   // このあとは必ず値が入っている
+          return code;
         }
-        case 'if': return `${head}if (H.truthy(${expr(s[1])})) {\n${block(s[2])}\n} else {\n${block(s[3])}\n}`;
+        case 'aug': {
+          const code = head + assign(s[2], binary(s[1], current(s[2]), expr(s[3])));
+          if (s[2][0] === 'l' && cond === 0) defLocals.add(localVar(s[2][1]));
+          return code;
+        }
+        case 'if': {
+          const c = expr(s[1]);
+          cond++;
+          const a = block(s[2]), b = block(s[3]);
+          cond--;
+          return `${head}if (H.truthy(${c})) {\n${a}\n} else {\n${b}\n}`;
+        }
         case 'for': {
           const v = localVar(s[1]);
           const it = s[2];
@@ -612,11 +672,18 @@ export function generateRunner(ir, top) {
             const r = loopTemp();
             const a = it[2].map(expr);
             const x = loopTemp();
+            cond++;                              // 本体は 1 回も動かないことがある
+            const body = block(s[3]);
+            cond--;
             code = `${r} = H.range(${a.join(', ')});\n`
-              + `for (let ${x} = ${r}[0]; ${r}[2] > 0 ? ${x} < ${r}[1] : ${x} > ${r}[1]; ${x} += ${r}[2]) {\n${v} = ${x};\n${block(s[3])}\n}`;
+              + `for (let ${x} = ${r}[0]; ${r}[2] > 0 ? ${x} < ${r}[1] : ${x} > ${r}[1]; ${x} += ${r}[2]) {\n${v} = ${x};\n${body}\n}`;
           } else {
             const x = loopTemp();
-            code = `for (const ${x} of H.vec(${expr(it)}, 'for の繰り返し')) {\n${v} = ${x};\n${block(s[3])}\n}`;
+            const itCode = expr(it);
+            cond++;
+            const body = block(s[3]);
+            cond--;
+            code = `for (const ${x} of H.vec(${itCode}, 'for の繰り返し')) {\n${v} = ${x};\n${body}\n}`;
           }
           loops--;
           return head + code;
@@ -626,25 +693,35 @@ export function generateRunner(ir, top) {
           return `${head}${s[0]};`;
         default: return giveUp();
       }
-    }).join('\n');
+    });
   };
 
-  let body;
+  let parts;
   try {
-    body = block(ir);
+    parts = blockParts(ir);
   } catch (e) {
     return null;                                  // 扱わない形・深すぎる入れ子など（IR をたどって計算する）
   }
-  // 変数が多ければ、配列 V の要素にする（1 回の呼び出しで使うスタックを小さくする）
-  const many = locals.size > MANY_LOCALS;
-  if (many) body = body.replace(/\$L(\d+)/g, 'V[$1]');
-  const decl = many ? [] : [...locals.values()].map((v) => `${v} = H.U`);
-  for (const t of temps) decl.push(t);
-  const src = `'use strict';\nlet S = 0;\nconst outs = {};\n${many ? `const V = new Array(${locals.size}).fill(H.U);\n` : ''}`
-    + `${decl.length ? `let ${decl.join(', ')};\n` : ''}${body}\nreturn outs;`;
+  // 一時変数は 1 つの文の中でしか使わない。大きい定義は、一番外側の文の境目で関数を塊に分ける（JavaScript のエンジンは
+  // 大きすぎる関数を最適化しないので、展開した exprespy のような何万文の定義は、遅い実行のままになる）。変数・覚えた入力・
+  // 繰り返しの数・出力は外側の関数に置き、塊から使う。一時変数は塊ごとに持つ
+  // 変数と覚えた入力は、多すぎなければふつうの変数にする（速い）。多ければ配列 V・RD の要素にする（1 回の呼び出しで使う
+  // スタックを小さくする）。一時変数は式の深さごとに使い回すので少ない
+  let body = parts.join('\n');
+  const regs = locals.size + readSlots.size <= REG_LIMIT;
+  let decl = '';
+  if (regs) {
+    const names = [...locals.values(), ...[...readSlots.values()].map((k) => `$Q${k}`)];
+    if (names.length) decl = `let ${names.map((v) => `${v} = U`).join(', ')};\n`;
+  } else {
+    body = body.replace(/\$L(\d+)/g, 'V[$1]').replace(/\$Q(\d+)/g, 'RD[$1]');
+    decl = `const V = new Array(${locals.size}).fill(U);\nconst RD = new Array(${readSlots.size}).fill(U);\n`;
+  }
+  if (temps.size) decl += `let ${[...temps].join(', ')};\n`;
+  const factory = `'use strict';\nconst U = H.U;\nreturn (io) => {\nlet S = 0;\nconst outs = {};\n${decl}${body}\nreturn outs;\n};`;
   try {
-    const fn = new Function('io', 'H', 'K', src);   // eslint-disable-line no-new-func
-    return (io) => fn(io, H, K);
+    const run = new Function('H', 'K', factory)(H, K);   // eslint-disable-line no-new-func
+    return run;
   } catch (e) {
     return null;                                  // 関数を作れない環境（Content-Security-Policy など）
   }
