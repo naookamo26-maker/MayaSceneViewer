@@ -174,6 +174,23 @@ export function readSnapshotMat(mats, stride, i, m) {
   e[3] = 0; e[7] = 0; e[11] = 0; e[15] = 1;
   return m;
 }
+/** deep のやり直しで使う関数（評価器ごとに 1 回だけ作る。呼んだときの状態は st.saved） */
+function deepHooks(st) {
+  return {
+    retry() {
+      // あふれた所から戻る途中で片付けられなかったもの（計算中の印・状態）を、呼んだときに戻す
+      const sv = st.saved, self = sv.self, marks = st.marks;
+      self.varying = sv.varying;
+      self.dcur = sv.dcur;
+      if (!sv.busy) self.busy.clear();
+      if (sv.prof && sv.prof.defStack) sv.prof.defStack.length = sv.defs;
+      for (let i = sv.mark; i < marks.length; i += 2) if (marks[i].get(marks[i + 1]) === BUSY) marks[i].delete(marks[i + 1]);
+      marks.length = sv.mark;
+    },
+    stuck(at) { return st.saved.self.unstick(at); },
+  };
+}
+
 /** 専用の評価をやめた理由（スタックがあふれた所の関数名） */
 const overflowReason = (e) => `計算の鎖が深すぎる（スタックがあふれた: ${stackNames(e && e.stack).join(' ← ') || '場所不明'}）`;               // キャッシュの計算中の印（循環の検出）
 const PLAN = { def: 0, input: 1, component: 2, output: 3, triple: 4, static: 5 };   // plugPlan の種類
@@ -1107,18 +1124,17 @@ export class RigEvaluator {
   deep(fn) {
     const st = this.deepState;
     if (st.depth) return fn();
-    const varying = this.varying, dcur = this.dcur, busy = this.busy.size;
-    const prof = this.profile, defs = prof && prof.defStack ? prof.defStack.length : 0;
-    const marks = st.marks, mark = marks.length;
-    return runDeep(st, fn, () => {
-      // あふれた所から戻る途中で片付けられなかったもの（計算中の印・状態）を、呼んだときに戻す
-      this.varying = varying;
-      this.dcur = dcur;
-      if (!busy) this.busy.clear();
-      if (prof && prof.defStack) prof.defStack.length = defs;
-      for (let i = mark; i < marks.length; i += 2) if (marks[i].get(marks[i + 1]) === BUSY) marks[i].delete(marks[i + 1]);
-      marks.length = mark;
-    }, (at) => this.unstick(at));
+    // 呼んだときの状態（やり直す前に戻す）。よく呼ぶので、関数は作らずに状態に置く（deepHooks）
+    const sv = st.saved;
+    sv.self = this;                                      // 評価器か、計画の読み手（plan.ad。状態を戻す相手）
+    sv.varying = this.varying;
+    sv.dcur = this.dcur;
+    sv.busy = this.busy.size;
+    sv.prof = this.profile;
+    sv.defs = sv.prof && sv.prof.defStack ? sv.prof.defStack.length : 0;
+    sv.mark = st.marks.length;
+    const hooks = st.hooks || (st.hooks = deepHooks(st));
+    return runDeep(st, fn, hooks.retry, hooks.stuck);
   }
 
   /**
@@ -1806,8 +1822,14 @@ export class RigEvaluator {
         // コンストレイントの 3 軸とは違う）。角度は 0 に近い方）
         const { t, q, s, sh } = decomposeMaya(this.mat(id, 'imat'), undefined, undefined, undefined, undefined, 'z');
         const e = mayaEuler(q, Math.round(this.num(id, 'ro', 0)));
-        o = { ...expand('ot', t.toArray(), XYZ), ...expand('or', e, XYZ), ...expand('os', s.toArray(), XYZ),
-          ...expand('osh', sh.toArray(), XYZ), ...expand('oq', [q.x, q.y, q.z, q.w], ['x', 'y', 'z', 'w']) };
+        // 出力は決まった名前なので、1 つのオブジェクトリテラルで作る（よく使うノード。形が毎回同じで速い）
+        o = {
+          ot: [t.x, t.y, t.z], otx: t.x, oty: t.y, otz: t.z,
+          or: e, orx: e[0], ory: e[1], orz: e[2],
+          os: [s.x, s.y, s.z], osx: s.x, osy: s.y, osz: s.z,
+          osh: [sh.x, sh.y, sh.z], oshx: sh.x, oshy: sh.y, oshz: sh.z,
+          oq: [q.x, q.y, q.z, q.w], oqx: q.x, oqy: q.y, oqz: q.z, oqw: q.w,
+        };
         break;
       }
       case 'composeMatrix': {
@@ -2043,7 +2065,7 @@ export class RigEvaluator {
         if (!c || !c.isCurve) { o = null; break; }
         const u = nearestParam(c, new Vector3(...this.vec(id, 'ip')));
         const p = pointAt(c, u).toArray();
-        o = { ...expand('p', p, XYZ), pr: u, parameter: u, position: p, positionX: p[0], positionY: p[1], positionZ: p[2] };
+        o = expandInto({ pr: u, parameter: u, position: p, positionX: p[0], positionY: p[1], positionZ: p[2] }, 'p', p, XYZ);
         break;
       }
       default: {
@@ -2185,9 +2207,13 @@ export class RigEvaluator {
     const curvature = speed2 > EPS ? n.length() / speed2 : 0;
     const cr = curvature > EPS ? 1 / curvature : 0;
     const cc = curvature > EPS ? p.clone().addScaledVector(n.clone().normalize(), cr) : p.clone();
-    return { ...expand('p', p.toArray(), XYZ), ...expand('t', t.toArray(), XYZ), ...expand('nt', tn.toArray(), XYZ),
-      ...expand('n', n.toArray(), XYZ), ...expand('nn', n.clone().normalize().toArray(), XYZ),
-      ...expand('cc', cc.toArray(), XYZ), cr };
+    const o = { cr };
+    expandInto(o, 'p', p.toArray(), XYZ);
+    expandInto(o, 't', t.toArray(), XYZ);
+    expandInto(o, 'nt', tn.toArray(), XYZ);
+    expandInto(o, 'n', n.toArray(), XYZ);
+    expandInto(o, 'nn', n.clone().normalize().toArray(), XYZ);
+    return expandInto(o, 'cc', cc.toArray(), XYZ);
   }
 
   /** remapValue: 入力を 0〜1 にして値のランプ（vl[i]: 位置 vp・値 fv・補間 vi）を引き、出力の範囲に戻す */
@@ -2373,7 +2399,7 @@ export class RigEvaluator {
     const three = idx(/^i3\[(\d+)\]/).map((i) => element(3, i, XYZ));
     const o2 = [0, 1].map((a) => combine(two.map((v) => v[a])));
     const o3 = [0, 1, 2].map((a) => combine(three.map((v) => v[a])));
-    return { o1: combine(one), ...expand('o2', o2, XY), ...expand('o3', o3, XYZ) };
+    return expandInto(expandInto({ o1: combine(one) }, 'o2', o2, XY), 'o3', o3, XYZ);
   }
 
   condition(id) {
@@ -2425,7 +2451,7 @@ export class RigEvaluator {
         return pick(r1[i], r2[i], (g.inputs && g.inputs[own]) || (g.attrs && own in g.attrs) ? mode(own) : 0);
       });
     }
-    return { ...expand('ot', ot, XYZ), ...expand('or', or, XYZ) };
+    return expandInto(expand('ot', ot, XYZ), 'or', or, XYZ);
   }
 
   // ------------------------------------------------------------------ コンストレイント
@@ -2505,7 +2531,7 @@ export class RigEvaluator {
         for (const { m, w } of list) pos.addScaledVector(positionOf(m, _v.clone()), w / total);
         const q = averageQuat(list.map(({ m, w }) => ({ q: rotationOf(m), w })));
         const lr = g.attrs && Array.isArray(g.attrs.lr) ? g.attrs.lr : null;
-        return { ...expand('ct', toTranslate(pos), XYZ), ...expand('cr', toRotate(q, { ref: lr }), XYZ) };
+        return expandInto(expand('ct', toTranslate(pos), XYZ), 'cr', toRotate(q, { ref: lr }), XYZ);
       }
       case 'aimConstraint': case 'lookAt': {
         // lookAt（カメラとエイム）も同じ。twist で視線のまわりに回す（world up がシーンの上・ベクトルのとき）
@@ -2584,7 +2610,7 @@ export class RigEvaluator {
     switch (g.type) {
       case 'pointConstraint': return expand('ct', rt, XYZ);
       case 'orientConstraint': case 'aimConstraint': return expand('cr', rr, XYZ);
-      case 'parentConstraint': return { ...expand('ct', rt, XYZ), ...expand('cr', rr, XYZ) };
+      case 'parentConstraint': return expandInto(expand('ct', rt, XYZ), 'cr', rr, XYZ);
       case 'scaleConstraint': return expand('cs', this.vec(id, 'rs', [1, 1, 1]), XYZ);
       default: return null;
     }
@@ -3481,8 +3507,13 @@ export class RigEvaluator {
 
 /** 3 つ組の値を、まとめた名前（o）と成分の名前（ox など）の両方で引けるようにする */
 function expand(base, values, suffixes) {
-  const o = { [base]: values };
-  suffixes.forEach((s, i) => { o[base + s] = values[i]; });
+  return expandInto({}, base, values, suffixes);
+}
+
+/** expand を o に書き足す（出力を 1 つのオブジェクトにまとめる。スプレッド構文で作り直さない） */
+function expandInto(o, base, values, suffixes) {
+  o[base] = values;
+  for (let i = 0; i < suffixes.length; i++) o[base + suffixes[i]] = values[i];
   return o;
 }
 

@@ -812,7 +812,7 @@ function evalChannels(plan, s, f) {
 function channelValues(plan, s, f, cur) {
   const { rest, e } = s;
   for (const k of VEC_KEYS) if (rest[k]) { const a = cur[k], b = rest[k]; a[0] = b[0]; a[1] = b[1]; a[2] = b[2]; }
-  for (const b of s.zeroBases) cur[b] = [0, 0, 0];
+  for (const b of s.zeroBases) { const a = cur[b]; if (a) { a[0] = 0; a[1] = 0; a[2] = 0; } else cur[b] = [0, 0, 0]; }
   cur.ro = rest.ro;
   for (const ch of e.channels) cur[ch.base][ch.axis] = evaluateCurve(ch.curve, f);
   for (const x of s.inputs) {
@@ -821,7 +821,8 @@ function channelValues(plan, s, f, cur) {
       v = evaluateCurve(x.curve, f);
       v = x.curve.type === 'TA' ? v * D2R : v;
     } else {
-      if (x.src) v = plan.ad.deep(() => plan.ad.source(x.src));      // 長い鎖でもスタックがあふれないように（deep）
+      // 長い鎖でもスタックがあふれないように（deep）。読む関数は入力ごとに 1 回だけ作る
+      if (x.src) v = plan.ad.deep(x.read || (x.read = () => plan.ad.source(x.src)));
       else {
         const c = x.con;
         if (c.stamp !== plan.stamp) evalConstraint(plan, c, f);
@@ -831,7 +832,9 @@ function channelValues(plan, s, f, cur) {
     if (v === undefined) continue;
     const k = ANGLE_KEYS.has(x.base) ? R2D : 1;
     if (x.axis < 0) {
-      if (Array.isArray(v)) for (let a = 0; a < 3; a++) if (!s.fromCurve.has(x.base + XYZ[a])) cur[x.base][a] = v[a] * k;
+      // 軸ごとに、カーブで決まる属性でないか（入力ごとに 1 回だけ調べる）
+      const free = x.free || (x.free = [0, 1, 2].map((a) => !s.fromCurve.has(x.base + XYZ[a])));
+      if (Array.isArray(v)) for (let a = 0; a < 3; a++) if (free[a]) cur[x.base][a] = v[a] * k;
     } else if (typeof v === 'number') cur[x.base][x.axis] = v * k;
   }
   clampLimits(cur);

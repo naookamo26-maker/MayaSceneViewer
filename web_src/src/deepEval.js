@@ -28,6 +28,7 @@ export const DEEP_ERROR = new RangeError('Maximum call stack size exceeded（評
 export function newDeepState() {
   const orders = { generic: { order: [], known: new Set() }, plan: { order: [], known: new Set() } };
   return { depth: 0, at: null, retries: 0, orders, order: orders.generic.order, known: orders.generic.known, marks: [], level: 0,
+    saved: {}, hooks: null,                      // saved・hooks: rig.js の deep（呼んだときの状態・やり直しの関数）
     insertAt: -1 };                              // insertAt: 先に求めている途中に覚えた順番を入れる位置（-1 なら最後）
 }
 
