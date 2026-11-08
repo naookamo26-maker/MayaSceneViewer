@@ -603,33 +603,44 @@ function mathReader(plan, constChan, pmOpm) {
   const recs = new Map();
   const recOf = (id) => {
     let r = recs.get(id);
-    if (!r) recs.set(id, r = { km: rig.keep.plug.get(id) || null, fm: new Map(), stamp: -1, out: undefined, outStamp: -1 });
+    if (!r) recs.set(id, r = { g: rig.byId.get(id), km: rig.keep.plug.get(id) || null, slots: new Map(), out: undefined, outStamp: -1 });
     return r;
   };
+  // 属性ごとの記録（スロット）: 時間で変わらない値か・求め方（plugPlan）・このフレームの値とそのフレームの番号（stamp）。
+  // 属性を読むたびに表を何度も引かないよう、2 回目からはスロットを引くだけにする
+  const slotOf = (r, attr) => {
+    const sl = { fixed: false, v: undefined, stamp: -1, plan: null };
+    if (r.km && r.km.has(attr)) { sl.fixed = true; sl.v = r.km.get(attr); }
+    r.slots.set(attr, sl);
+    return sl;
+  };
   ad.plug = function plug(id, attr) {
-    const r = recOf(id);
-    if (r.km) { const v = r.km.get(attr); if (v !== undefined || r.km.has(attr)) return v; }
-    if (r.stamp !== plan.stamp) { r.fm.clear(); r.stamp = plan.stamp; }
-    let v = r.fm.get(attr);
-    if (v !== undefined || r.fm.has(attr)) return v;
+    const r = recs.get(id) || recOf(id);
+    const sl = r.slots.get(attr) || slotOf(r, attr);
+    if (sl.fixed || sl.stamp === plan.stamp) return sl.v;
+    // 時間で変わらない値があとから覚えられていれば使う（任せたノードを RigEvaluator が求めたときなど）
+    const km = r.km || (r.km = rig.keep.plug.get(id) || null);
+    if (km && km.has(attr)) { sl.fixed = true; sl.v = km.get(attr); return sl.v; }
+    let v;
     let entered = false;
     try {
       enterDeep(ad.deepState);                           // 入れ子の段数を数える（deepEval.js）
       entered = true;
-      v = proto.plugUncached.call(ad, id, attr);
+      v = proto.plugWithPlan.call(ad, r.g, attr, sl.plan || (sl.plan = proto.plugPlan.call(ad, r.g, attr)));
     } catch (e) {
       const ds = ad.deepState;                         // ad.outputs と同じ
       if (ds.depth && ds.at === null && mayOverflow(e)) {
         ds.at = () => ad.plug(id, attr);
         ds.at.warm = { key: `p${id}.${attr}`, id, attr };   // 次のフレームから先に求める（rig.js の prewarmDeep）
-        ds.at.place = r.fm;                            // 同じ計算か（deepEval.js の runDeep）
+        ds.at.place = r.slots;                         // 同じ計算か（deepEval.js の runDeep）
         ds.at.key = attr;
       }
       throw e;
     } finally {
       if (entered) leaveDeep(ad.deepState);
     }
-    r.fm.set(attr, v);
+    sl.v = v;
+    sl.stamp = plan.stamp;
     return v;
   };
   ad.outputs = function outputs(id) {

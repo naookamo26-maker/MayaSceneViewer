@@ -159,3 +159,32 @@ test('そのほかのスカラー・行列のノード', () => {
   const held = run({ o: M }, 'holdMatrix');
   assert.deepEqual(held.elements.slice(12, 15), [11, 12, 13], 'holdMatrix は入力がなければファイルの値');
 });
+
+test('decomposeMatrix・composeMatrix の途中の値の使い回し: 入力を読むと別の同じ種類のノードを計算しても、値が壊れない', async () => {
+  const { composeMaya, decomposeMaya, mayaEuler } = await import('../src/animation.js');
+  const { Euler, Matrix4: M4, Quaternion } = await import('three');
+  const D = Math.PI / 180;
+  // d2 は c1 を分け、回転順は d1 から読む（d1 は c2 を分ける。d2 が回転順を読んだときに初めて計算する）。
+  // c4 のせん断は d3 から読む（d3 は c5 を分ける。c4 がせん断を読んだときに初めて c5・d3 を計算する）
+  const graph = [
+    { id: 1, name: 'c1', type: 'composeMatrix', dag: -1, attrs: { it: [1, 2, 3], ir: [30, 20, 10] } },
+    { id: 2, name: 'c2', type: 'composeMatrix', dag: -1, attrs: { it: [1, 0, 0], ir: [-40, 50, 60] } },
+    { id: 3, name: 'd1', type: 'decomposeMatrix', dag: -1, inputs: { imat: { node: 2, attr: 'omat' } } },
+    { id: 4, name: 'd2', type: 'decomposeMatrix', dag: -1, inputs: { imat: { node: 1, attr: 'omat' }, ro: { node: 3, attr: 'otx' } } },
+    { id: 5, name: 'c5', type: 'composeMatrix', dag: -1, attrs: { it: [0.1, 0.2, 0.3], ir: [70, -10, 5] } },
+    { id: 6, name: 'd3', type: 'decomposeMatrix', dag: -1, inputs: { imat: { node: 5, attr: 'omat' } } },
+    { id: 7, name: 'c4', type: 'composeMatrix', dag: -1, attrs: { it: [4, 5, 6], ir: [15, -25, 35] }, inputs: { ish: { node: 6, attr: 'ot' } } },
+  ];
+  const anim = { fps: 24, start: 1, end: 1, curves: [], times: [], values: [], channels: [], nodes: [], graph };
+  const rig = new RigEvaluator(new AnimationClip(anim), [], () => new M4());
+  rig.evaluate(1);
+  // 読む順番: d2（→ c1 → 回転順で d1 → c2）、c4（→ せん断で d3 → c5）
+  const d2 = rig.outputs(4), c4 = rig.outputs(7).omat;
+  // 1 つずつ求めた値
+  const compose = (t, r, sh = [0, 0, 0]) => composeMaya(t, new Quaternion().setFromEuler(new Euler(r[0] * D, r[1] * D, r[2] * D, 'ZYX')), [1, 1, 1], sh);
+  const want = decomposeMaya(compose([1, 2, 3], [30, 20, 10]), undefined, undefined, undefined, undefined, 'z');
+  assert.deepEqual(d2.ot, want.t.toArray());
+  assert.deepEqual(d2.or, mayaEuler(want.q, 1), '回転順は d1 の移動 x（1 = yzx）');
+  assert.deepEqual(d2.oq, [want.q.x, want.q.y, want.q.z, want.q.w]);
+  assert.deepEqual([...c4.elements], [...compose([4, 5, 6], [15, -25, 35], [0.1, 0.2, 0.3]).elements]);
+});

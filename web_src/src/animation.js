@@ -316,7 +316,8 @@ const _f = new Matrix4();
 export function decomposeMaya(m, t = new Vector3(), q = new Quaternion(), s = new Vector3(), sh = new Vector3(), mirror = 'all') {
   const e = m.elements;
   t.set(e[12], e[13], e[14]);
-  const x = new Vector3(e[0], e[1], e[2]), y = new Vector3(e[4], e[5], e[6]), z = new Vector3(e[8], e[9], e[10]);
+  // 途中のベクトル・行列は使い回す（よく使う。結果は t・q・s・sh）
+  const x = _dmX.set(e[0], e[1], e[2]), y = _dmY.set(e[4], e[5], e[6]), z = _dmZ.set(e[8], e[9], e[10]);
   let sx = x.length();
   if (sx < 1e-12) { m.decompose(t, q, s); sh.set(0, 0, 0); return { t, q, s, sh }; }
   x.divideScalar(sx);
@@ -330,7 +331,7 @@ export function decomposeMaya(m, t = new Vector3(), q = new Quaternion(), s = ne
   let sz = z.length();
   if (sz < 1e-12) { m.decompose(t, q, s); sh.set(0, 0, 0); return { t, q, s, sh }; }
   z.divideScalar(sz);
-  if (new Vector3().crossVectors(x, y).dot(z) < 0) {     // 鏡に映した行列
+  if (_dmC.crossVectors(x, y).dot(z) < 0) {              // 鏡に映した行列
     if (mirror === 'z') {                                // 反転は Z のスケールだけ
       sz = -sz;
       z.negate();
@@ -340,7 +341,7 @@ export function decomposeMaya(m, t = new Vector3(), q = new Quaternion(), s = ne
       dxy = -dxy; dxz = -dxz; dyz = -dyz;
     }
   }
-  q.setFromRotationMatrix(new Matrix4().makeBasis(x, y, z));
+  q.setFromRotationMatrix(_dmM.makeBasis(x, y, z));
   s.set(sx, sy, sz);
   sh.set(dxy / sy, dxz / sz, dyz / sz);
   return { t, q, s, sh };
@@ -348,12 +349,15 @@ export function decomposeMaya(m, t = new Vector3(), q = new Quaternion(), s = ne
 
 /** Maya の composeMatrix と同じ行列（行ベクトルの S · Sh · R · T）。q は回転の四元数、sh はせん断 (xy, xz, yz) */
 export function composeMaya(t, q, s, sh = [0, 0, 0], target = new Matrix4()) {
-  const R = new Matrix4().makeRotationFromQuaternion(q);
-  const Sh = new Matrix4().set(1, sh[0], sh[1], 0, 0, 1, sh[2], 0, 0, 0, 1, 0, 0, 0, 0, 1);
-  const S = new Matrix4().makeScale(s[0], s[1], s[2]);
+  // 途中の行列は使い回す（よく使う。結果は target）
+  const R = _cmR.makeRotationFromQuaternion(q);
+  const Sh = _cmSh.set(1, sh[0], sh[1], 0, 0, 1, sh[2], 0, 0, 0, 1, 0, 0, 0, 0, 1);
+  const S = _cmS.makeScale(s[0], s[1], s[2]);
   target.makeTranslation(t[0], t[1], t[2]).multiply(R).multiply(Sh).multiply(S);
   return target;
 }
+const _cmR = new Matrix4(), _cmSh = new Matrix4(), _cmS = new Matrix4();
+const _dmX = new Vector3(), _dmY = new Vector3(), _dmZ = new Vector3(), _dmC = new Vector3(), _dmM = new Matrix4();
 
 const AXIS_VEC = [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)];
 const AXIS_INDEX = { X: 0, Y: 1, Z: 2 };

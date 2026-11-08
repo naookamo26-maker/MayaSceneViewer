@@ -132,6 +132,13 @@ const CHAN_MODES = { full: 0, fk: 1, t: 2 };
 const NO_INPUTS = [];
 const NO_POSE = () => null;                // ポーズ確認の追加分なし
 const BUSY = Symbol('busy');
+// decomposeMatrix・composeMatrix の途中の値（使い回す）
+const _dcT = new Vector3(), _dcQ = new Quaternion(), _dcS = new Vector3(), _dcSh = new Vector3();
+const _cpQ = new Quaternion(), _cpE = new Euler();
+/** outputsCommon が扱わない種類 */
+const NOT_COMMON = Symbol('notCommon');
+/** グラフのノード → 正規表現 → 配列の属性の添字（indices。返す配列は書き換えないこと） */
+const INDICES = new WeakMap();
 
 // ---- 再生キャッシュの行列の並び。ローカル行列は移動・回転・スケール（とせん断）でできていて、最後の行が 0, 0, 0, 1 なので、
 // 残りの 12 個だけを持つ（キャッシュが 25% 小さくなる）。コンストレイントの計算などで、最後の行が丸めの誤差だけ違う
@@ -1584,7 +1591,12 @@ export class RigEvaluator {
 
   plugUncached(id, attr) {
     const g = this.byId.get(id);
-    const plan = this.plugPlan(g, attr);
+    return this.plugWithPlan(g, attr, this.plugPlan(g, attr));
+  }
+
+  /** 求め方（plugPlan）がわかっている属性の値（専用の評価の読み手は、求め方を覚えておいて直接呼ぶ） */
+  plugWithPlan(g, attr, plan) {
+    const id = g.id;
     switch (plan.kind) {
       case PLAN.def: return this.defPlug(g, attr);
       case PLAN.input: return this.source(plan.src);
@@ -1669,10 +1681,17 @@ export class RigEvaluator {
     return new Matrix4();
   }
 
-  /** 配列の属性の添字（接続とファイルの値の両方から） */
+  /** 配列の属性の添字（接続とファイルの値の両方から）。グラフの形だけで決まるので、ノードと re ごとに 1 回だけ求めて覚える */
   indices(g, re) {
-    const keys = [...Object.keys(g.inputs || {}), ...Object.keys(g.attrs || {})];
-    return [...new Set(keys.map((k) => re.exec(k)).filter(Boolean).map((m) => +m[1]))].sort((a, b) => a - b);
+    let byRe = INDICES.get(g);
+    if (!byRe) INDICES.set(g, byRe = new Map());
+    let out = byRe.get(re.source);
+    if (!out) {
+      const keys = [...Object.keys(g.inputs || {}), ...Object.keys(g.attrs || {})];
+      out = [...new Set(keys.map((k) => re.exec(k)).filter(Boolean).map((m) => +m[1]))].sort((a, b) => a - b);
+      byRe.set(re.source, out);
+    }
+    return out;
   }
 
   /** 属性の名前の候補（短い名前・長い名前）のうち、接続か値があるもの（なければ最初の名前） */
@@ -1843,12 +1862,93 @@ export class RigEvaluator {
     return this.memo(this.cache.out, this.keep.out, id, () => this.outputsUncached(id), NULL, () => `out ${id}`);
   }
 
+  /** よく使う種類の計算ノードの出力（outputsUncached の先に振り分ける）。それ以外の種類は NOT_COMMON */
+  outputsCommon(id, g) {
+    let o = null;
+    switch (g.type) {
+      case 'unitConversion': o = { o: this.num(id, 'i') * this.num(id, 'cf', 1) }; break;
+      case 'multMatrix': {
+        // Maya の o = i[0] · i[1] · …（行ベクトル）は、three.js では … · i[1] · i[0]
+        const out = new Matrix4();
+        for (const i of this.indices(g, /^i\[(\d+)\]$/)) out.premultiply(this.mat(id, `i[${i}]`));
+        o = { o: out };
+        break;
+      }
+      case 'decomposeMatrix': {
+        // Maya と同じ分け方（せん断を分けてから回転にする。鏡に映した行列は Z のスケールを負にする（MTransformationMatrix。
+        // コンストレイントの 3 軸とは違う）。角度は 0 に近い方）
+        // 途中の値（_dc*）は使い回すので、入力はすべて先に読む（読むと、ほかの decomposeMatrix を計算して書き換えることがある）
+        const m = this.mat(id, 'imat'), ro = Math.round(this.num(id, 'ro', 0));
+        const { t, q, s, sh } = decomposeMaya(m, _dcT, _dcQ, _dcS, _dcSh, 'z');
+        const e = mayaEuler(q, ro);
+        // 出力は決まった名前なので、1 つのオブジェクトリテラルで作る（よく使うノード。形が毎回同じで速い）
+        o = {
+          ot: [t.x, t.y, t.z], otx: t.x, oty: t.y, otz: t.z,
+          or: e, orx: e[0], ory: e[1], orz: e[2],
+          os: [s.x, s.y, s.z], osx: s.x, osy: s.y, osz: s.z,
+          osh: [sh.x, sh.y, sh.z], oshx: sh.x, oshy: sh.y, oshz: sh.z,
+          oq: [q.x, q.y, q.z, q.w], oqx: q.x, oqy: q.y, oqz: q.z, oqw: q.w,
+        };
+        break;
+      }
+      case 'composeMatrix': {
+        const t = this.vec(id, 'it'), r = this.vec(id, 'ir'), s = this.vec(id, 'is', [1, 1, 1]);
+        const sh = this.vec(id, 'ish');                     // せん断（inputShear）も入れる
+        let q;
+        if (this.num(id, 'uer', 1) >= 0.5) {
+          // 回転順は .ro（Maya の技術資料。古いサンプルの .iro も読む）
+          const ro = this.num(id, this.attrName(this.byId.get(id), ['ro', 'iro']), 0);
+          // 途中の値（_cpQ・_cpE）は使い回すので、入力はすべて先に読んである（このあとは属性を読まない）
+          q = _cpQ.setFromEuler(_cpE.set(r[0], r[1], r[2], THREE_ORDER[Math.round(ro)] || 'ZYX'));
+        } else {
+          const v = this.vec(id, 'iq', [0, 0, 0, 1]);
+          q = new Quaternion(v[0], v[1], v[2], v[3] ?? 1).normalize();
+        }
+        o = { omat: composeMaya(t, q, s, sh) };
+        break;
+      }
+      case 'inverseMatrix': o = { omat: this.mat(id, 'imat').clone().invert() }; break;
+      // アニメーションレイヤー: 下のレイヤーまでの値（ia）にこのレイヤーの値（ib）をウェイトで重ねる
+      case 'animBlendNodeAdditiveDL': case 'animBlendNodeAdditiveDA': case 'animBlendNodeAdditive':
+      case 'animBlendNodeAdditiveF': case 'animBlendNodeAdditiveFL': case 'animBlendNodeAdditiveFA':
+      case 'animBlendNodeTime':
+        o = { o: this.num(id, 'ia', 0) * this.num(id, 'wa', 1) + this.num(id, 'ib', 0) * this.num(id, 'wb', 1) };
+        break;
+      case 'animBlendNodeAdditiveI16': case 'animBlendNodeAdditiveI32':
+        o = { o: Math.round(this.num(id, 'ia', 0) * this.num(id, 'wa', 1) + this.num(id, 'ib', 0) * this.num(id, 'wb', 1)) };
+        break;
+      case 'animBlendNodeAdditiveScale': {
+        // かけ算で重ねる（acm 1）: ia · (1 + (ib − 1) · wb)。足し算（acm 0）: ia · wa + ib · wb
+        const ia = this.num(id, 'ia', 0), ib = this.num(id, 'ib', 0), wb = this.num(id, 'wb', 1);
+        o = { o: this.num(id, 'acm', 0) >= 0.5 ? ia * (1 + (ib - 1) * wb) : ia * this.num(id, 'wa', 1) + ib * wb };
+        break;
+      }
+      case 'animBlendNodeBoolean': case 'animBlendNodeEnum':
+        // 足し合わせられない型: ウェイトが半分以上ならこのレイヤーの値、それ以外は下のレイヤーまでの値
+        o = { o: this.num(id, 'wb', 1) >= 0.5 ? this.num(id, 'ib', 0) : this.num(id, 'ia', 0) };
+        break;
+      case 'animBlendNodeAdditiveRotation': {
+        // 成分ごとに読む（vec と同じ値。3 つ組を読むと成分を読んで配列を作り直すので、よく使うノードでは直接読む）
+        const wa = this.num(id, 'wa', 1), wb = this.num(id, 'wb', 1);
+        const x = this.num(id, 'iax', 0) * wa + this.num(id, 'ibx', 0) * wb;
+        const y = this.num(id, 'iay', 0) * wa + this.num(id, 'iby', 0) * wb;
+        const z = this.num(id, 'iaz', 0) * wa + this.num(id, 'ibz', 0) * wb;
+        o = { o: [x, y, z], ox: x, oy: y, oz: z };
+        break;
+      }
+      default: return NOT_COMMON;
+    }
+    return o;
+  }
+
   outputsUncached(id) {
     const g = this.byId.get(id);
     if (g.def) return this.defOutputs(g);
+    // よく使う種類は、小さな関数で先に振り分ける（大きな振り分けは種類の名前を上から順に比べるので、後ろの種類ほど遅い）
+    const common = this.outputsCommon(id, g);
+    if (common !== NOT_COMMON) return common;
     let o = null;
     switch (g.type === 'distanceBetweenDL' ? 'distanceBetween' : g.type) {
-      case 'unitConversion': o = { o: this.num(id, 'i') * this.num(id, 'cf', 1) }; break;
       case 'multiplyDivide': o = this.multiplyDivide(id); break;
       case 'plusMinusAverage': o = this.plusMinusAverage(id); break;
       case 'reverse': o = expand('o', this.vec(id, 'i').map((x) => 1 - x), XYZ); break;
@@ -1866,43 +1966,6 @@ export class RigEvaluator {
         o = { dist: d, distance: d };
         break;
       }
-      case 'multMatrix': {
-        // Maya の o = i[0] · i[1] · …（行ベクトル）は、three.js では … · i[1] · i[0]
-        const out = new Matrix4();
-        for (const i of this.indices(g, /^i\[(\d+)\]$/)) out.premultiply(this.mat(id, `i[${i}]`));
-        o = { o: out };
-        break;
-      }
-      case 'decomposeMatrix': {
-        // Maya と同じ分け方（せん断を分けてから回転にする。鏡に映した行列は Z のスケールを負にする（MTransformationMatrix。
-        // コンストレイントの 3 軸とは違う）。角度は 0 に近い方）
-        const { t, q, s, sh } = decomposeMaya(this.mat(id, 'imat'), undefined, undefined, undefined, undefined, 'z');
-        const e = mayaEuler(q, Math.round(this.num(id, 'ro', 0)));
-        // 出力は決まった名前なので、1 つのオブジェクトリテラルで作る（よく使うノード。形が毎回同じで速い）
-        o = {
-          ot: [t.x, t.y, t.z], otx: t.x, oty: t.y, otz: t.z,
-          or: e, orx: e[0], ory: e[1], orz: e[2],
-          os: [s.x, s.y, s.z], osx: s.x, osy: s.y, osz: s.z,
-          osh: [sh.x, sh.y, sh.z], oshx: sh.x, oshy: sh.y, oshz: sh.z,
-          oq: [q.x, q.y, q.z, q.w], oqx: q.x, oqy: q.y, oqz: q.z, oqw: q.w,
-        };
-        break;
-      }
-      case 'composeMatrix': {
-        const t = this.vec(id, 'it'), r = this.vec(id, 'ir'), s = this.vec(id, 'is', [1, 1, 1]);
-        let q;
-        if (this.num(id, 'uer', 1) >= 0.5) {
-          // 回転順は .ro（Maya の技術資料。古いサンプルの .iro も読む）
-          const ro = this.num(id, this.attrName(this.byId.get(id), ['ro', 'iro']), 0);
-          q = new Quaternion().setFromEuler(new Euler(r[0], r[1], r[2], THREE_ORDER[Math.round(ro)] || 'ZYX'));
-        } else {
-          const v = this.vec(id, 'iq', [0, 0, 0, 1]);
-          q = new Quaternion(v[0], v[1], v[2], v[3] ?? 1).normalize();
-        }
-        o = { omat: composeMaya(t, q, s, this.vec(id, 'ish')) };   // せん断（inputShear）も入れる
-        break;
-      }
-      case 'inverseMatrix': o = { omat: this.mat(id, 'imat').clone().invert() }; break;
       case 'fourByFourMatrix': {
         // 16 個の数（i00〜i33 = 行・列。長い名前は in00〜in33）を、Maya の行の順に並べた行列。既定値は単位行列
         const v = [];
@@ -2012,30 +2075,6 @@ export class RigEvaluator {
         for (const [k, v] of Object.entries(g.attrs || {})) if (OUTPUTS.character.test(k)) o[k] = /^av\[/.test(k) ? v * D2R : v;
         if (g.trax) this.varying = true;
         if (g.trax) Object.assign(o, evaluateTrax(g.trax, this.frame, this.clip.curves, (c, v) => (c.type === 'TA' ? v * D2R : v)));
-        break;
-      }
-      // アニメーションレイヤー: 下のレイヤーまでの値（ia）にこのレイヤーの値（ib）をウェイトで重ねる
-      case 'animBlendNodeAdditiveDL': case 'animBlendNodeAdditiveDA': case 'animBlendNodeAdditive':
-      case 'animBlendNodeAdditiveF': case 'animBlendNodeAdditiveFL': case 'animBlendNodeAdditiveFA':
-      case 'animBlendNodeTime':
-        o = { o: this.num(id, 'ia', 0) * this.num(id, 'wa', 1) + this.num(id, 'ib', 0) * this.num(id, 'wb', 1) };
-        break;
-      case 'animBlendNodeAdditiveI16': case 'animBlendNodeAdditiveI32':
-        o = { o: Math.round(this.num(id, 'ia', 0) * this.num(id, 'wa', 1) + this.num(id, 'ib', 0) * this.num(id, 'wb', 1)) };
-        break;
-      case 'animBlendNodeAdditiveScale': {
-        // かけ算で重ねる（acm 1）: ia · (1 + (ib − 1) · wb)。足し算（acm 0）: ia · wa + ib · wb
-        const ia = this.num(id, 'ia', 0), ib = this.num(id, 'ib', 0), wb = this.num(id, 'wb', 1);
-        o = { o: this.num(id, 'acm', 0) >= 0.5 ? ia * (1 + (ib - 1) * wb) : ia * this.num(id, 'wa', 1) + ib * wb };
-        break;
-      }
-      case 'animBlendNodeBoolean': case 'animBlendNodeEnum':
-        // 足し合わせられない型: ウェイトが半分以上ならこのレイヤーの値、それ以外は下のレイヤーまでの値
-        o = { o: this.num(id, 'wb', 1) >= 0.5 ? this.num(id, 'ib', 0) : this.num(id, 'ia', 0) };
-        break;
-      case 'animBlendNodeAdditiveRotation': {
-        const a = this.vec(id, 'ia'), b = this.vec(id, 'ib'), wa = this.num(id, 'wa', 1), wb = this.num(id, 'wb', 1);
-        o = expand('o', a.map((x, i) => x * wa + b[i] * wb), XYZ);
         break;
       }
       case 'animCurveUA': case 'animCurveUL': case 'animCurveUU': {
