@@ -50,9 +50,18 @@ function drawGeometry(geometry) {
 }
 
 /** オブジェクトと、その親のすべてが表示か */
+// 祖先まで表示か（sync の中で、同じ祖先を何度もたどらないよう、求めた結果を祖先にも覚える。sync のたびに visStamp を進める）
+let visStamp = 0;
+const _chain = [];
 function shownInTree(o) {
-  for (let p = o; p; p = p.parent) if (!p.visible) return false;
-  return true;
+  let res = true, n = 0;
+  for (let p = o; p; p = p.parent) {
+    if (p.__visStamp === visStamp) { res = p.__vis; break; }
+    if (!p.visible) { res = false; p.__visStamp = visStamp; p.__vis = false; break; }
+    _chain[n++] = p;
+  }
+  for (let i = 0; i < n; i++) { _chain[i].__visStamp = visStamp; _chain[i].__vis = res; }
+  return res;
 }
 
 export class MeshBatches {
@@ -139,6 +148,7 @@ export class MeshBatches {
   /** 描画の前に、元のメッシュの表示・ワールド行列・材質を写す */
   sync() {
     if (!this.enabled) return;
+    visStamp++;
     for (const p of this.pieces) {
       const o = p.e.staticMesh;
       const vis = shownInTree(o);
@@ -230,10 +240,17 @@ export class SkinBatches {
     for (const b of this.batches) for (const p of b.pieces) count.set(p.e, (count.get(p.e) || 0) + 1);
     for (const [e, n] of count) {
       const slots = e.materials.length > 1 && e.geometry.groups.length ? e.geometry.groups.filter((g) => g.count).length : 1;
-      if (n === slots) this.state.set(e, { active: false, toggles: 0, never: false });
+      if (n === slots) this.state.set(e, { active: false, toggles: 0, never: false, batches: [], last: new Float64Array(16).fill(NaN), near: false });
     }
     for (const b of this.batches) b.pieces = b.pieces.filter((p) => this.state.has(p.e));
     this.batches = this.batches.filter((b) => b.pieces.length);
+    // メッシュごとに、入っているまとまり（材質のスロットごと）
+    for (const b of this.batches) {
+      for (const p of b.pieces) {
+        const st = this.state.get(p.e);
+        if (!st.batches.includes(b)) st.batches.push(b);
+      }
+    }
   }
 
   /** まとまりを作る: 頂点に B を掛けた（法線は B の 3×3）属性をつなげ、ピースごとの三角形（全体の番号）を覚える */
@@ -316,23 +333,28 @@ export class SkinBatches {
   /** 描画の前に: メッシュごとに、まとめて描けるか（表示・X・材質）を決め、変わったまとまりの三角形の一覧を作り直す */
   sync() {
     if (!this.enabled) return;
+    visStamp++;
     for (const [e, st] of this.state) {
       const o = e.skinned;
       let want = !st.never && shownInTree(o);
       if (want) {
-        const X = _x.multiplyMatrices(worldMatrixOf(o), o.bindMatrixInverse).elements;
-        for (const b of this.batches) {
-          if (!b.pieces.some((p) => p.e === e)) continue;
-          // メッシュの親を動かした（ポーズ確認など）: まとめたときの X と違えば、元のメッシュで描く
-          if (!nearMatrix(X, b.X.elements)) { want = false; break; }
+        // メッシュの親を動かした（ポーズ確認など）: まとめたときの X（M · B⁻¹）と違えば、元のメッシュで描く。
+        // M が前の sync と同じなら、前の判定のまま（X を計算し直さない）
+        const M = worldMatrixOf(o).elements, last = st.last;
+        let same = true;
+        for (let i = 0; i < 16; i++) if (M[i] !== last[i]) { same = false; break; }
+        if (!same) {
+          last.set(M);
+          const X = _x.multiplyMatrices(o.matrixWorld, o.bindMatrixInverse).elements;
+          st.near = st.batches.every((b) => nearMatrix(X, b.X.elements));
         }
+        want = st.near;
       }
       if (want === st.active) continue;
       st.active = want;
       if (++st.toggles > MAX_TOGGLES) { st.never = true; st.active = false; want = false; }
       o.layers.set(want ? BATCHED_LAYER : 0);
-      for (const b of this.batches) {
-        if (!b.pieces.some((p) => p.e === e)) continue;
+      for (const b of st.batches) {
         if (want) b.members.add(e); else b.members.delete(e);
         b.dirty = true;
       }

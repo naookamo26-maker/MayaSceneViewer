@@ -284,18 +284,17 @@ class ViewerApp {
       if (fresh && root && root.parent === this.scene) {
         for (const c of this.scene.children) if (c !== root) c.updateMatrixWorld();
         flushLeaves();
-      } else {
-        this.scene.updateMatrixWorld();
-        this.worldTrusted = false;          // フレームごとの計算で覚えた行列は使わない（updateWorldPartial）
-      }
+      } else this.scene.updateMatrixWorld();
+      const ta = recording ? performance.now() : 0;
       // まとめて描くメッシュに、元のメッシュの表示・ワールド行列・材質を写す
       if (this.batches) this.batches.sync();
+      const tb = recording ? performance.now() : 0;
       if (this.skinBatches) this.skinBatches.sync();
       this.scene.matrixWorldAutoUpdate = false;
       if (recording) {
         const t1 = performance.now();
         this.renderer.render(this.scene, this.activeCamera());
-        this.profiler.addRender(performance.now() - t1, this.renderer.info.render, t1 - t0);
+        this.profiler.addRender(performance.now() - t1, this.renderer.info.render, t1 - t0, { check: ta - t0, batch: tb - ta, skin: t1 - tb });
       } else this.renderer.render(this.scene, this.activeCamera());
     } finally {
       this.scene.matrixWorldAutoUpdate = true;
@@ -1670,8 +1669,23 @@ class ViewerApp {
     const mode = this.settings.poseSource;
     const sceneHasBind = hasBindPose(this.built);
     let tSub = pr ? performance.now() : 0;
+    // フレームを変えただけで、前のフレームの行列が当てになるとき（fast）は、リグの結果が前と同じノードを飛ばす
+    // （写さない・姿勢を組み立て直さない・ワールド行列を計算し直さない。キーが平らなコントローラーなど）。
+    // 変わったノードに印を付け、その下だけ計算する（afterPoseChange）。姿勢の基準・ポーズ確認の追加分が変わったら使わない
+    const wt = this.worldTrack;
+    const key = `${mode}|${sceneHasBind}|${this.pose ? this.pose.version : 0}`;
+    const fast = !!(wt && partial && this.worldTrusted && wt.key === key);
+    if (wt) { wt.fast = fast; wt.key = key; }
+    const changed = fast ? [] : null;
     for (const [ni, m] of mats) {
       const ud = this.built.nodeObjects[ni].userData;
+      if (fast) {
+        const a = ud.fileMatrix.elements, b = m.elements;
+        let same = true;
+        for (let i = 0; i < 16; i++) if (a[i] !== b[i]) { same = false; break; }
+        if (same) continue;
+        changed.push(ni);
+      }
       ud.fileMatrix.copy(m);
       ud.baseMatrix.copy(poseBaseMatrix(ud, mode, sceneHasBind));     // バインドポーズではフレームによらない
     }
@@ -1682,7 +1696,15 @@ class ViewerApp {
       if (this.selected >= 0) { this.ui.showPoseFor(this.selected, this.pose.get(this.selected)); this.syncGizmo(); }
       return;
     }
-    for (const ni of this.animTouched) this.pose.apply(ni);
+    if (fast) {
+      // 変わったノードと、その子（親のスケールの補正）だけ組み立て直す。ワールド行列は変わったノードの下だけ
+      const { pos, dirty } = wt, kids = this.built.childrenOf;
+      for (const ni of changed) {
+        this.pose.apply(ni);
+        for (const c of kids[ni]) this.pose.apply(c);
+        if (pos[ni] >= 0) dirty[pos[ni]] = 1;
+      }
+    } else for (const ni of this.animTouched) this.pose.apply(ni);
     if (pr) pr.sub('pose', performance.now() - tSub);
     // カーブの形（バインドポーズの表示では変形前の形）
     const bindView = mode === 'bind' && sceneHasBind;
@@ -2574,48 +2596,16 @@ class ViewerApp {
   }
 
   /**
-   * フレームごとのワールド行列の計算の準備（一覧を作り直したとき）。動くノード（animTouched）の一覧の中の位置と、
-   * 前に計算したときのローカル行列を覚える所を作る
+   * フレームごとのワールド行列の計算の準備（一覧を作り直したとき）。ノード番号 → 一覧の中の位置と、変わったノードの印
    */
   trackWorld() {
     const wl = this.worldList;
     this.worldTrusted = false;
     if (!wl) { this.worldTrack = null; return; }
     const at = new Map(wl.map((o, i) => [o, i]));
-    const objs = [], idx = [];
-    for (const ni of this.animTouched) {
-      const o = this.built.nodeObjects[ni], i = at.get(o);
-      if (i !== undefined) { objs.push(o); idx.push(i); }
-    }
-    this.worldTrack = { objs, idx: Int32Array.from(idx), prev: new Float64Array(objs.length * 16), dirty: new Uint8Array(wl.length) };
-  }
-
-  /**
-   * 動くノードの下のワールド行列を計算し直す（フレームを変えただけのとき）。前のフレームからローカル行列が変わった
-   * ノードとその子孫だけ（ほかは前の計算のまま正しい。キーが平らなコントローラーなど）。覚えた行列が当てにならないとき
-   * （ほかの所でワールド行列を計算した: worldTrusted が false）は、一覧のすべてを計算する。計算した数を返す
-   */
-  updateWorldPartial() {
-    const wl = this.worldList, t = this.worldTrack;
-    const { objs, idx, prev, dirty } = t;
-    if (!this.worldTrusted) {
-      for (let k = 0; k < objs.length; k++) prev.set(objs[k].matrix.elements, k * 16);
-      dirty.fill(0);
-      updateWorldList(wl);
-      this.worldTrusted = true;
-      return wl.length;
-    }
-    for (let k = 0; k < objs.length; k++) {
-      const e = objs[k].matrix.elements, o = k * 16;
-      for (let j = 0; j < 16; j++) {
-        if (prev[o + j] !== e[j]) {
-          prev.set(e, o);
-          dirty[idx[k]] = 1;
-          break;
-        }
-      }
-    }
-    return updateWorldListDirty(wl, dirty);
+    const pos = new Int32Array(this.built.nodeObjects.length).fill(-1);
+    this.built.nodeObjects.forEach((o, ni) => { const i = at.get(o); if (i !== undefined) pos[ni] = i; });
+    this.worldTrack = { pos, dirty: new Uint8Array(wl.length), fast: false, key: null };
   }
 
   /** @param light 再生中など、パネルの情報の更新を省くとき */
@@ -2634,10 +2624,20 @@ class ViewerApp {
     let tSub = pr ? performance.now() : 0;
     if (partial && !this.worldNeedsFull && this.touchedRoots) {
       // 動くノードの下だけ。木をたどらずに、親が先の平らな一覧で計算する（sceneBuilder.js）。前のフレームから
-      // ローカル行列が変わったノードの下だけ（updateWorldPartial）
-      if (this.worldList) {
-        const n = this.updateWorldPartial();
-        if (pr) pr.count('world', n, this.worldList.length);
+      // リグの結果が変わったノードの下だけ（applyFrameInner の fast）
+      const wl = this.worldList, wt = this.worldTrack;
+      if (wl) {
+        let n;
+        if (wt.fast) n = updateWorldListDirty(wl, wt.dirty);
+        else {
+          // すべて組み立て直したフレーム: 一覧のすべてを計算する（次のフレームからは変わったノードの下だけ）
+          wt.dirty.fill(0);
+          updateWorldList(wl);
+          n = wl.length;
+          this.worldTrusted = true;
+        }
+        wt.fast = false;
+        if (pr) pr.count('world', n, wl.length);
       } else for (const o of this.touchedRoots) o.updateMatrixWorld(true);
     } else {
       this.built.root.updateMatrixWorld(true);
@@ -2690,10 +2690,7 @@ class ViewerApp {
   syncGizmo(force = false, worldReady = false) {
     if (!this.gizmo || this.selected < 0 || !this.pose) return;
     if (!force && !this.gizmo.object) return;
-    if (!worldReady) {
-      this.built.root.updateMatrixWorld(true);
-      this.worldTrusted = false;            // フレームごとの計算で覚えた行列は使わない（updateWorldPartial）
-    }
+    if (!worldReady) this.built.root.updateMatrixWorld(true);
     this.pose.frameMatrix(this.selected, this.poseFrame.matrix);
     const p = this.pose.get(this.selected);
     this.poseProxy.position.fromArray(p.t);
@@ -2728,7 +2725,6 @@ class ViewerApp {
   gizmoGroupStart() {
     if (!this.pose || this.selection.length < 2 || this.selected < 0) return null;
     this.built.root.updateMatrixWorld(true);
-    this.worldTrusted = false;              // フレームごとの計算で覚えた行列は使わない（updateWorldPartial）
     const others = this.gizmoNodes().slice(1)
       .map((ni) => ({ ni, start: this.pose.get(ni), frame: this.pose.frameMatrix(ni, new Matrix4()) }));
     if (!others.length) return null;
@@ -3081,7 +3077,6 @@ class ViewerApp {
       for (let v = 0; v < e.vertexCount; v += step) box.expandByPoint(vertexWorldPosition(e, v, this.settings.skin, _v2));
     }
     this.built.root.updateMatrixWorld(true);
-    this.worldTrusted = false;              // フレームごとの計算で覚えた行列は使わない（updateWorldPartial）
     for (const it of this.curves.items) {                // 表示中のカーブ（ツールバーでカーブを隠していれば含めない）
       if (!it || !it.line.visible) continue;
       const pos = it.line.geometry.getAttribute('position');
