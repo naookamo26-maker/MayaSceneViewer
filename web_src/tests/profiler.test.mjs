@@ -396,5 +396,5 @@ test('描画の準備（行列の確認・まとめたメッシュへの写し�
   assert.deepEqual(s.world, { n: 150, total: 1000 });
   const text = profilerText(prof, {});
   assert.ok(text.includes('ワールド行列の計算 0.00 ms（150 / 1000 個）'), text);
-  assert.ok(text.includes('描画のうち、準備（行列の確認・まとめて描くメッシュへの写し）: 1.00 ms'), text);
+  assert.ok(text.includes('描画のうち、準備: 1.00 ms（行列の確認 0.00 ms'), text);
 });

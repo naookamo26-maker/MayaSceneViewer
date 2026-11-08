@@ -31,6 +31,13 @@ export const PARTS = [
  * 種類の分類も初めて求めるので、いつもの 2〜5 倍かかる（記録を始めた直後に跳ねる）。計算はするので、そのあとは正しく測れる
  */
 export const WARM_FRAMES = 5;
+
+/** 描画の準備の内訳 */
+export const PREP_PARTS = [
+  { key: 'check', label: '行列の確認' },
+  { key: 'batch', label: 'まとめたメッシュへの写し' },
+  { key: 'skin', label: 'スキン付きメッシュのまとめ' },
+];
 const MAX_FRAMES = 5000;               // 覚えるフレームの数（古いものから捨てる。種類ごとの集計は捨てない）
 export const NODE_ROWS = 100;          // ノードごとの表に出す数（時間の大きい順）
 const CON_RE = /Constraint$|^lookAt$/;
@@ -244,11 +251,16 @@ export class EvalProfiler {
    * 描画の時間。直前に記録したフレームのものとして足す。ms: renderer.render、prep: その前の準備（行列の確認・
    * まとめて描くメッシュへの写し）。描画（CPU 側）には両方を足す
    */
-  addRender(ms, info = null, prep = 0) {
+  addRender(ms, info = null, prep = 0, prepParts = null) {
     const c = this.pending;
     if (!this.recording || !c) return;
     c.parts.render = (c.parts.render || 0) + ms + prep;
     c.renderPrep = (c.renderPrep || 0) + prep;
+    // 準備の内訳（check: 行列の確認、batch: まとめたメッシュへの写し、skin: スキン付きメッシュのまとめ）
+    if (prepParts) {
+      const p = c.prepParts || (c.prepParts = { check: 0, batch: 0, skin: 0 });
+      for (const k of PREP_PARTS) p[k.key] += prepParts[k.key] || 0;
+    }
     // ドローコール・ポリゴン数（三角形）・ライン（three.js の renderer.info.render。描画のたびに数え直される）
     if (info) c.draw = { calls: info.calls || 0, triangles: info.triangles || 0, lines: info.lines || 0 };
     this.pending = null;
@@ -280,6 +292,8 @@ export class EvalProfiler {
     sub.other = Math.max(0, avg.scene - SUB_PARTS.reduce((a, p) => a + sub[p.key], 0));
     const drawn = fr.filter((e) => e.draw);
     const renderPrep = fr.reduce((a, e) => a + (e.renderPrep || 0), 0) / n;
+    const prepParts = {};
+    for (const p of PREP_PARTS) prepParts[p.key] = fr.reduce((a, e) => a + ((e.prepParts && e.prepParts[p.key]) || 0), 0) / n;
     // ワールド行列を計算した数（前のフレームから変わったノードの下だけ）の平均
     const wc = fr.filter((e) => e.counts && e.counts.world);
     const world = wc.length ? { n: wc.reduce((a, e) => a + e.counts.world[0], 0) / wc.length, total: wc[wc.length - 1].counts.world[1] } : null;
@@ -290,7 +304,7 @@ export class EvalProfiler {
     } : null;
     return {
       frames: fr.length, hits, evaluated: fr.length - hits, avg, sub, draw, total: total / n, max, prep, warmed: this.warmed,
-      renderPrep, world,
+      renderPrep, prepParts, world,
       fps: nInterval ? 1000 / (sumInterval / nInterval) : null,
     };
   }
@@ -435,7 +449,7 @@ export function profilerText(prof, ctx) {
   for (const p of PARTS) L.push(`  ${pad(p.label, 36)}${ms(s.avg[p.key])}`);
   const subText = (p) => `${p.label} ${ms(s.sub[p.key])}` + (p.key === 'world' && s.world ? `（${Math.round(s.world.n)} / ${s.world.total} 個）` : '');
   L.push(`  行列の更新・表示・その他の内訳: ${SUB_PARTS.map(subText).join('・')}・その他 ${ms(s.sub.other)}`);
-  if (s.draw) L.push(`  描画のうち、準備（行列の確認・まとめて描くメッシュへの写し）: ${ms(s.renderPrep)}`);
+  if (s.draw) L.push(`  描画のうち、準備: ${ms(s.renderPrep)}（${PREP_PARTS.map((p) => `${p.label} ${ms(s.prepParts[p.key])}`).join('・')}）`);
   if (s.draw) L.push(`  ドローコール ${Math.round(s.draw.calls)}・ポリゴン数（三角形） ${Math.round(s.draw.triangles)}・ライン ${Math.round(s.draw.lines)}（1 フレームの平均）`);
   L.push(`  ${pad('合計（平均）', 36)}${ms(s.total)}　最大 ${ms(s.max)}`);
   const split = (pred) => {

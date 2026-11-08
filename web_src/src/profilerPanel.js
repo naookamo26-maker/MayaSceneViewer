@@ -2,7 +2,7 @@
 //   * フレームの内訳: 1 フレームごとの積み上げ棒（記録した順。右がいちばん新しい）。フレームバジェット（1000 / fps）の線
 //   * リグの評価の内訳: 種類ごと（何で動くノードか）・経路ごと（専用の評価か、汎用の経路に任せたか、その理由）
 //   * 再生キャッシュとワーカーの状態
-import { PARTS, SUB_PARTS, cacheInfo, checkText, formatBytes, errorText, planInfo, profilerText, workerStartText } from './profiler.js';
+import { PARTS, PREP_PARTS, SUB_PARTS, cacheInfo, checkText, formatBytes, errorText, planInfo, profilerText, workerStartText } from './profiler.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -209,7 +209,8 @@ export class ProfilerPanel {
       detail.push(`<span><b>行列の更新・表示・その他</b>（平均 ${msText(s.avg.scene)}）: `
         + `${SUB_PARTS.map(sub).join('・')}・その他 ${msText(s.sub.other)}</span>`);
       if (s.draw) {
-        detail.push(`<span><b>描画</b>（平均 ${msText(s.avg.render)}。うち準備 ${msText(s.renderPrep)}）: ドローコール ${num(Math.round(s.draw.calls))}・`
+        detail.push(`<span><b>描画</b>（平均 ${msText(s.avg.render)}。うち準備 ${msText(s.renderPrep)}: `
+          + `${PREP_PARTS.map((p) => `${esc(p.label)} ${msText(s.prepParts[p.key])}`).join('・')}）: ドローコール ${num(Math.round(s.draw.calls))}・`
           + `ポリゴン数（三角形） ${num(Math.round(s.draw.triangles))}${s.draw.lines ? `・ライン ${num(Math.round(s.draw.lines))}` : ''}</span>`);
       }
     }
@@ -295,7 +296,9 @@ export class ProfilerPanel {
     const extra = [];
     if (e.sub) extra.push(`行列の更新・表示の内訳: ${SUB_PARTS.map((p) => `${esc(p.label)} ${msText(e.sub[p.key] || 0)}`).join('・')}`);
     if (e.counts && e.counts.world) extra.push(`ワールド行列を計算した数 ${num(e.counts.world[0])} / ${num(e.counts.world[1])}`);
-    if (e.renderPrep) extra.push(`描画の準備（行列の確認・まとめて描くメッシュへの写し） ${msText(e.renderPrep)}`);
+    if (e.renderPrep) {
+      extra.push(`描画の準備 ${msText(e.renderPrep)}${e.prepParts ? `（${PREP_PARTS.map((p) => `${esc(p.label)} ${msText(e.prepParts[p.key])}`).join('・')}）` : ''}`);
+    }
     if (e.draw) extra.push(`ドローコール ${num(e.draw.calls)}・ポリゴン数（三角形） ${num(e.draw.triangles)}`);
     if (e.skip) extra.push(`<span class="warn">${esc(e.prep || '準備中')}のため、集計に入れていません</span>`);
     tip.innerHTML = `<b>フレーム ${esc(e.f)}</b>・${esc(path)}・合計 <b>${msText(total)}</b>${e.interval ? `・前のフレームから ${msText(e.interval)}` : ''}<div class="prof-tip-items">${items.join('')}</div>`
