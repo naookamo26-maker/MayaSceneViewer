@@ -339,3 +339,25 @@ test('いろいろな追加分を行き来しても、毎回新しく評価し�
     }
   }
 });
+
+test('再生キャッシュの行列は 12 個ずつ持ち（最後の行 0, 0, 0, 1 を省く）、読むとビット単位で同じ。最後の行が違えば 16 個ずつ', async () => {
+  const { packSnapshotMats, readSnapshotMat, snapshotStride } = await import('../src/rig.js');
+  const a = new Matrix4().makeRotationX(0.3).setPosition(1.5, -2, 3e-7);
+  a.elements[1] = -0;                                         // -0 もそのまま戻る
+  const b = new Matrix4().makeScale(2, 3, -0.5);
+  const moving = new Set([4, 7]);
+  const target = new Map([[4, a], [7, b]]);
+  const packed = packSnapshotMats(target, moving);
+  assert.equal(packed.length, 24);
+  assert.equal(snapshotStride(packed, 2), 12);
+  for (const [i, m] of [[0, a], [1, b]]) {
+    const back = readSnapshotMat(packed, 12, i, new Matrix4()).elements;
+    m.elements.forEach((v, k) => assert.ok(Object.is(back[k], v), `${i} の ${k}: ${back[k]} と ${v}`));
+  }
+  // 最後の行が 0, 0, 0, 1 でない行列（射影）があれば、そのフレームは 16 個ずつ
+  const p = new Matrix4().makePerspective(-1, 1, 1, -1, 0.1, 10);
+  const full = packSnapshotMats(new Map([[4, a], [7, p]]), moving);
+  assert.equal(snapshotStride(full, 2), 16);
+  assert.deepEqual([...readSnapshotMat(full, 16, 1, new Matrix4()).elements], [...p.elements]);
+  assert.equal(snapshotStride(new Float64Array(20), 2), 0, '数が合わない');
+});

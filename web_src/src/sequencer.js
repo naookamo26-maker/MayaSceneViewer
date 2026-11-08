@@ -36,6 +36,52 @@ export function shotTime(shot, seq) {
   return shot.startFrame + local;
 }
 
+/**
+ * シーケンスを from から再生したとき（end まで行ったら start に戻る）に表示する、シーンの整数のフレーム（通る順・重ねない）。
+ * 再生キャッシュを作る順番に使う。整数でないフレーム（ショットの scale が 1 でないとき）はキャッシュしないので除く
+ */
+export function sequenceSceneFrames(shots, start, end, from) {
+  const out = [], seen = new Set();
+  const s0 = Math.ceil(start), e0 = Math.floor(end);
+  if (!(e0 >= s0)) return out;
+  const f0 = Math.min(Math.max(Math.floor(from), s0), e0);
+  for (let i = 0; i <= e0 - s0; i++) {
+    const seq = s0 + ((f0 - s0 + i) % (e0 - s0 + 1));
+    const shot = activeShot(shots, seq);
+    if (!shot) continue;
+    const t = shotTime(shot, seq);
+    const r = Math.round(t);
+    if (Math.abs(t - r) > 1e-9 || seen.has(r)) continue;
+    seen.add(r);
+    out.push(r);
+  }
+  return out;
+}
+
+/**
+ * 再生キャッシュを作る順番（まだないフレーム）。have(f): もう作ってあるか。
+ *   * シーケンスで見ているとき（follow）: シーケンスをいまの位置から再生したときに通るシーンのフレーム → 残りの再生範囲
+ *   * そうでないとき: いまのフレームから再生範囲の終わり → 先頭からいまのフレーム → シーケンスのショットが指す範囲外のフレーム
+ * opts: { start, end（再生範囲）, frame（いまのフレーム）, sequence（{ shots, start, end } か null）, seqFrame, follow }
+ */
+export function bakeOrder(opts, have) {
+  const out = [], seen = new Set();
+  const add = (f) => { if (seen.has(f)) return; seen.add(f); if (!have(f)) out.push(f); };
+  const s = Math.ceil(opts.start), e = Math.floor(opts.end);
+  const clip = () => {
+    if (!(e >= s)) return;
+    const f0 = Math.min(Math.max(Math.round(opts.frame), s), e);
+    for (let f = f0; f <= e; f++) add(f);
+    for (let f = s; f < f0; f++) add(f);
+  };
+  const seq = () => {
+    const q = opts.sequence;
+    if (q) for (const f of sequenceSceneFrames(q.shots, q.start, q.end, opts.seqFrame ?? q.start)) add(f);
+  };
+  if (opts.follow && opts.sequence) { seq(); clip(); } else { clip(); seq(); }
+  return out;
+}
+
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtF = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(1));

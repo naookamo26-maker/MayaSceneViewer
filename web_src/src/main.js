@@ -26,12 +26,12 @@ import { connectBridge, isQtHost } from './bridge.js';
 import { History, sameChanges } from './history.js';
 import { compareGpuCpuSkinning } from './skinCheck.js';
 import { AnimationClip, worldRotationDegrees } from './animation.js';
-import { RigEvaluator, hiddenByProps } from './rig.js';
+import { RigEvaluator, hiddenByProps, readSnapshotMat, snapshotStride } from './rig.js';
 import { Timeline } from './timeline.js';
 import { CurveOverlay } from './curveOverlay.js';
 import { TEMPLATE_HEX, isTemplated } from './displayType.js';
 import { CameraIcons, cameraFrustum, cameraParams } from './cameraView.js';
-import { SequencerPanel, activeShot, shotStarts, shotTime } from './sequencer.js';
+import { SequencerPanel, activeShot, bakeOrder, shotStarts, shotTime } from './sequencer.js';
 import { CurveEditor } from './curveEditor.js';
 import { warningsText } from './warnGroups.js';
 import { BakeWorkers } from './bakeWorkers.js';
@@ -1473,6 +1473,8 @@ class ViewerApp {
     const nodes = this.data.nodes;
     const nameOf = (ni) => (nodes[ni] && (nodes[ni].path || nodes[ni].name)) || `ノード ${ni}`;
     const staticLocal = (ni) => this.built.nodeObjects[ni].userData.fileMatrix;
+    // 再生キャッシュの並び（12 個か 16 個ずつ）の i 番目の行列の 16 個の要素
+    const snapMat = (mats, i) => readSnapshotMat(mats, snapshotStride(mats, this.rig.moving.size), i, new Matrix4()).elements;
     const fresh = (compiled) => {
       // 再生に使っている AnimationClip とは別に作る（評価の途中の値を共有しない）
       const clip = new AnimationClip(this.clip.raw);
@@ -1512,7 +1514,7 @@ class ViewerApp {
     const snap = this.rig.snapshots.get(f);
     if (snap) {
       const order = new Map([...this.rig.moving].map((ni, i) => [ni, i]));
-      rig.push(compareWith('再生キャッシュ（覚えた値）', (ni) => (order.has(ni) ? snap.mats.subarray(order.get(ni) * 16, order.get(ni) * 16 + 16) : null)));
+      rig.push(compareWith('再生キャッシュ（覚えた値）', (ni) => (order.has(ni) ? snapMat(snap.mats, order.get(ni)) : null)));
     }
     const posed = !!(this.pose && this.pose.size);
     if (!posed) rig.push(compareWith('いま表示している値', (ni) => this.built.nodeObjects[ni].userData.fileMatrix.elements));
@@ -1534,7 +1536,7 @@ class ViewerApp {
         const fr = r.frames.find((x) => x.f === f);
         if (!fr) return;
         const order = new Map([...b.rig.moving].map((ni, i) => [ni, i]));
-        rig.push(compareWith(label, (ni) => (order.has(ni) ? fr.mats.subarray(order.get(ni) * 16, order.get(ni) * 16 + 16) : null)));
+        rig.push(compareWith(label, (ni) => (order.has(ni) ? snapMat(fr.mats, order.get(ni)) : null)));
       };
       byWorker([f], 'ワーカーと同じ作り方（このフレームから評価）');
       const start = Math.ceil(this.clip.start);
@@ -1547,7 +1549,7 @@ class ViewerApp {
         const r = await this.bakers.probe([f], fresh);
         const fr = r && r.frames.find((x) => x.f === f);
         if (!fr) { rig.push({ label: `${label}: 使えません`, compared: 0, diff: [] }); continue; }
-        rig.push(compareWith(label + info(r.info), (ni) => (order.has(ni) ? fr.mats.subarray(order.get(ni) * 16, order.get(ni) * 16 + 16) : null)));
+        rig.push(compareWith(label + info(r.info), (ni) => (order.has(ni) ? snapMat(fr.mats, order.get(ni)) : null)));
       }
     }
     // 表示: 親から直接たどったワールド行列と比べる（非表示のものは計算を省いているので比べない）
@@ -1727,28 +1729,41 @@ class ViewerApp {
    * 再生で使う追加分（updatePlaybackPose）のレイヤーを作る。ポーズ確認でリグに効く追加分を変えると、新しいレイヤーを
    * 影響を受けるノードだけ計算して作る（前と同じ追加分に戻せば、前のレイヤーをそのまま使う）
    */
+  /** 再生キャッシュを作る順番（まだないフレーム。sequencer.js の bakeOrder）。have(f): もう作ってあるか */
+  bakeOrder(have) {
+    return bakeOrder({
+      start: this.clip.start, end: this.clip.end, frame: this.frame,
+      sequence: this.sequence, seqFrame: this.seqFrame, follow: this.seqFollow,
+    }, have);
+  }
+
   scheduleBake() {
     clearTimeout(this.bakeTimer);
     if (this.bakeHandle) { (window.cancelIdleCallback || clearTimeout)(this.bakeHandle); this.bakeHandle = null; }
     if (!this.rig || !this.hasTimeline || this.rig.playbackFull) { this.bakers.cancel(); return; }
     const rig = this.rig;
     // Web Worker で作る（画面のスレッドを止めない・コアの数だけ並べる）。作っている途中なら、再生中も続ける
+    // 作る順番は、いまの位置から再生したときに通る順（bakeOrder。シーケンスで見ているときはショットの順）。位置が飛んだとき
+    // （シークした・シーケンスで見るを切り替えた）は、作っている途中でも残りを並べ替える（再生中は 1 フレームずつなので変えない）
+    const anchor = this.sequence && this.seqFollow ? `s${this.seqFrame}` : `f${this.frame}`;
+    const prev = this.bakeAnchor;
+    this.bakeAnchor = anchor;
+    const jumped = !prev || prev[0] !== anchor[0] || Math.abs(+anchor.slice(1) - +prev.slice(1)) > 2;
     const pose = this.bakers.available ? rig.playbackPoseData() : null;
     if (pose) {
       const todo = () => {
         if (rig !== this.rig || !this.clip) return [];
-        const L = rig.layerFor(pose.keys), out = [];
-        for (let f = Math.ceil(this.clip.start); f <= this.clip.end; f++) if (!(L && L.frames.has(f))) out.push(f);
-        return out;
+        const L = rig.layerFor(pose.keys);
+        return this.bakeOrder((f) => !!(L && L.frames.has(f)));
       };
-      if (this.bakers.request(pose, todo)) return;
+      if (this.bakers.request(pose, todo, jumped)) return;
     }
     const idle = window.requestIdleCallback || ((fn) => setTimeout(() => fn({ timeRemaining: () => 8 }), 50));
     const step = (deadline) => {
       this.bakeHandle = null;
       if (rig !== this.rig || !this.clip || rig.playbackFull) return;
-      const todo = [], have = rig.snapshots;
-      for (let f = Math.ceil(this.clip.start); f <= this.clip.end; f++) if (!have.has(f)) todo.push(f);
+      const have = rig.snapshots;
+      const todo = this.bakeOrder((f) => have.has(f));
       if (!todo.length) return;
       // 空き時間が残っているあいだ続ける（作り終えたら、いまのフレームの状態に戻す）
       const made = rig.bake(todo, () => deadline.timeRemaining() > 4);
