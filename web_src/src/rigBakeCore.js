@@ -72,6 +72,7 @@ export function bakeFrames(baker, req) {
   const scratch = new Map();
   const frames = [];
   const t0 = performance.now();
+  rig.setCachePrecision(!!req.f32);                     // 再生キャッシュの精度（画面側の設定）
   for (const f of req.frames) {
     const tf = baker.timing.firstMs === null ? performance.now() : 0;
     rig.evaluate(f, poseOf, scratch, poseKey);

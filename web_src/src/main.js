@@ -64,6 +64,7 @@ const DEFAULTS = {
   cameraGate: true,              // カメラから見るとき、解像度ゲートの外側を暗くする
   hud: true,                     // ヘッドアップディスプレイ（再生のフレームレート）
   playbackCacheMB: 512,          // リグの再生キャッシュの上限（MB。0 なら使わない。次回の起動でも使う）
+  playbackCachePrecision: 'float32',   // 再生キャッシュの精度（float32: 2 倍のフレーム・float64: 値をそのまま。次回の起動でも使う）
   pickMode: 'object',            // クリックで選ぶもの: 'object'（オブジェクト）・'vertex'（頂点とそのウェイト）
   pickAll: false,                // Maya で選択できないもの（テンプレート・リファレンス）もクリックで選ぶ
 };
@@ -152,6 +153,9 @@ class ViewerApp {
         b.loadSetting('playbackCacheMB', (v) => {
           const n = Number(v);
           if (v !== '' && v !== null && Number.isFinite(n) && n >= 0) this.setSetting('playbackCacheMB', n, { restoring: true });
+        });
+        b.loadSetting('playbackCachePrecision', (v) => {
+          if (v === 'float32' || v === 'float64') this.setSetting('playbackCachePrecision', v, { restoring: true });
         });
       }
       this.historyChanged(this.history);
@@ -879,8 +883,13 @@ class ViewerApp {
       // 次回の起動でも使う（Python の QSettings に保存する。読み戻したときは保存し直さない）
       if (!opts.restoring && this.bridge && this.bridge.saveSetting) this.bridge.saveSetting(key, String(value));
     }
+    if (key === 'playbackCachePrecision') {
+      value = value === 'float64' ? 'float64' : 'float32';
+      if (!opts.restoring && this.bridge && this.bridge.saveSetting) this.bridge.saveSetting(key, value);
+    }
     this.settings[key] = value;
     if (key === 'playbackCacheMB') { this.updateCacheView(); this.scheduleBake(); }
+    if (key === 'playbackCachePrecision') this.applyCachePrecision();
     if (key === 'gizmoSize' && this.gizmo) this.gizmo.setSize(value);
     if (key === 'space' && this.gizmo) this.gizmo.setSpace(value);
     if (key === 'grid' && this.grid) this.grid.visible = !!value;      // シーンがなくても切り替えられる
@@ -1364,6 +1373,8 @@ class ViewerApp {
     // 姿勢の基準が変わったときに子のスケール補正も掛け直すよう、動くノードとその子を覚えておく
     this.rig = new RigEvaluator(clip, this.data.nodes, (ni) => this.built.nodeObjects[ni].userData.fileMatrix);
     this.rig.setPlaybackLimit(this.settings.playbackCacheMB * MB);
+    this.rig.setCachePrecision(this.settings.playbackCachePrecision !== 'float64');
+    this.bakers.f32 = this.rig.cacheFloat32;
     // ワーカーにも同じアニメーションを渡す（受け取った JSON の文字列があれば、それを渡す。複製より速い）
     // 文字列がなければ、キーのデータを型付き配列にしたもの（数のリストのままより、送る・受け取るときの複製がずっと速い）
     const compact = clip.takeKeyArrays(anim);
@@ -1704,6 +1715,7 @@ class ViewerApp {
     this.cacheViewRig = rig;
     this.cacheViewFrames = frames;
     this.timeline.setCached(st && st.frames ? (f) => frames.has(f) : null);
+    if (this.seqPanel) this.seqPanel.setCached(st && st.frames ? (f) => frames.has(f) : null);   // シーケンサの帯も
     // 再生キャッシュを作り終えた（読み込みの経過として Qt のログに出す。アニメーションごとに 1 回）
     const bc = this.bakeClock;
     if (bc && bc.rig === rig && !bc.reported && st && st.limit && frames) {
@@ -1729,6 +1741,17 @@ class ViewerApp {
    * 再生で使う追加分（updatePlaybackPose）のレイヤーを作る。ポーズ確認でリグに効く追加分を変えると、新しいレイヤーを
    * 影響を受けるノードだけ計算して作る（前と同じ追加分に戻せば、前のレイヤーをそのまま使う）
    */
+  /** 再生キャッシュの精度を評価器・ワーカーに合わせる（変えたら作り直す） */
+  applyCachePrecision() {
+    const f32 = this.settings.playbackCachePrecision !== 'float64';
+    this.bakers.f32 = f32;
+    if (!this.rig || this.rig.cacheFloat32 === f32) return;
+    this.bakers.cancel();
+    this.rig.setCachePrecision(f32);
+    this.updateCacheView();
+    this.scheduleBake();
+  }
+
   /** 再生キャッシュを作る順番（まだないフレーム。sequencer.js の bakeOrder）。have(f): もう作ってあるか */
   bakeOrder(have) {
     return bakeOrder({

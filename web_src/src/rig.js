@@ -142,12 +142,15 @@ const AFFINE_TOL = 1e-12;
 const isAffine = (e) => Math.abs(e[3]) <= AFFINE_TOL && Math.abs(e[7]) <= AFFINE_TOL && Math.abs(e[11]) <= AFFINE_TOL
   && Math.abs(e[15] - 1) <= AFFINE_TOL;
 
-/** 動くノード（moving の順）のローカル行列（target）を、再生キャッシュの並びにする */
-export function packSnapshotMats(target, moving) {
+/**
+ * 動くノード（moving の順）のローカル行列（target）を、再生キャッシュの並びにする。f32: 32 ビットの数で持つ（大きさが半分。
+ * 値は 32 ビットに丸める。描画は GPU で 32 ビットなので、見た目にはほぼ出ない）
+ */
+export function packSnapshotMats(target, moving, f32 = false) {
   let affine = true;
   for (const ni of moving) if (!isAffine(target.get(ni).elements)) { affine = false; break; }
   const stride = affine ? 12 : 16;
-  const mats = new Float64Array(moving.size * stride);
+  const mats = new (f32 ? Float32Array : Float64Array)(moving.size * stride);
   let o = 0;
   for (const ni of moving) {
     const e = target.get(ni).elements;
@@ -156,6 +159,16 @@ export function packSnapshotMats(target, moving) {
     o += stride;
   }
   return mats;
+}
+
+/** 2 つのキャッシュの並びが同じか（型・長さ・値。0 と -0 も区別する） */
+function sameMats(a, b) {
+  if (a.constructor !== b.constructor || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i], y = b[i];
+    if (x !== y || (x === 0 && 1 / x !== 1 / y)) return false;
+  }
+  return true;
 }
 
 /** 再生キャッシュの並びの、1 つの行列の数の個数（12 か 16。count: 動くノードの数）。どちらでもなければ 0 */
@@ -558,6 +571,7 @@ export class RigEvaluator {
     this.layer = null;                       // いまのフレームの評価に使ったレイヤー
     this.play = null;                        // 再生で使う追加分 { poseOf, key, keys }（setPlaybackPose。null = いまの追加分）
     this.snapshotBytes = 0;                  // 再生キャッシュの大きさ（全レイヤー。カーブの形・属性の値を含む目安）
+    this.cacheFloat32 = false;                               // 再生キャッシュを 32 ビットの数で持つか（setCachePrecision）
     this.frameBytes = this.moving.size * 96 + SNAPSHOT_BASE;    // 1 フレームの大きさの見込み（12 個ずつ。覚えたフレームの最大）
     this.countedCurves = new WeakSet();      // 大きさを数えたカーブの値（時間で変わらない形は全フレームで同じものを使う）
     this.playbackLimit = 512 * 1024 * 1024;
@@ -769,6 +783,33 @@ export class RigEvaluator {
     this.current = null;
   }
 
+  /**
+   * 変化のないフレーム: 隣のフレーム（f−1・f+1）と行列がすべて同じなら、そのデータを共有する（snap.mats を置き換え、
+   * 共有元に sharers として覚える。共有したフレームは行列の分を数えない）。共有したら true
+   */
+  shareMats(layer, f, snap) {
+    for (const g of [f - 1, f + 1]) {
+      const other = layer.frames.get(g);
+      if (!other) continue;
+      const owner = other.owner || other;
+      if (owner === snap || !sameMats(owner.mats, snap.mats)) continue;
+      snap.mats = owner.mats;
+      snap.owner = owner;
+      (owner.sharers || (owner.sharers = [])).push(snap);
+      return true;
+    }
+    return false;
+  }
+
+  /** 再生キャッシュの精度（true: 32 ビット）。変えたら覚えたフレームを捨てる（作り直す） */
+  setCachePrecision(f32) {
+    f32 = !!f32;
+    if (this.cacheFloat32 === f32) return;
+    this.cacheFloat32 = f32;
+    this.frameBytes = this.moving.size * (f32 ? 48 : 96) + SNAPSHOT_BASE;
+    this.clearPlayback();
+  }
+
   /** 再生キャッシュの上限（バイト。0 なら使わない）。いまの大きさが上限を超えたら、古いレイヤー・先に覚えたフレームから捨てる */
   setPlaybackLimit(bytes) {
     this.playbackLimit = Math.max(0, bytes || 0);
@@ -778,10 +819,25 @@ export class RigEvaluator {
     for (const L of order) {
       for (const [f, snap] of L.frames) {
         if (this.snapshotBytes <= this.playbackLimit) return;
-        if (snap === this.current) continue;
-        L.frames.delete(f);
-        L.bytes -= snap.bytes;
-        this.snapshotBytes -= snap.bytes;
+        if (snap === this.current || !L.frames.has(f)) continue;
+        // 共有元を捨てるときは、共有しているフレームも捨てる（数えていない行列のデータが残らないように）
+        for (const x of [snap, ...(snap.sharers || [])]) {
+          if (x === this.current) {
+            // いま使っているフレームは捨てない。共有元を捨てるなら、これを新しい共有元にして行列の分を数える
+            if (x !== snap && x.owner === snap) {
+              x.owner = null;
+              x.bytes += snap.mats.byteLength;
+              L.bytes += snap.mats.byteLength;
+              this.snapshotBytes += snap.mats.byteLength;
+            }
+            continue;
+          }
+          let found = false;
+          for (const [g, y] of L.frames) if (y === x) { L.frames.delete(g); found = true; break; }
+          if (!found) continue;                          // もう捨ててある
+          L.bytes -= x.bytes;
+          this.snapshotBytes -= x.bytes;
+        }
       }
       if (!L.frames.size && L !== this.layer) this.dropLayer(L);
     }
@@ -956,10 +1012,10 @@ export class RigEvaluator {
 
   /** フレーム f の動くノードのローカル行列を、再生キャッシュのレイヤー layer に入れる */
   storeSnapshot(f, layer, target) {
-    const mats = packSnapshotMats(target, this.moving);
+    const mats = packSnapshotMats(target, this.moving, this.cacheFloat32);
     this.current = { mats, props: null, curves: new Map(), bytes: 0, layer };
     layer.frames.set(f, this.current);
-    this.addSnapshotBytes(this.current, mats.byteLength + SNAPSHOT_BASE);
+    this.addSnapshotBytes(this.current, this.shareMats(layer, f, this.current) ? SNAPSHOT_BASE : mats.byteLength + SNAPSHOT_BASE);
   }
 
   /** フレーム f が（再生で使うレイヤーの）再生キャッシュにあるか */
@@ -1035,7 +1091,7 @@ export class RigEvaluator {
       if (!this.roomFor(L)) break;
       const snap = { mats: fr.mats, props: fr.props || null, curves: fr.curves || new Map(), bytes: 0, layer: L };
       L.frames.set(fr.f, snap);
-      let bytes = fr.mats.byteLength + SNAPSHOT_BASE;
+      let bytes = this.shareMats(L, fr.f, snap) ? SNAPSHOT_BASE : fr.mats.byteLength + SNAPSHOT_BASE;
       if (snap.props) bytes += snap.props.reduce((k, p) => k + 64 + Object.keys(p.values).length * 48, 64);
       for (const v of snap.curves.values()) {
         if (v && v.isCurve && !this.countedCurves.has(v)) { this.countedCurves.add(v); bytes += 160 + v.cvs.length * 64; }

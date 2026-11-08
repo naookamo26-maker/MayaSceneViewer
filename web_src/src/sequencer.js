@@ -59,6 +59,29 @@ export function sequenceSceneFrames(shots, start, end, from) {
 }
 
 /**
+ * シーケンスのフレームのうち、再生キャッシュにあるもの（そのショットのシーンのフレームが整数で、has(f) が true）を、
+ * 続いている範囲 [最初, 最後] の並びにする（シーケンサの溜まり具合の帯）
+ */
+export function sequenceCachedRuns(shots, start, end, has) {
+  const runs = [];
+  const s0 = Math.ceil(start), e0 = Math.floor(end);
+  let run = null;
+  for (let f = s0; f <= e0 + 1; f++) {
+    let ok = false;
+    if (f <= e0) {
+      const shot = activeShot(shots, f);
+      if (shot) {
+        const t = shotTime(shot, f), r = Math.round(t);
+        ok = Math.abs(t - r) <= 1e-9 && has(r);
+      }
+    }
+    if (ok) { if (run === null) run = f; continue; }
+    if (run !== null) { runs.push([run, f - 1]); run = null; }
+  }
+  return runs;
+}
+
+/**
  * 再生キャッシュを作る順番（まだないフレーム）。have(f): もう作ってあるか。
  *   * シーケンスで見ているとき（follow）: シーケンスをいまの位置から再生したときに通るシーンのフレーム → 残りの再生範囲
  *   * そうでないとき: いまのフレームから再生範囲の終わり → 先頭からいまのフレーム → シーケンスのショットが指す範囲外のフレーム
@@ -139,6 +162,7 @@ export class SequencerPanel {
   /** @param seq 共通 JSON の sequencer（なければ null でパネルを隠す） @param cameras カメラの一覧（名前の表示用） */
   build(seq, cameras) {
     this.seq = seq && seq.shots && seq.shots.length ? seq : null;
+    this.cachedRuns = null;
     document.body.classList.toggle('has-sequencer', !!this.seq);
     $('sequencer').hidden = !this.seq;
     const rows = $('seq-rows');
@@ -168,13 +192,14 @@ export class SequencerPanel {
       rows.appendChild(row);
     }
     this.buildRuler();
+    this.drawCached();
     $('seq-frame').min = String(this.seq.start);
     $('seq-frame').max = String(this.seq.end);
   }
 
   buildRuler() {
     const ruler = $('seq-ruler');
-    ruler.textContent = '';
+    ruler.querySelectorAll('.seq-tick').forEach((el) => el.remove());   // 目盛りだけ消す（再生キャッシュの帯は残す）
     const span = this.span();
     const step = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].find((s) => span / s <= 12) || 1000;
     for (let f = Math.ceil(this.seq.start / step) * step; f <= this.seq.end; f += step) {
@@ -183,6 +208,37 @@ export class SequencerPanel {
       tick.style.left = `${this.pct(f)}%`;
       tick.textContent = String(f);
       ruler.appendChild(tick);
+    }
+  }
+
+  /**
+   * 再生キャッシュの溜まり具合（ルーラーの下端の緑の帯）。has(f): シーンのフレーム f が再生キャッシュにあるか（null で消す）。
+   * シーケンスのフレームごとに、そのショットのシーンのフレームで見る（整数でないフレームはキャッシュを使わない）
+   */
+  setCached(has) {
+    this.cachedRuns = this.seq && has ? sequenceCachedRuns(this.seq.shots, this.seq.start, this.seq.end, has) : null;
+    this.drawCached();
+  }
+
+  drawCached() {
+    const c = $('seq-cache');
+    if (!c) return;
+    if (!this.cacheObserver && typeof ResizeObserver === 'function') {
+      this.cacheObserver = new ResizeObserver(() => this.drawCached());   // パネルの大きさが変わったら描き直す
+      this.cacheObserver.observe(c);
+    }
+    const w = c.clientWidth, h = c.clientHeight;
+    if (!w || !h) return;
+    const dpr = window.devicePixelRatio || 1;
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+    const g = c.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    if (!this.seq || !this.cachedRuns) return;
+    g.fillStyle = '#5fb37a';
+    for (const [a, b] of this.cachedRuns) {
+      const x0 = Math.floor((this.pct(a) / 100) * w), x1 = Math.ceil((this.pct(b + 1) / 100) * w);
+      g.fillRect(x0, 0, Math.max(x1 - x0, 1), h);
     }
   }
 

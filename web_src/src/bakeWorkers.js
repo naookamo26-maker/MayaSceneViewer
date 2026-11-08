@@ -166,7 +166,7 @@ export class BakeWorkers {
     job.busy++;
     w.frames = frames;
     for (const f of frames) job.inflight.add(f);
-    w.worker.postMessage({ type: 'bake', token: this.token, job: job.id, sig: job.sig, frames, poses: job.poses });
+    w.worker.postMessage({ type: 'bake', token: this.token, job: job.id, sig: job.sig, frames, poses: job.poses, f32: !!this.f32 });
   }
 
   /**

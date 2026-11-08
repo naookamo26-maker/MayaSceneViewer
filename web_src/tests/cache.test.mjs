@@ -371,3 +371,40 @@ test('再生キャッシュの行列は 12 個ずつ持ち（最後の行 0, 0, 
   assert.deepEqual([back[3], back[7], back[11], back[15]], [0, 0, 0, 1]);
   assert.deepEqual(AFFINE_OTHERS(back), AFFINE_OTHERS(c.elements));
 });
+
+test('32 ビットの再生キャッシュ: Float32Array で持ち、読んだ値は 64 ビットの値とごく近い。精度を変えると覚えたフレームを捨てる', () => {
+  const data = load('rig6_mapped');
+  const a = makeRig(data), b = makeRig(data);
+  b.setCachePrecision(true);
+  const frames = framesOf(a).slice(0, 6);
+  for (const f of frames) { a.evaluate(f); b.evaluate(f); }
+  for (const f of frames) {
+    const x = a.evaluate(f, undefined, new Map()), y = b.evaluate(f, undefined, new Map());
+    assert.equal(b.lastPath, 'cache');
+    assert.ok(b.snapshots.get(f).mats instanceof Float32Array);
+    for (const [ni, m] of x) {
+      m.elements.forEach((v, k) => assert.ok(Math.abs(y.get(ni).elements[k] - v) <= 1e-6 * (1 + Math.abs(v)), `フレーム ${f}・${ni}・${k}`));
+    }
+  }
+  assert.ok(b.playbackStats().bytes < a.playbackStats().bytes * 0.6, '大きさがおよそ半分');
+  b.setCachePrecision(false);
+  assert.equal(b.playbackStats().bytes, 0, '精度を変えたら捨てる');
+});
+
+test('変化のないフレームは、隣のフレームと行列のデータを共有し、行列の分を数えない。上限を下げて捨てても数えた大きさが合う', () => {
+  const data = load('rig6_mapped');
+  const rig = makeRig(data);
+  const end = Math.floor(rig.clip.end);
+  // キーの範囲の外（最後のキーより後）は、どのフレームも同じ姿勢
+  const hold = [end + 10, end + 11, end + 12, end + 13];
+  for (const f of hold) rig.evaluate(f);
+  const snaps = hold.map((f) => rig.snapshots.get(f));
+  assert.ok(snaps.slice(1).every((s) => s.owner === snaps[0] && s.mats === snaps[0].mats), '共有する');
+  assert.ok(snaps.slice(1).every((s) => s.bytes < snaps[0].mats.byteLength), '共有したフレームは行列の分を数えない');
+  const sum = () => [...rig.snapshots.values()].reduce((n, s) => n + s.bytes, 0);
+  assert.equal(rig.playbackStats().bytes, sum());
+  // 上限を下げて、共有元を捨てる（共有しているフレームも一緒に捨てる。二重に引かない）
+  rig.setPlaybackLimit(1);
+  assert.equal(rig.playbackStats().bytes, sum());
+  for (const s of rig.snapshots.values()) if (s.owner) assert.ok([...rig.snapshots.values()].includes(s.owner), '共有元のないフレームが残っていない');
+});

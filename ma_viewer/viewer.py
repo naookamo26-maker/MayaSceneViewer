@@ -90,7 +90,7 @@ class Bridge(QtCore.QObject):
         self.loadEventSignal.emit(name, detail)
 
     # JS から保存・読み戻しできる設定（キー → QSettings のキー）
-    SAVED_SETTINGS = {"playbackCacheMB": "viewer/playbackCacheMB"}
+    SAVED_SETTINGS = {"playbackCacheMB": "viewer/playbackCacheMB", "playbackCachePrecision": "viewer/playbackCachePrecision"}
 
     @Slot(str, str)
     def saveSetting(self, key, value):
