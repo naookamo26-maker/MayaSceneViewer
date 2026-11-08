@@ -687,6 +687,9 @@ function mathReader(plan, constChan, pmOpm) {
   };
   const comp = (arr, k) => (k >= 0 ? arr[k] : arr);
   ad.dagPlug = function dagPlug(ni, attr) {
+    // 先に求めている途中（runPlan の prewarmDeep）は、計画の値（s.cur・s.local・s.world）がまだこのフレームのものでない。
+    // 汎用の経路で求める（前のフレームの値を読むと、それをこのフレームの値として覚えてしまう）
+    if (plan.warming) return proto.dagPlug.call(rig, ni, attr);
     const { base, trs, axis } = parse(attr);
     const s = plan.steps.get(ni);
     if (trs) {
@@ -1064,7 +1067,12 @@ export function runPlan(plan, f, target) {
   const prof = plan.profile || null;
   let t0 = prof ? performance.now() : 0;
   useOrder(rig.deepState, 'plan');                 // 専用の評価で覚えた順番（汎用の経路の順番は使わない。二重に求めないように）
-  if (plan.ad) rig.prewarmDeep(plan.ad);           // 鎖が長くてスタックがあふれた所は、深い所から先に求める
+  if (plan.ad) {                                   // 鎖が長くてスタックがあふれた所は、深い所から先に求める
+    // 計画の順番の計算より前なので、専用に計算するノードの値はまだ前のフレームのまま。先に求めるあいだは、
+    // DAG ノードの値を汎用の経路で求める（plan.warming。結果は同じ）
+    plan.warming = true;
+    try { rig.prewarmDeep(plan.ad); } finally { plan.warming = false; }
+  }
   for (const s of plan.order) {
     const ni = s.ni;
     if (s.kind === STATIC) {

@@ -308,3 +308,36 @@ test('スプライン IK のカーブを動かすノードが深い階層の下:
   assert.ok(compiled.compiledPlan, `専用の評価にならない: ${compiled.compiledReason}`);
   assert.ok(compiled.deepState.retries > 0, 'あふれていない（階層を深くする）');
 });
+
+test('計算ノードの長い鎖の元が専用に計算するノード: 先に求めるときも前のフレームの値を読まず、飛んだフレームでも正しい', () => {
+  // 専用の評価は、あふれた所を次のフレームから計画の順番の計算より前に先に求める（prewarmDeep）。そのとき計画の読み手が
+  // 専用に計算するノード（q_ctrl）の行列をまだ前のフレームの値のまま読み、それをこのフレームの値として覚えていた
+  // （後ろへのスクラブ・飛んだフレームへのジャンプで、前のフレームの姿勢が混ざる）
+  const d = JSON.parse(readFileSync(path.resolve(here, '../../samples/ik_sample.json'), 'utf8'));
+  const anim = d.animation;
+  const byName = (n) => anim.graph.find((g) => g.name === n);
+  const dec = byName('q_dec');
+  let id = Math.max(...anim.graph.map((g) => g.id)) + 1;
+  let prev = { node: dec.id, attr: 'orx' };
+  for (let k = 0; k < 100; k++, id++) {
+    anim.graph.push({ id, name: `adl${k}`, type: 'addDoubleLinear', dag: -1, inputs: { i1: prev }, attrs: { i2: 0.001 } });
+    prev = { node: id, attr: 'o' };
+  }
+  const jnt = byName('q_jnt');
+  jnt.inputs = { rx: prev };
+  const ni = jnt.dag;
+  const make = (compiled) => {
+    const rig = new RigEvaluator(new AnimationClip(anim), d.nodes, (n) => new Matrix4().fromArray(d.nodes[n].matrix));
+    rig.useCompiled = compiled;
+    rig.setPlaybackLimit(0);
+    return rig;
+  };
+  const compiled = make(true);
+  for (const f of [1, 2, 3, 20, 4, 18, 1, 24, 6, 6, 12, 2]) {
+    const b = compiled.evaluate(f, undefined, new Map()).get(ni).elements;
+    const a = make(false).evaluate(f, undefined, new Map()).get(ni).elements;   // 正解: フレームごとに新しい評価器（汎用の経路）
+    a.forEach((v, k) => assert.ok(Math.abs(v - b[k]) < 1e-9, `フレーム ${f}: [${k}] ${b[k]} ≠ ${v}`));
+  }
+  assert.ok(compiled.compiledPlan, `専用の評価にならない: ${compiled.compiledReason}`);
+  assert.ok(compiled.deepState.retries > 0, 'あふれていない（鎖を長くする）');
+});
