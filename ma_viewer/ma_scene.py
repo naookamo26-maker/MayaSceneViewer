@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import bisect
 import os
 import re
 from typing import Callable, Dict, List, Optional, Tuple
@@ -225,12 +226,14 @@ class MeshData:
 
 
 class SkinData:
-    __slots__ = ("_weights", "sparse", "pm", "gm", "skm", "mi", "nw", "wd")
+    __slots__ = ("_weights", "sparse", "_spans", "_overlap", "pm", "gm", "skm", "mi", "nw", "wd")
 
     def __init__(self):
         self._weights: Dict[int, Dict[int, float]] = {}  # 頂点 → {インフルエンス論理番号: 値}
         # まとめて書かれた疎形式の行（numpy の経路用）: [(最初の頂点, 最後の頂点, 値の文字列)]
         self.sparse: List[Tuple[int, int, List[str]]] = []
+        self._spans: List[Tuple[int, int]] = []   # sparse の頂点の範囲（最初の頂点の順）
+        self._overlap = False                     # _spans に重なる範囲があるか
         self.pm: Dict[int, List[float]] = {}
         self.gm: Optional[List[float]] = None
         self.skm = 0
@@ -245,22 +248,41 @@ class SkinData:
             for a, b, vals in self.sparse:
                 _sparse_into(self._weights, a, b, vals)
             self.sparse = []
+            self._spans = []
+            self._overlap = False
         return self._weights
+
+    def add_sparse(self, a: int, b: int, text: str) -> None:
+        """まとめて書かれた疎形式の行を、値の文字列のまま保持する"""
+        self.sparse.append((a, b, text))
+        spans = self._spans
+        i = bisect.bisect_left(spans, (a, b))
+        if (i and spans[i - 1][1] >= a) or (i < len(spans) and spans[i][0] <= b):
+            self._overlap = True
+        spans.insert(i, (a, b))
+
+    def pending_covers(self, v: int) -> bool:
+        """保持している疎形式の行に、頂点 v が含まれるか"""
+        spans = self._spans
+        i = bisect.bisect_right(spans, (v, float("inf")))     # 最初の頂点が v 以下の範囲は spans[:i]
+        if self._overlap:
+            return any(a <= v <= b for a, b in spans[:i])
+        return bool(i) and spans[i - 1][1] >= v              # 範囲が重ならなければ、含むとすれば spans[i - 1] だけ
 
 
 def _sparse_into(weights: Dict[int, Dict[int, float]], a: int, b: int, vals) -> None:
-    """疎形式（頂点ごとに「個数 (番号 値)×個数」）を辞書に入れる。vals はトークンのリストか値の文字列"""
+    """疎形式（頂点ごとに「個数 (番号 値)×個数」）を辞書に入れる。vals はトークンのリストか値の文字列。
+    先に書かれた同じ頂点のウェイトは消さず、同じ番号だけを上書きする（setAttr は書いた要素だけを変える。numpy の経路と同じ）"""
     if isinstance(vals, str):
         vals = vals.split()
     p = 0
     for v in range(a, b + 1):
         cnt = int(R.to_float(vals[p]))
         p += 1
-        d = {}
+        d = weights.setdefault(v, {})
         for _ in range(cnt):
             d[int(vals[p])] = float(vals[p + 1])
             p += 2
-        weights[v] = d
 
 
 class MaNode:
@@ -1174,7 +1196,7 @@ class MaScene:
                     return
                 if numpy_enabled() and '"' not in sa.values_text:
                     # 値の文字列のまま保持し、変換時にすべての文をつなげて一度に数値化する（extract_ma の _skin_arrays_np）
-                    sk.sparse.append((a, b, sa.values_text))
+                    sk.add_sparse(a, b, sa.values_text)
                 else:
                     _sparse_into(sk.weights, a, b, sa.values())
             else:
@@ -1182,7 +1204,11 @@ class MaScene:
                     return
                 vals = sa.values()
                 # 範囲の行（sk.sparse）は保持したまま、1 頂点ずつの書き方だけを辞書に入れる
-                # （sk.weights を参照すると範囲の行がすべて辞書に展開され、速い経路が使えなくなる）
+                # （sk.weights を参照すると範囲の行がすべて辞書に展開され、速い経路が使えなくなる）。
+                # ただし先に書かれた範囲の行に同じ頂点があれば、書かれた順に入れるため先に展開する
+                # （展開しないと、あとで範囲の行を展開したときにこの行の値が消える）
+                if sk.sparse and sk.pending_covers(vspec):
+                    sk.weights
                 d = sk._weights.setdefault(vspec, {})
                 if isinstance(wspec, int):
                     d[wspec] = float(vals[0])
