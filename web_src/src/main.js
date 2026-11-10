@@ -39,6 +39,7 @@ import { bakeFrames, createBaker } from './rigBakeCore.js';
 import { EvalProfiler } from './profiler.js';
 import { ProfilerPanel } from './profilerPanel.js';
 import { BATCHED_LAYER, MeshBatches, SkinBatches } from './meshBatches.js';
+import { TransferBuffer } from './transfer.js';
 
 // ビューアのバージョン（ma_viewer/version.py。ビルド時に build.mjs が埋め込む）
 // eslint-disable-next-line no-undef
@@ -3396,6 +3397,26 @@ function worldMatrixOf(obj, target) {
   if (ve) ve.textContent = `Maya Scene Viewer ${VERSION}`;
 }
 
+/** 転送の進み具合（1% ごとに表示を更新する） */
+function showTransferProgress() {
+  const tr = app.transfer;
+  if (!tr || !app.transferMessage) return;
+  const f = tr.fraction;
+  const pct = f < 0 ? -1 : Math.floor(f * 100);
+  if (pct === app.transferShown) return;
+  app.transferShown = pct;
+  app.ui.showLoading(app.transferMessage, f);
+}
+
+/** 受け取りに失敗した（止まったままにせず、理由を出す） */
+function failTransfer(err) {
+  app.transfer = null;
+  app.sceneLoading = false;
+  app.ui.hideLoading();
+  app.ui.showError('データを受け取れませんでした。\n' + (err && err.message ? err.message : String(err)));
+  return false;
+}
+
 window.mayaViewer = {
   version: VERSION,
   /** 評価のプロファイラを開く（Qt の［ウインドウ］→［評価のプロファイラ］） */
@@ -3421,31 +3442,53 @@ window.mayaViewer = {
       return false;
     }
   },
-  /** 大きなデータを分割して受け取る（Python の runJavaScript 用） */
-  beginTransfer(message) {
-    app.transfer = [];
+  /**
+   * 大きなデータを分割して受け取る（Python の runJavaScript 用。viewer.py の set_scene）。大きな数値の配列は JSON から
+   * 抜き出して先に届く（appendBlobChunk・endBlob。その場でバイト列に戻す）。そのあと JSON の骨組み（appendChunk）が届く。
+   * total: 届く文字数の合計（進み具合の表示）
+   */
+  beginTransfer(message, total = 0) {
+    app.transfer = new TransferBuffer(total);
+    app.transferMessage = message || 'データを受け取り中';
+    app.transferShown = -1;
     app.transferStart = performance.now();
-    app.ui.showLoading(message || 'データを受け取り中');
+    app.ui.showLoading(app.transferMessage, app.transfer.fraction);
     return true;
   },
-  appendChunk(text) { if (app.transfer) app.transfer.push(text); return true; },
+  appendChunk(text) { if (app.transfer) { app.transfer.append(text); showTransferProgress(); } return true; },
+  appendBlobChunk(b64) {
+    if (!app.transfer) return false;
+    try { app.transfer.appendBlob(b64); } catch (err) { return failTransfer(err); }
+    showTransferProgress();
+    return true;
+  },
+  endBlob() { return app.transfer ? app.transfer.endBlob() : -1; },
   endTransfer() {
-    const text = app.transfer ? app.transfer.join('') : '';
+    const tr = app.transfer;
     app.transfer = null;
+    if (!tr) return 0;
+    let obj;
+    try {
+      obj = tr.finish().obj;
+    } catch (err) {
+      return failTransfer(err);
+    }
     app.sceneLoading = true;            // 組み立てまでに届いたアニメーションは、組み立て後に読み込む
     app.timing = { transfer: performance.now() - (app.transferStart || performance.now()) };
     app.ui.showLoading('シーンを組み立て中');
-    setTimeout(() => this.loadScene(text), 16);
-    return text.length;
+    setTimeout(() => this.loadScene(obj), 16);
+    return tr.received;
   },
-  /** アニメーションを分割して受け取る（シーンのあとに届く） */
-  beginAnimationTransfer() { app.transfer = []; return true; },
+  /** アニメーションを分割して受け取る（シーンのあとに届く。受け取り方はシーンと同じ） */
+  beginAnimationTransfer(total = 0) { app.transfer = new TransferBuffer(total); app.transferMessage = null; return true; },
   endAnimationTransfer() {
-    const text = app.transfer ? app.transfer.join('') : '';
+    const tr = app.transfer;
     app.transfer = null;
     try {
-      const anim = JSON.parse(text);
-      app.animationText = { anim, text };       // 再生キャッシュのワーカーにそのまま渡す（setAnimation で使って消す）
+      const { obj: anim, text } = tr.finish();
+      // 再生キャッシュのワーカーにそのまま渡す（setAnimation で使って消す）。配列を抜き出したものは、文字列がないので
+      // 型付き配列にしたキーのデータを渡す
+      app.animationText = text !== null ? { anim, text } : null;
       return app.setAnimation(anim);
     } catch (err) {
       app.timeline.setStatus('アニメーションを読めませんでした: ' + err.message);
