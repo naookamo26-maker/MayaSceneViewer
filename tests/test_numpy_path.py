@@ -103,6 +103,25 @@ connectAttr "sc.og[0]" "gShape.i";
         self.assertEqual(m["gShape"]["uv"]["indices"][:4], [0, 1, 2, 3])     # mu が 2 回なら最初のもの
         self.assertEqual(m["gShape"]["skin"]["counts"], [2, 0, 2, 0, 1])     # 範囲外の頂点（5）は無視
 
+    def test_dense_after_sparse_same_vertex(self):
+        # 範囲の行のあとに、同じ頂点を 1 つずつ書いた行がある（あとの行のウェイトを消さない。書かれた順に上書き）
+        text = """
+createNode skinCluster -n "sc";
+\tsetAttr ".wl[0:2].w" 1 0 0.1 2 0 0.3 1 0.7 1 1 1;
+\tsetAttr ".wl[0].w[1]" 0.9;
+\tsetAttr ".wl[1].w[0]" 0.4;
+\tsetAttr ".wl[2:3].w" 1 0 0.2 1 1 1;
+\tsetAttr ".wl[2].w[1]" 0.8;
+"""
+        want = {0: {0: 0.1, 1: 0.9}, 1: {0: 0.4, 1: 0.7}, 2: {0: 0.2, 1: 0.8}, 3: {1: 1.0}}
+
+        def read():
+            sk = [n for n in ma_scene.parse_ma_text(text).nodes if n.type == "skinCluster"][0].skin
+            return {v: dict(d) for v, d in sk.weights.items()}
+        slow, fast = _both(read)
+        self.assertEqual(slow, want)
+        self.assertEqual(fast, want)
+
 
 if __name__ == "__main__":
     unittest.main()
