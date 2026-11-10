@@ -1,5 +1,5 @@
 // Maya の技術資料（ノードの属性の短い名前・型・既定値）に合わせた読み方の検証
-// 名前: animLayer（.fgwt・.wgth・.mt・.ovrd）、pairBlend（.rm）、composeMatrix（.ro）、remapValue（.vlp・.vlfv・.vli）、wire（.ro）
+// 名前: animLayer（.fgwt・.wgth・.mt・.ovrd・.pthg・.sam・.ram/.oram・.pwth・.pmte・.sslo・.csol・.chsl）、pairBlend（.rm）、composeMatrix（.ro）、remapValue（.vlp・.vlfv・.vli）、wire（.ro）
 // 単位: character の角度の値（.av。ファイルは度）
 // 既定値: multDoubleLinear の入力（0）、animBlendNodeAdditiveScale（ia・ib・acm 0）、ikHandle の .dwua（3）
 // 古いサンプルの名前（.fo・.w・.m・.rxm・.iro・.fv・.rot）も読めることも確かめる
@@ -54,6 +54,107 @@ test('animLayer: Override のレイヤーは背面のウェイト .bgwt で下�
   assert.ok(near(out(r, 'layer1', 'bgwt'), 0.5));
   const ia = r.rig.plug(r.g('lay_jnt_translateZ_blend1').id, 'ia'), ib = r.rig.plug(r.g('lay_jnt_translateZ_blend1').id, 'ib');
   assert.ok(near(out(r, 'lay_jnt_translateZ_blend1', 'o'), ia * 0.5 + ib * 0.5));
+});
+
+/** グラフにノードを足す（id は末尾の番号） */
+function addNode(d, type, name, extra = {}) {
+  const g = d.animation.graph;
+  const n = { id: g.length, name, type, dag: -1, ...extra };
+  g.push(n);
+  return n;
+}
+
+test('animLayer: スケールの重ね方は Maya と同じくレイヤーの .sam（既定 1 = かけ算）を .acm につないで読む', () => {
+  // Maya のファイル: setAttr ".acm" は書かず、connectAttr "layer.sam" "blend.acm"（.sam は既定値なら書かない）
+  const conn = (edit) => run('rig6_sample', (g, d) => {
+    const b = g('lay_jnt_scaleY_blend1');
+    delete b.attrs.acm;
+    b.inputs.acm = { node: g('layer1').id, attr: 'sam' };
+    if (edit) edit(g, d);
+  }, 48);
+  const mult = conn();
+  assert.ok(near(out(mult, 'lay_jnt_scaleY_blend1', 'o'), 2 * 1.5 ** 0.5), 'かけ算（ia · ib^wb）: ' + out(mult, 'lay_jnt_scaleY_blend1', 'o'));
+  const add = conn((g) => { g('layer1').attrs.sam = 0; });
+  assert.ok(near(out(add, 'lay_jnt_scaleY_blend1', 'o'), 2 + 1.5 * 0.5), '足し算（ia · wa + ib · wb）');
+});
+
+test('animBlendNodeAdditiveScale: かけ算は ia^wa · ib^wb（Override のレイヤーは下のレイヤーを置き換える）', () => {
+  const r = run('rig6_sample', (g) => {
+    const l = g('layer1');
+    l.attrs = { wgth: 1, ovrd: 1 };
+    g('lay_jnt_scaleY_blend1').inputs.wa = { node: l.id, attr: 'bgwt' };
+  }, 48);
+  assert.ok(near(out(r, 'layer1', 'bgwt'), 0));
+  assert.ok(near(out(r, 'lay_jnt_scaleY_blend1', 'o'), 1.5), 'ウェイト 1 の Override はこのレイヤーの値だけ');
+});
+
+test('animLayer: Override で Passthrough（.pthg）がオフなら、下のレイヤーは見えない（ウェイトはこのレイヤーの量）', () => {
+  const r = run('rig6_sample', (g) => {
+    const l = g('layer1');
+    Object.assign(l.attrs, { ovrd: 1, pthg: 0 });
+    g('lay_jnt_translateZ_blend1').inputs.wa = { node: l.id, attr: 'bgwt' };
+  }, 48);
+  assert.ok(near(out(r, 'layer1', 'bgwt'), 0));
+  const ib = r.rig.plug(r.g('lay_jnt_translateZ_blend1').id, 'ib');
+  assert.ok(near(out(r, 'lay_jnt_translateZ_blend1', 'o'), ib * 0.5));
+  // ミュートした Override のレイヤーは、下のレイヤーをそのまま通す
+  const m = run('rig6_sample', (g) => {
+    const l = g('layer1');
+    Object.assign(l.attrs, { ovrd: 1, pthg: 0, mt: 1 });
+    g('lay_jnt_translateZ_blend1').inputs.wa = { node: l.id, attr: 'bgwt' };
+  }, 48);
+  assert.ok(near(out(m, 'layer1', 'bgwt'), 1));
+  assert.ok(near(out(m, 'lay_jnt_translateZ_blend1', 'o'), m.rig.plug(m.g('lay_jnt_translateZ_blend1').id, 'ia')));
+});
+
+test('animLayer: 親のレイヤーのウェイト・ミュート（.fgwt → .pwth、.omte → .pmte）と、兄弟のソロ（.csol → .sslo）', () => {
+  const tree = (parentAttrs, layerAttrs = {}, siblingAttrs = {}) => run('rig6_sample', (g, d) => {
+    const p = addNode(d, 'animLayer', 'parentLayer', { attrs: parentAttrs });
+    const s = addNode(d, 'animLayer', 'siblingLayer', { attrs: siblingAttrs });
+    const l = g('layer1');
+    Object.assign(l.attrs, layerAttrs);
+    l.inputs = { pwth: { node: p.id, attr: 'fgwt' }, pmte: { node: p.id, attr: 'omte' }, sslo: { node: p.id, attr: 'csol' } };
+    p.inputs = { 'chsl[0]': { node: l.id, attr: 'sl' }, 'chsl[1]': { node: s.id, attr: 'sl' } };
+  }, 48);
+  const fg = (r) => out(r, 'layer1', 'fgwt');
+  assert.ok(near(fg(tree({ wgth: 0.5 })), 0.25), '親のウェイトを掛ける');
+  assert.ok(near(fg(tree({ mt: 1 })), 0), '親をミュートすると子もミュート');
+  assert.equal(out(tree({ mt: 1 }), 'layer1', 'omte'), 1);
+  assert.ok(near(fg(tree({}, {}, { sl: 1 })), 0), '兄弟がソロならミュート');
+  assert.ok(near(fg(tree({}, { sl: 1 }, { sl: 1 })), 0.5), '自分もソロなら再生する');
+  const r = tree({}, {}, { sl: 1 });
+  assert.equal(out(r, 'parentLayer', 'csol'), 1);
+});
+
+test('animBlendNodeBoolean・Enum: ウェイトが 0 でなければこのレイヤーの値、0 なら下のレイヤーまでの値', () => {
+  for (const type of ['animBlendNodeBoolean', 'animBlendNodeEnum']) {
+    for (const [wb, want] of [[0.25, 3], [1, 3], [0, 2]]) {
+      const r = run('rig6_sample', (g, d) => { addNode(d, type, 'bl', { attrs: { ia: 2, ib: 3, wb } }); }, 1);
+      assert.equal(out(r, 'bl', 'o'), want, `${type} wb ${wb}`);
+    }
+  }
+});
+
+test('animBlendNodeAdditiveRotation: レイヤーごとの重ね方（.acm 1 ← レイヤーの .oram）はクォータニオンで重ねる', () => {
+  // 1 軸だけの回転なら、成分ごとの重ね方と同じ値（30° + 10° × 0.5）
+  const one = run('rig6_sample', (g) => {
+    const b = g('lay_jnt_rotate_layer1');
+    g('layer1').attrs.ram = 1;
+    b.inputs.acm = { node: g('layer1').id, attr: 'oram' };
+  }, 48);
+  assert.ok(near(out(one, 'lay_jnt_rotate_layer1', 'ox') * R2D, 35, 1e-6), '' + out(one, 'lay_jnt_rotate_layer1', 'ox') * R2D);
+  // 2 軸の回転を重ねると、成分ごとの和（x 30・y 10）とは違う値になる
+  const two = (acm) => run('rig6_sample', (g) => {
+    const b = g('lay_jnt_rotate_layer1');
+    b.attrs = { acm, iay: 0 };
+    b.inputs = { iax: b.inputs.iax, iby: { curve: b.inputs.ibx.curve } };
+    b.inputs.wb = { node: g('layer1').id, attr: 'fgwt' };
+    g('layer1').attrs.wgth = 1;
+  }, 48);
+  const comp = two(0), lay = two(1);
+  const v = (r) => ['ox', 'oy', 'oz'].map((a) => out(r, 'lay_jnt_rotate_layer1', a) * R2D);
+  assert.ok(near(v(comp)[0], 30) && near(v(comp)[1], 10), '成分ごと: ' + v(comp));
+  assert.ok(v(lay).some((x, i) => !near(x, v(comp)[i], 1e-3)), 'レイヤーごと: ' + v(lay));
 });
 
 test('pairBlend: 回転のモード .rm（3 軸に共通）で入力 1・入力 2 だけにする。古い軸ごとの .rxm も読む', () => {

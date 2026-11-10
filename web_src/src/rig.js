@@ -71,10 +71,13 @@ const DEFAULTS = {
   animBlendNodeAdditiveDL: { ia: 0, ib: 0, wa: 1, wb: 1 },
   animBlendNodeAdditiveDA: { ia: 0, ib: 0, wa: 1, wb: 1 },
   animBlendNodeAdditiveRotation: { ia: [0, 0, 0], ib: [0, 0, 0], wa: 1, wb: 1 },
-  // Maya の既定値は ia・ib 0、acm 0（足し算）。かけ算で重ねるレイヤーは、Maya が acm 1 をファイルに書く
+  // Maya の既定値は ia・ib 0、acm 0（足し算）。ふつうは acm にレイヤーの .sam（既定 1 = かけ算）が接続される
   animBlendNodeAdditiveScale: { ia: 0, ib: 0, wa: 1, wb: 1, acm: 0 },
-  // ウェイト .wgth・ミュート .mt・Override .ovrd（古いサンプルの .w・.m も読むので、それらは既定値を持たせない）
-  animLayer: { wgth: 1, mt: 0, ovrd: 0 },
+  // ウェイト .wgth・ミュート .mt・Override .ovrd・Passthrough .pthg（既定 1）・ソロ .sl・
+  // 回転の重ね方 .ram（0 = 成分ごと、1 = レイヤーごと（クォータニオン））・スケールの重ね方 .sam（0 = 足し算、1 = かけ算）・
+  // 親のレイヤーから: ウェイト .pwth・ミュート .pmte・兄弟のソロ .sslo（Maya の技術資料。古いサンプルの .w・.m も読むので、
+  // それらは既定値を持たせない）
+  animLayer: { wgth: 1, mt: 0, ovrd: 0, pthg: 1, sl: 0, ram: 0, sam: 1, pwth: 1, pmte: 0, sslo: 0 },
   cluster: { en: 1 },
   pointOnCurveInfo: { pr: 0, top: 0 },
 };
@@ -98,7 +101,7 @@ const OUTPUTS = {
   nearestPointOnCurve: /^(p[xyz]?|pr|position[XYZ]?|parameter)$/, wire: /^og(\[\d+\])?$/, locator: /^(wp|worldPosition)(\[\d+\])?$/, expression: /^(out|output)\[\d+\]$/,
   addDoubleLinear: /^o$/, multDoubleLinear: /^o$/, clamp: /^op[rgb]?$/, setRange: /^o[xyz]?$/, remapValue: /^(ov|outValue)$/,
   distanceBetween: /^d$/, vectorProduct: /^o[xyz]?$/, blendTwoAttr: /^o$/, blendWeighted: /^o$/, choice: /^o$/,
-  animBlendNodeAdditiveDL: /^o$/, animBlendNodeAdditiveDA: /^o$/, animBlendNodeAdditiveRotation: /^o[xyz]?$/, animLayer: /^(fgwt|fo|bgwt)$/,
+  animBlendNodeAdditiveDL: /^o$/, animBlendNodeAdditiveDA: /^o$/, animBlendNodeAdditiveRotation: /^o[xyz]?$/, animLayer: /^(fgwt|fo|bgwt|omte|oram|csol)$/,
   animBlendNodeAdditive: /^o$/, animBlendNodeAdditiveF: /^o$/, animBlendNodeAdditiveFL: /^o$/, animBlendNodeAdditiveFA: /^o$/,
   animBlendNodeAdditiveI16: /^o$/, animBlendNodeAdditiveI32: /^o$/, animBlendNodeAdditiveScale: /^o$/,
   animBlendNodeBoolean: /^o$/, animBlendNodeEnum: /^o$/, animBlendNodeTime: /^o$/,
@@ -292,6 +295,38 @@ function isAngleAttr(type, attr) {
     case 'animBlendNodeAdditiveRotation': return /^i[ab][xyz]?$/.test(attr);
     default: return false;
   }
+}
+
+/** かけ算で重ねるスケールの x^w（負のスケールは向きを残して大きさだけを w 乗する） */
+function weightedPow(x, w) {
+  if (w === 1) return x;
+  if (w === 0) return 1;
+  return Math.sign(x) * Math.abs(x) ** w;
+}
+
+const _lrA = new Quaternion(), _lrB = new Quaternion(), _lrI = new Quaternion(), _lrE = new Euler();
+/**
+ * 回転のレイヤーごとの重ね方（Rotation Accumulation: By Layer）。a・b はラジアンの (x, y, z)、ro は回転順。
+ * 足し算のレイヤー（wa 1）: 下のレイヤーまでの回転 a に、このレイヤーの回転 b を wb の割合で重ねる（クォータニオンの積。
+ * b をジョイントの向きの中で先に回す順。推定）。Override（wa < 1）: a（wa 0 なら回転なし）から b へ wb の割合で slerp
+ */
+function layerRotation(a, b, wa, wb, ro) {
+  const order = THREE_ORDER[ro] || 'ZYX';
+  _lrA.setFromEuler(_lrE.set(a[0], a[1], a[2], order));
+  _lrB.setFromEuler(_lrE.set(b[0], b[1], b[2], order));
+  _lrI.identity();
+  let q;
+  if (wa >= 1 - 1e-9) {
+    q = _lrA.multiply(_lrI.slerp(_lrB, wb));             // a · b^wb
+  } else if (wb >= 1 - 1e-9) {
+    q = _lrB;
+  } else {
+    // Passthrough（wa = 1 − wb）なら a、そうでない（wa 0）なら回転なしから
+    const base = _lrI.slerp(_lrA, Math.min(1, Math.max(0, wa / (1 - wb))));
+    q = base.slerp(_lrB, wb);
+  }
+  _lrE.setFromQuaternion(q, order);
+  return [_lrE.x, _lrE.y, _lrE.z];
 }
 
 /** 3 つ組の属性の成分の名前（c1 → c1r など） */
@@ -1925,27 +1960,58 @@ export class RigEvaluator {
         o = { o: Math.round(this.num(id, 'ia', 0) * this.num(id, 'wa', 1) + this.num(id, 'ib', 0) * this.num(id, 'wb', 1)) };
         break;
       case 'animBlendNodeAdditiveScale': {
-        // かけ算で重ねる（acm 1）: ia · (1 + (ib − 1) · wb)。足し算（acm 0）: ia · wa + ib · wb
-        const ia = this.num(id, 'ia', 0), ib = this.num(id, 'ib', 0), wb = this.num(id, 'wb', 1);
-        o = { o: this.num(id, 'acm', 0) >= 0.5 ? ia * (1 + (ib - 1) * wb) : ia * this.num(id, 'wa', 1) + ib * wb };
+        // かけ算で重ねる（acm 1。レイヤーの .sam の既定）: ia^wa · ib^wb。足し算（acm 0）: ia · wa + ib · wb
+        // （Maya の技術資料の式。Override のレイヤーは wa（背面のウェイト）で下のレイヤーを弱める）
+        const ia = this.num(id, 'ia', 0), ib = this.num(id, 'ib', 0), wa = this.num(id, 'wa', 1), wb = this.num(id, 'wb', 1);
+        o = { o: this.num(id, 'acm', 0) >= 0.5 ? weightedPow(ia, wa) * weightedPow(ib, wb) : ia * wa + ib * wb };
         break;
       }
       case 'animBlendNodeBoolean': case 'animBlendNodeEnum':
-        // 足し合わせられない型: ウェイトが半分以上ならこのレイヤーの値、それ以外は下のレイヤーまでの値
-        o = { o: this.num(id, 'wb', 1) >= 0.5 ? this.num(id, 'ib', 0) : this.num(id, 'ia', 0) };
+        // 足し合わせられない型: ウェイトが 0 でなければこのレイヤーの値、0 なら下のレイヤーまでの値（Maya の技術資料）
+        o = { o: this.num(id, 'wb', 1) > 0 ? this.num(id, 'ib', 0) : this.num(id, 'ia', 0) };
         break;
       case 'animBlendNodeAdditiveRotation': {
         // 成分ごとに読む（vec と同じ値。3 つ組を読むと成分を読んで配列を作り直すので、よく使うノードでは直接読む）
         const wa = this.num(id, 'wa', 1), wb = this.num(id, 'wb', 1);
-        const x = this.num(id, 'iax', 0) * wa + this.num(id, 'ibx', 0) * wb;
-        const y = this.num(id, 'iay', 0) * wa + this.num(id, 'iby', 0) * wb;
-        const z = this.num(id, 'iaz', 0) * wa + this.num(id, 'ibz', 0) * wb;
+        const ax = this.num(id, 'iax', 0), ay = this.num(id, 'iay', 0), az = this.num(id, 'iaz', 0);
+        const bx = this.num(id, 'ibx', 0), by = this.num(id, 'iby', 0), bz = this.num(id, 'ibz', 0);
+        let x, y, z;
+        if (this.num(id, 'acm', 0) >= 0.5) {
+          // レイヤーごと（.ram 1）: クォータニオンで重ねる（入力の値はすべて先に読んである）
+          [x, y, z] = layerRotation([ax, ay, az], [bx, by, bz], wa, wb, Math.round(this.num(id, 'ro', 0)));
+        } else {
+          // 成分ごと（.ram 0。Maya の既定）: ia · wa + ib · wb
+          x = ax * wa + bx * wb; y = ay * wa + by * wb; z = az * wa + bz * wb;
+        }
         o = { o: [x, y, z], ox: x, oy: y, oz: z };
         break;
       }
       default: return NOT_COMMON;
     }
     return o;
+  }
+
+  /**
+   * アニメーションレイヤーの出力（Maya の技術資料・ユーザーガイド。保存されたシーンの値で確かめた）。
+   * ミュート .omte: 自分のミュート .mt・親のミュート .pmte・兄弟がソロでこのレイヤーはソロでない（.sslo かつ .sl でない）。
+   * 子のレイヤーへは .omte → .pmte、.fgwt → .pwth、.csol → .sslo とつながる。
+   * 前面のウェイト .fgwt（古いサンプルの .fo も）: ミュートなら 0、それ以外はウェイト .wgth × 親のウェイト .pwth。
+   * 背面のウェイト .bgwt（blend ノードの wa）: 足し算のレイヤーとミュートしたレイヤーは 1。Override は、Passthrough
+   * （.pthg）なら 1 − 前面のウェイト（下のレイヤーと混ぜる）、そうでなければ 0（下のレイヤーは見えない）
+   */
+  animLayer(g) {
+    const id = g.id;
+    const soloOut = this.num(id, 'sslo', 0) >= 0.5 && this.num(id, 'sl', 0) < 0.5;
+    const muted = this.num(id, this.attrName(g, ['mt', 'm']), 0) >= 0.5 || this.num(id, 'pmte', 0) >= 0.5 || soloOut;
+    const fg = muted ? 0 : this.num(id, this.attrName(g, ['wgth', 'w']), 1) * this.num(id, 'pwth', 1);
+    let bg = 1;
+    if (!muted && this.num(id, 'ovrd', 0) >= 0.5) bg = this.num(id, 'pthg', 1) >= 0.5 ? 1 - fg : 0;
+    // 子のレイヤーのどれかがソロ（.chsl[i] ← 子の .sl）
+    let csol = 0;
+    for (const k of new Set([...Object.keys(g.inputs || {}), ...Object.keys(g.attrs || {})])) {
+      if (/^chsl\[\d+\]$/.test(k) && this.num(id, k, 0) >= 0.5) { csol = 1; break; }
+    }
+    return { fgwt: fg, fo: fg, bgwt: bg, omte: muted ? 1 : 0, oram: this.num(id, 'ram', 0), csol };
   }
 
   outputsUncached(id) {
@@ -2093,15 +2159,7 @@ export class RigEvaluator {
         o.output = o.o;
         break;
       }
-      case 'animLayer': {
-        // 前面のウェイト .fgwt（古いサンプルの .fo も）: ミュートなら 0、それ以外はウェイト。
-        // 背面のウェイト .bgwt: Override のレイヤーは下のレイヤーを (1 − ウェイト) に弱める（足し算のレイヤーは 1。推定）
-        const muted = this.num(id, this.attrName(g, ['mt', 'm']), 0) >= 0.5;
-        const fg = muted ? 0 : this.num(id, this.attrName(g, ['wgth', 'w']), 1);
-        const bg = this.num(id, 'ovrd', 0) >= 0.5 ? 1 - fg : 1;
-        o = { fgwt: fg, fo: fg, bgwt: bg };
-        break;
-      }
+      case 'animLayer': o = this.animLayer(g); break;
       case 'expression': o = this.expression(g); break;
       case 'tweak': {                                       // 頂点の調整は反映しない（形はそのまま通す）
         const c = this.plug(id, 'ip[0].ig');

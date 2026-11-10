@@ -15,7 +15,7 @@
     blendWeighted・choice・expression（式を解釈できるもの）
   * ドリブンキー: animCurveUA・UL・UU（ドライバーの値でキーを引く）
   * アニメーションレイヤー: animBlendNodeAdditive・DL・DA・F・FL・FA・I16・I32・Rotation・Scale、animBlendNodeBoolean・
-    Enum・Time、animLayer（ウェイトとミュート）
+    Enum・Time、animLayer（ウェイト・ミュート・ソロ・Override・Passthrough・親のレイヤー）
   * 行列ノード: multMatrix・decomposeMatrix・composeMatrix・inverseMatrix・fourByFourMatrix、DAG ノードの offsetParentMatrix
   * 四元数ノード: quatToEuler・eulerToQuat・quatProd・quatInvert・quatNormalize・quatSlerp
   * Maya 2024 以降の計算ノード（sum・multiply・clampRange・lerp・smoothStep・三角関数・比較・論理・丸め・ベクトル・
@@ -77,7 +77,11 @@ UTILITY_TYPES = {"unitConversion", "pairBlend", "blendColors", "multiplyDivide",
                  "distanceBetweenDL",
                  "nearestPointOnCurve"} | MATH_TYPES  # カーブ上のいちばん近い点（位置とパラメータ）    # distanceBetweenDL は distanceBetween と同じ（Maya 2026 からの単位つきの版）
 # 入力をたどらない（値を読むだけの）ノード
-_NO_INPUT_TYPES = {"displayLayer", "animLayer"}       # animLayer はウェイトとミュートを読むだけ
+_NO_INPUT_TYPES = {"displayLayer"}
+# 入力のうち、決まった属性だけをたどるノード。animLayer はウェイト・ミュート・ソロ・モードと、親のレイヤーからの
+# ウェイト（.pwth）・ミュート（.pmte）・兄弟のソロ（.sslo）、子のソロ（.chsl[i]）。.dsm（レイヤーに入れた属性）・.bnds
+# （blend ノード）・.cdly（子のレイヤー）はメンバーの登録用（たどると blend ノードとの循環になる）
+_SOME_INPUTS = {"animLayer": re.compile(r"^(wgth|w|mt|m|sl|ovrd|pthg|ram|sam|pwth|pmte|sslo|chsl\[\d+\])$")}
 # カーブと、それを動かすノード（必要な入力だけをたどる）
 GEOMETRY_TYPES = {"nurbsCurve", "skinCluster", "tweak", "groupParts", "locator", "wire", "cluster", "transformGeometry",
                   "rebuildCurve", "reverseCurve", "detachCurve", "subCurve"}
@@ -310,7 +314,10 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
                     for c in curves_of_character(ms, n):  # Trax のクリップのカーブ
                         info.curves[id(c)] = c
                 if n.type not in _NO_INPUT_TYPES:
+                    only = _SOME_INPUTS.get(n.type)
                     for key in list(n.inputs):
+                        if only is not None and not only.match(key):
+                            continue
                         if n.type == "expression" and key in ("tim", "time"):
                             continue                     # 時間はビューアのフレームから求める
                         if n.type == "character":
