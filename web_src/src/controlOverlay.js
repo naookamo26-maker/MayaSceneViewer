@@ -6,6 +6,7 @@ import {
   Vector3,
 } from 'three';
 import { CONTROL_ROLES, sideFromName } from './controlRoles.js';
+import { segmentsDistance, segmentsHitRect } from './marquee.js';
 
 /** 役割の色（ジョイントの水色・選択のアンバーとは形でも見分けられる） */
 export const ROLE_COLORS = {
@@ -16,6 +17,7 @@ export const ROLE_COLORS = {
 export const SIDE_COLORS = { L: 0x4c8dff, R: 0xff5a5a, C: 0xffd84d };
 const BONE_SCALE = 0.24;        // 近くの骨に合わせるとき: 骨の長さに対する目印の半径
 const SCREEN_PX = 14;           // 画面上で一定のとき: 目印の半径（ピクセル）
+export const PICK_PX = 5;       // クリックで選ぶ: 目印の線から画面上でこのピクセル以内（カーブと同じ。Maya と同じく線に触れれば選ぶ）
 
 function ring(r, n, axis) {
   const p = [];
@@ -69,7 +71,7 @@ export class ControlOverlay {
     for (const r of CONTROL_ROLES) this.shapes[r] = Float32Array.from(shapePoints(r));
     // 目印はすべて 1 つの線分の集まり（頂点色）にまとめて描く（1 個ずつ描くと、目印の多いリグで描画の呼び出しが増えるため）。
     // items の obj は位置・向き・大きさを求めるためのもの（シーンには入れない）
-    this.items = [];                  // { ni, role, info, obj, side, color, ref, size }
+    this.items = [];                  // { ni, role, info, obj, side, color, ref, size, vOff, vCount（まとめた線分での頂点の範囲） }
     this.markerMat = new LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.95 });
     this.markers = null;
     this.colorMode = 'role';
@@ -215,6 +217,8 @@ export class ControlOverlay {
       it.obj.updateMatrix();
       it.obj.updateMatrixWorld();
       _c.copy(o.selectColorOf(it.ni) || o.statusColor(it.ni) || it.color);
+      it.vOff = nv;
+      it.vCount = mp ? this.shapes[it.role].length / 3 : 0;
       if (mp) {                                    // 形の頂点を目印の行列で動かして、まとめた線分に書く
         const sh = this.shapes[it.role], e = it.obj.matrixWorld.elements;
         for (let k = 0; k < sh.length; k += 3, nv++) {
@@ -253,23 +257,36 @@ export class ControlOverlay {
   }
 
   /**
-   * レイに近い目印のノード番号（なければ -1）。目印の半径の内側を通れば当たり、中心がクリックにいちばん近いものを選ぶ。
-   * 同じ位置に重なっているときは手前のもの、それも同じなら IK ハンドルよりその親（手のコントローラーなど）
+   * クリックした点に近い目印のノード番号（なければ -1）。Maya と同じく、目印の線（ロケーターの十字・箱の辺など）の
+   * どこかから画面上で tol ピクセル以内なら当たり。線にいちばん近いもの（1 ピクセル刻み）→ 手前 → IK ハンドルよりその親
+   * （手のコントローラーなど）の順に選ぶ。
+   * @param ray クリックのレイ（手前かの比較に使う） @param project makeProjector の関数 @param x,y クリックの位置（ピクセル）
    */
-  pick(ray) {
+  pick(ray, project, x, y, tol = PICK_PX) {
+    const pos = this.markers ? this.markers.geometry.attributes.position.array : null;
+    if (!pos) return -1;
     let best = null;
     for (const it of this.items) {
-      if (!it.shown || !(it.size > 0)) continue;
-      const p = it.obj.position;
-      const d = Math.sqrt(ray.distanceSqToPoint(p)) / it.size;
-      if (d > 1.05) continue;
-      const t = _t.subVectors(p, ray.origin).dot(ray.direction);
-      if (t <= 0) continue;
+      if (!it.shown || !it.vCount) continue;
+      const d = segmentsDistance(pos, it.vOff, it.vCount, project, x, y);
+      if (!(d <= tol)) continue;
+      const t = _t.subVectors(it.obj.position, ray.origin).dot(ray.direction);
       const handle = this.ctx.nodes[it.ni].type === 'ikHandle' ? 1 : 0;
-      const key = [Math.round(d * 20), t, handle];          // 中心からの近さ（目印の半径の 1/20 刻み）→ 手前 → ハンドルは後
+      const key = [Math.round(d), t, handle];
       if (!best || key[0] < best.key[0] || (key[0] === best.key[0] && (key[1] < best.key[1] - 1e-6
         || (Math.abs(key[1] - best.key[1]) <= 1e-6 && key[2] < best.key[2])))) best = { ni: it.ni, key };
     }
     return best ? best.ni : -1;
+  }
+
+  /** 矩形（ピクセル）に線が一部でもかかる目印のノード番号（Maya のマーキー選択と同じ） */
+  inRect(project, rect) {
+    const pos = this.markers ? this.markers.geometry.attributes.position.array : null;
+    const out = [];
+    if (!pos) return out;
+    for (const it of this.items) {
+      if (it.shown && it.vCount && segmentsHitRect(pos, it.vOff, it.vCount, project, rect)) out.push(it.ni);
+    }
+    return out;
   }
 }

@@ -2195,7 +2195,8 @@ class ViewerApp {
     const nodes = this.data.nodes;
     const okNode = (ni) => force || !nodes[ni].unselectable;
     if (this.settings.joints || this.settings.controls) {
-      const ni = this.overlay.pick(this.raycaster);
+      const project = makeProjector(cam, rect.width, rect.height);
+      const ni = this.overlay.pick(this.raycaster, { project, x: ev.clientX - rect.left, y: ev.clientY - rect.top });
       if (ni >= 0 && okNode(ni)) { this.select(ni, { notify: true, mode }); return; }
     }
     // カーブ: 画面上で約 5 ピクセル以内を通る線（メッシュより手前なら優先）
@@ -2270,7 +2271,7 @@ class ViewerApp {
     const nodes = this.data.nodes;
     const okNode = (ni) => force || !nodes[ni].unselectable;
     const out = new Set();
-    // ジョイント・コントローラー（表示しているもの）: 中心が矩形の中
+    // ジョイント（表示しているもの）: 中心が矩形の中。コントローラー: 線が矩形にかかる
     if (this.settings.joints && this.overlay.jointGroup.visible) {
       for (const ni of this.overlay.joints) {
         if (out.has(ni) || !okNode(ni) || (this.hiddenEff && this.hiddenEff[ni])) continue;
@@ -2279,11 +2280,8 @@ class ViewerApp {
       }
     }
     if (this.settings.controls && this.overlay.controlGroup.visible) {
-      for (const it of this.overlay.ctrl.items || []) {
-        if (!it.shown || out.has(it.ni) || !okNode(it.ni)) continue;
-        const p = it.obj.position;
-        if (pointHitsRect(p.x, p.y, p.z, project, rect)) out.add(it.ni);
-      }
+      // 目印の線が一部でも矩形にかかる（Maya と同じ）
+      for (const ni of this.overlay.ctrl.inRect(project, rect)) if (okNode(ni)) out.add(ni);
     }
     // カーブ: 線が矩形にかかる
     for (const it of this.curves.items) {

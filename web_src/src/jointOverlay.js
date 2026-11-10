@@ -321,14 +321,17 @@ export class JointOverlay {
     });
   }
 
-  /** レイが当たったジョイント・コントローラーの nodeIndex（なければ -1）。表示していないほうは選ばない */
-  pick(raycaster) {
+  /**
+   * レイが当たったジョイント・コントローラーの nodeIndex（なければ -1）。表示していないほうは選ばない。
+   * screen = { project, x, y }（コントローラーは画面上で線に近いかで選ぶ）
+   */
+  pick(raycaster, screen) {
     if (!this.spheres) return -1;
     if (this.jointGroup.visible && this.joints.length) {
       const hits = raycaster.intersectObject(this.spheres, false);
       if (hits.length && hits[0].instanceId !== undefined) return this.joints[hits[0].instanceId];
     }
-    if (this.controlGroup.visible && this.controls.length) return this.ctrl.pick(raycaster.ray);
+    if (this.controlGroup.visible && this.controls.length) return this.ctrl.pick(raycaster.ray, screen.project, screen.x, screen.y);
     return -1;
   }
 }

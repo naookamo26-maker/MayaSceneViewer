@@ -3,9 +3,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Matrix4, OrthographicCamera, PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import {
-  combineSelection, makeProjector, normRect, pointHitsRect, pointInTriangle, polylineHitsRect, segmentHitsRect,
-  selectionModeOf, trianglesHitRect,
+  combineSelection, makeProjector, normRect, pointHitsRect, pointInTriangle, pointSegmentDistance, polylineHitsRect,
+  segmentHitsRect, segmentsDistance, segmentsHitRect, selectionModeOf, trianglesHitRect,
 } from '../src/marquee.js';
+import { ControlOverlay } from '../src/controlOverlay.js';
+import { Object3D, Ray } from 'three';
 import { MayaControls, buttonBit, dolly, dollyAmount, dollyScale, navModeOf, track, tumble, wheelScale, worldPerPixel } from '../src/mayaControls.js';
 import { poseFromTransform, poseMatrix, poseQuaternion, propagatePoseDelta } from '../src/pose.js';
 
@@ -272,4 +274,59 @@ test('複数選択の回転（ローカル）とスケール: それぞれの軸
   const s = propagatePoseDelta('scale', false, leadStart, { ...leadStart, s: [2, 1, 0.5] }, leadFrame, otherStart, otherFrame);
   assert.deepEqual(s.s, [2, 2, 0.5]);
   assert.deepEqual(s.t, otherStart.t);
+});
+
+// ---------------------------------------------------------------- コントローラーの目印の選択（線に触れれば選ぶ）
+test('点と線分の距離（ピクセル）', () => {
+  assert.ok(near(pointSegmentDistance(5, 3, 0, 0, 10, 0), 3));
+  assert.ok(near(pointSegmentDistance(-4, 3, 0, 0, 10, 0), 5));    // 端点の外: 端点までの距離
+  assert.ok(near(pointSegmentDistance(2, 2, 1, 1, 1, 1), Math.SQRT2)); // 長さ 0
+});
+
+// 正面から見る正射影のカメラ（1 ワールド単位 = 10 ピクセル、原点が画面の中央 (100, 100)）
+function orthoFront() {
+  const cam = new OrthographicCamera(-10, 10, 10, -10, 0.1, 100);
+  cam.position.set(0, 0, 50);
+  cam.updateMatrixWorld();
+  return cam;
+}
+
+test('線分の集まり: 画面上の距離と矩形', () => {
+  const project = makeProjector(orthoFront(), 200, 200);
+  const cross = [-2, 0, 0, 2, 0, 0, 0, -2, 0, 0, 2, 0];   // 十字（腕の長さ 2 = 20 ピクセル）
+  assert.ok(near(segmentsDistance(cross, 0, 4, project, 118, 102), 2, 1e-6));   // 腕の先の近く
+  assert.ok(near(segmentsDistance(cross, 0, 4, project, 110, 110), 10, 1e-6));  // 腕の間（線から 10 ピクセル）
+  assert.ok(segmentsHitRect(cross, 0, 4, project, normRect(115, 95, 130, 105)));   // 腕の先だけがかかる
+  assert.ok(!segmentsHitRect(cross, 0, 4, project, normRect(105, 105, 130, 130))); // 腕の間
+  assert.equal(segmentsDistance(cross, 2, 2, project, 118, 102), 18);              // 範囲（縦の線だけ）
+});
+
+function overlayWith(role, ni = 0) {
+  const ov = new ControlOverlay();
+  const obj = new Object3D();
+  obj.updateMatrixWorld();
+  const ctx = {
+    nodes: [{ name: 'ctrl', type: 'transform' }], objs: [obj],
+    boneLen: () => 1, nearestJoint: () => -1, medianBone: 1, charRadius: 1,
+  };
+  ov.build([ni], new Map([[ni, { role }]]), ctx);
+  ov.setScale(20);                                     // 半径 4.8（画面で 48 ピクセル）
+  ov.update({ selectColorOf: () => null, isHidden: () => false, statusColor: () => null });
+  return ov;
+}
+
+test('コントローラーの目印: Maya と同じく線のどこかに触れれば選ぶ（中心から離れた腕の先でも）', () => {
+  const ov = overlayWith('locator');
+  const size = ov.items[0].size;                       // 目印の半径（ワールド）。十字の腕は半径の 1.2 倍
+  const cam = orthoFront();
+  const project = makeProjector(cam, 200, 200);
+  const ray = new Ray(new Vector3(0, 0, 50), new Vector3(0, 0, -1));
+  const tip = 100 + size * 1.15 * 10;                  // 腕の先の近く（半径の外）
+  assert.ok(size * 1.15 > size * 1.05);
+  assert.equal(ov.pick(ray, project, tip, 101), 0);
+  assert.equal(ov.pick(ray, project, 100 + size * 6, 100 + size * 6), -1);   // 腕の間（線から離れたところ）は選ばない
+  assert.equal(ov.pick(ray, project, 100, 100 - size * 12 - 3), 0);          // 縦の腕の先から 3 ピクセル
+  assert.equal(ov.pick(ray, project, 100, 100 - size * 12 - 8), -1);         // 8 ピクセル離れると選ばない
+  assert.deepEqual(ov.inRect(project, normRect(tip - 2, 95, tip + 20, 105)), [0]);
+  assert.deepEqual(ov.inRect(project, normRect(150, 150, 190, 190)), []);
 });

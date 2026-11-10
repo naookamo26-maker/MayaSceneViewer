@@ -148,3 +148,43 @@ export function pointHitsRect(x, y, z, project, r) {
   const p = project(x, y, z, {});
   return p.front && pointInRect(p.x, p.y, r);
 }
+
+/** 点 (px, py) から線分 a-b までの距離（画面のピクセル） */
+export function pointSegmentDistance(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const l2 = dx * dx + dy * dy;
+  let t = l2 > 1e-12 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const ex = ax + dx * t - px, ey = ay + dy * t - py;
+  return Math.sqrt(ex * ex + ey * ey);
+}
+
+/**
+ * 線分の集まり（ワールド座標 positions = [x, y, z, ...] の 2 点ずつ。頂点 start から count 個）を画面に写したとき、
+ * 点 (x, y) にいちばん近い線までの距離（ピクセル）。カメラの後ろに端点がある線分は除く。なければ Infinity
+ */
+export function segmentsDistance(positions, start, count, project, x, y) {
+  const a = {}, b = {};
+  let best = Infinity;
+  for (let k = start, end = start + count - 1; k < end; k += 2) {
+    project(positions[k * 3], positions[k * 3 + 1], positions[k * 3 + 2], a);
+    project(positions[k * 3 + 3], positions[k * 3 + 4], positions[k * 3 + 5], b);
+    if (!a.front || !b.front) continue;
+    const d = pointSegmentDistance(x, y, a.x, a.y, b.x, b.y);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/** 線分の集まり（segmentsDistance と同じ形）のどれかが矩形にかかるか */
+export function segmentsHitRect(positions, start, count, project, r) {
+  const a = {}, b = {};
+  for (let k = start, end = start + count - 1; k < end; k += 2) {
+    project(positions[k * 3], positions[k * 3 + 1], positions[k * 3 + 2], a);
+    project(positions[k * 3 + 3], positions[k * 3 + 4], positions[k * 3 + 5], b);
+    if (a.front && b.front && segmentHitsRect(a.x, a.y, b.x, b.y, r)) return true;
+    if (a.front && !b.front && pointInRect(a.x, a.y, r)) return true;
+    if (b.front && !a.front && pointInRect(b.x, b.y, r)) return true;
+  }
+  return false;
+}
