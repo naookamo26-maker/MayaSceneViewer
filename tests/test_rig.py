@@ -206,6 +206,40 @@ class TestSmallRigs(unittest.TestCase):
         self.assertEqual((attrs["i1[0]"], attrs["i1[1]"], attrs["i1[2]"]), (1.0, 2.0, 3.0))
         self.assertEqual(attrs["i3[1]"], [4.0, 5.0, 6.0])
 
+    def test_anim_layer_inputs(self):
+        """animLayer: Maya が保存する接続のうち、ウェイト・ミュート・ソロと親のレイヤーからの値だけをたどる
+        （.dsm・.bnds はメンバーの登録用。たどると blend ノードとの循環になる）"""
+        body = (
+            'createNode joint -n "j";\n'
+            'createNode animLayer -n "BaseAnimation";\n\tsetAttr -s 1 ".chsl";\n\tsetAttr ".ovrd" yes;\n'
+            'createNode animLayer -n "L1";\n\tsetAttr ".wgth" 0.5;\n'
+            'createNode animBlendNodeAdditiveScale -n "j_scaleY_L1";\n\tsetAttr ".o" 1;\n'
+            'createNode animCurveTU -n "j_scaleY";\n\tsetAttr -s 2 ".ktv[0:1]"  1 1 10 2;\n'
+            'createNode animCurveTU -n "j_scaleY_L1_inputB";\n\tsetAttr -s 2 ".ktv[0:1]"  1 1 10 3;\n'
+            'createNode animCurveTU -n "L1_weight";\n\tsetAttr -s 2 ".ktv[0:1]"  1 0 10 1;\n'
+            'connectAttr "j_scaleY_L1.o" "j.sy";\n'
+            'connectAttr "L1.sl" "BaseAnimation.chsl[0]";\n'
+            'connectAttr "L1.play" "BaseAnimation.cdly[0]";\n'
+            'connectAttr "BaseAnimation.csol" "L1.sslo";\n'
+            'connectAttr "BaseAnimation.fgwt" "L1.pwth";\n'
+            'connectAttr "BaseAnimation.omte" "L1.pmte";\n'
+            'connectAttr "L1_weight.o" "L1.wgth";\n'
+            'connectAttr "j.sy" "L1.dsm" -na;\n'
+            'connectAttr "j_scaleY_L1.msg" "L1.bnds[0]";\n'
+            'connectAttr "L1.sam" "j_scaleY_L1.acm";\n'
+            'connectAttr "L1.bgwt" "j_scaleY_L1.wa";\n'
+            'connectAttr "L1.fgwt" "j_scaleY_L1.wb";\n'
+            'connectAttr "j_scaleY.o" "j_scaleY_L1.ia";\n'
+            'connectAttr "j_scaleY_L1_inputB.o" "j_scaleY_L1.ib";\n')
+        _sc, anim = from_text(body)
+        graph = {g["name"]: g for g in anim["graph"]}
+        self.assertEqual(set(graph["L1"]["inputs"]), {"sslo", "pwth", "pmte", "wgth"})
+        self.assertEqual(graph["L1"]["inputs"]["pwth"], {"node": graph["BaseAnimation"]["id"], "attr": "fgwt"})
+        self.assertIn("curve", graph["L1"]["inputs"]["wgth"])          # ウェイトのキー
+        self.assertEqual(set(graph["BaseAnimation"]["inputs"]), {"chsl[0]"})
+        self.assertEqual(graph["j_scaleY_L1"]["inputs"]["acm"], {"node": graph["L1"]["id"], "attr": "sam"})
+        self.assertFalse([w for w in anim.get("warnings", []) if "循環" in w], anim.get("warnings"))
+
 
 
 class TestStage3(unittest.TestCase):
