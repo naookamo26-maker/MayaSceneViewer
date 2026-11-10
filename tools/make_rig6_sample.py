@@ -202,7 +202,8 @@ def main():
     uid("lay_jnt_rotateY_blend1")
     A('createNode animBlendNodeAdditiveScale -n "lay_jnt_scaleY_blend1";')
     uid("lay_jnt_scaleY_blend1")
-    A('\tsetAttr ".acm" 1;')                          # かけ算で重ねる（ノードの既定値は 0 なので Maya はファイルに書く）
+    # かけ算で重ねる（ノードの既定値は 0。Maya はレイヤーの .sam（既定 1 = かけ算）を .acm に接続する。ここでは値を書く）
+    A('\tsetAttr ".acm" 1;')
     anim("TL", "lay_jnt_translateZ_base", [(1, 10), (48, 14)])
     anim("TL", "lay_jnt_translateZ_layer1", [(1, 0), (48, 2)])
     anim("TA", "lay_jnt_rotateY_base", [(1, 0), (48, 20)])
