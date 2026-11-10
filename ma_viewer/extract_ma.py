@@ -14,6 +14,7 @@ import os
 import re
 from typing import Dict, List, Optional, Set, Tuple
 
+from . import bind_pose
 from . import mathutil as M
 from . import schema
 from .ma_scene import (FAST, XFORM_KEYS, FlatFaces, MaNode, MaScene, ProgressFn, RawNumbers, _ranges, clamp_limits,
@@ -1448,29 +1449,57 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
 
     lap("出力するノードの決定")
     # --- バインドポーズ（.pm → dagPose → .bps の優先順）---------------------------
+    # 同じノードのバインド時の行列が skinCluster（dagPose）ごとに違えば、動かす頂点の多い側を使う（bind_pose.choose）
     bind_src: Dict[int, Tuple[List[float], str, str]] = {}   # id → (行列, "world" | "local", 情報源)
-    for n, _source, skin_node, _gi, _tw in mesh_entries:
+    bind_alt: Dict[int, List[List[str]]] = {}                 # id → 姿勢ごとの情報源の組（先頭が使ったもの。食い違うときだけ）
+    bind_conflicts: List[Tuple[str, List[str], List[List[str]]]] = []
+
+    def _nverts(mesh_node) -> int:
+        md = mesh_node.mesh
+        return sum(len(vals) // 3 for _start, vals in md.vt) if md is not None else 0
+
+    pm_cands: Dict[int, list] = {}
+    node_by_id: Dict[int, MaNode] = {}
+    skin_weight: Dict[int, float] = {}                         # skinCluster → 動かす頂点の数
+    for n, source, skin_node, _gi, _tw in mesh_entries:
         if skin_node is None:
             continue
+        nv = _nverts(source)
+        skin_weight[id(skin_node)] = skin_weight.get(id(skin_node), 0) + nv
         for key, (src, _sattr) in skin_node.inputs.items():
             m = _INFLUENCE_RE.match(key)
             if not m:
                 continue
             node = src.parent if src.is_shape else src
             pm = skin_node.skin.pm.get(int(m.group(1)))
-            if pm is not None and id(node) not in bind_src:
-                try:
-                    bind_src[id(node)] = (M.inverse(pm), "world", "pm")
-                except ValueError:
-                    pass
+            if pm is None:
+                continue
+            try:
+                W = M.inverse(pm)
+            except ValueError:
+                continue
+            node_by_id[id(node)] = node
+            pm_cands.setdefault(id(node), []).append((skin_node.name, W, nv))
+    for nid, cands in pm_cands.items():
+        W, used, others = bind_pose.choose(cands)
+        bind_src[nid] = (W, "world", "pm")
+        if others:
+            bind_alt[nid] = [used] + others
+            bind_conflicts.append((node_by_id[nid].name, used, others))
+    msg = bind_pose.conflict_warning(bind_conflicts, "skinCluster")
+    if msg:
+        ms.warn(msg)
     # 接続はつながり先ごとに 1 回だけ索引化する（dagPose ごとに全接続を走査すると、大きなリグで遅い）
     pose_inputs: Dict[int, list] = {}
     bp_sources = set()
+    pose_weight: Dict[int, float] = {}                         # dagPose → つながる skinCluster の頂点の数
     for c in ms.connections:
         if c[2].type == "dagPose":
             pose_inputs.setdefault(id(c[2]), []).append(c)
         elif c[3] == "bp" and c[2].type == "skinCluster":
             bp_sources.add(id(c[0]))
+            pose_weight[id(c[0])] = pose_weight.get(id(c[0]), 0) + skin_weight.get(id(c[2]), 0)
+    pose_cands: Dict[int, Dict[str, list]] = {}               # id → {"world" | "local": [(dagPose, 行列, 重み)]}
     for dp in ms.nodes:
         if dp.type != "dagPose" or dp.raw is None or not _is_bind_pose(dp, bp_sources):
             continue
@@ -1480,12 +1509,22 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
                 continue
             i = int(mm.group(1))
             wm = _matrix_tokens(dp.raw.get("wm[%d]" % i))
-            if wm:
-                bind_src[id(src)] = (wm, "world", "dagPose")
-                continue
-            xm = _matrix_tokens(dp.raw.get("xm[%d]" % i))
-            if xm:
-                bind_src[id(src)] = (xm, "local", "dagPose")
+            xm = None if wm else _matrix_tokens(dp.raw.get("xm[%d]" % i))
+            if wm or xm:
+                node_by_id[id(src)] = src
+                pose_cands.setdefault(id(src), {}).setdefault("world" if wm else "local", []).append(
+                    (dp.name, wm or xm, pose_weight.get(id(dp), 0)))
+    dp_conflicts = []
+    for nid, kinds in pose_cands.items():
+        kind = "world" if "world" in kinds else "local"
+        W, used, others = bind_pose.choose(kinds[kind])
+        bind_src[nid] = (W, kind, "dagPose")
+        if others:
+            bind_alt[nid] = [used] + others
+            dp_conflicts.append((node_by_id[nid].name, used, others))
+    msg = bind_pose.conflict_warning(dp_conflicts, "dagPose")
+    if msg:
+        ms.warn(msg)
     for n in ms.nodes:
         if n.type == "joint" and id(n) not in bind_src and "bps" in n.xattrs:
             bind_src[id(n)] = (n.xattrs["bps"], "world", "bps")
@@ -1647,6 +1686,8 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         if id(x) in bind_local:
             entry["bindMatrix"] = schema.matrix_list(bind_local[id(x)])
             entry["bindSource"] = bind_src[id(x)][2]
+            if id(x) in bind_alt:
+                entry["bindPoses"] = bind_alt[id(x)]       # 姿勢ごとのバインドの情報源の名前（先頭が使ったもの）
         if id(x) in driven:
             entry["drivenBy"] = driven[id(x)]
         out_nodes.append(entry)

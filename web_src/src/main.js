@@ -2170,6 +2170,7 @@ class ViewerApp {
       hiddenByRig: !!(this.rigHidden && this.rigHidden.has(ni) && !this.rigShown.has(ni) && !this.hidden.has(ni)),
       hiddenByParent: !!(this.hiddenEff && this.hiddenEff[ni] && !(this.hidden && this.isNodeHidden(ni))),
       bindSource: n.bindSource || null,
+      bindPoses: n.bindPoses || null,
       unselectable: n.unselectable || null,
       reference: referenceOf(this.data, n.name),
       usingBind: this.settings.poseSource === 'bind' && !!n.bindMatrix,

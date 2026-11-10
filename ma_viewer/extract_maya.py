@@ -17,6 +17,7 @@ import maya.api.OpenMaya as om
 import maya.api.OpenMayaAnim as oma
 from maya import cmds
 
+from . import bind_pose
 from . import schema
 from .materials import (ALPHA_OUTPUTS, MAP_ATTRS, OPACITY_ATTRS, OUTPUT_CHANNEL, SCALAR_ATTRS, TextureResolver,
                         albedo_attrs, default_color, layer_note, map_attrs, pick_layer, texture_entry,
@@ -177,7 +178,9 @@ class _Extractor:
         self.cameras: List[dict] = []
         self.warnings: List[str] = []
         self.progress = progress
-        self.bind_pm: Dict[str, List[float]] = {}    # パス → バインド時のワールド行列（.pm の逆行列）
+        self.bind_pm: Dict[str, List[float]] = {}    # パス → バインド時のワールド行列（.pm の逆行列。_choose_bind で決める）
+        self.bind_cands: Dict[str, list] = {}        # パス → [(skinCluster, バインド時のワールド行列, 頂点の数)]
+        self.bind_alt: Dict[str, List[List[str]]] = {}   # パス → 姿勢ごとの skinCluster の名前（先頭が使ったもの。食い違うときだけ）
         self.bind_bps: Dict[str, List[float]] = {}   # パス → ジョイントの bindPose 属性
         self.materials: List[dict] = []
         self.textures: List[dict] = []
@@ -634,7 +637,7 @@ class _Extractor:
             li = fn_skin.indexForInfluenceObject(p)
             pm = _matrix_from_plug(dep, "bindPreMatrix", li)
             pms.append(schema.matrix_list(pm))
-            self.bind_pm.setdefault(path, inverse_or_identity(pm))
+            self.bind_cands.setdefault(path, []).append((sc_name, inverse_or_identity(pm), nv))
 
         n_out = om.MFnMesh(out_dag).numVertices
         comp_fn = om.MFnSingleIndexedComponent()
@@ -702,8 +705,22 @@ class _Extractor:
             off += c
         return new_counts, new_idx, new_vals
 
+    def _choose_bind(self):
+        """インフルエンスごとのバインド時の行列。skinCluster ごとに違えば、動かす頂点の多い側（bind_pose.choose）"""
+        conflicts = []
+        for path, cands in self.bind_cands.items():
+            W, used, others = bind_pose.choose(cands)
+            self.bind_pm[path] = W
+            if others:
+                self.bind_alt[path] = [used] + others
+                conflicts.append((path.rsplit("|", 1)[-1], used, others))
+        msg = bind_pose.conflict_warning(conflicts, "skinCluster")
+        if msg:
+            self.warn(msg)
+
     def _apply_bind_pose(self):
         """バインドポーズ（.pm → bindPose 属性の優先順）のローカル行列を nodes に入れる"""
+        self._choose_bind()
         worlds: List[List[float]] = []
         for n in self.nodes:
             p = n["parent"]
@@ -719,6 +736,8 @@ class _Extractor:
             if src:
                 n["bindMatrix"] = schema.matrix_list(mul(W, inverse_or_identity(pw)))
                 n["bindSource"] = src
+                if src == "pm" and n["path"] in self.bind_alt:
+                    n["bindPoses"] = self.bind_alt[n["path"]]
 
     def to_dict(self) -> dict:
         self._apply_bind_pose()

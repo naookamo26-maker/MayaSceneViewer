@@ -60,6 +60,7 @@ transform・joint などの変換ノードです。**親は必ず子より前に
 | `segmentScaleCompensate` | joint のみ（省略時は true）。ポーズ確認で親ジョイントをスケールしたときの補正に使う |
 | `bindMatrix` | バインドポーズのローカル行列（情報があるノードのみ）。情報のないノードは matrix のまま親についていく |
 | `bindSource` | bindMatrix の情報源: `pm`（skinCluster の .pm）・`dagPose`・`bps`（ジョイントの .bps） |
+| `bindPoses` | バインド時の姿勢が skinCluster（dagPose）ごとに食い違うときだけ: 姿勢ごとの情報源の名前の組（例: `[["skinCluster1", "skinCluster3"], ["skinCluster2"]]`）。先頭が bindMatrix に使ったもの（動かす頂点の数の合計が多い側） |
 | `drivenBy` | 移動・回転などが接続で決まっている場合の接続元（例: `r ← uc1（unitConversion）`）。この場合 .ma に値がないため、matrix はバインドポーズの姿勢（bindMatrix があれば）か既定値になる |
 | `visible` | 自身の表示状態 |
 | `unselectable` | Maya のビューポートで選択できないとき、その理由（`テンプレート`・`リファレンス`）。テンプレート（.template。祖先も含む）と、描画のオーバーライドかディスプレイレイヤーの表示の種類（近い方の設定）から決める。meshes・curves も同じ |

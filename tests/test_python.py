@@ -421,6 +421,66 @@ connectAttr "root.msg" "bindPose1.m[1]";
 """
 
 
+def _tri_mesh(name, nverts_extra=0):
+    """三角形 1 枚（nverts_extra 個の頂点を足せる）のメッシュと元形状"""
+    vt = "0 0 0 1 0 0 0 1 0" + " 0 0 0" * nverts_extra
+    n = 3 + nverts_extra
+    return ('createNode transform -n "%s";\ncreateNode mesh -n "%sShape" -p "%s";\n'
+            'createNode mesh -n "%sShapeOrig" -p "%s";\n\tsetAttr ".io" yes;\n'
+            '\tsetAttr ".vt[0:%d]" %s;\n\tsetAttr ".ed[0:2]" 0 1 0 1 2 0 2 0 0;\n'
+            '\tsetAttr ".fc[0]" -type "polyFaces" f 3 0 1 2;\n' % (name, name, name, name, name, n - 1, vt))
+
+
+# 同じジョイント j を 3 つの skinCluster でバインドし、sc_b だけ別の姿勢（y=5）。頂点の数は a:3・b:6・c:4
+MULTI_BIND_MA = """
+createNode joint -n "j";
+""" + _tri_mesh("a") + _tri_mesh("b", 3) + _tri_mesh("c", 1) + """
+createNode skinCluster -n "sc_a";
+\tsetAttr ".pm[0]" -type "matrix" 1 0 0 0 0 1 0 0 0 0 1 0 0 -1 0 1;
+createNode skinCluster -n "sc_b";
+\tsetAttr ".pm[0]" -type "matrix" 1 0 0 0 0 1 0 0 0 0 1 0 0 -5 0 1;
+createNode skinCluster -n "sc_c";
+\tsetAttr ".pm[0]" -type "matrix" 1 0 0 0 0 1 0 0 0 0 1 0 0 -1.0000001 0 1;
+connectAttr "j.wm" "sc_a.ma[0]";
+connectAttr "j.wm" "sc_b.ma[0]";
+connectAttr "j.wm" "sc_c.ma[0]";
+connectAttr "aShapeOrig.w" "sc_a.ip[0].ig";
+connectAttr "sc_a.og[0]" "aShape.i";
+connectAttr "bShapeOrig.w" "sc_b.ip[0].ig";
+connectAttr "sc_b.og[0]" "bShape.i";
+connectAttr "cShapeOrig.w" "sc_c.ip[0].ig";
+connectAttr "sc_c.og[0]" "cShape.i";
+"""
+
+
+class TestMultipleBindPoses(unittest.TestCase):
+    def test_majority_by_vertices(self):
+        from ma_viewer import bind_pose
+        # 同じ行列とみなす差
+        self.assertTrue(bind_pose.same_matrix(M.identity(), M.translate((0, 1e-5, 0))))
+        self.assertFalse(bind_pose.same_matrix(M.identity(), M.translate((0, 0.01, 0))))
+        m, used, others = bind_pose.choose([("a", [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1], 3),
+                                            ("b", [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 5, 0, 1], 6),
+                                            ("c", [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1], 4)])
+        self.assertEqual((used, others), (["a", "c"], [["b"]]))         # 3 + 4 = 7 頂点 > 6 頂点
+        self.assertEqual(m[13], 1)
+
+    def test_scene(self):
+        scene = scene_to_dict(parse_ma_text(MULTI_BIND_MA))
+        j = {x["name"]: x for x in scene["nodes"]}["j"]
+        self.assertEqual(j["bindSource"], "pm")
+        self.assertTrue(M.is_close(M.position(j["bindMatrix"]), (0, 1, 0)))   # 頂点の多い側（sc_a・sc_c）
+        self.assertEqual(j["bindPoses"], [["sc_a", "sc_c"], ["sc_b"]])
+        warns = " ".join(scene["warnings"])
+        self.assertIn("バインドポーズが複数あります: 1 個のノード", warns)
+        self.assertIn("j（sc_a・sc_c を使用。sc_b は別の姿勢）", warns)
+
+    def test_no_conflict_no_field(self):
+        scene = scene_to_dict(parse_ma_text(BIND_MA))
+        self.assertFalse(any("bindPoses" in x for x in scene["nodes"]))
+        self.assertNotIn("バインドポーズが複数", " ".join(scene["warnings"]))
+
+
 class TestBindPose(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

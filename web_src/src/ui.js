@@ -1043,6 +1043,12 @@ export class UI {
     if (info.bindSource || n.type === 'joint') {
       h += `<tr><th>姿勢の基準</th><td>${info.usingBind ? 'バインドポーズ' : 'ファイルの値'}</td></tr>`;
       h += `<tr><th>バインドポーズの情報</th><td>${info.bindSource ? esc(SRC[info.bindSource] || info.bindSource) : 'なし'}</td></tr>`;
+      if (info.bindPoses && info.bindPoses.length > 1) {
+        // skinCluster（dagPose）ごとにバインド時の姿勢が違う。先頭が使ったもの
+        const [used, ...others] = info.bindPoses;
+        h += `<tr><th>バインドポーズが複数</th><td><span class="badge warn">${info.bindPoses.length} 通り</span>。使用: ${esc(used.join('・'))}`
+          + `<br>別の姿勢: ${others.map((o) => esc(o.join('・'))).join(' / ')}</td></tr>`;
+      }
     }
     h += '</table>';
     const anim = info.animChannels || [];
