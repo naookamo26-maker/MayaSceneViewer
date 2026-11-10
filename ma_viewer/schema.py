@@ -98,6 +98,48 @@ def is_packed(x) -> bool:
     return isinstance(x, dict) and "data" in x and "dtype" in x
 
 
+# split_blobs で抜き出す配列の大きさ（base64 の文字数。これより小さい配列は JSON に残す）
+BLOB_MIN_CHARS = 1 << 16
+
+
+def split_blobs(obj, min_chars: int = BLOB_MIN_CHARS):
+    """大きな数値の配列（pack_array の形）を抜き出す → (骨組み, [base64 の文字列])。
+    骨組みでは、抜き出した配列が {"dtype", "count", "blob": 番号} になる（番号は一覧の位置）。obj は変えない
+    （抜き出さない部分はそのまま共有する）。ビューアへの転送で、大きな 1 つの文字列を作らないために使う
+    （ブラウザの文字列には約 5.3 億文字の上限がある。web_src/src/transfer.js が受け取る）"""
+    blobs: list = []
+
+    def walk(x):
+        if isinstance(x, dict):
+            if is_packed(x) and isinstance(x["data"], str) and len(x["data"]) >= min_chars:
+                blobs.append(x["data"])
+                ref = {k: v for k, v in x.items() if k != "data"}
+                ref["blob"] = len(blobs) - 1
+                return ref
+            out = None
+            for k, v in x.items():
+                if isinstance(v, (dict, list)):
+                    w = walk(v)
+                    if w is not v:
+                        if out is None:
+                            out = dict(x)
+                        out[k] = w
+            return x if out is None else out
+        if isinstance(x, list):
+            out = None
+            for i, v in enumerate(x):
+                if isinstance(v, (dict, list)):
+                    w = walk(v)
+                    if w is not v:
+                        if out is None:
+                            out = list(x)
+                        out[i] = w
+            return x if out is None else out
+        return x
+
+    return walk(obj), blobs
+
+
 def array_values(x) -> list:
     """数値の配列（リストか pack_array の形）を数値のリストにする。None・リストはそのまま返す"""
     if not is_packed(x):

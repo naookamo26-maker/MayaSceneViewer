@@ -17,9 +17,10 @@ from .qt_compat import (QAction, QWebChannel, QWebEnginePage, QWebEngineScript, 
                         QWebEngineView, QtCore, QtGui, QtWidgets, Qt, Signal, Slot, require_webengine,
                         run_javascript)
 
+from . import schema  # noqa: E402
 from .resources import index_html  # noqa: E402
 from .resources import APP_NAME  # noqa: E402  ソフト名（ウィンドウのタイトルなど。英語表記）  web 一式の場所（exe 化しても見つかるように探す）
-CHUNK_SIZE = 4 * 1024 * 1024          # runJavaScript 1 回あたりの文字数
+CHUNK_SIZE = 4 * 1024 * 1024          # runJavaScript 1 回あたりの文字数（4 の倍数: 配列の base64 をかけらごとに戻すため）
 OPENABLE_EXT = (".ma", ".json", ".msv", ".mb")
 DATA_EXT = (".json", ".msv")      # 変換済みのデータ（解析しない。アニメーションも一緒に入っている）
 
@@ -284,24 +285,35 @@ class ViewerWidget(QtWidgets.QWidget):
                 self.bridge.package_names.update(x["packed"] for x in [t] + list(t.get("tiles") or []) if x.get("packed"))
         payload = payload or Payload.of(scene)
         self.last_dump_seconds = payload.seconds
-        payload = payload.text
-        self._call("beginTransfer", message)
-        for i in range(0, len(payload), CHUNK_SIZE):
-            self.run_js("window.mayaViewer.appendChunk(%s)" % json.dumps(payload[i:i + CHUNK_SIZE]))
-        self._call("endTransfer")
-        return len(payload)
+        return self._transfer(scene, payload, "beginTransfer", "endTransfer", message)
+
+    def _transfer(self, data, payload: "Payload", begin: str, end: str, message: Optional[str] = None) -> int:
+        """data を分割して送る。大きな数値の配列は JSON から抜き出して先に 1 つずつ送り（ビューアがその場でバイト列に
+        戻す）、そのあと JSON の骨組みを送る。ブラウザの文字列の上限（約 5.3 億文字）を超えるシーンも送れる。
+        戻り値: 送った文字数"""
+        skeleton, blobs = schema.split_blobs(data)
+        text = payload.text if not blobs else json.dumps(skeleton, ensure_ascii=True, separators=(",", ":"))
+        total = len(text) + sum(len(b) for b in blobs)
+        if message is None:
+            self._call(begin, total)
+        else:
+            self._call(begin, message, total)
+        for b in blobs:
+            # かけらの長さは 4 の倍数（base64 の区切り。ビューアはかけらごとにバイト列に戻す）
+            for i in range(0, len(b), CHUNK_SIZE):
+                self.run_js("window.mayaViewer.appendBlobChunk(%s)" % json.dumps(b[i:i + CHUNK_SIZE]))
+            self.run_js("window.mayaViewer.endBlob()")
+        for i in range(0, len(text), CHUNK_SIZE):
+            self.run_js("window.mayaViewer.appendChunk(%s)" % json.dumps(text[i:i + CHUNK_SIZE]))
+        self._call(end)
+        return total
 
     def set_animation(self, anim: dict, payload: Optional[Payload] = None):
         """アニメーション（共通 JSON の animation）を送る。シーンを送ったあとに呼ぶ。
         payload: 読み込みスレッドで文字列にしておいたもの（なければここで文字列にする）"""
         payload = payload or Payload.of(anim)
         self.last_dump_seconds = payload.seconds
-        payload = payload.text
-        self._call("beginAnimationTransfer")
-        for i in range(0, len(payload), CHUNK_SIZE):
-            self.run_js("window.mayaViewer.appendChunk(%s)" % json.dumps(payload[i:i + CHUNK_SIZE]))
-        self._call("endAnimationTransfer")
-        return len(payload)
+        return self._transfer(anim, payload, "beginAnimationTransfer", "endAnimationTransfer")
 
     def set_animation_status(self, text: str):
         """アニメーションの読み込み状況（タイムラインに表示）"""
