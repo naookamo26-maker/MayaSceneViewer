@@ -141,6 +141,19 @@ class TestShapeInput(unittest.TestCase):
         self.assertNotIn("cc", maya_scene.skip_attrs("nurbsCurve", False))      # 入力のないカーブは形を書く
 
 
+class TestCompareTool(unittest.TestCase):
+    def test_compare(self):
+        """tools/maya_compare: Maya から作った文と .ma の文の違いを一覧にする（同じなら 0 件、抜けた属性は「.ma だけ」）"""
+        sys.path.insert(0, os.path.join(ROOT, "tools"))
+        import maya_compare
+        path = os.path.join(ROOT, "samples", "exprespy_sample.ma")
+        ma_text = read_ma_text_info(path)[0]
+        st = scene_text(path)
+        self.assertTrue(maya_compare.compare_text("\n".join(st.lines), ma_text)[0].startswith("違い 0 件"))
+        lines = maya_compare.compare_text("\n".join(x for x in st.lines if '".cd"' not in x), ma_text)[1]
+        self.assertTrue(lines[0].startswith("[.ma だけにある値] exprespy.cd × "), lines[:2])
+
+
 class TestBlockText(unittest.TestCase):
     def test_relative_plug(self):
         """ブロックの中の setAttr は、ノードの名前を付けない形にそろえる（あとから属性を読む処理はこの形を探す）"""
