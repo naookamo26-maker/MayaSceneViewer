@@ -114,12 +114,12 @@ class SceneText:
         self._attrs(setattrs)
 
     def _attrs(self, setattrs) -> None:
-        """ノードのブロックの文（.ma と同じく字下げする。字下げのない行でブロックが終わるので、複数行の文も行ごとに）。
+        """ノードのブロックの文。setattrs の 1 つは 1 つの属性の文（複数の文・複数の行のこともある。文の区切りは ;）。
+        .ma と同じく字下げする（字下げのない行でブロックが終わるので、複数行の文も行ごとに）。
         属性はノードの名前を付けない形（setAttr ".cc"）にそろえる（あとから属性を読む処理はこの形を探す）"""
         for c in setattrs:
             rows = [r.strip() for r in c.splitlines() if r.strip()]
-            if rows:
-                rows[0] = _relative_plug(rows[0])
+            rows = [_relative_plug(r) if r.startswith("setAttr") else r for r in rows]
             if rows and not rows[-1].endswith(";"):
                 rows[-1] += ";"
             self.lines += ["\t" + r for r in rows]
@@ -201,18 +201,18 @@ def _setattr_cmds(obj, fn, skip) -> List[str]:
                 pass
         if not fa.parent.isNull() or not fa.storable or fa.shortName in skip:
             continue
-        typed = a.hasFn(om.MFn.kTypedAttribute)
-        if typed and om.MFnTypedAttribute(a).attrType() in geometry:
+        if a.hasFn(om.MFn.kTypedAttribute) and om.MFnTypedAttribute(a).attrType() in geometry:
             continue
         plug = om.MPlug(obj, a)
         if plug.isDestination:
             continue
         try:
-            # データの型を持つ属性（文字列・カーブの形・componentList など）は既定値と比べられず、kNonDefault では
-            # 書かれないので、値をすべて書く（exprespy のコード .cd・カーブの形 .cc・テクスチャのファイル名など）
-            out += plug.getSetAttrCmds(om.MPlug.kAll if typed else om.MPlug.kNonDefault, False)
+            # 長い値の文は複数の行に分けて返る（カーブの形・長い文字列など。; は最後の行だけ）。1 つの属性の行はつなげる
+            rows = plug.getSetAttrCmds(om.MPlug.kNonDefault, False)
         except RuntimeError:
-            pass
+            continue
+        if len(rows):
+            out.append("\n".join(rows))
     return adds + out
 
 
