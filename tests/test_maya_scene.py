@@ -152,6 +152,11 @@ class TestCompareTool(unittest.TestCase):
         self.assertTrue(maya_compare.compare_text("\n".join(st.lines), ma_text)[0].startswith("違い 0 件"))
         lines = maya_compare.compare_text("\n".join(x for x in st.lines if '".cd"' not in x), ma_text)[1]
         self.assertTrue(lines[0].startswith("[.ma だけにある値] exprespy.cd × "), lines[:2])
+        # リファレンスの仮の接続（.phl[n]）は、同じ接続先への Maya の接続（接続元はリファレンスの中）と同じとみなす
+        ma = 'createNode reference -n "aRN";\ncreateNode transform -n "n";\nconnectAttr "aRN.phl[1]" "n.tx";\n'
+        maya = 'createNode reference -n "aRN";\ncreateNode transform -n "n";\nconnectAttr "|a:c.tx" "n.tx";\n'
+        self.assertTrue(maya_compare.compare_text(maya, ma)[0].startswith("違い 0 件"))
+        self.assertIn("[.ma だけにある接続] transform.tx × 1", maya_compare.compare_text("", ma)[1])
 
 
 class TestBlockText(unittest.TestCase):
