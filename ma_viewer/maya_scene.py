@@ -187,7 +187,7 @@ def _setattr_cmds(obj, fn, skip) -> List[str]:
     """ノードのブロックの文（Maya が .ma に書くもの）: 独自の属性の addAttr（getAddAttrCmd。複合の属性の子も）と、
     値が既定と違う属性の setAttr（複合・配列の属性は子と要素もまとめて）。.ma と同じく addAttr を先に書く。
     addAttr は、独自の属性の種類（角度など）と既定値（-dv。既定値のままの属性は setAttr を書かない）に要る。
-    接続の先の属性は、.ma と同じく値を書かない（値は接続から求める）"""
+    接続の先の属性の値も、.ma と同じく書く（評価の出発点・評価できないときの値に使う）"""
     adds: List[str] = []
     out: List[str] = []
     geometry = _geometry_types()
@@ -204,8 +204,6 @@ def _setattr_cmds(obj, fn, skip) -> List[str]:
         if a.hasFn(om.MFn.kTypedAttribute) and om.MFnTypedAttribute(a).attrType() in geometry:
             continue
         plug = om.MPlug(obj, a)
-        if plug.isDestination:
-            continue
         try:
             # 長い値の文は複数の行に分けて返る（カーブの形・長い文字列など。; は最後の行だけ）。1 つの属性の行はつなげる
             rows = plug.getSetAttrCmds(om.MPlug.kNonDefault, False)

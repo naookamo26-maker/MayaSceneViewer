@@ -177,6 +177,30 @@ class TestBlockText(unittest.TestCase):
         self.assertFalse([w for w in scene["warnings"] if ".cc" in w], scene["warnings"])
 
 
+class TestDestinationValues(unittest.TestCase):
+    def test_connected_values_are_kept(self):
+        """.ma は接続の先の属性の値も書く（評価の出発点・評価できないときの値に使う）。抜くと結果が変わる
+        （カメラ・リグのサンプル）ので、collect も書く"""
+        for name in ("vis_camera_sample.ma", "rig_sample.ma"):
+            path = os.path.join(ROOT, "samples", name)
+            st = scene_text(path)
+            dst = {_PLUG.findall(x)[1] for x in st.lines if x.startswith("connectAttr") and len(_PLUG.findall(x)) > 1}
+            kept, cur = [], None
+            for x in st.lines:
+                if not x.startswith("\t"):
+                    m = re.search(r'^createNode \S+ -n "([^"]+)"', x)
+                    cur = m.group(1) if m else None
+                m = _PLUG.search(x) if cur and x.lstrip().startswith("setAttr") else None
+                if m and m.group(1).startswith(".") and cur + m.group(1) in dst:
+                    continue
+                kept.append(x)
+            st.lines = kept
+            got, want = load(maya_scene.load_staged(st)), load(load_ma_staged(path))
+            got["source"].pop("kind")
+            want["source"].pop("kind")
+            self.assertNotEqual(got, want, name)
+
+
 class TestAddAttr(unittest.TestCase):
     def test_exprespy_needs_addattr(self):
         """独自の属性の addAttr がないと、exprespy の入力の種類（ベクトルか数か）が分からず、コードを解析できない。
