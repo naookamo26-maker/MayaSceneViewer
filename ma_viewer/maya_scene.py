@@ -90,6 +90,7 @@ class SceneText:
         self.skins: Dict[str, tuple] = {}           # skinCluster → (頂点, インフルエンスの論理番号, 値)
         self.namespaces: Dict[str, str] = {}        # リファレンスから読んだノード → 名前の前置き（"rig:"）
         self.ref_infos: List[RefInfo] = []
+        self.warnings: List[str] = []               # 集めるときの警告（MaScene の警告に入れる）
         self.view_camera: Optional[str] = None      # 作業中のビューのカメラ
         self.project_root: Optional[str] = None     # いまのプロジェクト（テクスチャを探す）
 
@@ -120,6 +121,8 @@ class SceneText:
         ms.source_kind = "maya"
         ms.view_camera_name = self.view_camera or ""
         ms.ref_infos = self.ref_infos
+        for w in self.warnings:
+            ms.warn(w)
         ms.project_root = self.project_root
         for name, m in self.meshes.items():
             n = ms.resolve(name)
@@ -294,26 +297,36 @@ def _nodes(selection_only: bool):
     return out
 
 
+def _ref_query(rfn: str, default, **flags):
+    """referenceQuery。問い合わせられない reference ノード（名前空間のないもの・ファイルのないものなど）は default"""
+    try:
+        return cmds.referenceQuery(rfn, **flags)
+    except RuntimeError:
+        return default
+
+
 def _references() -> List[RefInfo]:
     """読み込んだリファレンス（.ma の file -r と同じ情報。ノードは Maya が読み込んだものを使う）"""
     infos: List[Tuple[RefInfo, Optional[str]]] = []
     by_rfn: Dict[str, RefInfo] = {}
     for rfn in cmds.ls(type="reference") or []:
-        try:
-            path = cmds.referenceQuery(rfn, filename=True, unresolvedName=True, withoutCopyNumber=True)
-            resolved = cmds.referenceQuery(rfn, filename=True, withoutCopyNumber=True)
-        except RuntimeError:                       # sharedReferenceNode など、ファイルのない reference ノード
+        path = _ref_query(rfn, None, filename=True, unresolvedName=True, withoutCopyNumber=True)
+        if not path:                               # sharedReferenceNode など、ファイルのない reference ノード
             continue
-        ns = (cmds.referenceQuery(rfn, namespace=True) or "").lstrip(":")
+        loaded = bool(_ref_query(rfn, False, isLoaded=True))
+        nodes = (_ref_query(rfn, None, nodes=True) or []) if loaded else []
+        ns = _ref_query(rfn, None, namespace=True)
+        if ns is None:                             # 名前空間を問い合わせられなければ、ノードの名前から
+            ns = next((n.rpartition(":")[0] for n in nodes if ":" in n), "")
+        ns = ns.lstrip(":")
         ri = RefInfo(path, ns, ns + ":" if ns else "", rfn, 1, None)
-        ri.resolved = resolved
-        ri.loaded = bool(cmds.referenceQuery(rfn, isLoaded=True))
-        if ri.loaded:
-            ri.node_count = len(cmds.referenceQuery(rfn, nodes=True) or [])
-        else:
+        ri.resolved = _ref_query(rfn, None, filename=True, withoutCopyNumber=True)
+        ri.loaded = loaded
+        ri.node_count = len(nodes)
+        if not loaded:
             ri.reason = "Maya でアンロードされています"
         by_rfn[rfn] = ri
-        infos.append((ri, cmds.referenceQuery(rfn, referenceNode=True, parent=True)))
+        infos.append((ri, _ref_query(rfn, None, referenceNode=True, parent=True)))
     for ri, parent_rfn in infos:
         ri.parent = by_rfn.get(parent_rfn)
     for ri, _p in infos:                           # 入れ子の深さ（1 = いちばん外側）
@@ -400,7 +413,10 @@ def collect(selection_only: bool = False, progress: ProgressFn = None) -> SceneT
                 skey = "time1"                       # 時間の入力（.ma の解析と同じく、time1 のノードは作らない）
             if skey is not None:
                 st.connect(skey + "." + _plug_name(src), key + "." + _plug_name(plug))
-    st.ref_infos = _references()
+    try:
+        st.ref_infos = _references()
+    except Exception as exc:  # noqa: BLE001  リファレンスの一覧は補助の情報。取れなくてもシーンは読む
+        st.warnings.append("リファレンスの一覧を取得できませんでした（%s）。ノードはそのまま表示します。" % exc)
     st.view_camera = _view_camera()
     try:
         st.project_root = (cmds.workspace(query=True, rootDirectory=True) or "").rstrip("/\\") or None

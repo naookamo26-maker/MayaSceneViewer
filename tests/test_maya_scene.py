@@ -141,6 +141,39 @@ class TestShapeInput(unittest.TestCase):
         self.assertNotIn("cc", maya_scene.skip_attrs("nurbsCurve", False))      # 入力のないカーブは形を書く
 
 
+class _RefCmds:
+    """リファレンスを問い合わせる cmds の代わり。rigRN は名前空間を問い合わせると失敗する
+    （Maya の「関係付けられたネームスペースが見つかりません」）。sharedReferenceNode はファイルがない"""
+    REFS = {"rigRN": {"filename": "C:/proj/scenes/rig.mb", "isLoaded": True, "nodes": ["rig:root", "rig:geo"],
+                      "referenceNode": None},
+            "rig:propRN": {"filename": "C:/proj/scenes/prop.ma", "isLoaded": False, "namespace": ":rig:prop",
+                           "referenceNode": "rigRN"},
+            "sharedReferenceNode": {}}
+
+    def ls(self, type=None):
+        return list(self.REFS)
+
+    def referenceQuery(self, rfn, **flags):
+        flag = next(k for k in flags if k not in ("unresolvedName", "withoutCopyNumber", "parent"))
+        info = self.REFS[rfn]
+        if flag not in info:
+            raise RuntimeError("関係付けられたネームスペースが見つかりません")
+        return info[flag]
+
+
+class TestReferences(unittest.TestCase):
+    def test_reference_without_namespace_query(self):
+        saved = maya_scene.cmds
+        maya_scene.cmds = _RefCmds()
+        try:
+            refs = maya_scene._references()
+        finally:
+            maya_scene.cmds = saved
+        got = [(r.rfn, r.namespace, r.prefix, r.loaded, r.node_count, r.depth, r.reason) for r in refs]
+        self.assertEqual(got, [("rigRN", "rig", "rig:", True, 2, 1, ""),
+                               ("rig:propRN", "rig:prop", "rig:prop:", False, 0, 2, "Maya でアンロードされています")])
+
+
 class TestExport(unittest.TestCase):
     def test_export_package(self):
         """mv.export: ウィンドウを開かずに、ビューアで開いたときと同じシーン（アニメーションも）を .msv に書き出す"""
