@@ -143,7 +143,7 @@ class ViewerApp {
       this.ui.setEmpty(false);
       this.ui.showError('WebGL を初期化できませんでした。\n'
         + 'GPU ドライバを更新するか、環境変数 QTWEBENGINE_CHROMIUM_FLAGS に --ignore-gpu-blocklist を指定して起動してください。\n\n'
-        + String(err && err.message || err));
+        + String(err && err.message || err), { sticky: true });
     }
     this.bindEvents();
     connectBridge((b) => {
@@ -447,7 +447,7 @@ class ViewerApp {
   loadFile(file) {
     if (/\.(ma|mb)$/i.test(file.name)) {
       this.ui.showError(`${file.name} はブラウザでは直接読めません。\n`
-        + 'python -m ma_viewer pack でパッケージ（.msv）に変換するか、Qt版のビューア（python -m ma_viewer）で開いてください。');
+        + 'パッケージ（.msv）・共通 JSON を開いてください。');
       return;
     }
     this.ui.showLoading(`${file.name} を読み込み中`);
