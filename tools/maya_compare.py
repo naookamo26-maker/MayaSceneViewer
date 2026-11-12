@@ -11,6 +11,7 @@ Maya 内の読み込みがスタンドアロンと違うとき、どのノード
     maya_compare.run()                                   # 一覧をファイルに書き、場所と要約を出す
 
 比べるのは、.ma のこのファイルに書かれたノード（リファレンスの中のノードは、Maya 側にしかないので数だけ）。
+.ma のリファレンスの仮の接続（reference ノードの .phl[n] から）は、同じ接続先への Maya の接続と同じものとみなす。
 メッシュの形・スキンウェイトなど、文にせず API から入れる属性（maya_scene.skip_attrs）は比べない。
 """
 from __future__ import annotations
@@ -136,10 +137,16 @@ def compare_text(maya_text: str, ma_text: str) -> Tuple[str, List[str]]:
             note(".ma だけにある addAttr", a["type"], ln, "%s.%s" % (name, ln))
     extra_nodes = Counter(m["type"] for name, m in mn.items() if name not in an)
     types = {name: a["type"] for name, a in an.items()}
-    for src, dst in ac - mc:
-        note(".ma だけにある接続", types.get(dst.split(".")[0], "?"), dst.split(".", 1)[1], "%s -> %s" % (src, dst))
-    for src, dst in mc - ac:
-        if dst.split(".")[0] in an and src.split(".")[0] in an:
+    ma_only = ac - mc
+    maya_only = {(s, d) for s, d in mc - ac if d.split(".")[0] in an}      # 接続元はリファレンスの中でもよい
+    # .ma のリファレンスの仮の接続（reference ノードの .phl[n]）は、同じ接続先への Maya の接続と同じものとみなす
+    maya_dst = {d for _s, d in maya_only}
+    same = {d for s, d in ma_only if ".phl[" in s and d in maya_dst}
+    for src, dst in ma_only:
+        if dst not in same:
+            note(".ma だけにある接続", types.get(dst.split(".")[0], "?"), dst.split(".", 1)[1], "%s -> %s" % (src, dst))
+    for src, dst in maya_only:
+        if dst not in same:
             note("Maya だけにある接続", types.get(dst.split(".")[0], "?"), dst.split(".", 1)[1], "%s -> %s" % (src, dst))
 
     lines = []

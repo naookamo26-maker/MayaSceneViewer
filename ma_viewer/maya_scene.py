@@ -287,7 +287,8 @@ def _selection_closure() -> set:
 
 
 def _nodes(selection_only: bool):
-    """書き出すノード: [(MObject, .ma に書く名前, 親のパス)]。DAG は親から順（MItDag）、そのあと DG ノード"""
+    """書き出すノード: [(MObject, .ma に書く名前, 親のパス)]。DAG は親から順（MItDag）、そのあと DG ノード。
+    既定のノードは .ma と同じく除く。canBeWritten() は使わない（.ma に書かれるノードにも偽のものがある。IK のソルバーなど）"""
     keep = _selection_closure() if selection_only else None
     out = []
     it = om.MItDag(om.MItDag.kDepthFirst)
@@ -298,8 +299,8 @@ def _nodes(selection_only: bool):
             continue
         fn = om.MFnDagNode(path)
         full = path.fullPathName()
-        if path.instanceNumber() > 0 or not fn.canBeWritten() or fn.isDefaultNode:
-            it.prune()                             # インスタンスの 2 つめ以降（.ma の解析でも使わない）・書かないノード
+        if path.instanceNumber() > 0 or fn.isDefaultNode:
+            it.prune()                             # インスタンスの 2 つめ以降（.ma の解析でも使わない）・既定のノード
         elif keep is None or full in keep:
             parent = full.rsplit("|", 1)[0]
             out.append((it.currentItem(), full, full.rsplit("|", 1)[1], parent or None))
@@ -312,7 +313,7 @@ def _nodes(selection_only: bool):
             continue
         fn = om.MFnDependencyNode(obj)
         name = fn.name()
-        if (fn.isDefaultNode or not fn.canBeWritten() or fn.typeName == "reference" or name in _SKIP_NODES
+        if (fn.isDefaultNode or fn.typeName == "reference" or name in _SKIP_NODES
                 or (keep is not None and name not in keep)):
             continue
         out.append((obj, name, name, None))
