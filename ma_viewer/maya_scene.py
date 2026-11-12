@@ -146,6 +146,17 @@ _SKIP_ATTRS = {
     "skinCluster": {"wl"},
     "blendShape": {"it"},                 # ターゲットの形（ビューアは blendShape を評価しない）
 }
+# 形の入力（ヒストリ・デフォーマ）があるときに書かない、形の値。.ma と同じく、形は入力から求める
+# （書くと、いま評価された形が固定の形として読まれ、リグで動かなくなる）
+_INPUT_SHAPE = {"nurbsCurve": ("cr", "cc")}
+
+
+def skip_attrs(node_type: str, shape_input: bool) -> set:
+    """文にしない属性。shape_input: 形の入力（_INPUT_SHAPE の入力の属性）に接続があるか"""
+    out = set(_SKIP_ATTRS.get(node_type, ()))
+    if shape_input and node_type in _INPUT_SHAPE:
+        out.add(_INPUT_SHAPE[node_type][1])
+    return out
 # 既定のノードのうち、.ma と同じく select -ne で値を書くもの（ほかの既定のノードは .ma の解析でも作られない）
 _DEFAULT_NODES = ("defaultResolution",)
 # 書かないノード: 画面の構成（作業中のビューのカメラは SceneText.view_camera に入れる）と、再生範囲（いまの値を書く）
@@ -157,7 +168,8 @@ def _geometry_types():
 
 
 def _setattr_cmds(obj, fn, skip) -> List[str]:
-    """ノードの値が既定と違う属性の setAttr（Maya が .ma に書く文。複合・配列の属性は子と要素もまとめて）"""
+    """ノードの値が既定と違う属性の setAttr（Maya が .ma に書く文。複合・配列の属性は子と要素もまとめて）。
+    接続の先の属性は、.ma と同じく値を書かない（値は接続から求める）"""
     out: List[str] = []
     geometry = _geometry_types()
     for i in range(fn.attributeCount()):
@@ -167,8 +179,11 @@ def _setattr_cmds(obj, fn, skip) -> List[str]:
             continue
         if a.hasFn(om.MFn.kTypedAttribute) and om.MFnTypedAttribute(a).attrType() in geometry:
             continue
+        plug = om.MPlug(obj, a)
+        if plug.isDestination:
+            continue
         try:
-            out += om.MPlug(obj, a).getSetAttrCmds(om.MPlug.kNonDefault, False)
+            out += plug.getSetAttrCmds(om.MPlug.kNonDefault, False)
         except RuntimeError:
             pass
     return out
@@ -358,7 +373,8 @@ def collect(selection_only: bool = False, progress: ProgressFn = None) -> SceneT
             progress(i / total, "Maya からシーンを取得中: %s" % name)
         fn = om.MFnDependencyNode(obj)
         t = fn.typeName
-        st.node(t, name, parent, _setattr_cmds(obj, fn, _SKIP_ATTRS.get(t, ())))
+        shape_input = t in _INPUT_SHAPE and fn.findPlug(_INPUT_SHAPE[t][0], False).isDestination
+        st.node(t, name, parent, _setattr_cmds(obj, fn, skip_attrs(t, shape_input)))
         ident[om.MObjectHandle(obj).hashCode()] = key
         if fn.isFromReferencedFile and ":" in name:
             st.namespaces[key] = name.rsplit("|", 1)[-1].rpartition(":")[0] + ":"

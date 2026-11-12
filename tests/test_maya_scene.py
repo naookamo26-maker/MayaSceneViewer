@@ -30,9 +30,9 @@ _PLUG = re.compile(r'"([^"]+)"')
 
 
 def _bulk(node_type: str, attr: str) -> bool:
-    """collect が文にしない属性か（maya_scene._SKIP_ATTRS と同じ）"""
+    """collect が文にしない属性か（形の入力のないノードとして。maya_scene.skip_attrs）"""
     base = re.split(r"[\[.]", attr.lstrip("."), maxsplit=1)[0]
-    return base in maya_scene._SKIP_ATTRS.get(node_type, ())
+    return base in maya_scene.skip_attrs(node_type, False)
 
 
 def mesh_arrays(n) -> maya_scene.MeshArrays:
@@ -124,6 +124,21 @@ class TestSameAsMa(unittest.TestCase):
                 self.assertEqual(got["source"].pop("kind"), "maya")
                 want["source"].pop("kind")
                 self.assertEqual(got, want)
+
+
+class TestShapeInput(unittest.TestCase):
+    def test_curve_with_input_has_no_cc(self):
+        """変形の入力（.cr ← skinCluster）のあるカーブに、いま評価された形（.cc）を書くと、固定の形として読まれ、
+        スプライン IK がリグについていかない（.ma には書かれない）。collect はその .cc を書かない"""
+        path = os.path.join(ROOT, "samples", "ik_sample.ma")
+        st = scene_text(path)
+        at = st.lines.index('createNode nurbsCurve -n "spA_curveShape" -p "spA_curve";')
+        st.lines.insert(at + 1, '\tsetAttr ".cc" -type "nurbsCurve" 3 1 0 no 3 6 0 0 0 1 1 1 4 -30 0 0 -30 2.66666667 0 '
+                                '-30 5.33333333 0 -30 8 0;')
+        curve = lambda sc: next(c for c in sc["curves"] if c["name"] == "spA_curveShape")  # noqa: E731
+        self.assertNotEqual(curve(load(maya_scene.load_staged(st))), curve(load(load_ma_staged(path))))
+        self.assertIn("cc", maya_scene.skip_attrs("nurbsCurve", True))
+        self.assertNotIn("cc", maya_scene.skip_attrs("nurbsCurve", False))      # 入力のないカーブは形を書く
 
 
 class TestExport(unittest.TestCase):
