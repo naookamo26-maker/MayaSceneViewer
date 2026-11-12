@@ -201,6 +201,27 @@ class TestDestinationValues(unittest.TestCase):
             self.assertNotEqual(got, want, name)
 
 
+class TestUnitConversion(unittest.TestCase):
+    def test_connections_keep_unit_conversion(self):
+        """MPlug.source() は unitConversion を飛ばして元の属性を返す。それで接続を書くと単位の換算が抜け、結果が変わる
+        （カメラのエイム・リグのサンプル）。collect は sourceWithConversion() で、.ma と同じく unitConversion を経由させる"""
+        for name in ("camaim_sample.ma", "rig_sample.ma"):
+            path = os.path.join(ROOT, "samples", name)
+            st = scene_text(path)
+            ucs = {re.search(r'-n "([^"]+)"', x).group(1) for x in st.lines if x.startswith("createNode unitConversion")}
+            conns = [_PLUG.findall(x)[:2] for x in st.lines if x.startswith("connectAttr")]
+            into = {b.split(".")[0]: a for a, b in conns if b.split(".")[0] in ucs}
+            lines = [x for x in st.lines if not x.startswith("connectAttr")]
+            for a, b in conns:                       # source() のように、unitConversion を飛ばした接続にする
+                if b.split(".")[0] not in ucs:
+                    lines.append('connectAttr "%s" "%s";' % (into.get(a.split(".")[0], a), b))
+            st.lines = lines
+            got, want = load(maya_scene.load_staged(st)), load(load_ma_staged(path))
+            got["source"].pop("kind")
+            want["source"].pop("kind")
+            self.assertNotEqual(got, want, name)
+
+
 class TestAddAttr(unittest.TestCase):
     def test_exprespy_needs_addattr(self):
         """独自の属性の addAttr がないと、exprespy の入力の種類（ベクトルか数か）が分からず、コードを解析できない。
