@@ -37,7 +37,7 @@ a = Analysis(
     hookspath=[],
     runtime_hooks=[],
     # Maya 内でだけ使うモジュールと、ビューアに不要な大きなパッケージは入れない
-    excludes=["maya", "ma_viewer.extract_maya", "ma_viewer.maya_launcher", "tkinter"],   # numpy は読み込みの高速化に使うので含める
+    excludes=["maya", "ma_viewer.maya_scene", "ma_viewer.maya_launcher", "tkinter"],   # numpy は読み込みの高速化に使うので含める
     noarchive=False,
 )
 pyz = PYZ(a.pure)

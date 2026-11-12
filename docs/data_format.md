@@ -1,6 +1,6 @@
 # 共通 JSON（maya-scene-lite）の仕様
 
-.ma パーサ（`extract_ma.py`）と Maya 抽出器（`extract_maya.py`）が出力し、ビューア（three.js）が読み込む形式です。検証は `ma_viewer/schema.py` の `validate()` で行えます。
+.ma パーサ（`extract_ma.py`）が出力し（Maya 内の読み込み `maya_scene.py` も、.ma の解析と同じ形にしてからこれを通す）、ビューア（three.js）が読み込む形式です。検証は `ma_viewer/schema.py` の `validate()` で行えます。
 
 ## 全体
 
@@ -26,11 +26,11 @@
 }
 ```
 
-`animation` は省略できます（アニメーションがない場合や、読み込まない設定の場合）。`curves` も省略できます（Maya 内からの抽出では出力しません）。`cameras`・`render` も省略できます（古い版の JSON）。
+`animation` は省略できます（アニメーションがない場合や、読み込まない設定の場合）。`curves` も省略できます。`cameras`・`render` も省略できます（古い版の JSON）。
 
-`source.kind` は `"ma"`（.ma から）か `"maya"`（Maya 内から）です。
+`source.kind` は `"ma"`（.ma から）か `"maya"`（Maya で開いているシーンから）です。ほかの内容はどちらも同じです。
 
-`source.references` は .ma のリファレンス（`file -r`。入れ子も含む）の一覧です（省略可。Maya 内からの抽出では出力しません。Maya が読み込み済みのノードをそのまま出力するため）。リファレンスから読み込んだノードの名前には、名前空間が付きます（例: `rig:shoulder`、入れ子なら `rig:prop:crate`）。
+`source.references` は .ma のリファレンス（`file -r`。入れ子も含む）の一覧です（省略可。Maya 内では Maya が読み込んでいるリファレンス。ノードは Maya が読み込んだものをそのまま使う）。リファレンスから読み込んだノードの名前には、名前空間が付きます（例: `rig:shoulder`、入れ子なら `rig:prop:crate`）。
 
 | キー | 内容 |
 |---|---|
@@ -141,7 +141,7 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 
 ## viewCamera
 
-保存したときに Maya のビュー（メインのパネル）で見ていたカメラの、cameras の番号です。ビューアは読み込んだときにそのカメラから表示します。persp などの起動時のカメラや、分からないときは -1（自由視点）。.ma では uiConfigurationScriptNode の「Current Layout」のパネル構成で、最初に置かれたモデルパネルのカメラ（`-cam`）を使います。Maya 内からの抽出では、作業中のモデルパネルのカメラです。
+保存したときに Maya のビュー（メインのパネル）で見ていたカメラの、cameras の番号です。ビューアは読み込んだときにそのカメラから表示します。persp などの起動時のカメラや、分からないときは -1（自由視点）。.ma では uiConfigurationScriptNode の「Current Layout」のパネル構成で、最初に置かれたモデルパネルのカメラ（`-cam`）を使います。Maya 内では、作業中のモデルパネルのカメラです。
 
 ## sequencer
 

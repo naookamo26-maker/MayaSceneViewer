@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """ビューアに渡す共通 JSON（maya-scene-lite）の定義と検証。
 
-.ma パーサ（extract_ma）と Maya 抽出器（extract_maya）はどちらもこの形式を出力し、
+.ma パーサ（extract_ma。Maya 内の読み込み maya_scene もこれを通す）がこの形式を出力し、
 ビューア（three.js）はこの形式だけを読む。
 
 {
@@ -9,7 +9,7 @@
   "version": 1,
   "source": {"kind": "ma" | "maya", "path": str, "mayaVersion": str | null,
              "linearUnit": "cm", "angularUnit": "deg", "upAxis": "y",
-             "references": [            # リファレンス（.ma のみ。省略可）
+             "references": [            # リファレンス（省略可）
                {"namespace": str, "path": str, "resolved": str | null, "rfn": str, "depth": int,
                 "loaded": bool, "reason": str | null, "nodes": int}]},
   "nodes": [                      # transform / joint。親が必ず子より前に並ぶ

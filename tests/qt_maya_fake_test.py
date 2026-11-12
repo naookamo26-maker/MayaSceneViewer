@@ -1,25 +1,26 @@
 # -*- coding: utf-8 -*-
-"""Maya 用ウィンドウ（host="maya"）の動作確認を偽の Maya API で行う。
+"""Maya 用ウィンドウ（host="maya"）の動作確認を偽の Maya で行う。
 
   xvfb-run python tests/qt_maya_fake_test.py
 
-Maya シーンの読み込み → ビューアでの選択が cmds.select に届くか →
+Maya シーンの読み込み（Maya の API で集める maya_scene.collect は、サンプルの .ma から同じ形を作るものに差し替える。
+test_maya_scene と同じ）→ .ma と同じ読み込みスレッドで表示するか → ビューアでの選択が cmds.select に届くか →
 Maya 側の選択変更（scriptJob）がビューアに反映されるか → 閉じたときに scriptJob を消すか。
 """
-import json
 import os
 import sys
+import types
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 
-import test_extract_maya_fake as F  # noqa: E402
+import test_maya_scene as T  # noqa: E402
+from ma_viewer import maya_scene  # noqa: E402
 
-F.SCENE = F.FakeScene(F.load_ma(os.path.join(ROOT, "samples", "sample_arm.ma")))   # メッシュの配列をリストに戻した変換結果
-F.install_fake_maya()
-cmds = sys.modules["maya.cmds"]
-calls = {"select": [], "jobs": {}, "killed": []}
+SAMPLE = os.path.join(ROOT, "samples", "anim_sample.ma")
+maya_scene.collect = lambda selection_only=False, progress=None: T.scene_text(SAMPLE)
+calls = {"select": [], "jobs": {}, "killed": [], "selection": []}
 
 
 def scriptJob(**kw):
@@ -33,9 +34,14 @@ def scriptJob(**kw):
         calls["jobs"].pop(kw["kill"], None)
 
 
+cmds = types.ModuleType("maya.cmds")
 cmds.scriptJob = scriptJob
-cmds.objExists = lambda p: p in F.SCENE.dag
-cmds.select = lambda p, replace=True: calls["select"].append(p)
+cmds.objExists = lambda p: True
+cmds.select = lambda p=None, replace=True, clear=False: calls["select"].append(p)
+cmds.ls = lambda selection=False, long=False: list(calls["selection"])
+maya = types.ModuleType("maya")
+maya.cmds = cmds
+sys.modules.update({"maya": maya, "maya.cmds": cmds})
 
 from ma_viewer.qt_compat import QtCore, QtWidgets  # noqa: E402
 QtCore.QCoreApplication.setAttribute(QtCore.Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
@@ -59,6 +65,9 @@ def step1():
 
 
 def step2():
+    scene = win.current_scene or {}
+    check(scene.get("source", {}).get("kind") == "maya" and scene.get("animation"),
+          "スタンドアロンと同じくアニメーションも読む: %s" % bool(scene.get("animation")))
     win.viewer.get_stats(lambda st: (check(st and st["loaded"] and st["meshes"] == 3, "Maya シーンを表示: %s" % (st and st.get("meshes"))),
                                      step3()))
 
@@ -73,7 +82,7 @@ def step4():
     # 複数選択に対応して、cmds.select にはパスの一覧（最後がリード）を渡す
     check(calls["select"] and calls["select"][-1][-1].endswith("|elbow"), "ビューアの選択を Maya へ: %s" % calls["select"])
     # Maya 側で wrist を選択したことにして scriptJob のコールバックを呼ぶ
-    F.SCENE.selection = ["|rig_grp|shoulder|elbow|forearm_twist|wrist"]
+    calls["selection"] = ["|rig_grp|shoulder|elbow|forearm_twist|wrist"]
     calls["jobs"][1]()
     QtCore.QTimer.singleShot(400, step5)
 
