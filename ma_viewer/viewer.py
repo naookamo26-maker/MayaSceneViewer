@@ -800,15 +800,22 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.viewer.run_js("window.mayaViewer && window.mayaViewer.showProfiler()")
 
     def show_rig_report(self):
-        """リグの診断（.ma を読み直して、評価できないノードと IK の上流を一覧にする）"""
+        """リグの診断（.ma・Maya で開いているシーンを読み直して、評価できないノードと IK の上流を一覧にする）"""
         path = self.current_path
-        if not path or not path.lower().endswith(".ma"):
-            QtWidgets.QMessageBox.information(self, "リグの診断", ".ma ファイルを開いているときに使えます。")
+        from_maya = not path and self.host == "maya" and self.current_scene is not None
+        if not from_maya and (not path or not path.lower().endswith(".ma")):
+            QtWidgets.QMessageBox.information(self, "リグの診断", ".ma ファイルか、Maya で開いているシーンを読み込んでいるときに使えます。")
             return
-        from .rig_report import format_verification, rig_report_file
+        from .rig_report import format_verification, rig_report_file, rig_report_scene
         QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            text = rig_report_file(path)
+            if from_maya:
+                from . import maya_scene
+                st = maya_scene.collect(self._maya_selection)
+                path = st.source_path or "Maya シーン"
+                text = rig_report_scene(st.build())
+            else:
+                text = rig_report_file(path)
         except Exception as exc:  # noqa: BLE001  診断の失敗はメッセージで知らせる
             text = "診断できませんでした: %s" % exc
         finally:

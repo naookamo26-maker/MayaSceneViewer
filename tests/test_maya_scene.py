@@ -30,9 +30,9 @@ _PLUG = re.compile(r'"([^"]+)"')
 
 
 def _bulk(node_type: str, attr: str) -> bool:
-    """collect が文にしない属性か（maya_scene._SKIP_ATTRS と同じ）"""
+    """collect が文にしない属性か（形の入力のないノードとして。maya_scene.skip_attrs）"""
     base = re.split(r"[\[.]", attr.lstrip("."), maxsplit=1)[0]
-    return base in maya_scene._SKIP_ATTRS.get(node_type, ())
+    return base in maya_scene.skip_attrs(node_type, False)
 
 
 def mesh_arrays(n) -> maya_scene.MeshArrays:
@@ -124,6 +124,66 @@ class TestSameAsMa(unittest.TestCase):
                 self.assertEqual(got["source"].pop("kind"), "maya")
                 want["source"].pop("kind")
                 self.assertEqual(got, want)
+
+
+class TestShapeInput(unittest.TestCase):
+    def test_curve_with_input_has_no_cc(self):
+        """変形の入力（.cr ← skinCluster）のあるカーブに、いま評価された形（.cc）を書くと、固定の形として読まれ、
+        スプライン IK がリグについていかない（.ma には書かれない）。collect はその .cc を書かない"""
+        path = os.path.join(ROOT, "samples", "ik_sample.ma")
+        st = scene_text(path)
+        at = st.lines.index('createNode nurbsCurve -n "spA_curveShape" -p "spA_curve";')
+        st.lines.insert(at + 1, '\tsetAttr ".cc" -type "nurbsCurve" 3 1 0 no 3 6 0 0 0 1 1 1 4 -30 0 0 -30 2.66666667 0 '
+                                '-30 5.33333333 0 -30 8 0;')
+        curve = lambda sc: next(c for c in sc["curves"] if c["name"] == "spA_curveShape")  # noqa: E731
+        self.assertNotEqual(curve(load(maya_scene.load_staged(st))), curve(load(load_ma_staged(path))))
+        self.assertIn("cc", maya_scene.skip_attrs("nurbsCurve", True))
+        self.assertNotIn("cc", maya_scene.skip_attrs("nurbsCurve", False))      # 入力のないカーブは形を書く
+
+
+class TestAddAttr(unittest.TestCase):
+    def test_exprespy_needs_addattr(self):
+        """独自の属性の addAttr がないと、exprespy の入力の種類（ベクトルか数か）が分からず、コードを解析できない。
+        collect は .ma と同じく addAttr（getAddAttrCmd）を書く"""
+        path = os.path.join(ROOT, "samples", "exprespy_sample.ma")
+        st = scene_text(path)
+        st.lines = [x for x in st.lines if not x.lstrip().startswith("addAttr")]
+        bad = [w for w in load(maya_scene.load_staged(st))["warnings"] if "posCnsEx のコードを解析できません" in w]
+        self.assertTrue(bad)
+        self.assertFalse([w for w in load(load_ma_staged(path))["warnings"] if "posCnsEx のコードを解析できません" in w])
+
+
+class _RefCmds:
+    """リファレンスを問い合わせる cmds の代わり。rigRN は名前空間を問い合わせると失敗する
+    （Maya の「関係付けられたネームスペースが見つかりません」）。sharedReferenceNode はファイルがない"""
+    REFS = {"rigRN": {"filename": "C:/proj/scenes/rig.mb", "isLoaded": True, "nodes": ["rig:root", "rig:geo"],
+                      "referenceNode": None},
+            "rig:propRN": {"filename": "C:/proj/scenes/prop.ma", "isLoaded": False, "namespace": ":rig:prop",
+                           "referenceNode": "rigRN"},
+            "sharedReferenceNode": {}}
+
+    def ls(self, type=None):
+        return list(self.REFS)
+
+    def referenceQuery(self, rfn, **flags):
+        flag = next(k for k in flags if k not in ("unresolvedName", "withoutCopyNumber", "parent"))
+        info = self.REFS[rfn]
+        if flag not in info:
+            raise RuntimeError("関係付けられたネームスペースが見つかりません")
+        return info[flag]
+
+
+class TestReferences(unittest.TestCase):
+    def test_reference_without_namespace_query(self):
+        saved = maya_scene.cmds
+        maya_scene.cmds = _RefCmds()
+        try:
+            refs = maya_scene._references()
+        finally:
+            maya_scene.cmds = saved
+        got = [(r.rfn, r.namespace, r.prefix, r.loaded, r.node_count, r.depth, r.reason) for r in refs]
+        self.assertEqual(got, [("rigRN", "rig", "rig:", True, 2, 1, ""),
+                               ("rig:propRN", "rig:prop", "rig:prop:", False, 0, 2, "Maya でアンロードされています")])
 
 
 class TestExport(unittest.TestCase):

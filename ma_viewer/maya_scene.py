@@ -4,7 +4,8 @@
 .ma を開いたときと同じ変換（extract_ma.load_staged）に渡すので、アニメーション・リグ・カーブ・マテリアル・
 警告などの扱いはスタンドアロンと同じになる。一時ファイルは作らない。
 
-  * ノード・属性・接続: Maya が .ma に書くのと同じ文（MPlug.getSetAttrCmds）をメモリの上で組み立て、.ma の解析器に通す。
+  * ノード・属性・接続: Maya が .ma に書くのと同じ文（addAttr は MFnAttribute.getAddAttrCmd、setAttr は MPlug.getSetAttrCmds）を
+    メモリの上で組み立て、.ma の解析器に通す。
     リファレンスは、Maya が読み込んだノード（名前空間つき）をそのまま出す（.mb のリファレンスも Maya が読む）
   * メッシュの形・UV とスキンウェイト（.ma の大部分を占めるデータ）: 文にせず、API から numpy の配列で直接入れる。
     ヒストリから作られるメッシュも、Maya が評価した形になる（.ma では形がファイルにない）
@@ -90,6 +91,7 @@ class SceneText:
         self.skins: Dict[str, tuple] = {}           # skinCluster → (頂点, インフルエンスの論理番号, 値)
         self.namespaces: Dict[str, str] = {}        # リファレンスから読んだノード → 名前の前置き（"rig:"）
         self.ref_infos: List[RefInfo] = []
+        self.warnings: List[str] = []               # 集めるときの警告（MaScene の警告に入れる）
         self.view_camera: Optional[str] = None      # 作業中のビューのカメラ
         self.project_root: Optional[str] = None     # いまのプロジェクト（テクスチャを探す）
 
@@ -120,6 +122,8 @@ class SceneText:
         ms.source_kind = "maya"
         ms.view_camera_name = self.view_camera or ""
         ms.ref_infos = self.ref_infos
+        for w in self.warnings:
+            ms.warn(w)
         ms.project_root = self.project_root
         for name, m in self.meshes.items():
             n = ms.resolve(name)
@@ -146,6 +150,17 @@ _SKIP_ATTRS = {
     "skinCluster": {"wl"},
     "blendShape": {"it"},                 # ターゲットの形（ビューアは blendShape を評価しない）
 }
+# 形の入力（ヒストリ・デフォーマ）があるときに書かない、形の値。.ma と同じく、形は入力から求める
+# （書くと、いま評価された形が固定の形として読まれ、リグで動かなくなる）
+_INPUT_SHAPE = {"nurbsCurve": ("cr", "cc")}
+
+
+def skip_attrs(node_type: str, shape_input: bool) -> set:
+    """文にしない属性。shape_input: 形の入力（_INPUT_SHAPE の入力の属性）に接続があるか"""
+    out = set(_SKIP_ATTRS.get(node_type, ()))
+    if shape_input and node_type in _INPUT_SHAPE:
+        out.add(_INPUT_SHAPE[node_type][1])
+    return out
 # 既定のノードのうち、.ma と同じく select -ne で値を書くもの（ほかの既定のノードは .ma の解析でも作られない）
 _DEFAULT_NODES = ("defaultResolution",)
 # 書かないノード: 画面の構成（作業中のビューのカメラは SceneText.view_camera に入れる）と、再生範囲（いまの値を書く）
@@ -157,21 +172,33 @@ def _geometry_types():
 
 
 def _setattr_cmds(obj, fn, skip) -> List[str]:
-    """ノードの値が既定と違う属性の setAttr（Maya が .ma に書く文。複合・配列の属性は子と要素もまとめて）"""
+    """ノードのブロックの文（Maya が .ma に書くもの）: 独自の属性の addAttr（getAddAttrCmd。複合の属性の子も）と、
+    値が既定と違う属性の setAttr（複合・配列の属性は子と要素もまとめて）。.ma と同じく addAttr を先に書く。
+    addAttr は、独自の属性の種類（角度など）と既定値（-dv。既定値のままの属性は setAttr を書かない）に要る。
+    接続の先の属性は、.ma と同じく値を書かない（値は接続から求める）"""
+    adds: List[str] = []
     out: List[str] = []
     geometry = _geometry_types()
     for i in range(fn.attributeCount()):
         a = fn.attribute(i)
         fa = om.MFnAttribute(a)
+        if fa.dynamic:
+            try:
+                adds.append(fa.getAddAttrCmd(False))
+            except RuntimeError:
+                pass
         if not fa.parent.isNull() or not fa.storable or fa.shortName in skip:
             continue
         if a.hasFn(om.MFn.kTypedAttribute) and om.MFnTypedAttribute(a).attrType() in geometry:
             continue
+        plug = om.MPlug(obj, a)
+        if plug.isDestination:
+            continue
         try:
-            out += om.MPlug(obj, a).getSetAttrCmds(om.MPlug.kNonDefault, False)
+            out += plug.getSetAttrCmds(om.MPlug.kNonDefault, False)
         except RuntimeError:
             pass
-    return out
+    return adds + out
 
 
 def _mesh_arrays(obj) -> MeshArrays:
@@ -279,26 +306,36 @@ def _nodes(selection_only: bool):
     return out
 
 
+def _ref_query(rfn: str, default, **flags):
+    """referenceQuery。問い合わせられない reference ノード（名前空間のないもの・ファイルのないものなど）は default"""
+    try:
+        return cmds.referenceQuery(rfn, **flags)
+    except RuntimeError:
+        return default
+
+
 def _references() -> List[RefInfo]:
     """読み込んだリファレンス（.ma の file -r と同じ情報。ノードは Maya が読み込んだものを使う）"""
     infos: List[Tuple[RefInfo, Optional[str]]] = []
     by_rfn: Dict[str, RefInfo] = {}
     for rfn in cmds.ls(type="reference") or []:
-        try:
-            path = cmds.referenceQuery(rfn, filename=True, unresolvedName=True, withoutCopyNumber=True)
-            resolved = cmds.referenceQuery(rfn, filename=True, withoutCopyNumber=True)
-        except RuntimeError:                       # sharedReferenceNode など、ファイルのない reference ノード
+        path = _ref_query(rfn, None, filename=True, unresolvedName=True, withoutCopyNumber=True)
+        if not path:                               # sharedReferenceNode など、ファイルのない reference ノード
             continue
-        ns = (cmds.referenceQuery(rfn, namespace=True) or "").lstrip(":")
+        loaded = bool(_ref_query(rfn, False, isLoaded=True))
+        nodes = (_ref_query(rfn, None, nodes=True) or []) if loaded else []
+        ns = _ref_query(rfn, None, namespace=True)
+        if ns is None:                             # 名前空間を問い合わせられなければ、ノードの名前から
+            ns = next((n.rpartition(":")[0] for n in nodes if ":" in n), "")
+        ns = ns.lstrip(":")
         ri = RefInfo(path, ns, ns + ":" if ns else "", rfn, 1, None)
-        ri.resolved = resolved
-        ri.loaded = bool(cmds.referenceQuery(rfn, isLoaded=True))
-        if ri.loaded:
-            ri.node_count = len(cmds.referenceQuery(rfn, nodes=True) or [])
-        else:
+        ri.resolved = _ref_query(rfn, None, filename=True, withoutCopyNumber=True)
+        ri.loaded = loaded
+        ri.node_count = len(nodes)
+        if not loaded:
             ri.reason = "Maya でアンロードされています"
         by_rfn[rfn] = ri
-        infos.append((ri, cmds.referenceQuery(rfn, referenceNode=True, parent=True)))
+        infos.append((ri, _ref_query(rfn, None, referenceNode=True, parent=True)))
     for ri, parent_rfn in infos:
         ri.parent = by_rfn.get(parent_rfn)
     for ri, _p in infos:                           # 入れ子の深さ（1 = いちばん外側）
@@ -358,7 +395,8 @@ def collect(selection_only: bool = False, progress: ProgressFn = None) -> SceneT
             progress(i / total, "Maya からシーンを取得中: %s" % name)
         fn = om.MFnDependencyNode(obj)
         t = fn.typeName
-        st.node(t, name, parent, _setattr_cmds(obj, fn, _SKIP_ATTRS.get(t, ())))
+        shape_input = t in _INPUT_SHAPE and fn.findPlug(_INPUT_SHAPE[t][0], False).isDestination
+        st.node(t, name, parent, _setattr_cmds(obj, fn, skip_attrs(t, shape_input)))
         ident[om.MObjectHandle(obj).hashCode()] = key
         if fn.isFromReferencedFile and ":" in name:
             st.namespaces[key] = name.rsplit("|", 1)[-1].rpartition(":")[0] + ":"
@@ -384,7 +422,10 @@ def collect(selection_only: bool = False, progress: ProgressFn = None) -> SceneT
                 skey = "time1"                       # 時間の入力（.ma の解析と同じく、time1 のノードは作らない）
             if skey is not None:
                 st.connect(skey + "." + _plug_name(src), key + "." + _plug_name(plug))
-    st.ref_infos = _references()
+    try:
+        st.ref_infos = _references()
+    except Exception as exc:  # noqa: BLE001  リファレンスの一覧は補助の情報。取れなくてもシーンは読む
+        st.warnings.append("リファレンスの一覧を取得できませんでした（%s）。ノードはそのまま表示します。" % exc)
     st.view_camera = _view_camera()
     try:
         st.project_root = (cmds.workspace(query=True, rootDirectory=True) or "").rstrip("/\\") or None

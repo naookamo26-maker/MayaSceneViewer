@@ -93,6 +93,22 @@ def step5():
 
 
 def step6():
+    win.rig_report_text = ""
+    win.show_rig_report()            # Maya で開いているシーンからも、リグの診断を作る
+
+    def opened(tries=[0]):
+        text = getattr(win, "rig_report_text", "")
+        if not text and tries[0] < 100:
+            tries[0] += 1
+            QtCore.QTimer.singleShot(100, opened)
+            return
+        check("保存時のフレームの再現チェック" in text and "診断できませんでした" not in text, "リグの診断（Maya のシーン）")
+        win.rig_report_dialog.close()
+        step7()
+    opened()
+
+
+def step7():
     win.close()
     check(calls["killed"] == [1], "閉じたときに scriptJob を削除: %s" % calls["killed"])
     app.quit()
