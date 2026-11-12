@@ -771,10 +771,14 @@ def format_verification(result: Optional[dict]) -> str:
 
 def rig_report_file(path: str, node_defs=None) -> str:
     """node_defs: 自作ノードの定義（省略時は ma_viewer/node_defs に同梱したもの。テスト用）"""
+    from .ma_scene import parse_ma_file
+    return rig_report_scene(parse_ma_file(path), node_defs)
+
+
+def rig_report_scene(ms: MaScene, node_defs=None) -> str:
+    """解析したシーン（.ma・Maya で開いているシーン）のリグの診断"""
     from .animation import build_animation
     from .extract_ma import scene_to_dict
-    from .ma_scene import parse_ma_file
-    ms = parse_ma_file(path)
     if node_defs is not None:
         ms.node_defs = node_defs
     scene = scene_to_dict(ms)
