@@ -763,7 +763,7 @@ function chanTOf(plan, ni) {
 function ikReader(plan, ik) {
   const rig = plan.rig;
   const ev = {
-    byId: rig.byId, dagGraph: rig.dagGraph, ikVariant: null,
+    byId: rig.byId, dagGraph: rig.dagGraph, ikVariant: null, chainSolver: rig.chainSolver,
     rest: (ni) => rig.rest(ni),
     chan: (ni, mode) => {
       if (mode === 't') {

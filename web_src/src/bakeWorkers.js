@@ -91,7 +91,7 @@ export class BakeWorkers {
     if (w.token === this.token) return;
     const t = performance.now();
     w.worker.postMessage({ type: 'init', token: this.token, anim: this.init.anim, nodes: this.init.nodes,
-      sentAt: performance.timeOrigin + t });
+      chainSolver: this.rig.chainSolver, sentAt: performance.timeOrigin + t });
     this.stat.sendMs += performance.now() - t;
     w.token = this.token;
     w.sent = 0;
@@ -196,7 +196,8 @@ export class BakeWorkers {
           done(e.data.frames ? e.data : null);
         };
         worker.onerror = () => { worker.terminate(); done(null); };
-        worker.postMessage({ type: 'probe', id, fresh: true, frames, anim: this.init.anim, nodes: this.init.nodes });
+        worker.postMessage({ type: 'probe', id, fresh: true, frames, anim: this.init.anim, nodes: this.init.nodes,
+          chainSolver: this.rig && this.rig.chainSolver });
         return;
       }
       const w = this.workers.find((x) => x.token === this.token);

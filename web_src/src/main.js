@@ -26,7 +26,7 @@ import { connectBridge, isQtHost } from './bridge.js';
 import { History, sameChanges } from './history.js';
 import { compareGpuCpuSkinning } from './skinCheck.js';
 import { AnimationClip, worldRotationDegrees } from './animation.js';
-import { RigEvaluator, hiddenByProps, readSnapshotMat, snapshotStride } from './rig.js';
+import { CHAIN_SOLVERS, RigEvaluator, hiddenByProps, readSnapshotMat, snapshotStride } from './rig.js';
 import { Timeline } from './timeline.js';
 import { CurveOverlay } from './curveOverlay.js';
 import { TEMPLATE_HEX, isTemplated } from './displayType.js';
@@ -68,6 +68,7 @@ const DEFAULTS = {
   playbackCachePrecision: 'float32',   // 再生キャッシュの精度（float32: 2 倍のフレーム・float64: 値をそのまま。次回の起動でも使う）
   pickMode: 'object',            // クリックで選ぶもの: 'object'（オブジェクト）・'vertex'（頂点とそのウェイト）
   pickAll: false,                // Maya で選択できないもの（テンプレート・リファレンス）もクリックで選ぶ
+  ikChainSolver: 'fabrik',       // 3 ボーン以上の IK の解き方（rig.js の CHAIN_SOLVERS。次回の起動でも使う）
 };
 const TOOLS = ['select', 'translate', 'rotate', 'scale'];
 // .msv に保存する表示の設定（見た目に関わるもの。ツール・ハンドル・クリックで選ぶもの・再生キャッシュなどの操作の好みは除く）
@@ -157,6 +158,9 @@ class ViewerApp {
         });
         b.loadSetting('playbackCachePrecision', (v) => {
           if (v === 'float32' || v === 'float64') this.setSetting('playbackCachePrecision', v, { restoring: true });
+        });
+        b.loadSetting('ikChainSolver', (v) => {
+          if (CHAIN_SOLVERS.includes(v)) this.setSetting('ikChainSolver', v, { restoring: true });
         });
       }
       this.historyChanged(this.history);
@@ -903,9 +907,14 @@ class ViewerApp {
       value = value === 'float64' ? 'float64' : 'float32';
       if (!opts.restoring && this.bridge && this.bridge.saveSetting) this.bridge.saveSetting(key, value);
     }
+    if (key === 'ikChainSolver') {
+      value = CHAIN_SOLVERS.includes(value) ? value : 'fabrik';
+      if (!opts.restoring && this.bridge && this.bridge.saveSetting) this.bridge.saveSetting(key, value);
+    }
     this.settings[key] = value;
     if (key === 'playbackCacheMB') { this.updateCacheView(); this.scheduleBake(); }
     if (key === 'playbackCachePrecision') this.applyCachePrecision();
+    if (key === 'ikChainSolver') this.applyChainSolver();
     if (key === 'gizmoSize' && this.gizmo) this.gizmo.setSize(value);
     if (key === 'space' && this.gizmo) this.gizmo.setSpace(value);
     if (key === 'grid' && this.grid) this.grid.visible = !!value;      // シーンがなくても切り替えられる
@@ -1393,6 +1402,7 @@ class ViewerApp {
     this.rig = new RigEvaluator(clip, this.data.nodes, (ni) => this.built.nodeObjects[ni].userData.fileMatrix);
     this.rig.setPlaybackLimit(this.settings.playbackCacheMB * MB);
     this.rig.setCachePrecision(this.settings.playbackCachePrecision !== 'float64');
+    this.rig.setChainSolver(this.settings.ikChainSolver);
     this.bakers.f32 = this.rig.cacheFloat32;
     // ワーカーにも同じアニメーションを渡す（受け取った JSON の文字列があれば、それを渡す。複製より速い）
     // 文字列がなければ、キーのデータを型付き配列にしたもの（数のリストのままより、送る・受け取るときの複製がずっと速い）
@@ -1805,6 +1815,21 @@ class ViewerApp {
    * 再生で使う追加分（updatePlaybackPose）のレイヤーを作る。ポーズ確認でリグに効く追加分を変えると、新しいレイヤーを
    * 影響を受けるノードだけ計算して作る（前と同じ追加分に戻せば、前のレイヤーをそのまま使う）
    */
+  /**
+   * 3 ボーン以上の IK の解き方を評価器・ワーカーに合わせる。変えたら、いまのフレームを評価し直し、再生キャッシュを
+   * 作り直す（ワーカーには新しい解き方でアニメーションを渡し直す）
+   */
+  applyChainSolver() {
+    if (!this.rig || !this.rig.setChainSolver(this.settings.ikChainSolver)) return;
+    const init = this.bakers.init;
+    if (init) this.bakers.reset(this.rig, init.anim, init.nodes);
+    this.worldNeedsFull = true;
+    this.applyFrame(this.frame);
+    this.updateCacheView();
+    this.scheduleBake();
+    this.requestRender();
+  }
+
   /** 再生キャッシュの精度を評価器・ワーカーに合わせる（変えたら作り直す） */
   applyCachePrecision() {
     const f32 = this.settings.playbackCachePrecision !== 'float64';
