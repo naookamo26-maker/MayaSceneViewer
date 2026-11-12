@@ -426,7 +426,9 @@ def collect(selection_only: bool = False, progress: ProgressFn = None) -> SceneT
         for plug in om.MFnDependencyNode(obj).getConnections():
             if not plug.isDestination:
                 continue
-            src = plug.source()
+            # source() は unitConversion を飛ばして元の属性を返すので、.ma と同じく unitConversion を経由する接続にする
+            # （飛ばすと単位の換算が抜ける: 角度と数値の間の接続など）
+            src = plug.sourceWithConversion()
             if src.isNull:
                 continue
             sobj = src.node()
