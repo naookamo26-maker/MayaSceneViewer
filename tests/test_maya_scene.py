@@ -150,6 +150,19 @@ class TestBlockText(unittest.TestCase):
         self.assertEqual(st.lines, ['createNode exprespy -n "rig:posEx";', '\tsetAttr ".cd" -type "string" "p = a.b";',
                                     '\tsetAttr -k on ".tx" 5;'])
 
+    def test_split_rows(self):
+        """getSetAttrCmds は長い文を行に分けて返す（Maya 2025 で確認: '\\tsetAttr ".cc" -type "nurbsCurve" '、
+        '\\t\\t2 57 1 no 3'、…。; は最後の行だけ）。collect は 1 つの属性の行をつなげて渡し、1 つの文として読む"""
+        rows = ['\tsetAttr ".cc" -type "nurbsCurve" ', "\t\t1 1 0 no 3", "\t\t2 0 1", "\t\t2", "\t\t0 0 0",
+                "\t\t0 5 0", "\t\t;"]
+        st = maya_scene.SceneText()
+        st.lines += ['requires maya "2025";', "currentUnit -l centimeter -a degree -t film;"]
+        st.node("transform", "line", None, [])
+        st.node("nurbsCurve", "lineShape", "|line", ["\n".join(rows)])
+        scene = load(maya_scene.load_staged(st))
+        self.assertEqual([c["name"] for c in scene["curves"]], ["lineShape"])
+        self.assertFalse([w for w in scene["warnings"] if ".cc" in w], scene["warnings"])
+
 
 class TestAddAttr(unittest.TestCase):
     def test_exprespy_needs_addattr(self):
