@@ -414,9 +414,11 @@ class _LoadWorker(QtCore.QObject):
     animationFailed = Signal(str, str)
     done = Signal()
 
-    def __init__(self, path: str, animation: bool = True, references: bool = True, cache: bool = True):
+    def __init__(self, path: str, animation: bool = True, references: bool = True, cache: bool = True, staged=None):
         super().__init__()
         self.path = path
+        # 読み込みの関数（進捗 → (シーン, アニメーションを読む関数)）。Maya で開いているシーン（maya_scene.load_staged）
+        self.staged = staged
         self.animation = animation
         self.references = references
         self.cache = cache            # 変換結果のディスクキャッシュを使う・保存する（scene_cache）
@@ -444,7 +446,9 @@ class _LoadWorker(QtCore.QObject):
         t0 = time.time()
         load_animation = None
         try:
-            if self.path.lower().endswith(".msv"):
+            if self.staged is not None:
+                scene, load_animation = self.staged(self._progress)
+            elif self.path.lower().endswith(".msv"):
                 from .package import read_package
                 scene, _pkg = read_package(self.path)
             elif self.path.lower().endswith(".json"):
@@ -574,6 +578,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self._anim_scene = None            # アニメーションを読み込み中のシーン
         self._sel_job = None
         self._last_viewer_path = None
+        self._maya_selection = False       # Maya から読んだのが選択範囲だけか（読み直しで使う）
 
         self.setWindowTitle(APP_NAME)
         self.setObjectName("MayaSceneViewerWindow")
@@ -895,7 +900,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if self.current_path:
             self.open_file(self.current_path)
         elif self.host == "maya" and self.current_scene is not None:
-            self.load_from_maya(False)
+            self.load_from_maya(self._maya_selection)
 
     def open_file(self, path: str):
         path = os.path.abspath(path)
@@ -923,13 +928,16 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.viewer.show_loading("%s を読み込み中" % name)
         self.statusBar().showMessage("読み込み中: %s" % path)
         self.log("info", "読み込み開始: %s" % path)
-        from .load_clock import LoadClock
-        self.load_clock = LoadClock(path)
-        self.load_clock.expect_animation = self.a_anim.isChecked() and not path.lower().endswith(DATA_EXT)
+        self._start_worker(_LoadWorker(path, animation=self.a_anim.isChecked(), references=self.a_refs.isChecked(),
+                                       cache=self.a_cache.isChecked()))
 
+    def _start_worker(self, worker: "_LoadWorker"):
+        """読み込みスレッドを始める（ファイル・Maya で開いているシーンで共通）"""
+        from .load_clock import LoadClock
+        self.load_clock = LoadClock(worker.path)
+        self.load_clock.expect_animation = self.a_anim.isChecked() and not worker.path.lower().endswith(DATA_EXT)
         self._thread = QtCore.QThread(self)
-        self._worker = _LoadWorker(path, animation=self.a_anim.isChecked(), references=self.a_refs.isChecked(),
-                                   cache=self.a_cache.isChecked())
+        self._worker = worker
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._on_progress)
@@ -962,7 +970,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.log("info", "変換結果のキャッシュから読み込みました（.ma・リファレンス・テクスチャ・設定が前回と同じため、"
                              "解析を省きました。［設定］→［変換結果のキャッシュ］で切り替え）")
         self._anim_scene = scene           # このシーンのアニメーションだけを受け取る
-        if self._worker is not None and self._worker.animation and not self.current_path.lower().endswith(DATA_EXT):
+        if self._worker is not None and self._worker.animation and not self._worker.path.lower().endswith(DATA_EXT):
             self.viewer.set_animation_status("アニメーションを読み込み中")
 
     @Slot(float, str)
@@ -1354,23 +1362,34 @@ class ViewerWindow(QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ Maya 連携
     def load_from_maya(self, selection_only: bool = False):
-        from . import extract_maya
-        self.current_path = None
-        QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        t0 = time.time()
-        try:
-            self.viewer.show_loading("Maya からデータを取得中")
+        """Maya で開いているシーンを読む。Maya の API で集めるところだけを画面のスレッドで行い、
+        変換（.ma を開いたときと同じ。アニメーションは後から）は読み込みスレッドで行う"""
+        if self._thread is not None:
+            self.statusBar().showMessage("読み込み中です。完了してから読み直してください。", 5000)
+            return
+        from . import maya_scene
+
+        def progress(frac, msg, _detail=None):
+            self.viewer.show_loading(msg, frac)
             QtWidgets.QApplication.processEvents()
-            scene = extract_maya.extract_scene(selection_only=selection_only)
+
+        self.current_path = None
+        self._maya_selection = selection_only
+        QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            progress(0.0, "Maya からシーンを取得中")
+            st = maya_scene.collect(selection_only, progress)
         except Exception as exc:  # noqa: BLE001
             self.log("error", traceback.format_exc())
             self._error("Maya からデータを取得できませんでした。\n%s" % exc)
             return
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
-        name = scene.get("source", {}).get("name") or "Maya シーン"
+        name = os.path.basename(st.source_path) or "Maya シーン"
         self.setWindowTitle("%s - %s" % (name, APP_NAME))
-        self.show_scene(scene, "取得 %.2f 秒" % (time.time() - t0))
+        self.log("info", "Maya から読み込み開始: %s%s" % (name, "（選択範囲）" if selection_only else ""))
+        self._start_worker(_LoadWorker("", animation=self.a_anim.isChecked(), cache=False,
+                                       staged=lambda p: maya_scene.load_staged(st, p)))
 
     def _on_viewer_selected(self, path):
         # 複数選んだときはパスが改行で区切られている（最後がリード。Maya の選択の順と同じ）

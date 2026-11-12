@@ -226,7 +226,7 @@ class MeshData:
 
 
 class SkinData:
-    __slots__ = ("_weights", "sparse", "_spans", "_overlap", "pm", "gm", "skm", "mi", "nw", "wd")
+    __slots__ = ("_weights", "sparse", "_spans", "_overlap", "arrays", "pm", "gm", "skm", "mi", "nw", "wd")
 
     def __init__(self):
         self._weights: Dict[int, Dict[int, float]] = {}  # 頂点 → {インフルエンス論理番号: 値}
@@ -234,6 +234,8 @@ class SkinData:
         self.sparse: List[Tuple[int, int, List[str]]] = []
         self._spans: List[Tuple[int, int]] = []   # sparse の頂点の範囲（最初の頂点の順）
         self._overlap = False                     # _spans に重なる範囲があるか
+        # Maya から読んだウェイト（maya_scene）: (頂点, インフルエンスの論理番号, 値) の numpy の配列。あれば wl より優先
+        self.arrays = None
         self.pm: Dict[int, List[float]] = {}
         self.gm: Optional[List[float]] = None
         self.skm = 0
@@ -243,7 +245,10 @@ class SkinData:
 
     @property
     def weights(self) -> Dict[int, Dict[int, float]]:
-        """頂点 → {論理番号: 値}。保持している疎形式の行は、参照した時点で辞書に展開する（記述順を保つ）"""
+        """頂点 → {論理番号: 値}。保持している疎形式の行（Maya から読んだ配列も）は、参照した時点で辞書に展開する（記述順を保つ）"""
+        if self.arrays is not None and not self._weights:
+            for v, li, w in zip(*(a.tolist() for a in self.arrays)):
+                self._weights.setdefault(v, {})[li] = w
         if self.sparse:
             for a, b, vals in self.sparse:
                 _sparse_into(self._weights, a, b, vals)
@@ -386,6 +391,8 @@ _TIME_NODE = MaNode("time1", "time", None, -1)
 class MaScene:
     def __init__(self, source_path: str = ""):
         self.source_path = source_path
+        self.source_kind = "ma"                      # 共通 JSON の source.kind（Maya で開いているシーンなら "maya"）
+        self.project_root: Optional[str] = None      # テクスチャを探すプロジェクト。None ならシーンのパスから探す（Maya 内ではいまのプロジェクト）
         self.nodes: List[MaNode] = []
         self._by_name: Dict[str, List[MaNode]] = {}
         self.current: Optional[MaNode] = None
@@ -395,6 +402,8 @@ class MaScene:
         self.up_axis = "y"
         self.time_unit = "film"
         self.current_time: Optional[float] = None    # time1 の .o（保存時の現在フレーム）
+        # 開いたときのカメラの名前。None なら uiConfigurationScriptNode から読む（Maya 内では作業中のビューのカメラ）
+        self.view_camera_name: Optional[str] = None
         # time1（ノード一覧にない）からの接続: [(先のノード, 先の属性)]。exprespy の入力の時間（秒）を見分けるため
         self.time_inputs: List[Tuple[MaNode, str]] = []
         # defaultResolution（レンダーの解像度。select -ne :defaultResolution のあとの setAttr を受け取る）

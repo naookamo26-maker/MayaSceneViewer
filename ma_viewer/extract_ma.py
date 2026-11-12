@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 import os
 import re
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from . import bind_pose
 from . import mathutil as M
@@ -467,7 +467,10 @@ def view_camera(ms: MaScene) -> str:
 
     uiConfigurationScriptNode の「Current Layout」のパネル構成で、最初に置かれたモデルパネルのカメラ
     （1 画面のレイアウトなら、それが見えているビュー）。起動時のカメラ（findStartUpCamera persp）は "persp" など。
+    Maya 内で読んだシーンは、作業中のビューのカメラ（ms.view_camera_name）。
     """
+    if ms.view_camera_name is not None:
+        return ms.view_camera_name
     mel = _ui_script(ms)
     if not mel:
         return ""
@@ -859,7 +862,7 @@ class _MaterialBuilder:
             d = os.path.dirname(os.path.abspath(ri.resolved)) if ri.loaded and ri.resolved else None
             if d and d not in ref_dirs:
                 ref_dirs.append(d)
-        self.resolver = TextureResolver(ms.source_path or "", extra_dirs=ref_dirs)
+        self.resolver = TextureResolver(ms.source_path or "", project_root=ms.project_root, extra_dirs=ref_dirs)
         # テクスチャを探した記録（変換結果のキャッシュで、次に開くときに同じ結果になるかを確かめる。scene_cache）
         ms.texture_lookups = {"extra_dirs": list(ref_dirs), "calls": []}
         self.materials: List[dict] = []
@@ -1796,7 +1799,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         "schema": schema.SCHEMA_NAME,
         "version": schema.SCHEMA_VERSION,
         "source": {
-            "kind": "ma",
+            "kind": ms.source_kind,
             "path": ms.source_path,
             "name": os.path.basename(ms.source_path) if ms.source_path else "",
             "mayaVersion": ms.maya_version,
@@ -1921,9 +1924,12 @@ def _skin_arrays_np(sk, nverts: int, slot_of: Dict[int, int]):
     rep = np.repeat(st, cnts_a)
     pos = rep + 2 * (_ranges(st, cnts_a) - rep)       # 各行の「番号」の位置（値はその次）
     V = np.repeat(np.asarray(vids, dtype=np.int64), cnts_a)
-    L = arr[pos].astype(np.int64)
-    W = arr[pos + 1]
+    return _skin_triplets(V, arr[pos].astype(np.int64), arr[pos + 1], nverts, slot_of)
 
+
+def _skin_triplets(V, L, W, nverts: int, slot_of: Dict[int, int]):
+    """(頂点, インフルエンスの論理番号, 値) の配列 → _skin_arrays と同じ戻り値（numpy の配列のまま）。
+    .ma の疎形式の行（_skin_arrays_np）と、Maya から読んだウェイト（SkinData.arrays）で共通"""
     extra = bool((V >= nverts).any())
     inside = V < nverts
     V, L, W = V[inside], L[inside], W[inside]
@@ -1982,7 +1988,10 @@ def _build_skin(ms: MaScene, ctx: _Ctx, shape: MaNode, sk_node: MaNode, nverts: 
         ms.warn("%s: スキニング方式が %s です。ビューアはリニアのみで変形します。"
                 % (sk_node.name, {1: "デュアルクォータニオン", 2: "ブレンド"}.get(sk.skm, str(sk.skm))))
 
-    arrays = _skin_arrays_np(sk, nverts, slot_of) if (numpy_enabled() and sk.sparse) else None
+    if sk.arrays is not None:                 # Maya から読んだウェイト（maya_scene）
+        arrays = _skin_triplets(*sk.arrays, nverts, slot_of)
+    else:
+        arrays = _skin_arrays_np(sk, nverts, slot_of) if (numpy_enabled() and sk.sparse) else None
     if arrays is not None:
         counts, indices, weights, missing, unknown, extra = arrays
     else:
@@ -2059,6 +2068,14 @@ def load_ma_staged(path: str, progress: ProgressFn = None, node_map: Optional[di
     返した関数を呼ぶと、表示するノードを動かすカーブだけを読み、animation（なければ None）を返す。
     シーンを先に表示しておき、アニメーションは後から読み込むために使う。
     """
+    return load_staged(lambda p: parse_ma_file(path, p, load_references=references), progress,
+                       node_map=node_map, node_defs=node_defs)
+
+
+def load_staged(parse: Callable[[ProgressFn], MaScene], progress: ProgressFn = None, node_map: Optional[dict] = None,
+                node_defs=None):
+    """解析（parse(進捗) → MaScene）と変換を 2 段階で行う（load_ma_staged の本体）。
+    .ma（parse_ma_file）と Maya で開いているシーン（maya_scene.SceneText.build）で共通"""
     import gc
     import time
     # 解析中は大量のオブジェクトを作るので、ガベージコレクションを止めておく（循環参照はほぼ作らない。約 1 割速い）
@@ -2067,7 +2084,7 @@ def load_ma_staged(path: str, progress: ProgressFn = None, node_map: Optional[di
     FAST.clear()
     try:
         t0 = time.perf_counter()
-        ms = parse_ma_file(path, _stage_progress(progress, 0.0, PARSE_SHARE), load_references=references)
+        ms = parse(_stage_progress(progress, 0.0, PARSE_SHARE))
         if node_map is not None:
             ms.node_map = node_map
         if node_defs is not None:

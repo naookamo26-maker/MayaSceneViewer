@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """層を重ねるノード（layeredShader・layeredTexture）のマテリアル・テクスチャ。
 
-.ma の読み込み（extract_ma）と、Maya からの読み込み（extract_maya。つながりを持つ偽の cmds で）の両方で、
 表示する層（上から見て最初の不透明な層）のテクスチャを使い、それより上の見える層を警告することを確かめる。
 
   python tests/test_layered.py
@@ -9,13 +8,11 @@
 from __future__ import annotations
 
 import os
-import re
 import sys
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ma_viewer.extract_ma import _MaterialBuilder  # noqa: E402
 from ma_viewer.ma_scene import parse_ma_text  # noqa: E402
@@ -109,132 +106,6 @@ class TestMa(unittest.TestCase):
         self.assertIn("lsA（layeredShader）: 層 0 は半透明かマスク付きのため重ねて表示できません。層 1（base_mat）", w)
         self.assertIn("lt（layeredTexture）: 層 0", w)
         self.assertNotIn("lsB（", w)
-        self.assertNotIn("lsC（", w)
-
-
-class GraphCmds:
-    """.ma のつながりと値をそのまま持つ偽の cmds（マテリアルまわりだけ）"""
-
-    LONG = {"c": "color", "it": "transparency", "t": "transparency", "a": "alpha", "oc": "outColor", "ot": "outTransparency",
-            "ftn": "fileTextureName", "cs": "inputs", "bm": "blendMode", "iv": "isVisible", "ss": "surfaceShader"}
-    DEFAULTS = {"transparency": (0.0, 0.0, 0.0), "alpha": 1.0, "blendMode": 1, "isVisible": True,
-                "color": (0.5, 0.5, 0.5), "repeatUV": (1.0, 1.0), "offset": (0.0, 0.0), "uvTilingMode": 0,
-                "computedFileTextureNamePattern": ""}
-
-    def __init__(self, ms):
-        self.types = {n.name: n.type for n in ms.nodes}
-        self.values, self.conns = {}, {}
-        for n in ms.nodes:
-            for k, v in (n.raw or {}).items():
-                if v:
-                    self.values[(n.name, self.long(k))] = v[0] if len(v) == 1 else tuple(float(x) for x in v)
-        for src, sattr, dst, dattr in ms.connections:
-            self.conns[(dst.name, self.long(dattr))] = (src.name, self.long(sattr))
-
-    def long(self, attr):
-        return re.sub(r"[A-Za-z]+", lambda m: self.LONG.get(m.group(0), m.group(0)), attr)
-
-    def nodeType(self, node):
-        return self.types[node]
-
-    def split(self, plug):
-        node, attr = plug.split(".", 1)
-        return node, self.long(attr)                     # Maya と同じく、短い名前でも長い名前でも受け付ける
-
-    def getAttr(self, plug, multiIndices=False):
-        node, attr = self.split(plug)
-        if multiIndices:
-            pat = re.compile(r"^%s\[(\d+)\]" % re.escape(attr))
-            idx = {int(m.group(1)) for (n, a) in list(self.values) + list(self.conns) if n == node for m in [pat.match(a)] if m}
-            return sorted(idx)
-        v = self.values.get((node, attr))
-        if v is None:
-            v = self.DEFAULTS.get(attr.rsplit(".", 1)[-1], 0.0)
-        if attr.endswith("fileTextureName"):
-            return str(v).strip('"')
-        if isinstance(v, tuple):
-            return [v]
-        if isinstance(v, str):
-            low = v.lower()
-            if low in ("yes", "no", "on", "off", "true", "false"):
-                return low in ("yes", "on", "true")
-            return float(v)
-        return v
-
-    def listConnections(self, plug, source=True, destination=True, plugs=False, skipConversionNodes=False, type=None):
-        node, attr = self.split(plug)
-        out = []
-        if source:
-            src = self.conns.get((node, attr))
-            if src and (type is None or self.types[src[0]] == type):
-                out.append("%s.%s" % src if plugs else src[0])
-        if destination and not source:
-            for (dn, da), (sn, sa) in self.conns.items():
-                if sn == node and sa == attr:
-                    out.append("%s.%s" % (dn, da) if plugs else dn)
-        return out
-
-    def attributeQuery(self, attr, node=None, exists=False):
-        from ma_viewer.materials import MAP_ATTRS
-        t = self.types.get(node)
-        if t == "file":
-            return attr in ("outTransparency", "outAlpha", "ot", "oa")
-        names = {a for attrs in MAP_ATTRS.get(t, {}).values() for a in attrs}
-        return attr in names or attr in ("transparency", "color")
-
-    def objExists(self, plug):
-        node, attr = self.split(plug)
-        return node in self.types and (bool(re.match(r"^inputs\[\d+\]\.", attr)) or self.attributeQuery(attr, node))
-
-
-class TestMaya(unittest.TestCase):
-    """extract_maya の層の処理（偽の cmds に .ma のつながりを入れて、.ma の読み込みと同じ結果になるか）"""
-
-    @classmethod
-    def setUpClass(cls):
-        if "maya.cmds" not in sys.modules:
-            from test_extract_maya_fake import install_fake_maya
-            install_fake_maya()
-        from ma_viewer import extract_maya
-        cls.em = extract_maya
-        cls.ms = parse_ma_text(HEADER + MA, "layered.ma")
-        cls.fake = GraphCmds(cls.ms)
-
-    def setUp(self):
-        cmds = self.em.cmds
-        names = ("nodeType", "getAttr", "listConnections", "attributeQuery", "objExists")
-        self.saved = {k: getattr(cmds, k, None) for k in names}
-        for k in names:
-            setattr(cmds, k, getattr(self.fake, k))
-
-    def tearDown(self):
-        for k, v in self.saved.items():
-            if v is None:
-                delattr(self.em.cmds, k)
-            else:
-                setattr(self.em.cmds, k, v)
-
-    def extractor(self):
-        from ma_viewer.materials import TextureResolver
-        ex = object.__new__(self.em._Extractor)
-        ex.materials, ex.textures, ex.warnings = [], [], []
-        ex._mat_of, ex._tex_of, ex._file_of_mat = {}, {}, {}
-        ex.resolver = TextureResolver("")
-        return ex
-
-    def test_same_as_ma(self):
-        ex = self.extractor()
-        got = {}
-        for name in ("lsA", "lsB", "lsC", "ltMat"):
-            m = ex.materials[ex._material_for_sg(name + "SG")]
-            got[name] = (m["name"], m["type"], ex.textures[m["texture"]]["node"] if m["texture"] >= 0 else None)
-        self.assertEqual(got, {"lsA": ("lsA", "layeredShader", "base_file"),
-                               "lsB": ("lsB", "layeredShader", "direct_file"),
-                               "lsC": ("lsC", "layeredShader", None),
-                               "ltMat": ("ltMat", "lambert", "bottom_file")})
-        w = "\n".join(ex.warnings)
-        self.assertIn("lsA（layeredShader）: 層 0", w)
-        self.assertIn("lt（layeredTexture）: 層 0", w)
         self.assertNotIn("lsC（", w)
 
 
