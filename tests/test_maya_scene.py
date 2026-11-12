@@ -141,6 +141,18 @@ class TestShapeInput(unittest.TestCase):
         self.assertNotIn("cc", maya_scene.skip_attrs("nurbsCurve", False))      # 入力のないカーブは形を書く
 
 
+class TestAddAttr(unittest.TestCase):
+    def test_exprespy_needs_addattr(self):
+        """独自の属性の addAttr がないと、exprespy の入力の種類（ベクトルか数か）が分からず、コードを解析できない。
+        collect は .ma と同じく addAttr（getAddAttrCmd）を書く"""
+        path = os.path.join(ROOT, "samples", "exprespy_sample.ma")
+        st = scene_text(path)
+        st.lines = [x for x in st.lines if not x.lstrip().startswith("addAttr")]
+        bad = [w for w in load(maya_scene.load_staged(st))["warnings"] if "posCnsEx のコードを解析できません" in w]
+        self.assertTrue(bad)
+        self.assertFalse([w for w in load(load_ma_staged(path))["warnings"] if "posCnsEx のコードを解析できません" in w])
+
+
 class _RefCmds:
     """リファレンスを問い合わせる cmds の代わり。rigRN は名前空間を問い合わせると失敗する
     （Maya の「関係付けられたネームスペースが見つかりません」）。sharedReferenceNode はファイルがない"""

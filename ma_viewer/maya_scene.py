@@ -4,7 +4,8 @@
 .ma を開いたときと同じ変換（extract_ma.load_staged）に渡すので、アニメーション・リグ・カーブ・マテリアル・
 警告などの扱いはスタンドアロンと同じになる。一時ファイルは作らない。
 
-  * ノード・属性・接続: Maya が .ma に書くのと同じ文（MPlug.getSetAttrCmds）をメモリの上で組み立て、.ma の解析器に通す。
+  * ノード・属性・接続: Maya が .ma に書くのと同じ文（addAttr は MFnAttribute.getAddAttrCmd、setAttr は MPlug.getSetAttrCmds）を
+    メモリの上で組み立て、.ma の解析器に通す。
     リファレンスは、Maya が読み込んだノード（名前空間つき）をそのまま出す（.mb のリファレンスも Maya が読む）
   * メッシュの形・UV とスキンウェイト（.ma の大部分を占めるデータ）: 文にせず、API から numpy の配列で直接入れる。
     ヒストリから作られるメッシュも、Maya が評価した形になる（.ma では形がファイルにない）
@@ -171,13 +172,21 @@ def _geometry_types():
 
 
 def _setattr_cmds(obj, fn, skip) -> List[str]:
-    """ノードの値が既定と違う属性の setAttr（Maya が .ma に書く文。複合・配列の属性は子と要素もまとめて）。
+    """ノードのブロックの文（Maya が .ma に書くもの）: 独自の属性の addAttr（getAddAttrCmd。複合の属性の子も）と、
+    値が既定と違う属性の setAttr（複合・配列の属性は子と要素もまとめて）。.ma と同じく addAttr を先に書く。
+    addAttr は、独自の属性の種類（角度など）と既定値（-dv。既定値のままの属性は setAttr を書かない）に要る。
     接続の先の属性は、.ma と同じく値を書かない（値は接続から求める）"""
+    adds: List[str] = []
     out: List[str] = []
     geometry = _geometry_types()
     for i in range(fn.attributeCount()):
         a = fn.attribute(i)
         fa = om.MFnAttribute(a)
+        if fa.dynamic:
+            try:
+                adds.append(fa.getAddAttrCmd(False))
+            except RuntimeError:
+                pass
         if not fa.parent.isNull() or not fa.storable or fa.shortName in skip:
             continue
         if a.hasFn(om.MFn.kTypedAttribute) and om.MFnTypedAttribute(a).attrType() in geometry:
@@ -189,7 +198,7 @@ def _setattr_cmds(obj, fn, skip) -> List[str]:
             out += plug.getSetAttrCmds(om.MPlug.kNonDefault, False)
         except RuntimeError:
             pass
-    return out
+    return adds + out
 
 
 def _mesh_arrays(obj) -> MeshArrays:
