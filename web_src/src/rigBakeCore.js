@@ -10,7 +10,7 @@ import { makeCurve } from './curve.js';
  * 評価器を作る。動かないノードのローカル行列は nodes の matrix（ビューアの fileMatrix と同じ値）
  * @param anim 共通 JSON の animation（オブジェクトか JSON の文字列）  @param nodes 共通 JSON の nodes
  */
-export function createBaker(anim, nodes) {
+export function createBaker(anim, nodes, opts = {}) {
   const t0 = performance.now();
   const data = typeof anim === 'string' ? JSON.parse(anim) : anim;
   const parseMs = performance.now() - t0;
@@ -20,7 +20,8 @@ export function createBaker(anim, nodes) {
   const t1 = performance.now();
   const rig = new RigEvaluator(clip, nodes, (ni) => statics[ni]);
   const rigMs = performance.now() - t1;
-  rig.setPlaybackLimit(Number.MAX_SAFE_INTEGER);      // 作ったフレームはすぐ送って捨てるので、上限はなし
+  rig.setPlaybackLimit(Number.MAX_SAFE_INTEGER);
+  if (opts.chainSolver) rig.setChainSolver(opts.chainSolver);   // 3 ボーン以上の IK の解き方（ビューアと同じにする）      // 作ったフレームはすぐ送って捨てるので、上限はなし
   // timing: 評価のプロファイラに出す、ワーカーの中の時間（準備・最初のフレーム）
   return { rig, sentDeps: new Map(), sentReads: new Set(),
     timing: { createMs: performance.now() - t0, parseMs, clipMs, rigMs, defsMs: rig.defsMs, recvMs: null, firstMs: null,
