@@ -184,6 +184,36 @@ export function frameAll(channels, start, end, normalize = false) {
   return { x0: x0 - px, x1: x1 + px, y0: y0 - py, y1: y1 + py };
 }
 
+/**
+ * 区間 k（キー k 〜 k+1）が直線か（リニア・フラットの接線など、両端の接線の傾きが区間の傾きと同じ）。
+ * 重み付きでも、制御点が区間の直線の上に乗るので直線になる。ステップの区間は false（別に描く）
+ */
+export function straightSegment(c, k) {
+  if (c.step[k]) return false;
+  const dt = c.t[k + 1] - c.t[k];
+  if (!(dt > 0)) return true;
+  const slope = (c.v[k + 1] - c.v[k]) / dt;
+  const tol = 1e-6 * Math.max(1, Math.abs(slope));
+  return Math.abs(c.outSlope[k] - slope) <= tol && Math.abs(c.inSlope[k + 1] - slope) <= tol;
+}
+
+/**
+ * 区間 k を折れ線で描くときの点の間隔（画面のピクセル。1 以上）。kx・ky: 横・縦の 1 単位あたりのピクセル。
+ * エルミートの区間は 2 階微分（区間の中では 1 次式なので両端の大きいほう）から、ずれが tol ピクセルに収まる間隔
+ * （折れ線のずれは 間隔² × 2 階微分 / 8 以下）にする。重み付きの区間は 2 ピクセルごと
+ */
+export function segmentStepPx(c, k, kx, ky, tol = 0.3) {
+  const dt = c.t[k + 1] - c.t[k];
+  if (!(dt > 0)) return 1;
+  if (c.weighted && !(c.outW[k] === 0 && c.inW[k + 1] === 0)) return 2;
+  const v0 = c.v[k], v1 = c.v[k + 1], m0 = c.outSlope[k] * dt, m1 = c.inSlope[k + 1] * dt;
+  const d0 = Math.abs(-6 * v0 - 4 * m0 + 6 * v1 - 2 * m1), d1 = Math.abs(6 * v0 + 2 * m0 - 6 * v1 + 4 * m1);
+  const w = dt * kx;                                                  // 区間の幅（ピクセル）
+  const curv = (Math.max(d0, d1) * Math.abs(ky)) / (w * w);           // 画面での 2 階微分（ピクセル / ピクセル²）
+  if (!(curv > 0) || !Number.isFinite(curv)) return Math.max(1, w);
+  return Math.min(Math.max(Math.sqrt((8 * tol) / curv), 1), Math.max(1, w));
+}
+
 /** 値の表示（桁数をそろえる） */
 export function fmtValue(v) {
   if (!Number.isFinite(v)) return String(v);
@@ -197,6 +227,7 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 const PAD = { left: 52, right: 10, top: 20, bottom: 6 };     // グラフの余白（左は値の目盛り、上はフレームの目盛り）
 const HANDLE_PX = 36;                                         // 重みのない接線のハンドルの長さ（画面のピクセル）
 const MIN_H = 140;
+const THIN_LINES_OVER = 16;                                   // 表示するカーブがこの本数より多ければ、線を細くする
 const LIST_W = { min: 120, max: 480 };                        // 左の一覧の幅（ドラッグで変える）
 
 export class CurveEditor {
@@ -227,7 +258,7 @@ export class CurveEditor {
     const panel = $('curve-editor');
     panel.addEventListener('pointerenter', () => { this.hover = true; });
     panel.addEventListener('pointerleave', () => { this.hover = false; });
-    new ResizeObserver(() => this.render()).observe(this.canvas);
+    new ResizeObserver(() => { this.rect = null; this.render(); }).observe(this.canvas);
     this.bindGraph();
     this.bindResizer();
     this.bindListResizer();
@@ -382,7 +413,7 @@ export class CurveEditor {
     const next = items && items.length ? new Set(items) : null;
     if (!next && !this.highlight) return;
     this.highlight = next;
-    this.render();
+    this.scheduleRender();
   }
 
   /** ノードの見出しの折りたたみ（カーブの表示は変えない） */
@@ -428,9 +459,16 @@ export class CurveEditor {
   }
 
   // ---- 座標
-  plotRect() {
+  /**
+   * グラフの領域（余白を除く）。キャンバスの大きさを読むとレイアウトを調べるので、描画のたびに 1 回だけ測って
+   * 使い回す（sx・sy は点ごとに呼ぶ。大きさが変われば ResizeObserver で描き直し、そこで測り直す）
+   */
+  plotRect() { return this.rect || this.measureRect(); }
+
+  measureRect() {
     const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
-    return { x: PAD.left, y: PAD.top, w: Math.max(w - PAD.left - PAD.right, 1), h: Math.max(h - PAD.top - PAD.bottom, 1) };
+    this.rect = { x: PAD.left, y: PAD.top, w: Math.max(w - PAD.left - PAD.right, 1), h: Math.max(h - PAD.top - PAD.bottom, 1) };
+    return this.rect;
   }
 
   sx(x) { const r = this.plotRect(); return r.x + ((x - this.view.x0) / (this.view.x1 - this.view.x0)) * r.w; }
@@ -444,15 +482,26 @@ export class CurveEditor {
 
   /** 表示する値（正規化するときは、キーの範囲と再生範囲での最小・最大を -1〜1 に） */
   valueOf(i, v) {
-    const ch = this.channels[i];
     if (!this.normalize) return v;
+    return this.normOf(i).map(v);
+  }
+
+  normOf(i) {
+    const ch = this.channels[i];
     if (!ch.norm) {
       const c = ch.curve;
       const x0 = Math.min(c.n ? c.t[0] : 0, this.clip ? this.clip.start : 0);
       const x1 = Math.max(c.n ? c.t[c.n - 1] : 0, this.clip ? this.clip.end : 0);
       ch.norm = normalizer(c, x0, x1);
     }
-    return ch.norm.map(v);
+    return ch.norm;
+  }
+
+  /** 描画を次のフレームにまとめる（ホイール・ドラッグ・一覧のハイライトなど、続けて来るもの） */
+  scheduleRender() {
+    if (this.renderPending) return;
+    this.renderPending = true;
+    requestAnimationFrame(() => { this.renderPending = false; this.render(); });
   }
 
   // ---- 描画
@@ -470,11 +519,19 @@ export class CurveEditor {
     const g = this.layer.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, h);
-    const r = this.plotRect();
+    const r = this.measureRect();
+    this.axis = viewAxis(this.channels);
+    // カーブが多いときは細い線にする（1 ピクセルの線は太い線よりずっと速く描ける。GPU のない環境で特に）
+    let nVisible = 0;
+    for (const ch of this.channels) if (ch.visible) nVisible++;
+    this.thinLines = nVisible > THIN_LINES_OVER;
+    // カーブの線（Path2D）は、表示範囲・大きさ・正規化が同じなら作り直さない（ハイライト・キーの選択・表示の切り替えは軽い）
+    const v = this.view;
+    this.pathKey = `${v.x0},${v.x1},${v.y0},${v.y1},${r.w},${r.h},${this.normalize}`;
     // 再生範囲の外は暗く（横軸がフレームのとき）
     g.fillStyle = '#1f2225';
     g.fillRect(r.x, r.y, r.w, r.h);
-    if (this.clip && viewAxis(this.channels) !== 'driver') {
+    if (this.clip && this.axis !== 'driver') {
       const a = Math.max(this.sx(this.clip.start), r.x), b = Math.min(this.sx(this.clip.end), r.x + r.w);
       if (b > a) { g.fillStyle = '#272b30'; g.fillRect(a, r.y, b - a, r.h); }
     }
@@ -521,7 +578,7 @@ export class CurveEditor {
     g.fillStyle = 'rgba(255, 255, 255, 0.12)';
     g.fillRect(r.x, PAD.top - 1, w - PAD.left - PAD.right, 1);
     // 横軸の意味（左上の角）
-    const axis = viewAxis(this.channels);
+    const axis = this.axis || viewAxis(this.channels);
     g.fillStyle = '#8e97a1';
     g.textAlign = 'left';
     g.fillText({ time: 'フレーム', driver: 'ドライバー', clip: 'クリップ', mixed: '混在' }[axis], 4, PAD.top / 2);
@@ -530,56 +587,77 @@ export class CurveEditor {
   drawCurve(g, r, i) {
     const ch = this.channels[i], c = ch.curve;
     if (!c.n) return;
-    const first = c.t[0], last = c.t[c.n - 1];
-    const step = Math.max((this.view.x1 - this.view.x0) / r.w, 1e-6);   // 1 ピクセルごと
-    const piece = (a, b, dashed) => {
-      if (b <= a) return;
-      g.setLineDash(dashed ? [4, 4] : []);
-      g.beginPath();
-      let x = a, firstPt = true;
-      while (true) {
-        const px = this.sx(x), py = this.sy(this.valueOf(i, evaluateCurve(c, x)));
-        if (firstPt) { g.moveTo(px, py); firstPt = false; } else g.lineTo(px, py);
-        if (x >= b) break;
-        x = Math.min(x + step, b);
-        // キーの時刻を飛ばさない（ステップの角を正しく描く）
-      }
-      g.stroke();
-    };
+    if (!ch.path || ch.path.key !== this.pathKey) ch.path = { key: this.pathKey, ...this.buildPaths(r, i) };
     const dim = this.highlight && !this.highlight.has(i);
-    g.lineWidth = this.highlight && !dim ? 2.5 : 1.5;
+    g.lineWidth = this.highlight && !dim ? 2.5 : this.thinLines ? 1 : 1.5;
     g.strokeStyle = ch.color;
     g.globalAlpha = dim ? 0.2 : 0.9;
-    piece(this.view.x0, Math.min(first, this.view.x1), true);           // 前の無限
-    // キーのあいだ: 区間ごとに描く（ステップの区間は角を描く）
+    g.setLineDash([4, 4]);
+    g.stroke(ch.path.dashed);                                        // 前後の無限
     g.setLineDash([]);
-    g.beginPath();
-    for (let k = 0; k < c.n - 1; k++) {
+    g.stroke(ch.path.solid);                                         // キーのあいだ
+    g.globalAlpha = dim ? 0.3 : 1;
+    g.fillStyle = ch.color;
+    g.fill(ch.path.keys);                                            // キー
+    g.globalAlpha = 1;
+  }
+
+  /**
+   * カーブ i の線（キーのあいだ・前後の無限）とキーの四角を、画面の座標の Path2D にする。
+   * 直線になる区間（リニア・フラットなど、接線の傾きが区間の傾きと同じ）と、定数・リニアの無限は端だけを結ぶ。
+   * ほかは 1 ピクセルごとに評価する
+   */
+  buildPaths(r, i) {
+    const c = this.channels[i].curve, v = this.view;
+    const kx = r.w / (v.x1 - v.x0), ky = r.h / (v.y1 - v.y0);
+    const norm = this.normalize ? this.normOf(i) : null;
+    const X = (x) => r.x + (x - v.x0) * kx;
+    const Y = norm ? (y) => r.y + (v.y1 - norm.map(y)) * ky : (y) => r.y + (v.y1 - y) * ky;
+    const step = Math.max(1 / kx, 1e-6);                             // 1 ピクセルごと
+    const n = c.n, first = c.t[0], last = c.t[n - 1];
+    const solid = new Path2D(), dashed = new Path2D(), keys = new Path2D();
+    // 前後の無限: 定数・リニアは直線、サイクル・往復は 1 ピクセルごと
+    const piece = (a, b, mode) => {
+      if (b <= a) return;
+      dashed.moveTo(X(a), Y(evaluateCurve(c, a)));
+      if (mode !== INFINITY.CONSTANT && mode !== INFINITY.LINEAR && n > 1) {
+        for (let x = a + step; x < b; x += step) dashed.lineTo(X(x), Y(evaluateCurve(c, x)));
+      }
+      dashed.lineTo(X(b), Y(evaluateCurve(c, b)));
+    };
+    piece(v.x0, Math.min(first, v.x1), c.pre);
+    piece(Math.max(last, v.x0), v.x1, c.post);
+    // キーのあいだ: 区間ごとに描く（ステップの区間は角を描く）。続く区間は線をつなげる
+    let penX = NaN, penY = NaN;
+    const moveTo = (x, y) => { if (x !== penX || y !== penY) solid.moveTo(x, y); penX = x; penY = y; };
+    const lineTo = (x, y) => { solid.lineTo(x, y); penX = x; penY = y; };
+    for (let k = 0; k < n - 1; k++) {
       const a = c.t[k], b = c.t[k + 1];
-      if (b < this.view.x0 || a > this.view.x1) continue;
-      const x0 = Math.max(a, this.view.x0), x1 = Math.min(b, this.view.x1);
-      g.moveTo(this.sx(x0), this.sy(this.valueOf(i, evaluateCurve(c, x0))));
+      if (b < v.x0 || a > v.x1) continue;
+      const x0 = Math.max(a, v.x0), x1 = Math.min(b, v.x1);
       if (c.step[k]) {
         const hold = c.step[k] === 1 ? c.v[k] : c.v[k + 1];
-        g.lineTo(this.sx(a), this.sy(this.valueOf(i, hold)));
-        g.lineTo(this.sx(b), this.sy(this.valueOf(i, hold)));
-        g.lineTo(this.sx(b), this.sy(this.valueOf(i, c.v[k + 1])));
+        moveTo(X(x0), Y(evaluateCurve(c, x0)));
+        lineTo(X(a), Y(hold));
+        lineTo(X(b), Y(hold));
+        lineTo(X(b), Y(c.v[k + 1]));
         continue;
       }
-      for (let x = x0 + step; x < x1; x += step) g.lineTo(this.sx(x), this.sy(this.valueOf(i, evaluateCurve(c, x))));
-      g.lineTo(this.sx(x1), this.sy(this.valueOf(i, k + 1 === c.n - 1 && x1 === b ? c.v[k + 1] : evaluateCurve(c, x1))));
+      const endY = Y(k + 1 === n - 1 && x1 === b ? c.v[k + 1] : evaluateCurve(c, x1));
+      moveTo(X(x0), Y(evaluateCurve(c, x0)));
+      if (!straightSegment(c, k)) {
+        // 曲がり具合から、折れ線のずれが 0.3 ピクセルに収まる間隔を決める（1 ピクセルより細かくはしない）
+        const h = segmentStepPx(c, k, kx, ky * (norm ? norm.scale : 1)) * step;
+        for (let x = x0 + h; x < x1 - h * 0.25; x += h) lineTo(X(x), Y(evaluateCurve(c, x)));
+      }
+      lineTo(X(x1), endY);
     }
-    g.stroke();
-    piece(Math.max(last, this.view.x0), this.view.x1, true);            // 後の無限
-    g.globalAlpha = dim ? 0.3 : 1;
-    // キー
-    g.fillStyle = ch.color;
-    for (let k = 0; k < c.n; k++) {
-      const px = this.sx(c.t[k]), py = this.sy(this.valueOf(i, c.v[k]));
+    for (let k = 0; k < n; k++) {
+      const px = X(c.t[k]);
       if (px < r.x - 4 || px > r.x + r.w + 4) continue;
-      g.fillRect(Math.round(px) - 2, Math.round(py) - 2, 5, 5);
+      keys.rect(Math.round(px) - 2, Math.round(Y(c.v[k])) - 2, 5, 5);
     }
-    g.globalAlpha = 1;
+    return { solid, dashed, keys };
   }
 
   /** 選んだキー（白い枠）と接線のハンドル */
@@ -630,7 +708,7 @@ export class CurveEditor {
     const r = this.plotRect();
     const f = this.app.frame;
     const px = Math.round(this.sx(f)) + 0.5;
-    const timeAxis = ['time', 'mixed'].includes(viewAxis(this.channels));   // ドリブンキーだけなら、横軸はフレームではない
+    const timeAxis = ['time', 'mixed'].includes(this.axis || viewAxis(this.channels));   // ドリブンキーだけなら、横軸はフレームではない
     if (timeAxis && px >= r.x && px <= r.x + r.w) {
       g.fillStyle = '#f2a93b';
       g.fillRect(px - 0.5, 0, 2, h);
@@ -704,7 +782,7 @@ export class CurveEditor {
         x0: zx ? at.x + (v.x0 - at.x) * k : v.x0, x1: zx ? at.x + (v.x1 - at.x) * k : v.x1,
         y0: zy ? at.y + (v.y0 - at.y) * k : v.y0, y1: zy ? at.y + (v.y1 - at.y) * k : v.y1,
       };
-      this.render();
+      this.scheduleRender();
     }, { passive: false });
     c.addEventListener('pointerdown', (e) => {
       if (!this.view) return;
@@ -741,7 +819,7 @@ export class CurveEditor {
         const a = drag.at;
         this.view = { x0: a.x + (v.x0 - a.x) * kx, x1: a.x + (v.x1 - a.x) * kx, y0: a.y + (v.y0 - a.y) * ky, y1: a.y + (v.y1 - a.y) * ky };
       }
-      this.render();
+      this.scheduleRender();
     });
     const end = () => { drag = null; };
     c.addEventListener('pointerup', end);

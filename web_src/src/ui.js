@@ -39,6 +39,9 @@ export function referenceOf(data, name) {
   return best;
 }
 /** パスのファイル名 */
+// エラー（#error）を自動で消すまでの時間と、出した直後に操作で消さない時間（ミリ秒）
+const ERROR_HIDE_MS = 8000;
+const ERROR_GRACE_MS = 400;
 const fileName = (p) => String(p || '').split(/[\\/]/).pop();
 /** これより行が多い階層は、見えている範囲の行だけを要素にする（仮想リスト） */
 export const TREE_VIRTUAL_ROWS = 2000;
@@ -1417,12 +1420,38 @@ export class UI {
     this.syncOverlays();
   }
   hideLoading() { $('loading').hidden = true; this.syncOverlays(); }
-  showError(text) {
+  /**
+   * エラーをビューポートの中央に出す。出したままだと見づらいので、一定の時間（ERROR_HIDE_MS）が経つか、
+   * ユーザーが操作（クリック・キー・ホイール）したら消す。opts.sticky: 消さない（WebGL を初期化できないなど、
+   * 操作しても直らず、消すと何も表示されない理由がわからなくなるとき）
+   */
+  showError(text, opts = {}) {
     const e = $('error');
     e.hidden = false;
     e.textContent = text;
     $('loading').hidden = true;                     // 読み込みは終わった（失敗した）
     this.syncOverlays();
+    clearTimeout(this.errorTimer);
+    this.errorTimer = null;
+    this.errorShownAt = performance.now();
+    this.errorSticky = !!opts.sticky;
+    if (this.errorSticky) return;
+    this.errorTimer = setTimeout(() => this.hideError(), ERROR_HIDE_MS);
+    if (!this.errorDismissBound) {
+      // 操作で消す。出した直後（ERROR_GRACE_MS 以内）の操作では消さない（読み終わりと同時のクリックで、読む前に消えないように）
+      this.errorDismissBound = true;
+      const dismiss = () => {
+        if (this.errorSticky || $('error').hidden) return;
+        if (performance.now() - this.errorShownAt < ERROR_GRACE_MS) return;
+        this.hideError();
+      };
+      for (const type of ['pointerdown', 'keydown', 'wheel']) window.addEventListener(type, dismiss, { capture: true, passive: true });
+    }
   }
-  hideError() { $('error').hidden = true; this.syncOverlays(); }
+  hideError() {
+    clearTimeout(this.errorTimer);
+    this.errorTimer = null;
+    $('error').hidden = true;
+    this.syncOverlays();
+  }
 }

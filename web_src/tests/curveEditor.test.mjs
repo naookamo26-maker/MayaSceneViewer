@@ -101,3 +101,31 @@ test('カーブはキーごとの接線の種類（.ma の値）を持つ', () =
     assert.ok([...c.tinType, ...c.toutType].every((k) => Object.values(TANGENT).includes(k)), c.name);
   }
 });
+
+test('描画を軽くする: 直線の区間を見分け、曲がった区間は折れ線のずれが許容内に収まる間隔で描く', async () => {
+  const { segmentStepPx, straightSegment } = await import('../src/curveEditor.js');
+  const mk = (t, v, outSlope, inSlope, extra = {}) => ({
+    n: t.length, t, v, outSlope, inSlope, step: new Uint8Array(t.length), weighted: false,
+    outW: new Float64Array(t.length), inW: new Float64Array(t.length), pre: 0, post: 0, last: 0, ...extra,
+  });
+  // リニア（接線の傾き = 区間の傾き）とフラット（同じ値・傾き 0）は直線、スプラインは直線でない
+  const lin = mk([0, 10], [0, 5], [0.5, 0.5], [0.5, 0.5]);
+  assert.equal(straightSegment(lin, 0), true);
+  assert.equal(straightSegment(mk([0, 10], [3, 3], [0, 0], [0, 0]), 0), true);
+  const spl = mk([0, 10], [0, 5], [2, 0], [2, 0]);
+  assert.equal(straightSegment(spl, 0), false);
+  const stepped = mk([0, 10], [0, 5], [0.5, 0.5], [0.5, 0.5], { step: new Uint8Array([1, 0]) });
+  assert.equal(straightSegment(stepped, 0), false);
+  // 間隔 h ピクセルで折れ線にしたときの、本当の値とのずれ（画面のピクセル）が 0.3 ピクセルに収まる
+  for (const [kx, ky] of [[8, 20], [2, 5], [30, 100], [0.5, 1]]) {
+    const h = segmentStepPx(spl, 0, kx, ky);
+    assert.ok(h >= 1);
+    const dx = h / kx;
+    let worst = 0;
+    for (let x = 0; x + dx <= 10; x += dx) {
+      const a = evaluateCurve(spl, x), b = evaluateCurve(spl, x + dx);
+      for (let s = 0; s <= 1; s += 0.05) worst = Math.max(worst, Math.abs(evaluateCurve(spl, x + s * dx) - (a + (b - a) * s)) * ky);
+    }
+    assert.ok(h === 1 || worst <= 0.31, `kx=${kx} ky=${ky} h=${h} ずれ ${worst}`);
+  }
+});
