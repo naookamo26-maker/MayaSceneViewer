@@ -141,6 +141,16 @@ class TestShapeInput(unittest.TestCase):
         self.assertNotIn("cc", maya_scene.skip_attrs("nurbsCurve", False))      # 入力のないカーブは形を書く
 
 
+class TestBlockText(unittest.TestCase):
+    def test_relative_plug(self):
+        """ブロックの中の setAttr は、ノードの名前を付けない形にそろえる（あとから属性を読む処理はこの形を探す）"""
+        st = maya_scene.SceneText()
+        st.node("exprespy", "rig:posEx", None, ['setAttr "rig:posEx.cd" -type "string" "p = a.b"',
+                                                'setAttr -k on "|grp|n.tx" 5;\n'])
+        self.assertEqual(st.lines, ['createNode exprespy -n "rig:posEx";', '\tsetAttr ".cd" -type "string" "p = a.b";',
+                                    '\tsetAttr -k on ".tx" 5;'])
+
+
 class TestAddAttr(unittest.TestCase):
     def test_exprespy_needs_addattr(self):
         """独自の属性の addAttr がないと、exprespy の入力の種類（ベクトルか数か）が分からず、コードを解析できない。
