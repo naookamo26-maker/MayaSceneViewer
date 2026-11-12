@@ -14,6 +14,7 @@ collect()（Maya の API。画面のスレッドで呼ぶ）→ SceneText.build(
 """
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -81,6 +82,14 @@ def mesh_data(md, m: MeshArrays) -> None:
     md.holes = 0
 
 
+_SETATTR_PLUG = re.compile(r'^(setAttr\b[^"]*")([^".][^"]*?)(\.[^"]*")')
+
+
+def _relative_plug(row: str) -> str:
+    """setAttr "pCube1.t" … → setAttr ".t" …（ブロックの中の文は、いまのノードの属性）"""
+    return _SETATTR_PLUG.sub(r"\1\3", row, count=1)
+
+
 class SceneText:
     """.ma の文（メモリの上）と、文にしないメッシュの形・ウェイト。build() で MaScene にする"""
 
@@ -105,9 +114,12 @@ class SceneText:
         self._attrs(setattrs)
 
     def _attrs(self, setattrs) -> None:
-        """ノードのブロックの文（.ma と同じく字下げする。字下げのない行でブロックが終わるので、複数行の文も行ごとに）"""
+        """ノードのブロックの文（.ma と同じく字下げする。字下げのない行でブロックが終わるので、複数行の文も行ごとに）。
+        属性はノードの名前を付けない形（setAttr ".cc"）にそろえる（あとから属性を読む処理はこの形を探す）"""
         for c in setattrs:
             rows = [r.strip() for r in c.splitlines() if r.strip()]
+            if rows:
+                rows[0] = _relative_plug(rows[0])
             if rows and not rows[-1].endswith(";"):
                 rows[-1] += ";"
             self.lines += ["\t" + r for r in rows]
@@ -189,13 +201,16 @@ def _setattr_cmds(obj, fn, skip) -> List[str]:
                 pass
         if not fa.parent.isNull() or not fa.storable or fa.shortName in skip:
             continue
-        if a.hasFn(om.MFn.kTypedAttribute) and om.MFnTypedAttribute(a).attrType() in geometry:
+        typed = a.hasFn(om.MFn.kTypedAttribute)
+        if typed and om.MFnTypedAttribute(a).attrType() in geometry:
             continue
         plug = om.MPlug(obj, a)
         if plug.isDestination:
             continue
         try:
-            out += plug.getSetAttrCmds(om.MPlug.kNonDefault, False)
+            # データの型を持つ属性（文字列・カーブの形・componentList など）は既定値と比べられず、kNonDefault では
+            # 書かれないので、値をすべて書く（exprespy のコード .cd・カーブの形 .cc・テクスチャのファイル名など）
+            out += plug.getSetAttrCmds(om.MPlug.kAll if typed else om.MPlug.kNonDefault, False)
         except RuntimeError:
             pass
     return adds + out
