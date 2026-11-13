@@ -14,7 +14,9 @@ collect()（Maya の API。画面のスレッドで呼ぶ）→ SceneText.build(
 """
 from __future__ import annotations
 
+import os
 import re
+import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -103,6 +105,9 @@ class SceneText:
         self.warnings: List[str] = []               # 集めるときの警告（MaScene の警告に入れる）
         self.view_camera: Optional[str] = None      # 作業中のビューのカメラ
         self.project_root: Optional[str] = None     # いまのプロジェクト（テクスチャを探す）
+        # 集めるのにかかった時間（collect。画面が止まる時間）: {"total", "fast", "parts": {部分: [秒, 回数]},
+        # "types": {ノードの型: [秒, 数]}}。ログの「Maya からの収集の内訳」に出す（timing_lines）
+        self.timing: Optional[dict] = None
 
     def node(self, node_type: str, name: str, parent: Optional[str], setattrs) -> None:
         self.lines.append('createNode %s -n "%s"%s;' % (node_type, name, ' -p "%s"' % parent if parent else ""))
@@ -214,16 +219,62 @@ def _setattr_cmds(obj, fn, skip) -> List[str]:
     return adds + out
 
 
-def _mesh_arrays(obj) -> MeshArrays:
-    fn = om.MFnMesh(obj)
-    pts = fn.getPoints(om.MSpace.kObject)
-    counts, connects = fn.getVertices()
-    ne = fn.numEdges
+# 速い経路（Maya で確かめるまで既定ではオフ。MA_VIEWER_MAYA_FAST=1 か collect(fast=True) で使う）。
+# 1 要素ずつの API の呼び出しを、まとめて取る呼び出しにする。結果が今の経路と同じかと速さは
+# tools/maya_collect_compare.py で確かめる。取れない・数が合わないときは今の経路に戻す
+FAST_ENV = "MA_VIEWER_MAYA_FAST"
+
+
+def fast_enabled() -> bool:
+    return os.environ.get(FAST_ENV) == "1"
+
+
+def _points_slow(pts) -> list:
+    return [(p.x, p.y, p.z) for p in pts]
+
+
+def _points_fast(pts) -> np.ndarray:
+    """MPointArray → (n, 3)。MPoint は (x, y, z, w) の並びなので、numpy でまとめて変換して w を落とす"""
+    a = np.array(pts, dtype=np.float64)
+    return a.reshape(-1, 4)[:, :3] if a.size else np.zeros((0, 3))
+
+
+def _edges_slow(fn, ne: int):
     edges = np.empty((ne, 2), dtype=np.int64)
     smooth = np.empty(ne, dtype=bool)
     for e in range(ne):
         edges[e] = fn.getEdgeVertices(e)
         smooth[e] = fn.isEdgeSmooth(e)
+    return edges, smooth
+
+
+def _edges_fast(name: str, ne: int):
+    """辺の両端とスムーズか（.ma の .ed と同じ値: 頂点 2 つと、スムーズなら 1）を、1 回の getAttr で読む。
+    読めない・数が合わないときは None（今の経路に戻す）"""
+    if ne == 0:
+        return np.empty((0, 2), dtype=np.int64), np.empty(0, dtype=bool)
+    try:
+        rows = cmds.getAttr("%s.ed[0:%d]" % (name, ne - 1))
+    except (RuntimeError, ValueError, TypeError):
+        return None
+    try:
+        arr = np.asarray(rows, dtype=np.float64).reshape(-1, 3)
+    except (ValueError, TypeError):
+        return None
+    if arr.shape[0] != ne:
+        return None
+    return arr[:, :2].astype(np.int64), arr[:, 2] != 0
+
+
+def _mesh_arrays(obj, fast: bool = False, timing=None) -> MeshArrays:
+    fn = om.MFnMesh(obj)
+    pts = fn.getPoints(om.MSpace.kObject)
+    counts, connects = fn.getVertices()
+    ne = fn.numEdges
+    got = _edges_fast(om.MFnDagNode(obj).fullPathName(), ne) if fast else None
+    if got is None and fast and timing is not None:
+        timing.count("速い経路を使えなかった辺")
+    edges, smooth = got if got is not None else _edges_slow(fn, ne)
     logical = {}                                         # UV セットの名前 → uvSet の論理番号（uvChooser などが使う）
     uvst = fn.findPlug("uvSet", False)
     name_attr = fn.attribute("uvSetName")
@@ -240,8 +291,44 @@ def _mesh_arrays(obj) -> MeshArrays:
         current = fn.currentUVSetName()
     except RuntimeError:
         current = None
-    return MeshArrays([(p.x, p.y, p.z) for p in pts], np.array(counts), np.array(connects), edges, smooth,
-                      uv_sets, current)
+    return MeshArrays(_points_fast(pts) if fast else _points_slow(pts), np.array(counts), np.array(connects), edges,
+                      smooth, uv_sets, current)
+
+
+def _skin_weights_fast(obj):
+    """skinCluster のウェイトを MFnSkinCluster.getWeights でまとめて取る（速い経路）→ (頂点, インフルエンスの論理番号, 値)。
+    値が 0 の要素は入れない。並びは今の経路と同じ（頂点、インフルエンスの論理番号の順）。
+    変形するメッシュが 1 つでないとき・取れないときは None（今の経路に戻す）"""
+    import maya.api.OpenMayaAnim as oma
+    try:
+        sk = oma.MFnSkinCluster(obj)
+        if sk.numOutputConnections() != 1:
+            return None
+        path = sk.getPathAtIndex(sk.indexForOutputConnection(0))
+        if not path.hasFn(om.MFn.kMesh):
+            return None
+        nv = om.MFnMesh(path).numVertices
+        comp = om.MFnSingleIndexedComponent()
+        cobj = comp.create(om.MFn.kMeshVertComponent)
+        comp.setCompleteData(nv)
+        weights, count = sk.getWeights(path, cobj)
+        infl = sk.influenceObjects()
+        logical = np.array([sk.indexForInfluenceObject(infl[k]) for k in range(len(infl))], dtype=np.int64)
+    except (RuntimeError, ValueError, TypeError):
+        return None
+    w = np.asarray(weights, dtype=np.float64)
+    if count != len(logical) or w.size != nv * count:
+        return None
+    return weights_from_dense(w.reshape(nv, count), logical)
+
+
+def weights_from_dense(w: np.ndarray, logical: np.ndarray) -> tuple:
+    """(頂点 × インフルエンス) の表と、インフルエンスの論理番号 → (頂点, 論理番号, 値)。0 は入れない。
+    並びは頂点の順、同じ頂点では論理番号の順（weightList を物理番号の順に読むのと同じ）"""
+    v, k = np.nonzero(w)
+    lo = logical[k] if len(logical) else k.astype(np.int64)
+    order = np.lexsort((lo, v))
+    return v[order].astype(np.int64), lo[order].astype(np.int64), w[v, k][order].astype(np.float64)
 
 
 def _skin_weights(fn) -> tuple:
@@ -397,11 +484,68 @@ def _header(st: SceneText) -> None:
     st.select("time1", ['setAttr ".o" %s' % cmds.currentTime(query=True)])
 
 
-def collect(selection_only: bool = False, progress: ProgressFn = None) -> SceneText:
-    """Maya で開いているシーン（または選択範囲）を集める。Maya の API を使うので、画面のスレッドで呼ぶ"""
+class CollectTiming:
+    """collect の部分ごと・ノードの型ごとの時間（秒）と回数"""
+
+    def __init__(self, fast: bool):
+        self.start = time.perf_counter()
+        self.fast = fast
+        self.parts: Dict[str, List[float]] = {}
+        self.types: Dict[str, List[float]] = {}
+
+    def add(self, part: str, seconds: float, node_type: Optional[str] = None) -> None:
+        p = self.parts.setdefault(part, [0.0, 0])
+        p[0] += seconds
+        p[1] += 1
+        if node_type is not None:
+            t = self.types.setdefault(node_type, [0.0, 0])
+            t[0] += seconds
+            t[1] += 1
+
+    def count(self, part: str) -> None:
+        self.parts.setdefault(part, [0.0, 0])[1] += 1
+
+    def result(self) -> dict:
+        return {"total": time.perf_counter() - self.start, "fast": self.fast,
+                "parts": {k: list(v) for k, v in self.parts.items()},
+                "types": {k: list(v) for k, v in self.types.items()}}
+
+
+# timing_lines に出す部分の順
+_PARTS = ("ノードの一覧", "setAttr の文", "メッシュの形", "スキンウェイト", "接続", "リファレンス・ビュー")
+
+
+def timing_lines(timing: Optional[dict], top: int = 6) -> List[str]:
+    """collect の時間をログの行にする（なければ空）"""
+    if not timing:
+        return []
+    parts = timing.get("parts", {})
+    shown = [k for k in _PARTS if k in parts] + sorted(k for k in parts if k not in _PARTS)
+    items = []
+    for k in shown:
+        sec, n = parts[k]
+        items.append("%s %d 回" % (k, n) if k.startswith("速い経路を使えなかった") else "%s %.2f 秒（%s）" % (
+            k, sec, "{:,}".format(int(n))))
+    lines = ["Maya からの収集の内訳: 合計 %.2f 秒（画面が止まる時間。%s）・%s" % (
+        timing.get("total", 0.0), "速い経路" if timing.get("fast") else "今の経路", "・".join(items))]
+    types = sorted(timing.get("types", {}).items(), key=lambda kv: -kv[1][0])[:top]
+    if types:
+        lines.append("setAttr の文の型ごと（上位 %d）: %s" % (len(types), "・".join(
+            "%s %.2f 秒（%s 個）" % (t, sec, "{:,}".format(int(n))) for t, (sec, n) in types)))
+    return lines
+
+
+def collect(selection_only: bool = False, progress: ProgressFn = None, fast: Optional[bool] = None) -> SceneText:
+    """Maya で開いているシーン（または選択範囲）を集める。Maya の API を使うので、画面のスレッドで呼ぶ。
+    fast: 速い経路を使うか（省略時は環境変数 MA_VIEWER_MAYA_FAST=1 のときだけ）。かかった時間は st.timing"""
+    fast = fast_enabled() if fast is None else bool(fast)
+    tm = CollectTiming(fast)
+    clock = time.perf_counter
     st = SceneText(cmds.file(query=True, sceneName=True) or "")
     _header(st)
+    t0 = clock()
     nodes = _nodes(selection_only)
+    tm.add("ノードの一覧", clock() - t0)
     ident: Dict[int, str] = {}
     total = max(len(nodes), 1)
     for i, (obj, key, name, parent) in enumerate(nodes):
@@ -409,20 +553,32 @@ def collect(selection_only: bool = False, progress: ProgressFn = None) -> SceneT
             progress(i / total, "Maya からシーンを取得中: %s" % name)
         fn = om.MFnDependencyNode(obj)
         t = fn.typeName
+        t0 = clock()
         shape_input = t in _INPUT_SHAPE and fn.findPlug(_INPUT_SHAPE[t][0], False).isDestination
         st.node(t, name, parent, _setattr_cmds(obj, fn, skip_attrs(t, shape_input)))
+        tm.add("setAttr の文", clock() - t0, t)
         ident[om.MObjectHandle(obj).hashCode()] = key
         if fn.isFromReferencedFile and ":" in name:
             st.namespaces[key] = name.rsplit("|", 1)[-1].rpartition(":")[0] + ":"
         if t == "mesh":
-            st.meshes[key] = _mesh_arrays(obj)
+            t0 = clock()
+            st.meshes[key] = _mesh_arrays(obj, fast, tm)
+            tm.add("メッシュの形", clock() - t0)
         elif t == "skinCluster":
-            st.skins[key] = _skin_weights(fn)
+            t0 = clock()
+            w = _skin_weights_fast(obj) if fast else None
+            if w is None and fast:
+                tm.count("速い経路を使えなかったスキンウェイト")
+            st.skins[key] = w if w is not None else _skin_weights(fn)
+            tm.add("スキンウェイト", clock() - t0)
+    t0 = clock()
     for name in _DEFAULT_NODES:
         obj = om.MSelectionList().add(name).getDependNode(0)
         st.select(name, _setattr_cmds(obj, om.MFnDependencyNode(obj), ()))
+    tm.add("setAttr の文", clock() - t0)
     if progress:
         progress(1.0, "Maya からつながりを取得中")
+    t0 = clock()
     for obj, key, _name, _parent in nodes:
         for plug in om.MFnDependencyNode(obj).getConnections():
             if not plug.isDestination:
@@ -438,6 +594,8 @@ def collect(selection_only: bool = False, progress: ProgressFn = None) -> SceneT
                 skey = "time1"                       # 時間の入力（.ma の解析と同じく、time1 のノードは作らない）
             if skey is not None:
                 st.connect(skey + "." + _plug_name(src), key + "." + _plug_name(plug))
+    tm.add("接続", clock() - t0)
+    t0 = clock()
     try:
         st.ref_infos = _references()
     except Exception as exc:  # noqa: BLE001  リファレンスの一覧は補助の情報。取れなくてもシーンは読む
@@ -447,6 +605,8 @@ def collect(selection_only: bool = False, progress: ProgressFn = None) -> SceneT
         st.project_root = (cmds.workspace(query=True, rootDirectory=True) or "").rstrip("/\\") or None
     except RuntimeError:
         pass
+    tm.add("リファレンス・ビュー", clock() - t0)
+    st.timing = tm.result()
     return st
 
 

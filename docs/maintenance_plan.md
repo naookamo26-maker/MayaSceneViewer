@@ -29,7 +29,7 @@ Maya で確かめられないことから、次のルールで進めます。
 | 0 | 済み: CI（`.github/workflows/test.yml`）・大きなリグのベンチ（`tools/make_big_rig_sample.py`・`--file`。[benchmark.md](benchmark.md)）・正解と比べる道具（`tools/maya_export_truth.py`・`python -m ma_viewer verify`・`tools/maya_node_check.py`。[maya_verification.md](maya_verification.md)） |
 | 1 | 1.32.0 に含めた（当初の予定は 1.31.7）: B1・B2・B3・M1・M3 は済み。M2 は変えない（下の「M2・M3 の資料の確認」） |
 | 2 | 1.32.0（段階 0〜1 と同じブランチ・同じ PR なので、1.31.7 を含めて 1 回だけ上げた）: M4・M5 は済み（下の「段階 2 の資料の確認」） |
-| 3 | 1.32.0 に含めた: P3・P5 は済み（付録 D のシーンで `wire_shapes` 1.34 → 0.016 秒、読み込み 2.57 → 1.17 秒。結果は処理時間の値のほかは同じ）。P2 は済み（コードは変えない。下の「P2 について」）。**P4 は未着手**（Maya で確かめられないため、計画どおり Maya が使えるようになるまで待つ）。P1 は測った結果、変えない（下の「P1 の測定」） |
+| 3 | 1.32.0 に含めた: P3・P5 は済み（付録 D のシーンで `wire_shapes` 1.34 → 0.016 秒、読み込み 2.57 → 1.17 秒。結果は処理時間の値のほかは同じ）。P2 は済み（コードは変えない。下の「P2 について」）。P4 は Maya なしでできる分だけ済み（1.36.0。下の「P4 の進み具合」）。P1 は測った結果、変えない（下の「P1 の測定」） |
 | IK | 1.33.0（計画の外。下の「IK（回転プレーン・シングルチェーン）の資料の確認」） |
 | 4 | D6・D8 は済み（版は上げない: 動作の変わらない内部の整理とドキュメント）。D6: `rig.parse_attrs`・`component_tags`・`animation.parse_curve` の setAttr・addAttr の切り出しを、1 段階目と同じ `ma_reader.iter_commands`（`statement_end`）にした（samples/ の結果と読み込みの速さは同じ）。D8: README の「対応範囲と制限」「構成」「開発」「動作確認の状況」を `docs/support_and_limits.md`・`docs/development.md`・`docs/verification_status.md` に分け、テストの件数・Maya での確認の行・構成のフォルダ名を直した。D1 は 1.34.0 で済み（下の「D1 の作り」）。D5 は済み（下の「D5 の進み具合」） |
 | 5 | 1.35.0: M6 は済み（下の「M6 の資料の確認」） |
@@ -48,6 +48,8 @@ IK（回転プレーン・シングルチェーン）の資料の確認（技術
 - 資料にあるがビューアが使わないもの: ジョイントの jointType（.jt・.jtx/.jty/.jtz・.dm。ない回転の軸は IK で使わない）、stiffness（.st）、回転の制限の減衰（.ndr/.nst・.xdr/.xst）。式がないので計算は変えず、IK のチェーンで使われていれば警告とリグの診断に出すようにした（`rig.ik_joint_notes`）。シングルチェーンは「位置を合わせたあと、開始 → エフェクタの線のまわりに開始ジョイントを回して、エフェクタの向きをハンドルにできるだけ合わせる」とあるが、ビューアはハンドルの向きを使わない（FK の形の面を保つ）。基準の向き（作ったときのずれをどう扱うか）が書かれていないので、変えていない。
 - 資料に式がないもの: twist の符号と 0 の基準の面（reference plane の決め方）、面が反転する境目。
 - 式のないものは「8」に足し、`tools/maya_node_check.py` に確かめる項目（`rp_twist`・`sc_handle_rotation`・`ik_joint_type`）を足した。
+
+P4 の進み具合（1.36.0）: (1) 計測: `maya_scene.collect` を部分ごと（ノードの一覧・setAttr の文・メッシュの形・スキンウェイト・接続・リファレンスとビュー）とノードの型ごとに測り（`SceneText.timing`）、ログに「Maya からの収集の内訳」を出す。(2) 速い経路（既定はオフ。環境変数 `MA_VIEWER_MAYA_FAST=1` か `collect(fast=True)`）: スキンウェイトは `MFnSkinCluster.getWeights` でまとめて取る（変形する形が 1 つのメッシュのときだけ。値が 0 の要素は入れない）、頂点は numpy でまとめて変換、辺とスムーズは mesh の `.ed` を 1 回の `getAttr` で読む。取れない・数が合わないときは今の経路に戻す。偽の Maya のテスト（`tests/test_maya_collect.py`）で、今の経路と同じ結果になる変換を確かめた。(3) Maya で確かめる道具 `tools/maya_collect_compare.py`（未実行）: 両方の経路で collect を行い、結果がまったく同じかと部分ごとの時間を出す。同じで速ければ速い経路を既定にする。`_setattr_cmds`（全属性の setAttr の文）は、(1) の計測で重いと分かってから考える。
 
 D5 の進み具合: (1) 計算ノードの型の一覧（Python の `rig.MATH_TYPES` と JS の `mathNodes.MATH_TYPES`）を `ma_viewer/node_types.json` の 1 か所にし、両方がそれを読む（`math.test.mjs` は、登録した型と JS の計算の実装が同じことを確かめる。型を足すときに Python を直さなくてよい）。(2) `rig.js` の計算ノード（unitConversion・multiplyDivide・pairBlend・行列ノード・カーブの情報・expression・アニメーションレイヤーなど。約 720 行）を `rigMath.js` に分けた。分けたファイルが `rig.js` の名前の import を忘れていないかは `web_src/tests/rigSplit.test.mjs` が確かめる（その経路を通るまで ReferenceError にならないため）。(2') `rig.js` の IK（回転プレーン・シングルチェーン・多関節・スプライン IK と再現チェック。約 800 行）を `rigIk.js` に分けた。(3) `rig.js` のコンストレイントの評価（`constraint`・`constraintRest`・`pivotWorld`・`targetMatrix`・`targetPosition`）を `rigConstraints.js` に分けた（メソッドのまま `installMethods` でプロトタイプに足す。ベンチの `--check` はビット単位で一致、bundle も Chromium で確かめた）。(4) 再生キャッシュと評価の入口（evaluate。約 560 行）を `rigPlayback.js` に分けた（分けるときの import・export は区切りの範囲が使う名前から作り、`rig.js` で使わなくなった import は取り除いた）。(5) DAG ノード（`rigDag.js`）・プラグ（`rigPlug.js`）・自作ノードの定義（`rigNodeDef.js`）・表示用（`rigDisplay.js`）も分けた。`rig.js`（4,114 行）は、作るとき（constructor）・共通の補助関数・IK を解く関数だけの約 1,200 行になった。(6) 型ごとの登録を `ma_viewer/node_types.json` の `types`（kind: Python がたどる種類・outputs: 出力の属性の名前・defaults: 既定値・angles: 度で書かれる角度の属性）と `skipAttrs`（1 段階目で setAttr を読み飛ばす型）にまとめ、Python の `CONSTRAINT_TYPES`・`UTILITY_TYPES`・`GEOMETRY_TYPES`・`_SKIP_ATTR_TYPES` と JS の `DEFAULTS`・`OUTPUTS`・`isAngleAttr` がそれを読む（置き換えの前後で中身が同じことを確かめた。`tests/test_node_types.py`）。ノードの型を 1 つ足すときは、JSON に足して、JS の計算（`rigMath.js` など）を書くと、型ごとの「1 段階目で読み飛ばすか」「入力をたどるか」「出力の名前」「既定値」「角度の属性」の登録。1 回に 1 種類ずつ PR を分ける。
 
@@ -281,7 +283,7 @@ Maya が使えるようになったら、0-c の `tools/maya_node_check.py` で�
 | 回転プレーン IK の twist の向き・0 の基準・反転の境目 | 開始 → ハンドルの軸のまわりに正の向き | `rp_twist` の結果と、ビューアの評価の比較 |
 | シングルチェーン IK のハンドルの回転 | 使わない（FK の形の面を保つ） | `sc_handle_rotation`: ハンドルを回したとき、チェーンが開始 → エフェクタの線のまわりに回るか・作ったときのずれの扱い |
 | IK と jointType・stiffness・damping | 使わない（警告） | `ik_joint_type`: 肘を z だけにしたとき・stiffness を付けたときの解 |
-| Maya 内の収集の時間（P4） | 未計測 | 大きなシーンで、収集（画面が止まる時間）の内訳 |
+| Maya 内の収集の時間（P4） | ログの「Maya からの収集の内訳」で測れる。速い経路は既定でオフ | 大きなシーンの内訳と、`tools/maya_collect_compare.py` の結果（同じなら速い経路を既定にする） |
 | 頂点法線の重み（角度と面積） | 角度 × 面積 | Maya の頂点法線（`polyNormalPerVertex -q -xyz`）と、ビューアの法線の比較 |
 | 全体の再現性 | 保存時のフレームだけ | 0-c の正解の JSON との差（実物のリグで） |
 
