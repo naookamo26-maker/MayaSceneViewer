@@ -415,6 +415,43 @@ def normalize_attr(path: str) -> str:
     return hit
 
 
+_TYPED_CACHE: Dict[Tuple[int, str], str] = {}
+
+
+def normalize_attr_typed(path: str, names) -> str:
+    """normalize_attr の、ノードの型の表（attr_names.names_for の (長い名前 → 短い名前, 短い名前の集合)）を使うもの。
+    要素ごとに、型の短い名前ならそのまま、型の長い名前なら短い名前、どちらでもなければ全体の表（ATTR_ALIASES）で読み替える
+    （型で意味の違う名前: unitConversion の input → i・ikHandle の twist → twi など）"""
+    key = (id(names), path)
+    hit = _TYPED_CACHE.get(key)
+    if hit is not None:
+        return hit
+    long_short, shorts = names
+    parts = []
+    for part in path.strip(".").split("."):
+        if not part:
+            continue
+        m = _ATTR_ELEM_RE.fullmatch(part)
+        if not m:
+            parts.append(part)
+            continue
+        raw = m.group(1)
+        name = raw if raw in shorts else long_short.get(raw) or ATTR_ALIASES.get(raw, raw)
+        idx: IndexSpec = None
+        if m.group(2) is not None:
+            if m.group(2) == "*":
+                idx = "*"
+            elif m.group(3) is not None:
+                idx = (int(m.group(2)), int(m.group(3)))
+            else:
+                idx = int(m.group(2))
+        parts.append(AttrElem(name, idx).key())
+    hit = ".".join(parts)
+    if len(_TYPED_CACHE) < 500000:
+        _TYPED_CACHE[key] = hit
+    return hit
+
+
 def split_node_attr(plug: str) -> Tuple[str, str]:
     """'|grp|joint1.wm[0]' → ('|grp|joint1', 'wm[0]')。ノード名に '.' は含まれない。"""
     if "." not in plug:

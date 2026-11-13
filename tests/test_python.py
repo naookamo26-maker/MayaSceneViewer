@@ -229,7 +229,9 @@ connectAttr "j2.wm" "sc.ma[1]";
         j2 = [n for n in ms.nodes if n.name == "j2"][0]
         self.assertEqual(j2.vec3("t"), (2.0, 0.0, 0.0))
         sc = [n for n in ms.nodes if n.type == "skinCluster"][0]
-        self.assertIn("matrix[0]", sc.inputs)  # matrix は別名変換しない
+        # 属性名は型の表（Autodesk の技術資料。skinCluster の matrix は ma）で読み替える。transform の matrix（m）とは別
+        self.assertIn("ma[0]", sc.inputs)
+        self.assertIn("ma[1]", sc.inputs)
         scene = scene_to_dict(ms)
         self.assertEqual(scene["meshes"][0]["indices"], [0, 1, 2])
 

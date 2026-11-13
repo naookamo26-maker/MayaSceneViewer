@@ -681,7 +681,7 @@ def parse_attrs(text: str, node: MaNode, skip=(), angle_k: Optional[float] = Non
             sa.plug = "." + R.split_node_attr(sa.plug)[1]    # "curveShapeOrig.cc" → ".cc"
         if sa is None or not sa.plug.startswith(".") or sa.type == "string":
             continue
-        key = MaScene.custom_attr(node, R.normalize_attr(sa.plug[1:]))   # 独自の属性の長い名前 → 短い名前
+        key = MaScene.attr_key(node, sa.plug[1:])        # 長い名前（型の表・独自の属性）→ 短い名前
         if not key or _base(key) in skip:
             continue
         vals = []

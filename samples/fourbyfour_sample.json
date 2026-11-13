@@ -519,6 +519,7 @@
  "materials":[],
  "textures":[],
  "warnings":[],
+ "notes":[],
  "stats":{
   "nodes":7,
   "joints":6,
@@ -856,7 +857,7 @@
       "node":0,
       "attr":"tx"
      },
-     "in31":{
+     "i31":{
       "node":0,
       "attr":"ty"
      }
@@ -1016,7 +1017,7 @@
     "inputs":{
      "imat":{
       "node":4,
-      "attr":"output"
+      "attr":"o"
      }
     }
    }
@@ -1052,7 +1053,7 @@
    "channels":2,
    "nodes":7,
    "graphNodes":16,
-   "seconds":0.0014
+   "seconds":0.0008
   }
  }
 }
