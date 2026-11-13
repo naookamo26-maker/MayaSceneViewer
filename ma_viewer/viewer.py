@@ -1395,6 +1395,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         name = os.path.basename(st.source_path) or "Maya シーン"
         self.setWindowTitle("%s - %s" % (name, APP_NAME))
         self.log("info", "Maya から読み込み開始: %s%s" % (name, "（選択範囲）" if selection_only else ""))
+        for line in maya_scene.timing_lines(getattr(st, "timing", None)):
+            self.log("info", line)                       # 集めるのにかかった時間（画面が止まる時間）の内訳
         self._start_worker(_LoadWorker("", animation=self.a_anim.isChecked(), cache=False,
                                        staged=lambda p: maya_scene.load_staged(st, p)))
 

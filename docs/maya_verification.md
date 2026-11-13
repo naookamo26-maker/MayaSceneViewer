@@ -68,12 +68,29 @@ Maya が使えるようになったら、上から順に実行してください
 | リファレンスの編集の属性名（長い名前・短い名前） | 両方に対応 |
 | cm 以外の作業単位の .ma の書式 | 対応しない（警告） |
 
-## 3. アニメーションカーブ
+## 3. Maya 内の読み込みの速さ（収集）
+
+Maya 内で読み込むと、ログに「Maya からの収集の内訳」（画面が止まる時間の内訳: setAttr の文・メッシュの形・
+スキンウェイト・接続など）が出ます。重いシーンで確かめたら、速い経路（既定はオフ）と比べます:
+
+```python
+import sys
+sys.path.append(r"C:/tools/MayaSceneViewer")
+sys.path.append(r"C:/tools/MayaSceneViewer/tools")
+import maya_collect_compare as m
+m.run()                      # 今の経路と速い経路で collect を 2 回ずつ行い、時間と結果の違いを出す
+```
+
+「結果は同じ」で速ければ、速い経路を既定にできます（`ma_viewer/maya_scene.py` の `fast_enabled`）。違いが出たら、
+その内容（JSON）を結果に貼ってください。速い経路だけを試すときは、Maya を起動する前に環境変数
+`MA_VIEWER_MAYA_FAST=1` を設定します。
+
+## 4. アニメーションカーブ
 
 カーブの評価は別の道具で比べます（[animation_curves.md](animation_curves.md)）:
 `tools/maya_anim_curve_check.py` → `python tools/compare_anim_curves.py`。
 
-## 4. Maya 内の読み込み
+## 5. Maya 内の読み込み（文）
 
 Maya 内の読み込み（`ma_viewer/maya_scene.py`）が .ma の読み込みと同じ文を作るかは `tools/maya_compare.py` で比べます
 （使い方はそのファイルの先頭）。
