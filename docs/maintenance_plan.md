@@ -22,6 +22,16 @@ Maya で確かめられないことから、次のルールで進めます。
 - 資料で確かめられないものは変えず、「8. Maya で確かめる項目」に残す。
 - 変更の前後で既存の結果が変わらないことは、`cd web_src && npm run bench -- --save before.json` → 変更 → `npm run bench -- --check before.json` で確かめる（意図して変える計算は、その差だけが出ること）。
 
+## 進み具合
+
+| 段階 | 状態 |
+|---|---|
+| 0 | 済み: CI（`.github/workflows/test.yml`）・大きなリグのベンチ（`tools/make_big_rig_sample.py`・`--file`。[benchmark.md](benchmark.md)）・正解と比べる道具（`tools/maya_export_truth.py`・`python -m ma_viewer verify`・`tools/maya_node_check.py`。[maya_verification.md](maya_verification.md)） |
+| 1 | 1.31.7: B1・B2・B3・M1 は済み。**M2・M3 は保留**（作業した環境から Autodesk の資料（help.autodesk.com）を開けなかったため、ルールどおり変えていない。「8」に残す） |
+| 2〜5 | 未着手 |
+
+P2 について: 0-b のベンチで、再生キャッシュの実際のメモリ（キャッシュあり・なしの評価器の、GC 後の `heapUsed + external` の増加の差）を測り直すと、`playbackStats().bytes` の 1.04〜1.05 倍だった（[benchmark.md](benchmark.md)）。下の「2.2〜3.4 倍」は、キャッシュ以外の増加も含めて測っていたと考えられる。段階 3 の P2 の受け入れ（1.3 倍以内）は、いまの時点で満たしている。
+
 ## 1. 調査時点の状態
 
 - テスト: `python -m unittest discover -s tests -p "test_*.py"` 361 件合格（2 件スキップ）。`cd web_src && npm ci && npm test` 447 件合格。

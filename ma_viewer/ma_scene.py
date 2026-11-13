@@ -13,7 +13,7 @@ from __future__ import annotations
 import bisect
 import os
 import re
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from . import ma_reader as R
 
@@ -294,7 +294,7 @@ class MaNode:
     __slots__ = ("name", "type", "parent", "children", "path", "order", "is_dag",
                  "xattrs", "mesh", "skin", "tweak", "inputs", "raw", "skip_attrs", "span", "attr_map", "ns", "espan",
                  "node_def", "baked", "xspans", "ssc_parent", "locks", "memo", "custom_shape",
-                 "xform_seen")
+                 "xform_seen", "custom_names")
 
     def __init__(self, name: str, node_type: str, parent: Optional["MaNode"], order: int, ns: str = ""):
         self.name = name
@@ -331,6 +331,9 @@ class MaNode:
         # setAttr に移動・回転・スケールなど transform にしかない属性の名前が出てきたか（値のない -k off ".tx" なども。
         # 自作ノードが transform かシェイプかの判定に使う）
         self.xform_seen = False
+        # 独自の属性（addAttr）の長い名前 → 短い名前（両方があって違うものだけ）。接続・setAttr の属性名を短い名前にそろえる
+        # （リファレンスの編集は長い名前で書かれ、リグの中の接続は短い名前で書かれることがあるため）
+        self.custom_names: Optional[Dict[str, str]] = None
 
     @property
     def is_shape(self) -> bool:
@@ -537,6 +540,8 @@ class MaScene:
             self._create_node(rest)
         elif cmd == "connectAttr":
             self._connect(rest, connect=True)
+        elif cmd == "addAttr":
+            self._add_attr(rest)
         elif cmd == "disconnectAttr":
             self._connect(rest, connect=False)
         elif cmd == "select":
@@ -548,9 +553,12 @@ class MaScene:
             tim = opts.get("-t") or opts.get("-time")
             if self.ref_depth:
                 # リファレンスの単位はシーンの単位を変えない（違えば、読み終えたあとに警告する）
-                if self._ref_current is not None and isinstance(lin, str):
-                    self._ref_current.units = (_LINEAR_UNITS.get(lin, lin),
-                                               _ANGULAR_UNITS.get(ang, ang) if isinstance(ang, str) else "deg")
+                if self._ref_current is not None and (isinstance(lin, str) or isinstance(ang, str)
+                                                      or isinstance(tim, str)):
+                    old = self._ref_current.units or ("cm", "deg", "film")
+                    self._ref_current.units = (_LINEAR_UNITS.get(lin, lin) if isinstance(lin, str) else old[0],
+                                               _ANGULAR_UNITS.get(ang, ang) if isinstance(ang, str) else old[1],
+                                               tim if isinstance(tim, str) else old[2])
                 return
             if isinstance(tim, str):
                 self.time_unit = tim
@@ -593,7 +601,7 @@ class MaScene:
         elif cmd == "parent":
             self.warn("parent コマンド（インスタンス等）は未対応のため無視しました。",
                       key="#parent コマンド")
-        # rename / addAttr / lockNode / relationship / fileInfo 等は不要なので無視
+        # rename / lockNode / relationship / fileInfo 等は不要なので無視
 
     def _wants_setattr(self, rest: str) -> bool:
         """値を解析する前に、ノードと属性名だけを見て、使う setAttr かを判定する（大きなファイルで効く）"""
@@ -699,6 +707,67 @@ class MaScene:
         else:
             self.current = None
 
+    def _add_attr(self, rest: str):
+        """addAttr の長い名前・短い名前だけを読む（値・型は rig.parse_attrs が範囲から読む）。
+        ノードはブロックの中ならいまのノード、ノード名つき（addAttr … "node"）ならそのノード"""
+        toks = R.tokenize(rest)
+        opts, pos = R.parse_flags(toks, _ADDATTR_FLAGS_WITH_ARG)
+        ln = opts.get("-ln") or opts.get("-longName")
+        sn = opts.get("-sn") or opts.get("-shortName")
+        named = [t.value for t in pos if t.quoted]
+        node = self.resolve(self.qualify(named[-1])) if named else self.current
+        if node is not None and isinstance(ln, str) and isinstance(sn, str):
+            self._custom_name(node, ln, sn)
+
+    @staticmethod
+    def _custom_name(node: "MaNode", ln: str, sn: str) -> bool:
+        """独自の属性の名前を覚える。新しく覚えたら True"""
+        if not ln or not sn or ln == sn:
+            return False
+        names = node.custom_names
+        if names is None:
+            names = node.custom_names = {}
+        if names.get(ln) == sn:
+            return False
+        names[ln] = sn
+        return True
+
+    @staticmethod
+    def custom_attr(node: "MaNode", key: str) -> str:
+        """正規化した属性のキー（R.normalize_attr）の、独自の属性の長い名前を短い名前にする
+        （"ikFkBlend" → "ikfk"。複合の属性の子の名前も）"""
+        names = node.custom_names
+        if not names or not key:
+            return key
+        parts = key.split(".")
+        changed = False
+        for k, part in enumerate(parts):
+            cut = part.find("[")
+            base = part if cut < 0 else part[:cut]
+            short = names.get(base)
+            if short is not None:
+                parts[k] = short if cut < 0 else short + part[cut:]
+                changed = True
+        return ".".join(parts) if changed else key
+
+    def _remap_custom(self, nodes: Set[int]):
+        """あとから独自の属性の名前を覚えたノード（リファレンスの編集の addAttr）の、接続の属性名を読み替え直す"""
+        out = []
+        ca = self.custom_attr
+        for c in self.connections:
+            src, sattr, dst, dattr = c
+            if id(src) not in nodes and id(dst) not in nodes:
+                out.append(c)
+                continue
+            s2, d2 = ca(src, sattr), ca(dst, dattr)
+            if (s2, d2) != (sattr, dattr):
+                if dst.inputs.get(dattr) == (src, sattr):
+                    del dst.inputs[dattr]
+                dst.inputs[d2] = (src, s2)
+                c = (src, s2, dst, d2)
+            out.append(c)
+        self.connections = out
+
     def _connect(self, rest: str, connect: bool):
         plugs = _PLUG_RE.findall(rest)
         if len(plugs) != 2 or "\\" in rest:
@@ -713,11 +782,11 @@ class MaScene:
         src = self.resolve(self.qualify(sn))
         dst = self.resolve(self.qualify(dn))
         if src is None and dst is not None and connect and self.qualify(sn).lstrip(":") == "time1":
-            self.time_inputs.append((dst, R.normalize_attr(dattr)))
+            self.time_inputs.append((dst, self.custom_attr(dst, R.normalize_attr(dattr))))
         if src is None or dst is None:
             return
-        key = R.normalize_attr(dattr)
-        skey = R.normalize_attr(sattr)
+        key = self.custom_attr(dst, R.normalize_attr(dattr))
+        skey = self.custom_attr(src, R.normalize_attr(sattr))
         if connect:
             dst.inputs[key] = (src, skey)
             self.connections.append((src, skey, dst, key))
@@ -858,6 +927,7 @@ class MaScene:
         skipped: Dict[str, int] = {}
         # 読み込まなかったリファレンスの中のノード（その編集は黙って飛ばす）
         unloaded = [ri.prefix for ri in self.ref_infos if not ri.loaded and ri.prefix]
+        self._late_names: Set[int] = set()
         for prefix, rnodes in self._ref_segments:
             self.prefix = prefix
             for rn in rnodes:
@@ -887,11 +957,21 @@ class MaScene:
                 pos += len(body)
             self._pieces.append("".join(chunks))
             self._text_len = pos
+        if self._late_names:
+            self._remap_custom(self._late_names)
         self._route_placeholders()
         for ri in self.ref_infos:
-            if ri.loaded and ri.units and ri.units[0] != self.linear_unit:
-                self.warn("リファレンス「%s」の作業単位（%s）がシーン（%s）と違います。値はファイルに書かれたまま使います。"
-                          % (ri.namespace or ri.path, ri.units[0], self.linear_unit), key="#リファレンスの単位")
+            if not ri.loaded or not ri.units:
+                continue
+            scene = (self.linear_unit, self.angular_unit, self.time_unit)
+            diff = [(label, mine, theirs) for label, mine, theirs in zip(("長さ", "角度", "時間"), ri.units, scene)
+                    if mine != theirs]
+            if diff:
+                self.warn("リファレンス「%s」の作業単位（%s）がシーン（%s）と違います。単位の違うリファレンスには"
+                          "対応していません（値をファイルに書かれたまま使うため、形や動きが崩れます）。Maya で単位を"
+                          "そろえて（長さは cm）保存し直してください。"
+                          % (ri.namespace or ri.path, "・".join("%s %s" % (l, m) for l, m, _t in diff),
+                             "・".join("%s %s" % (l, t) for l, _m, t in diff)), key="#リファレンスの単位")
         if skipped:
             self.warn("リファレンスの編集のうち、相手のノードがないものを無視しました（%s）。見つからないノードの名前は"
                       "リグの診断（python -m ma_viewer rig）に出します。"
@@ -931,11 +1011,12 @@ class MaScene:
             if node is None:
                 return self.qualify(args[0])
             value = args[2] if args[2][:1].isspace() else " " + args[2]
+            attr = self.custom_attr(node, args[1])          # 独自の属性の長い名前は短い名前にする
             self.current = None
             prefix, self.prefix = self.prefix, ""          # ノードはフルパスで指す（名前空間は付いている）
-            self.handle("setAttr", '"%s.%s"%s' % (node.path, args[1], value))
+            self.handle("setAttr", '"%s.%s"%s' % (node.path, attr, value))
             self.prefix = prefix
-            overlay.setdefault(id(node), []).append('setAttr ".%s"%s;' % (args[1], value))
+            overlay.setdefault(id(node), []).append('setAttr ".%s"%s;' % (attr, value))
             nodes_of[id(node)] = node
         elif code == 1:                                    # addAttr: ノード 長い名前 短い名前 フラグ
             node = self._edit_node(args[0])
@@ -943,6 +1024,8 @@ class MaScene:
                 return self.qualify(args[0])
             overlay.setdefault(id(node), []).append("addAttr %s;" % args[3])
             nodes_of[id(node)] = node
+            if self._custom_name(node, args[1], args[2]):
+                self._late_names.add(id(node))
         elif code in (3, 4):                               # connectAttr / disconnectAttr: 元 先 フラグ
             (sn, src), (dn, dst) = (self._edit_plug(p) for p in args[:2])
             if sn is None:
@@ -1001,7 +1084,7 @@ class MaScene:
             nname, attr = R.split_node_attr(plug)
             node = self.resolve(nname)
             if node is not None and attr:
-                real[key] = (node, R.normalize_attr(attr))
+                real[key] = (node, self.custom_attr(node, R.normalize_attr(attr)))
         if not real:
             return
         out = []
@@ -1528,6 +1611,12 @@ def read_ma_text_info(path: str) -> Tuple[str, str, Optional[str]]:
 
 
 _BLOCK_END_RE = re.compile(r"\n(?=[^\t \n])")
+# addAttr の、値を 1 つ取るフラグ。引用符の値を取るものは必ず入れる（ノード名と見分けるため）。値を書かないフラグ
+# （-m・-uac など）は入れない（次のフラグを値として読んでしまう）。-k true などの真偽の値は、引用符がないので無視される
+_ADDATTR_FLAGS_WITH_ARG = ["-sn", "-shortName", "-ln", "-longName", "-nn", "-niceName", "-at", "-attributeType",
+                           "-dt", "-dataType", "-p", "-parent", "-en", "-enumName", "-ct", "-category",
+                           "-pxy", "-proxy", "-dv", "-defaultValue", "-nc", "-numberOfChildren", "-min", "-minValue",
+                           "-max", "-maxValue", "-smn", "-softMinValue", "-smx", "-softMaxValue"]
 # 後から中身を読むために、属性の範囲（span）を覚えておくノード（アニメーションカーブ・再生範囲を持つ script・カーブの形）
 # camera: 独自の属性（ロールなど）がリグの入力になることがあるため、範囲を覚えて後から読む
 _SPAN_TYPES = ("animCurveTL", "animCurveTA", "animCurveTU", "script", "displayLayer", "nurbsCurve", "camera")
@@ -1617,6 +1706,7 @@ def _parse_segment(scene: MaScene, text: str, base: int, name: str) -> None:
             scene.current.span = (base + pos, base + skip_to)
             if skip_to > pos and scene.current.skip_attrs:
                 counts["読み飛ばし"] = counts.get("読み飛ばし", 0) + text.count(";", pos, skip_to)
+                _scan_addattr(scene, text, pos, skip_to)
                 pos = skip_to
         if progress is not None and pos / total >= next_report:
             at = min(pos, n)
@@ -1625,6 +1715,24 @@ def _parse_segment(scene: MaScene, text: str, base: int, name: str) -> None:
             scene._report_parse(at / total, name)
             next_report += 0.02
     scene._bytes_done += n - counted
+
+
+def _scan_addattr(scene: "MaScene", text: str, a: int, b: int):
+    """読み飛ばすノードのブロック（text[a:b]）の中の addAttr の文だけを処理する（独自の属性の名前を覚えるため）。
+    文の先頭（行の始めから空白だけ）にあるものだけを見る（文字列の中の addAttr は無視）"""
+    find = text.find
+    i = find("addAttr", a, b)
+    while i >= 0:
+        line = text.rfind("\n", a - 1, i) + 1
+        nxt = text[i + 7:i + 8]
+        if (not text[line:i].strip()) and nxt in (" ", "\t"):
+            end = R.statement_end(text, i, find(";", i))
+            cmd, rest = R.split_command(text[i:end])
+            if cmd == "addAttr":
+                scene._add_attr(rest)
+            i = find("addAttr", end, b)
+        else:
+            i = find("addAttr", i + 7, b)
 
 
 def _remember_named_setattr(scene: "MaScene", rest: str, a: int, b: int):

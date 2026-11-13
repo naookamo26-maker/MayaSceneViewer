@@ -7,4 +7,4 @@
   * パッチ: 互換を保った不具合の修正
 変えたら web_src/package.json の version も同じにする（tests/test_version.py が確かめる）。
 """
-__version__ = "1.31.6"
+__version__ = "1.31.7"
