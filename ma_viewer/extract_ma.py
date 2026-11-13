@@ -1780,6 +1780,16 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         why = selectability(n)
         if why:
             entry["unselectable"] = why
+        # 頂点法線の重みの種類（.vnm。0 重みなし・1 角度・2 面積・3 角度と面積（既定）。Autodesk の技術資料「mesh」）
+        vnm = n.xattrs.get("vnm", source.xattrs.get("vnm", 3) if source is not n else 3)
+        if vnm != 3 and vnm in (0, 1, 2):
+            entry["normalMethod"] = vnm
+        if n.xattrs.get("userNormals") or source.xattrs.get("userNormals"):
+            ms.warn("%s: ユーザーが指定した法線（ロックした法線）があります。ビューアはこれを使わずに頂点法線を計算するため、"
+                    "陰影が Maya と違うことがあります。" % n.name, key="#ユーザーが指定した法線", limit=10)
+        if n.xattrs.get("dsm", 0):
+            ms.warn("%s: スムーズメッシュプレビュー（3 キー）で表示するメッシュです。ビューアは細分割せず、元のメッシュを"
+                    "表示します。" % n.name, key="#スムーズメッシュプレビュー", limit=10)
         if skin_node is not None:
             lap("メッシュ（その他）")
             entry["skin"] = _build_skin(ms, ctx, n, skin_node, len(pos) // 3, index_of)

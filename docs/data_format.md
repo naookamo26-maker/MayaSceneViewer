@@ -85,6 +85,7 @@ transform・joint などの変換ノードです。**親は必ず子より前に
 | `counts` | 面ごとの頂点数 |
 | `indices` | 面の頂点番号を連結したもの（Maya の面の頂点順） |
 | `hardEdges` | ハードエッジ（スムーズでない辺）の頂点の組 `[a, b, a, b, ...]`。この辺をまたぐ面どうしは法線を分ける |
+| `normalMethod` | 頂点法線の重みの種類（Maya の `.vnm`）: 0 重みなし・1 角度・2 面積。省略時は 3（角度 × 面積。Maya の既定）。省略可 |
 | `uv` | UV（なければ null）。`{"set": UVセット名, "values": [u, v, ...], "indices": [面の角ごとの UV 番号（indices と同じ長さ。UV のない角は -1）]}` |
 | `material` | 面すべてが同じマテリアルのときの materials 番号（-1 は既定のマテリアル） |
 | `faceMaterials` | 面ごとに違う場合の、面ごとの materials 番号（同じなら null） |
