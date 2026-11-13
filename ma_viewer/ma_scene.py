@@ -452,6 +452,16 @@ class MaScene:
         self.cost: Dict[str, List[float]] = {}
         self.read_seconds = 0.0
         self.connections: List[Tuple[MaNode, str, MaNode, str]] = []   # (元, 元の属性, 先, 先の属性)
+        # 元のノードごとの出ていく接続の索引（outgoing）。作ったときの接続のリストとその長さ（変わったら作り直す）
+        self._out_index: Optional[Dict[int, List[Tuple[str, "MaNode", str]]]] = None
+        self._out_of: Optional[list] = None
+        self._out_len = -1
+        # 解析の途中の disconnectAttr: 接続の位置の索引（(id(元), 元の属性, id(先), 先の属性) → 位置）と、消した接続（None）
+        # があるか。リストを作り直さずに消し、リファレンスの編集を当て終えたら詰める（_compact_connections）
+        self._conn_pos: Optional[Dict[Tuple[int, str, int, str], List[int]]] = None
+        self._conn_list: Optional[list] = None        # 位置の索引を作ったときの接続のリストと、いまの長さ
+        self._conn_len = -1
+        self._conn_holes = False
         self.warnings: List[str] = []
         self.notes: List[str] = []               # お知らせ（問題ではないもの。警告に入れず、ログに出す）
         self._warn_keys: Dict[str, int] = {}
@@ -789,11 +799,48 @@ class MaScene:
         skey = self.custom_attr(src, R.normalize_attr(sattr))
         if connect:
             dst.inputs[key] = (src, skey)
-            self.connections.append((src, skey, dst, key))
+            conns = self.connections
+            if self._conn_pos is not None and self._conn_list is conns and self._conn_len == len(conns):
+                self._conn_pos.setdefault((id(src), skey, id(dst), key), []).append(len(conns))
+                self._conn_len += 1
+            conns.append((src, skey, dst, key))
         else:
             dst.inputs.pop(key, None)
-            self.connections = [c for c in self.connections
-                                if not (c[0] is src and c[1] == skey and c[2] is dst and c[3] == key)]
+            self._disconnect(src, skey, dst, key)
+
+    def _disconnect(self, src: "MaNode", skey: str, dst: "MaNode", key: str):
+        """接続のリストから 1 つの接続（同じものが複数あればすべて）を消す。リストは作り直さず、位置を None にする
+        （disconnectAttr の多いリファレンスの編集で、毎回リスト全体を作り直さないように）"""
+        conns = self.connections
+        if self._conn_pos is None or self._conn_list is not conns or self._conn_len != len(conns):
+            # 索引がない・リストが作り直された・索引を通さずに足された: 作り直す
+            pos: Dict[Tuple[int, str, int, str], List[int]] = {}
+            for i, c in enumerate(conns):
+                if c is not None:
+                    pos.setdefault((id(c[0]), c[1], id(c[2]), c[3]), []).append(i)
+            self._conn_pos, self._conn_list, self._conn_len = pos, conns, len(conns)
+        for i in self._conn_pos.pop((id(src), skey, id(dst), key), ()):
+            conns[i] = None
+            self._conn_holes = True
+
+    def _compact_connections(self):
+        """消した接続（None）を詰める。接続のリストを読む処理の前に呼ぶ"""
+        if self._conn_holes:
+            self.connections = [c for c in self.connections if c is not None]
+            self._conn_holes = False
+        self._conn_pos = self._conn_list = None
+        self._conn_len = -1
+
+    def outgoing(self) -> Dict[int, List[Tuple[str, "MaNode", str]]]:
+        """元のノードごとの出ていく接続（id(元) → [(元の属性, 先, 先の属性)]。接続のリストの順）。
+        接続のリストが変わったら（作り直し・追加）作り直す"""
+        conns = self.connections
+        if self._out_index is None or self._out_of is not conns or self._out_len != len(conns):
+            idx: Dict[int, List[Tuple[str, MaNode, str]]] = {}
+            for src, sattr, dst, dattr in conns:
+                idx.setdefault(id(src), []).append((sattr, dst, dattr))
+            self._out_index, self._out_of, self._out_len = idx, conns, len(conns)
+        return self._out_index
 
     # ------------------------------------------------------------------
     # リファレンス（references.py に形式の説明）
@@ -957,6 +1004,7 @@ class MaScene:
                 pos += len(body)
             self._pieces.append("".join(chunks))
             self._text_len = pos
+        self._compact_connections()                      # 解析・編集の disconnectAttr で消した接続を詰める
         if self._late_names:
             self._remap_custom(self._late_names)
         self._route_placeholders()
@@ -1652,6 +1700,7 @@ def parse_ma_text(text: str, source_path: str = "", progress: ProgressFn = None,
     scene._bytes_total = len(text)
     _parse_segment(scene, text, 0, os.path.basename(source_path) if source_path else "シーン")
     scene._finish_references()
+    scene._compact_connections()
     scene.text = text if len(scene._pieces) == 1 else "".join(scene._pieces)
     scene._pieces = []
     if progress is not None:

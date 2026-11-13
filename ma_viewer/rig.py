@@ -242,16 +242,17 @@ def _curve_without_shape(ms: MaScene, curve: MaNode):
 def wire_shapes(ms: MaScene, wire: MaNode) -> Dict[int, MaNode]:
     """デフォーマ（wire・cluster）の出力（og[k]）の先にある、変形されるカーブ（ほかのデフォーマを経由してもよい）"""
     out: Dict[int, MaNode] = {}
-    for src, sattr, dst, _dattr in ms.connections:
-        m = _DEFORM_OUT.match(sattr) if src is wire else None
+    outgoing = ms.outgoing()                    # 元のノードごとの接続（接続のリストの順。全体を毎回走査しない）
+    for sattr, dst, _dattr in outgoing.get(id(wire), ()):
+        m = _DEFORM_OUT.match(sattr)
         if not m:
             continue
         x, seen = dst, set()
         while x is not None and x.type != "nurbsCurve" and id(x) not in seen:
             seen.add(id(x))
             nxt = None
-            for s2, a2, d2, _ in ms.connections:
-                if s2 is x and (a2 == "og" or a2.startswith("og[")):
+            for a2, d2, _ in outgoing.get(id(x), ()):
+                if a2 == "og" or a2.startswith("og["):
                     nxt = d2
                     break
             x = nxt

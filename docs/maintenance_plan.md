@@ -29,7 +29,8 @@ Maya で確かめられないことから、次のルールで進めます。
 | 0 | 済み: CI（`.github/workflows/test.yml`）・大きなリグのベンチ（`tools/make_big_rig_sample.py`・`--file`。[benchmark.md](benchmark.md)）・正解と比べる道具（`tools/maya_export_truth.py`・`python -m ma_viewer verify`・`tools/maya_node_check.py`。[maya_verification.md](maya_verification.md)） |
 | 1 | 1.32.0 に含めた（当初の予定は 1.31.7）: B1・B2・B3・M1・M3 は済み。M2 は変えない（下の「M2・M3 の資料の確認」） |
 | 2 | 1.32.0（段階 0〜1 と同じブランチ・同じ PR なので、1.31.7 を含めて 1 回だけ上げた）: M4・M5 は済み（下の「段階 2 の資料の確認」） |
-| 3〜5 | 未着手 |
+| 3 | 1.32.0 に含めた: P3・P5 は済み（付録 D のシーンで `wire_shapes` 1.34 → 0.016 秒、読み込み 2.57 → 1.17 秒。結果は処理時間の値のほかは同じ）。P2 は済み（コードは変えない。下の「P2 について」）。**P4 は未着手**（Maya で確かめられないため、計画どおり Maya が使えるようになるまで待つ）。**P1 は未着手**（優先度が低い。0-b のベンチとプロファイルから始める） |
+| 4〜5 | 未着手 |
 
 M2・M3 の資料の確認（Autodesk Maya 2024 のノードの技術資料。help.autodesk.com の Maya-Tech-Docs/Nodes の setRange.html・vectorProduct.html）:
 - M3: vectorProduct の normalizeOutput の説明に「内積（ベクトルを出さない）では、オンにすると出力が -1〜1 に収まる。実質的に入力ベクトルの間の角度の cos」とある。これに合わせて、op 1 で `.no` がオンなら入力を正規化してから内積にした（長さ 0 のベクトルは 0）。テストは `tests/test_node_math.py`（汎用の経路と専用の評価の両方）。
@@ -39,6 +40,8 @@ M2・M3 の資料の確認（Autodesk Maya 2024 のノードの技術資料。he
 - M4: interpType（.int。既定 1）は「0 No Flip（前のフレームに依存）・1 Average（四元数の平均）・2 Shortest（ターゲットの間の最短の経路）・3 Longest（最長の経路）・4 Cache（キャッシュした結果）。ターゲットが 1 つなら補間しない」。式どおりに評価できる 2 ターゲットの Shortest を最短の弧の slerp にした（汎用の経路の `constraintQuat` と専用の評価の `averageQuat`）。ほかは平均のまま、警告を出す（`animation._interp_warning`。リグの診断にも出る）。
 - M5: pairBlend の rotateOrder（.ro）は「動かされるノードの回転順。それに合わせて回転の値を出す」。四元数補間（.ri 1）の入力と出力に使うようにした。既定 0 では計算の手順も結果も変わらない。
 - テストは `tests/test_node_math.py`（汎用と専用の両方。期待値は Python で別に計算）。
+
+P3・P5 の作り: `MaScene.outgoing()`（元のノードごとの出ていく接続の索引。接続のリストの作り直し・追加を見て作り直す）を `wire_shapes` が使う。`disconnectAttr` はリストを作り直さず、位置の索引で該当の接続を None にし、リファレンスの編集を当て終えたら詰める（`_compact_connections`）。テストは `tests/test_connections.py`（並びが前と同じこと・索引が変更に追いつくこと・全接続の走査が 1 回だけのこと）。
 
 P2 について: 0-b のベンチで、再生キャッシュの実際のメモリ（キャッシュあり・なしの評価器の、GC 後の `heapUsed + external` の増加の差）を測り直すと、`playbackStats().bytes` の 1.04〜1.05 倍だった（[benchmark.md](benchmark.md)）。下の「2.2〜3.4 倍」は、キャッシュ以外の増加も含めて測っていたと考えられる。段階 3 の P2 の受け入れ（1.3 倍以内）は、いまの時点で満たしている。
 
