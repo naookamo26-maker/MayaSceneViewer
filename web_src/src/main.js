@@ -150,6 +150,7 @@ class ViewerApp {
     connectBridge((b) => {
       this.bridge = b;
       if (b.jsReady) b.jsReady();
+      this.logGpu();
       // 保存した設定（再生キャッシュの上限）を読み戻す
       if (b.loadSetting) {
         b.loadSetting('playbackCacheMB', (v) => {
@@ -172,7 +173,20 @@ class ViewerApp {
   initRenderer() {
     const canvas = document.getElementById('canvas');
     this.canvas = canvas;
-    this.renderer = new WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+    // preserveDrawingBuffer は使わない（描画のたびに画面の写しを作るため、重いシーンで GPU の負担が増え、
+    // Qt WebEngine の合成で一瞬乱れることがある）。画面の色を読むときは、描画と同じタスクの中で読む
+    this.renderer = new WebGLRenderer({ canvas, antialias: true, alpha: true });
+    // GPU のリセットなどで WebGL のコンテキストが失われたら、ログに残す（画面が一瞬乱れる・消える原因を確かめるため）。
+    // 既定の動作（ブラウザが作り直す）を止めないよう preventDefault は three.js に任せ、戻ったら描き直す
+    this.contextLost = 0;
+    canvas.addEventListener('webglcontextlost', () => {
+      this.contextLost++;
+      this.log('warn', `WebGL のコンテキストが失われました（${this.contextLost} 回目）。GPU の負荷が高すぎるか、ドライバがリセットされた可能性があります`);
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      this.log('info', 'WebGL のコンテキストが戻りました。描き直します');
+      this.requestRender();
+    });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setClearColor(0x000000, 0);
     this.scene = new Scene();
@@ -440,6 +454,22 @@ class ViewerApp {
 
   log(level, text) {
     if (this.bridge && this.bridge.log) this.bridge.log(level, String(text));
+  }
+
+  /** 使っている GPU・WebGL の設定をログに出す（描画の乱れなど、環境による問題を調べるため） */
+  logGpu() {
+    if (!this.renderer) return;
+    try {
+      const gl = this.renderer.getContext();
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      const name = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+      const vendor = ext ? gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR);
+      const attr = gl.getContextAttributes() || {};
+      this.log('info', `GPU: ${vendor} / ${name}（${gl.getParameter(gl.VERSION)}、MSAA ${attr.antialias ? 'あり' : 'なし'}`
+        + `、画素比 ${this.renderer.getPixelRatio()}、最大テクスチャ ${gl.getParameter(gl.MAX_TEXTURE_SIZE)}）`);
+    } catch (err) {
+      this.log('warn', `GPU の情報を読めませんでした: ${err && err.message || err}`);
+    }
   }
 
   /** 読み込みの段階がビューアで終わったことを Qt に知らせる（ログの「読み込みの経過」用） */
