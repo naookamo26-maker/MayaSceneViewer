@@ -90,7 +90,8 @@ class NodeCheckImportTest(unittest.TestCase):
             import maya_node_check as M
             names = [c[0] for c in M.CHECKS]
             for n in ("set_range", "vector_product", "bool_fraction", "enum_fraction", "divide_by_zero", "curve_tan",
-                      "constraint_interp", "pair_blend_ro", "reference_edit_names", "unit_format"):
+                      "constraint_interp", "pair_blend_ro", "reference_edit_names", "unit_format", "rp_twist",
+                      "sc_handle_rotation", "ik_joint_type"):
                 self.assertIn(n, names)
             self.assertIn("未実行", M.__doc__)
         finally:

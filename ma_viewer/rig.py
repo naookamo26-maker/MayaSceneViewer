@@ -935,6 +935,52 @@ def analyze_fallback(info: GraphInfo, kept: List[MaNode], bind_ids: Set[int], ou
     return fallback, tainted_out
 
 
+_JOINT_TYPE_RE = re.compile(r'setAttr\s+(?:-[a-z]+\s+\S+\s+)*"\.(?:jt|jointType)"\s+-type\s+"string"\s+"([^"]*)"')
+_DOF_DEFAULT = 0x78797a03
+
+
+def ik_joint_notes(ms: MaScene, info: GraphInfo) -> List[str]:
+    """回転プレーン・シングルチェーンの IK で回るジョイントにある、Maya の IK の解に効くがビューアが使わない設定の警告。
+    Autodesk の技術資料（joint・ikSCsolver）: jointType（.jt・.jtx/.jty/.jtz・.dm）にない回転の軸は IK で使わない、
+    stiffness（.st）は動きへの抵抗、回転の制限の減衰（.ndr/.nst・.xdr/.xst）は制限の近くで動きを遅くする。
+    ikRPsolver は向きの合わせ方のほかは ikSCsolver と同じに解く。式は公開されていないので、計算はせず警告だけにする"""
+    out = []
+    for e in info.ik:
+        if e["problem"] or e["solver"] not in ("ikRPsolver", "ikSCsolver"):
+            continue
+        found: Dict[str, List[str]] = {}
+        for j in e["chain"][:-1]:                         # IK で回るジョイント（終端を除く）
+            attrs = parse_attrs(ms.text, j)
+            kinds = []
+            m = None
+            for a, b in [s for s in (j.span, j.espan) if s is not None]:
+                for m2 in _JOINT_TYPE_RE.finditer(ms.text, a, b):
+                    m = m2
+            jt = m.group(1) if m else None
+            off = [ax for ax in "xyz" if attrs.get("jt" + ax) in (0, 0.0, False)]
+            dm = attrs.get("dm")
+            if (jt is not None and set(jt) != set("xyz")) or off or (isinstance(dm, (int, float)) and int(dm) != _DOF_DEFAULT):
+                kinds.append("回転の軸の制限（jointType）")
+            def nonzero(*names):
+                for n in names:
+                    v = attrs.get(n)
+                    vals = v if isinstance(v, list) else [v]
+                    if any(isinstance(x, (int, float)) and abs(x) > 1e-12 for x in vals):
+                        return True
+                return False
+            if nonzero("st", "stx", "sty", "stz"):
+                kinds.append("stiffness")
+            if nonzero("nst", "xst"):
+                kinds.append("回転の制限の減衰（damping）")
+            for k in kinds:
+                found.setdefault(k, []).append(j.name)
+        for k, names in found.items():
+            out.append("アニメーション: IK ハンドル %s のジョイント（%s）に%sがあります。Maya の IK はこれを使って解きますが、"
+                       "ビューアは使わずに解くため、姿勢が Maya と違うことがあります。"
+                       % (e["handle"].name, "、".join(names[:4]) + (" ほか" if len(names) > 4 else ""), k))
+    return out
+
+
 def graph_warnings(info: GraphInfo) -> List[str]:
     out = []
     for t, items in sorted(info.unsupported.items(), key=lambda kv: -len(kv[1])):

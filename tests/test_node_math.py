@@ -269,5 +269,41 @@ class RotationBlendTest(unittest.TestCase):
             self.check(res, "j%d" % ro, slerp(euler_quat(r1, o), euler_quat(r2, o), w))
 
 
+class IkJointNotesTest(unittest.TestCase):
+    """IK で回るジョイントの jointType・stiffness・damping（Maya の IK の解に効くが、ビューアは使わない）は警告を出す。
+    出典: Autodesk Maya ノードの技術資料「joint」「ikSCsolver」「ikRPsolver」"""
+
+    def load(self, extra_b: str, extra_a: str = "") -> list:
+        sys.path.insert(0, os.path.join(ROOT, "tools"))
+        from make_big_rig_sample import build
+        text, _n, _c = build(1, 24)
+        if extra_b:
+            text = text.replace('\tsetAttr ".pa" -type "double3" 0 0 10;', '\tsetAttr ".pa" -type "double3" 0 0 10;\n' + extra_b, 1)
+        if extra_a:
+            text = text.replace('\tsetAttr ".jo" -type "double3" 0 0 -60;', '\tsetAttr ".jo" -type "double3" 0 0 -60;\n' + extra_a, 1)
+        tmp = tempfile.mkdtemp()
+        try:
+            path = os.path.join(tmp, "ik.ma")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            return load_ma(path, animation=True)["animation"].get("warnings", [])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_no_warning_by_default(self):
+        self.assertFalse([w for w in self.load("") if "IK ハンドル" in w])
+
+    def test_joint_type_and_stiffness(self):
+        warns = self.load('\tsetAttr ".jt" -type "string" "z";\n\tsetAttr ".st" -type "double3" 0 0 0.5;',
+                          '\tsetAttr ".jtx" no;\n\tsetAttr ".nst" -type "double3" 0 0 3;')
+        ik = [w for w in warns if "IK ハンドル L0_ik" in w]
+        self.assertTrue(any("（L0_a、L0_b）に回転の軸の制限（jointType）" in w for w in ik), ik)
+        self.assertTrue(any("（L0_b）にstiffness" in w for w in ik), ik)
+        self.assertTrue(any("（L0_a）に回転の制限の減衰（damping）" in w for w in ik), ik)
+
+    def test_full_joint_type_is_default(self):
+        self.assertFalse([w for w in self.load('\tsetAttr ".jt" -type "string" "xyz";') if "IK ハンドル" in w])
+
+
 if __name__ == "__main__":
     unittest.main()

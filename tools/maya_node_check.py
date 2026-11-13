@@ -242,6 +242,66 @@ def unit_format():
     return [{"file": path, "lines": lines[:20]}]
 
 
+def _ik_chain(solver="ikRPsolver", bend=10.0):
+    """3 関節のチェーン a → b → c（x 方向に 4 ずつ。b は優先角 z = bend で曲がる）と IK ハンドル。(ジョイント, ハンドル)"""
+    cmds.select(clear=True)
+    a = cmds.joint(name="ikA", position=(0, 0, 0))
+    b = cmds.joint(name="ikB", position=(4, 0, 0))
+    c = cmds.joint(name="ikC", position=(8, 0, 0))
+    cmds.setAttr(b + ".preferredAngleZ", bend)
+    h = cmds.ikHandle(startJoint=a, endEffector=c, solver=solver, name="ikH")[0]
+    return (a, b, c), h
+
+
+def _world(node):
+    return [round(x, 6) for x in cmds.xform(node, query=True, worldSpace=True, matrix=True)]
+
+
+@check("回転プレーン IK: ひねり（twist）の向きと 0 の基準・極ベクトル", "ひねりは開始 → ハンドルの軸のまわりに正の向き（rig.js の solveIKCore。資料に式はない）")
+def rp_twist():
+    rows = []
+    for pv in ((0, 0, 1), (0, 1, 0), (0, -1, 1)):
+        for twist in (0, 45, -45, 180):
+            _new()
+            (a, b, c), h = _ik_chain()
+            cmds.setAttr(h + ".translate", 6, 2, 1, type="double3")
+            cmds.setAttr(h + ".poleVector", *pv, type="double3")
+            cmds.setAttr(h + ".twist", twist)
+            rows.append({"poleVector": pv, "twist": twist, "a.rotate": cmds.getAttr(a + ".rotate")[0],
+                         "b.rotate": cmds.getAttr(b + ".rotate")[0], "a.world": _world(a), "b.world": _world(b)})
+    return rows
+
+
+@check("シングルチェーン IK: ハンドルの回転で、開始 → エフェクタの線のまわりにチェーンが回るか",
+       "ハンドルの向きを使わない（FK の形の面を保つ。資料には「エフェクタの向きをハンドルにできるだけ合わせる」とある）")
+def sc_handle_rotation():
+    rows = []
+    for rx in (0, 30, 90):
+        _new()
+        (a, b, c), h = _ik_chain("ikSCsolver")
+        cmds.setAttr(h + ".translate", 6, 2, 1, type="double3")
+        cmds.setAttr(h + ".rotate", rx, 0, 0, type="double3")
+        eff = cmds.listConnections(h + ".endEffector", source=True) or [""]
+        rows.append({"handle.rotateX": rx, "a.rotate": cmds.getAttr(a + ".rotate")[0],
+                     "b.rotate": cmds.getAttr(b + ".rotate")[0], "effector.world": _world(eff[0]) if eff[0] else None,
+                     "handle.world": _world(h)})
+    return rows
+
+
+@check("IK と jointType・stiffness（肘を z だけにする・stiffness を付ける）", "使わない（警告だけ）")
+def ik_joint_type():
+    rows = []
+    for jt, st in (("xyz", 0.0), ("z", 0.0), ("xyz", 0.8)):
+        _new()
+        (a, b, c), h = _ik_chain()
+        cmds.setAttr(b + ".jointType", jt, type="string")
+        cmds.setAttr(b + ".stiffness", st, st, st, type="double3")
+        cmds.setAttr(h + ".translate", 5, 3, 2, type="double3")
+        rows.append({"b.jointType": jt, "b.stiffness": st, "a.rotate": cmds.getAttr(a + ".rotate")[0],
+                     "b.rotate": cmds.getAttr(b + ".rotate")[0], "c.world": _world(c)})
+    return rows
+
+
 def run(out_dir: str) -> list:
     """すべての項目を確かめ、out_dir に node_check.json と node_check.md を書く"""
     os.makedirs(out_dir, exist_ok=True)
