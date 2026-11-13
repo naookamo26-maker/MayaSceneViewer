@@ -538,6 +538,12 @@ exprespy のテストは `tests/test_exprespy.py`（変換の結果・解析で�
 
 画面のない Linux では `xvfb-run -a` を付けて実行します。
 
+push と pull_request で、Python（numpy あり・なし）と Node.js のテスト、bundle がソースと一致するかを GitHub Actions で確かめます（`.github/workflows/test.yml`。Qt のテストは手動実行のジョブ）。
+
+リグの評価の速さは `cd web_src && npm run bench` で測ります。大きな合成リグ（`python tools/make_big_rig_sample.py 300 120 big.ma --json big.json`）は `node --expose-gc bench/rig.bench.mjs --file big.json` で測ります。列の意味と基準の値は [docs/benchmark.md](docs/benchmark.md) です。
+
+Maya で書き出した正解（各フレームのワールド行列と表示。`tools/maya_export_truth.py`）とビューアの評価は `python -m ma_viewer verify scene.ma truth.json` で比べます。手順は [docs/maya_verification.md](docs/maya_verification.md) です。
+
 ### ビューア（JS）の変更
 
 `web_src/src/` を編集したら、`web_src` で `npm run build` を実行します。`ma_viewer/web/viewer.bundle.js` が更新されます。配布には Node.js は不要で、ビルド済みの bundle を同梱しています。

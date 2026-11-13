@@ -1,10 +1,14 @@
-// リグの評価の速さを測る（開発用）: node bench/rig.bench.mjs [--repeat N] [--save file] [--check file]
-//   samples/ の、アニメーションのある JSON をすべて読み、範囲の全フレームをビューアと同じ順
+// リグの評価の速さを測る（開発用）: node [--expose-gc] bench/rig.bench.mjs [--repeat N] [--save file] [--check file] [--file json]
+//   samples/ の、アニメーションのある JSON をすべて読み（--file なら、その共通 JSON だけ）、範囲の全フレームをビューアと同じ順
 //   （evaluate → evaluateProps → カーブの形）で評価する。
 //   1 周目: 新しい評価器で 1 周（読み込み直後の再生）。2 周目以降: 同じ評価器でくり返す。
 //   キャッシュなし: 再生キャッシュを使わずに評価だけをくり返す（評価そのものの速さ）。
 //   固定なし: さらに、時間で変わらない値もフレームごとに計算し直す。
 //   汎用（generic）: 専用の評価（rigCompiled.js）を使わず、キャッシュなしで評価する。plan: 専用の評価を使ったか。
+//   最初: 新しい評価器の最初の 1 フレーム（計画を作る分を含む）。
+//   キャッシュ: 1 周目のあとの再生キャッシュの playbackStats().bytes（上限の計算に使う値。MB）。
+//   実メモリ: GC 後のヒープの増加の、キャッシュありとなし（上限 0）の評価器での差（MB。node --expose-gc のときだけ）。
+//   大きなリグは tools/make_big_rig_sample.py で一時フォルダに作って --file で測る。
 //   --save で全フレームの行列などを保存し、--check で保存した結果と同じか確かめる（高速化の前後の比較用）。
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -21,9 +25,14 @@ const opt = (name, def) => { const i = args.indexOf(name); return i >= 0 ? args[
 const repeat = Math.max(1, +opt('--repeat', 20));
 const saveTo = opt('--save', null);
 const checkWith = opt('--check', null);
+const single = opt('--file', null);
+const gc = typeof globalThis.gc === 'function' ? globalThis.gc : null;
+// 型付き配列の中身は heapUsed に入らない（external）ので足す
+const heap = () => { gc(); gc(); const m = process.memoryUsage(); return m.heapUsed + m.external; };
+const mb = (b) => (b / (1024 * 1024)).toFixed(1);
 
 function load(file) {
-  const data = JSON.parse(readFileSync(path.join(dir, file), 'utf8'));
+  const data = JSON.parse(readFileSync(single ? file : path.join(dir, file), 'utf8'));
   const anim = data.animation;
   if (!anim || !(anim.graph || []).length && !(anim.curves || []).length) return null;
   return data;
@@ -57,22 +66,45 @@ function step(ctx, f, record) {
   });
 }
 
-const files = readdirSync(dir).filter((f) => f.endsWith('.json') && !f.includes('expected') && !f.includes('_defs')).sort();
+const files = single ? [path.resolve(single)]
+  : readdirSync(dir).filter((f) => f.endsWith('.json') && !f.includes('expected') && !f.includes('_defs')).sort();
 const saved = {};
 const expected = checkWith ? JSON.parse(readFileSync(checkWith, 'utf8')) : null;
 let mismatches = 0;
 const rows = [];
 const total = { first: 0, warm: 0, nocache: 0, generic: 0, nokeep: 0, frames: 0 };
-for (const file of files) {
-  const data = load(file);
-  if (!data) continue;
-  // 1 周目（新しい評価器）
+for (const fileArg of files) {
+  const data = load(fileArg);
+  const file = single ? path.basename(fileArg) : fileArg;
+  if (!data) { if (single) console.log(`アニメーションがありません: ${fileArg}`); continue; }
+  // 1 周目（新しい評価器）。最初の 1 フレームは別に測る
   let ctx = makeRig(data);
   const frames = framesOf(ctx.clip);
   if (!frames.length) continue;
   let t0 = performance.now();
-  for (const f of frames) step(ctx, f, false);
+  step(ctx, frames[0], false);
+  const once = performance.now() - t0;
+  for (let i = 1; i < frames.length; i++) step(ctx, frames[i], false);
   const first = (performance.now() - t0) / frames.length;
+  // 再生キャッシュの大きさ: 数えている値と、GC 後の実際のヒープの増加（キャッシュあり − キャッシュなしの評価器で 1 周）
+  const cacheBytes = ctx.rig.playbackStats ? ctx.rig.playbackStats().bytes : 0;
+  let realBytes = null;
+  if (gc && 'playbackLimit' in ctx.rig) {
+    const grow = (limit) => {
+      let c = null;
+      const h0 = heap();
+      c = makeRig(data);
+      if (!limit) c.rig.playbackLimit = 0;
+      for (const f of frames) step(c, f, false);
+      const d = heap() - h0;
+      c.rig.evaluate(frames[0]);                         // 測るまで c を生かしておく
+      return d;
+    };
+    const keep = ctx;
+    ctx = null;
+    realBytes = grow(true) - grow(false);
+    ctx = keep;
+  }
   // 2 周目以降（同じ評価器）
   t0 = performance.now();
   for (let k = 0; k < repeat; k++) for (const f of frames) step(ctx, f, false);
@@ -100,8 +132,8 @@ for (const file of files) {
   for (let k = 0; k < repeat; k++) for (const f of frames) step(ctx, f, false);
   const nokeep = (performance.now() - t0) / (frames.length * repeat);
   rows.push({ file, nodes: ctx.rig.moving.size, graph: ctx.rig.graph.length, frames: frames.length,
-    first: first.toFixed(3), warm: warm.toFixed(3), nocache: nocache.toFixed(3), generic: generic.toFixed(3), plan,
-    nokeep: nokeep.toFixed(3) });
+    once: once.toFixed(1), first: first.toFixed(3), warm: warm.toFixed(3), nocache: nocache.toFixed(3), generic: generic.toFixed(3), plan,
+    nokeep: nokeep.toFixed(3), cacheMB: mb(cacheBytes), realMB: realBytes === null ? '-' : mb(realBytes) });
   total.first += first * frames.length; total.warm += warm * frames.length; total.nocache += nocache * frames.length;
   total.nokeep += nokeep * frames.length;
   total.generic += generic * frames.length;
@@ -129,6 +161,7 @@ console.log(`1 フレームあたり（ms・全サンプルの平均）: 1 周�
   + `2 周目以降 ${(total.warm / total.frames).toFixed(3)} ・ キャッシュなし ${(total.nocache / total.frames).toFixed(3)}`
   + `（汎用の経路だけ ${(total.generic / total.frames).toFixed(3)}）・ `
   + `固定なし ${(total.nokeep / total.frames).toFixed(3)}`);
+if (!gc) console.log('実メモリ（realMB）は node --expose-gc で実行したときだけ測ります');
 if (saveTo) { writeFileSync(saveTo, JSON.stringify(saved)); console.log(`結果を保存しました: ${saveTo}`); }
 if (expected || saveTo) {
   console.log(mismatches ? `一致しない結果: ${mismatches} 件` : '結果はすべて一致しました');

@@ -61,6 +61,41 @@ def cmd_export(args) -> int:
     return 0
 
 
+def cmd_verify(args) -> int:
+    """Maya の正解（tools/maya_export_truth.py の出力）と、ビューアの評価を比べる（web_src/tools/verify.mjs を Node で実行）"""
+    import shutil
+    import subprocess
+    import tempfile
+    from . import package
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script = os.path.join(root, "web_src", "tools", "verify.mjs")
+    if not os.path.isfile(script) or not os.path.isdir(os.path.join(root, "web_src", "node_modules")):
+        print("比べるには、ソースのフォルダで web_src の npm install（npm ci）を済ませてください: %s" % script,
+              file=sys.stderr)
+        return 2
+    node = shutil.which("node")
+    if node is None:
+        print("Node.js（node）が見つかりません", file=sys.stderr)
+        return 2
+    with tempfile.TemporaryDirectory() as tmp:
+        if args.input.lower().endswith(".json"):
+            scene_json = args.input
+        else:
+            if package.is_package(args.input):
+                scene, _pkg = package.read_package(args.input)
+            else:
+                from .extract_ma import load_ma
+                scene = load_ma(args.input, animation=True)
+            scene_json = os.path.join(tmp, "scene.json")
+            with open(scene_json, "w", encoding="utf-8") as f:
+                json.dump(scene, f, ensure_ascii=False, separators=(",", ":"))
+        cmd = [node, script, os.path.abspath(scene_json), os.path.abspath(args.truth),
+               "--top", str(args.top), "--pos", str(args.pos), "--rot", str(args.rot)]
+        if args.report:
+            cmd += ["--report", os.path.abspath(args.report)]
+        return subprocess.call(cmd, cwd=os.path.join(root, "web_src"))
+
+
 def _mb(n: int) -> str:
     return "%.2f MB" % (n / 1048576.0) if n >= 1048576 else "%.1f KB" % (n / 1024.0)
 
@@ -331,6 +366,13 @@ def main(argv=None) -> int:
     pc.add_argument("--plugin", help="プラグインの名前（省略時はファイル名。.ma の requires の名前に合わせる）")
     pc.add_argument("--version", help="プラグインの版（省略時は MFnPlugin の 3 番目の引数）")
     pc.add_argument("--show", action="store_true", help="書き出すときも変換した計算を表示する")
+    pq = sub.add_parser("verify", help="Maya の正解（tools/maya_export_truth.py の出力）とビューアの評価を比べる（開発用。Node.js が要る）")
+    pq.add_argument("input", help=".ma・.json・.msv")
+    pq.add_argument("truth", help="Maya で書き出した正解の JSON")
+    pq.add_argument("--top", type=int, default=20, help="表示する差の大きいノードの数（既定 20）")
+    pq.add_argument("--pos", type=float, default=0.001, help="位置のしきい値（cm。既定 0.001）")
+    pq.add_argument("--rot", type=float, default=0.01, help="回転のしきい値（度。既定 0.01）")
+    pq.add_argument("--report", help="全ノードの結果を JSON に書く")
     pv = sub.add_parser("view", help="ビューアを起動")
     pv.add_argument("input", nargs="?")
     args = p.parse_args(argv)
@@ -350,6 +392,8 @@ def main(argv=None) -> int:
         return cmd_node_defs(args)
     if args.cmd == "convert-plugin":
         return cmd_convert_plugin(args)
+    if args.cmd == "verify":
+        return cmd_verify(args)
     if args.cmd == "view":
         return cmd_view(args)
     from .app import main as app_main

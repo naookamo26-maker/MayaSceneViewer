@@ -1,0 +1,79 @@
+# 自動テスト: push と pull_request で Python・Node のテストと bundle の一致を確かめる。
+# Qt のテスト（tests/qt_*.py）は画面と PySide6 が要るので、手動実行（workflow_dispatch）の別ジョブにしている。
+name: test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      qt:
+        description: "Qt のテスト（tests/qt_*.py）も実行する"
+        type: boolean
+        default: false
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: 依存を入れる
+        run: pip install numpy Pillow
+      - name: テスト（numpy あり）
+        run: python -m unittest discover -s tests -p "test_*.py"
+      - name: テスト（numpy なしの経路）
+        env:
+          MA_VIEWER_NO_NUMPY: "1"
+        run: python -m unittest discover -s tests -p "test_*.py"
+
+  node:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web_src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web_src/package-lock.json
+      - run: npm ci
+      - name: テスト
+        run: npm test
+      - name: bundle がソースと一致するか（違えば node build.mjs をやり直してコミットする）
+        run: |
+          node build.mjs
+          git diff --exit-code -- ../ma_viewer/web/viewer.bundle.js
+
+  qt:
+    if: github.event_name == 'workflow_dispatch' && inputs.qt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 依存を入れる
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libnss3 libasound2t64
+          pip install PySide6 numpy Pillow
+      - name: Qt のテスト
+        env:
+          QTWEBENGINE_DISABLE_SANDBOX: "1"
+        run: |
+          status=0
+          for t in tests/qt_*.py; do
+            echo "::group::$t"
+            xvfb-run -a python "$t" || { echo "::error::$t が失敗しました"; status=1; }
+            echo "::endgroup::"
+          done
+          exit $status
