@@ -18,7 +18,6 @@ from typing import Dict, List, Optional, Set
 from .ma_scene import MaNode, MaScene
 from . import ma_reader as R
 
-_SETATTR_RE = re.compile(r"setAttr\b([^;]*);")
 _TAG_RE = re.compile(r"^gtag\[(\d+)\]\.(gtagnm|gtagcmp)$")
 _EXPR_RE = re.compile(r"^ip\[(\d+)\]\.gtg$")
 _CV_RE = re.compile(r"^cv\[(\*|\d+)(?::(\d+))?\]$")
@@ -30,8 +29,8 @@ def _setattrs(ms: MaScene, node: MaNode):
     """ノードのブロック（と、ブロックの外のノード名つきの setAttr）の setAttr を (属性, SetAttr) で返す"""
     spans = [s for s in (node.span, node.espan) if s is not None] + sorted(node.xspans or [])
     for a, b in spans:
-        for m in _SETATTR_RE.finditer(ms.text, a, b):
-            sa = R.parse_setattr(m.group(1))
+        for _at, _cmd, body in R.iter_commands(ms.text, a, b, ("setAttr",)):
+            sa = R.parse_setattr(body)
             if sa is None:
                 continue
             attr = sa.plug[1:] if sa.plug.startswith(".") else R.split_node_attr(sa.plug)[1]

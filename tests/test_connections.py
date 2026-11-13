@@ -87,3 +87,22 @@ class WireShapesIndexTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StatementSplitTest(unittest.TestCase):
+    """setAttr の読み直し（rig.parse_attrs）の文の切り出しは 1 段階目と同じ（R.iter_commands。文字列の中の ; で切らない。
+    D6）。以前の正規表現（; までを 1 文）でも、この例は parse_setattr が引用符のないプラグを読まないため同じ結果になる"""
+
+    def test_semicolon_in_string(self):
+        from ma_viewer.rig import parse_attrs
+        # 文字列の中の「setAttr .amt 99」は文ではない（本物の値 0.25 のまま）
+        text = HEAD + ('createNode transform -n "ctrl";\n'
+                       '\taddAttr -ci true -sn "amt" -ln "amt" -dv 1 -at "double";\n'
+                       '\taddAttr -ci true -sn "note" -ln "note" -dt "string";\n'
+                       '\tsetAttr -k on ".amt" 0.25;\n'
+                       '\tsetAttr ".note" -type "string" "a; setAttr .amt 99; b";\n'
+                       'createNode transform -n "other";\n')
+        ms = parse_ma_text(text)
+        attrs = parse_attrs(ms.text, ms.resolve("ctrl"))
+        self.assertEqual(attrs["amt"], 0.25)
+        self.assertNotIn("note", attrs)                     # 文字列の値は読まない

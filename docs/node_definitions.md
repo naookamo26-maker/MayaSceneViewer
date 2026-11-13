@@ -163,7 +163,7 @@ python -m ma_viewer node-defs                                                   
 
 ## exprespy
 
-exprespy（Python で式を書くプラグインのノード）は、定義ファイルなしで評価します。読み込みのたびに、ノードのコード（.cd）をプラグインからの変換と同じ仕組みで定義に変換します（`ma_viewer/exprespy.py`。コードは実行しません）。変換した定義は共通 JSON の `animation.nodeDefs` に入るので、書き出した JSON を開くときは .ma もプラグインも要りません。対応する書き方と制限は README の「対応範囲と制限」の「リグ」を参照してください。
+exprespy（Python で式を書くプラグインのノード）は、定義ファイルなしで評価します。読み込みのたびに、ノードのコード（.cd）をプラグインからの変換と同じ仕組みで定義に変換します（`ma_viewer/exprespy.py`。コードは実行しません）。変換した定義は共通 JSON の `animation.nodeDefs` に入るので、書き出した JSON を開くときは .ma もプラグインも要りません。対応する書き方と制限は [対応範囲と制限](support_and_limits.md) の「リグ」を参照してください。
 
 ## 制限
 
