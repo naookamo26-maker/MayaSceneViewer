@@ -3,7 +3,7 @@
 // 忘れても、その経路を通るまで ReferenceError にならない。ここでは文字列として調べる
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -37,7 +37,11 @@ function topNames(src) {
 
 test('分けたファイルは、使う rig.js の名前をすべて import している', () => {
   const rigNames = topNames(read('rig.js'));
-  for (const f of ['rigConstraints.js', 'rigIk.js', 'rigMath.js']) {
+  // 分けたファイル: RigEvaluator のメソッドを持つクラス（export class 〜Methods）を書いた rig*.js
+  const files = readdirSync(path.resolve(here, '../src')).filter((f) => /^rig\w+\.js$/.test(f)
+    && /^export class \w+Methods /m.test(read(f)));
+  assert.ok(files.length >= 4, files.join());
+  for (const f of files) {
     const src = read(f);
     const have = topNames(src);
     const body = src.slice(src.indexOf('export class'));
