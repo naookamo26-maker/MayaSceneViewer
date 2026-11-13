@@ -163,6 +163,24 @@ test('オートミックス・オートイーズは従来のオートと違う�
   const at = (type) => evaluateCurve(build(keys(type)).viewer, 1);
   const auto = at(TANGENT.AUTO), mix = at(TANGENT.AUTO_MIX), ease = at(TANGENT.AUTO_EASE);
   assert.ok(Math.abs(auto - mix) > 1e-3 && Math.abs(auto - ease) > 1e-3 && Math.abs(mix - ease) > 1e-3, `${auto} ${mix} ${ease}`);
-  // オートカスタム（21）はオートイーズと同じに扱う
+  // オートカスタム（29）はオートイーズと同じに扱う
   assert.equal(at(TANGENT.AUTO_CUSTOM), ease);
+});
+
+test('接線の種類の番号は Autodesk の資料のとおり（27 = オートミックス・28 = オートイーズ。19〜26 はカスタム）', () => {
+  // 出典: Maya の技術資料 animCurve の tangentType・keyTanInType
+  assert.equal(TANGENT.AUTO, 18);
+  assert.equal(TANGENT.AUTO_MIX, 27);
+  assert.equal(TANGENT.AUTO_EASE, 28);
+  assert.equal(TANGENT.AUTO_CUSTOM, 29);
+  const keys = (type) => [0, 2, 12].map((t, i) => ({ t, v: [0, 4, 14][i], tin: type, tout: type }));
+  const at = (type) => evaluateCurve(build(keys(type)).viewer, 1);
+  // 27・28 は animX のオートミックス・オートイーズと同じ値
+  for (const code of [27, 28]) {
+    const { reference } = build(keys(code));
+    assert.ok(Math.abs(at(code) - evaluate(1 / FPS, reference)) < 1e-6, `${code}`);
+  }
+  // カスタム（19〜26）・予約・1 バイトに入らない種類（255）は、表にない種類としてスプラインと同じ
+  for (const code of [19, 20, 21, 26, 30, 64, 255]) assert.equal(at(code), at(TANGENT.SPLINE), `${code}`);
+  assert.notEqual(at(TANGENT.AUTO_MIX), at(TANGENT.SPLINE));
 });

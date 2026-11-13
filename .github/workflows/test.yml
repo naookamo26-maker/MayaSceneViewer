@@ -64,11 +64,13 @@ jobs:
       - name: 依存を入れる
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libnss3 libasound2t64
+          sudo apt-get install -y xvfb libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libnss3 libasound2t64
           pip install PySide6 numpy Pillow
       - name: Qt のテスト
         env:
           QTWEBENGINE_DISABLE_SANDBOX: "1"
+          # GPU のない環境では WebGL のコンテキストを作れないので、ソフトウェア描画（SwiftShader）を使う
+          QTWEBENGINE_CHROMIUM_FLAGS: "--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader --ignore-gpu-blocklist --enable-webgl"
         run: |
           status=0
           for t in tests/qt_*.py; do

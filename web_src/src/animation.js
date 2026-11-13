@@ -12,10 +12,13 @@
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { decodeArray as decodeArrayAny } from './arrays.js';
 
-// 接線の種類（.ma の kit / kot / .tan の値）
+// 接線の種類（.ma の kit / kot / .tan の値）。Autodesk の技術資料（animCurve の tangentType・keyTanInType）の番号:
+//   18 = Auto、27 = AutoMix、28 = AutoEase、29 = AutoCustom。19〜26 はユーザーが使えるカスタムの種類、
+//   30〜63 は Autodesk の予約、64 以上は ADN で予約するカスタムの種類。表にない番号はスプラインとして評価する
+//   （共通 JSON では 1 バイトなので、Python 側で 256 以上は 255 にする）
 export const TANGENT = {
   FIXED: 1, LINEAR: 2, FLAT: 3, STEP: 5, SLOW: 6, FAST: 7, SPLINE: 9, CLAMPED: 10, PLATEAU: 16, STEP_NEXT: 17, AUTO: 18,
-  AUTO_MIX: 19, AUTO_EASE: 20, AUTO_CUSTOM: 21,
+  AUTO_MIX: 27, AUTO_EASE: 28, AUTO_CUSTOM: 29,
 };
 // 範囲外の振る舞い（.pre / .pst）
 export const INFINITY = { CONSTANT: 0, LINEAR: 1, CYCLE: 3, CYCLE_RELATIVE: 4, OSCILLATE: 5 };

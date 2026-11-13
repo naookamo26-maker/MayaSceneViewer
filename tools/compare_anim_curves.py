@@ -27,7 +27,7 @@ from ma_viewer.animation import CURVE_TYPES, _CM_PER_UNIT, _pack, curve_record, 
 
 # ビューアが想定している .ma の接線の種類の番号（web_src/src/animation.js の TANGENT）
 VIEWER_CODES = {"fixed": 1, "linear": 2, "flat": 3, "step": 5, "slow": 6, "fast": 7, "spline": 9, "clamped": 10,
-                "plateau": 16, "stepnext": 17, "auto": 18, "automix": 19, "autoease": 20, "autocustom": 21}
+                "plateau": 16, "stepnext": 17, "auto": 18, "automix": 27, "autoease": 28, "autocustom": 29}
 INFINITY_CODES = {"constant": 0, "linear": 1, "cycle": 3, "cycleRelative": 4, "oscillate": 5}
 EVAL_SCRIPT = os.path.join(ROOT, "web_src", "tools", "eval_curves.mjs")
 
