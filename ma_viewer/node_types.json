@@ -1,5 +1,5 @@
 {
- "_comment": "ノードの型の登録（Python の rig.py と JS の mathNodes.js がこれを読む。整備計画の D5）。math: Maya 2024 以降の計算ノード・行列ノード・時間の変換・DL 版（計算は web_src/src/mathNodes.js）",
+ "_comment": "ノードの型の登録（Python と JS が読む。整備計画の D5）。math: Maya 2024 以降の計算ノードなど（計算は web_src/src/mathNodes.js）。types: 型ごとの kind（Python がたどる種類: utility 計算ノード・constraint・geometry カーブとその変形・other）・outputs（出力の属性の名前の正規表現。これ以外の名前で計算結果を探さない）・defaults（ファイルに値がないときの既定値）・angles（ファイルの値が度で書かれる角度の属性の正規表現）。skipAttrs: 1 段階目で setAttr をすべて読み飛ばす型（ほかに animCurve・コンストレイント・シェイプなどは ma_scene.skips_attrs が決める）",
  "math": [
   "absolute",
   "absoluteDL",
@@ -107,5 +107,804 @@
   "truncateDL",
   "unitToTimeConversion",
   "wtAddMatrix"
+ ],
+ "types": {
+  "addDoubleLinear": {
+   "kind": "utility",
+   "outputs": "^o$",
+   "defaults": {
+    "i1": 0,
+    "i2": 0
+   }
+  },
+  "aimConstraint": {
+   "kind": "constraint",
+   "outputs": "^cr[xyz]?$",
+   "defaults": {
+    "a": [
+     1,
+     0,
+     0
+    ],
+    "u": [
+     0,
+     1,
+     0
+    ],
+    "wu": [
+     0,
+     1,
+     0
+    ],
+    "wut": 3,
+    "o": [
+     0,
+     0,
+     0
+    ]
+   },
+   "angles": "^(o[xyz]?|rsrr|rr[xyz])$"
+  },
+  "animBlendNodeAdditive": {
+   "kind": "utility",
+   "outputs": "^o$"
+  },
+  "animBlendNodeAdditiveDA": {
+   "kind": "utility",
+   "outputs": "^o$",
+   "defaults": {
+    "ia": 0,
+    "ib": 0,
+    "wa": 1,
+    "wb": 1
+   },
+   "angles": "^i[ab]$"
+  },
+  "animBlendNodeAdditiveDL": {
+   "kind": "utility",
+   "outputs": "^o$",
+   "defaults": {
+    "ia": 0,
+    "ib": 0,
+    "wa": 1,
+    "wb": 1
+   }
+  },
+  "animBlendNodeAdditiveF": {
+   "kind": "utility",
+   "outputs": "^o$"
+  },
+  "animBlendNodeAdditiveFA": {
+   "kind": "utility",
+   "outputs": "^o$",
+   "angles": "^i[ab]$"
+  },
+  "animBlendNodeAdditiveFL": {
+   "kind": "utility",
+   "outputs": "^o$"
+  },
+  "animBlendNodeAdditiveI16": {
+   "kind": "utility",
+   "outputs": "^o$"
+  },
+  "animBlendNodeAdditiveI32": {
+   "kind": "utility",
+   "outputs": "^o$"
+  },
+  "animBlendNodeAdditiveRotation": {
+   "kind": "utility",
+   "outputs": "^o[xyz]?$",
+   "defaults": {
+    "ia": [
+     0,
+     0,
+     0
+    ],
+    "ib": [
+     0,
+     0,
+     0
+    ],
+    "wa": 1,
+    "wb": 1
+   },
+   "angles": "^i[ab][xyz]?$"
+  },
+  "animBlendNodeAdditiveScale": {
+   "kind": "utility",
+   "outputs": "^o$",
+   "defaults": {
+    "ia": 0,
+    "ib": 0,
+    "wa": 1,
+    "wb": 1,
+    "acm": 0
+   }
+  },
+  "animBlendNodeBoolean": {
+   "kind": "utility",
+   "outputs": "^o$"
+  },
+  "animBlendNodeEnum": {
+   "kind": "utility",
+   "outputs": "^o$"
+  },
+  "animBlendNodeTime": {
+   "kind": "utility",
+   "outputs": "^o$"
+  },
+  "animCurveUA": {
+   "kind": "utility",
+   "outputs": "^(o|output)$"
+  },
+  "animCurveUL": {
+   "kind": "utility",
+   "outputs": "^(o|output)$"
+  },
+  "animCurveUU": {
+   "kind": "utility",
+   "outputs": "^(o|output)$"
+  },
+  "animLayer": {
+   "kind": "utility",
+   "outputs": "^(fgwt|fo|bgwt|omte|oram|csol)$",
+   "defaults": {
+    "wgth": 1,
+    "mt": 0,
+    "ovrd": 0,
+    "pthg": 1,
+    "sl": 0,
+    "ram": 0,
+    "sam": 1,
+    "pwth": 1,
+    "pmte": 0,
+    "sslo": 0
+   }
+  },
+  "blendColors": {
+   "kind": "utility",
+   "outputs": "^op[rgb]?$",
+   "defaults": {
+    "c1": [
+     1,
+     0,
+     0
+    ],
+    "c2": [
+     0,
+     0,
+     1
+    ],
+    "b": 0.5
+   }
+  },
+  "blendTwoAttr": {
+   "kind": "utility",
+   "outputs": "^o$",
+   "defaults": {
+    "ab": 0
+   }
+  },
+  "blendWeighted": {
+   "kind": "utility",
+   "outputs": "^o$",
+   "defaults": {}
+  },
+  "character": {
+   "kind": "utility",
+   "outputs": "^(lv|av|uv|tv)\\[\\d+\\]$"
+  },
+  "choice": {
+   "kind": "utility",
+   "outputs": "^o$",
+   "defaults": {
+    "s": 0
+   }
+  },
+  "clamp": {
+   "kind": "utility",
+   "outputs": "^op[rgb]?$",
+   "defaults": {
+    "ip": [
+     0,
+     0,
+     0
+    ],
+    "mn": [
+     0,
+     0,
+     0
+    ],
+    "mx": [
+     0,
+     0,
+     0
+    ]
+   }
+  },
+  "cluster": {
+   "kind": "geometry",
+   "outputs": "^og(\\[\\d+\\])?$",
+   "defaults": {
+    "en": 1
+   }
+  },
+  "composeMatrix": {
+   "kind": "utility",
+   "outputs": "^omat$",
+   "defaults": {
+    "it": [
+     0,
+     0,
+     0
+    ],
+    "ir": [
+     0,
+     0,
+     0
+    ],
+    "is": [
+     1,
+     1,
+     1
+    ],
+    "ish": [
+     0,
+     0,
+     0
+    ],
+    "iro": 0,
+    "uer": 1
+   },
+   "angles": "^ir[xyz]?$"
+  },
+  "condition": {
+   "kind": "utility",
+   "outputs": "^oc[rgb]?$",
+   "defaults": {
+    "ft": 0,
+    "st": 0,
+    "op": 0,
+    "ct": [
+     0,
+     0,
+     0
+    ],
+    "cf": [
+     1,
+     1,
+     1
+    ]
+   }
+  },
+  "curveInfo": {
+   "kind": "utility",
+   "outputs": "^(al|arcLength)$"
+  },
+  "decomposeMatrix": {
+   "kind": "utility",
+   "outputs": "^o(t|r|s|sh)[xyz]?$|^oq[xyzw]?$",
+   "defaults": {
+    "ro": 0
+   }
+  },
+  "detachCurve": {
+   "kind": "geometry",
+   "outputs": "^oc\\[\\d+\\]$"
+  },
+  "displayLayer": {
+   "kind": "utility",
+   "defaults": {
+    "v": 1,
+    "dt": 0,
+    "e": 1
+   }
+  },
+  "distanceBetween": {
+   "kind": "utility",
+   "outputs": "^d$",
+   "defaults": {
+    "p1": [
+     0,
+     0,
+     0
+    ],
+    "p2": [
+     0,
+     0,
+     0
+    ]
+   }
+  },
+  "distanceBetweenDL": {
+   "kind": "utility"
+  },
+  "distanceDimShape": {
+   "kind": "utility",
+   "outputs": "^(dist|distance)$"
+  },
+  "eulerToQuat": {
+   "kind": "utility",
+   "outputs": "^oq[xyzw]?$",
+   "defaults": {
+    "irt": [
+     0,
+     0,
+     0
+    ],
+    "iro": 0
+   },
+   "angles": "^irt[xyz]?$"
+  },
+  "expression": {
+   "kind": "utility",
+   "outputs": "^(out|output)\\[\\d+\\]$"
+  },
+  "fourByFourMatrix": {
+   "kind": "utility",
+   "outputs": "^(o|output)$"
+  },
+  "groupParts": {
+   "kind": "geometry",
+   "outputs": "^og$"
+  },
+  "ikHandle": {
+   "kind": "other",
+   "defaults": {
+    "pv": [
+     0,
+     0,
+     1
+    ],
+    "twi": 0,
+    "ikb": 1,
+    "roc": 0,
+    "off": 0,
+    "rol": 0,
+    "dtce": 0,
+    "dwut": 0,
+    "dwua": 3,
+    "dfa": 0,
+    "dwuv": [
+     0,
+     1,
+     0
+    ],
+    "dwve": [
+     0,
+     1,
+     0
+    ],
+    "twt": 0,
+    "rtm": 0,
+    "dtvt": 0,
+    "dtst": 0,
+    "dten": 0
+   },
+   "angles": "^(twi|rol)$"
+  },
+  "inverseMatrix": {
+   "kind": "utility",
+   "outputs": "^omat$"
+  },
+  "locator": {
+   "kind": "geometry",
+   "outputs": "^(wp|worldPosition)(\\[\\d+\\])?$"
+  },
+  "lookAt": {
+   "kind": "constraint",
+   "outputs": "^cr[xyz]?$",
+   "defaults": {
+    "a": [
+     0,
+     0,
+     -1
+    ],
+    "u": [
+     0,
+     1,
+     0
+    ],
+    "wu": [
+     0,
+     1,
+     0
+    ],
+    "wut": 3,
+    "o": [
+     0,
+     0,
+     0
+    ],
+    "tws": 0,
+    "twist": 0
+   },
+   "angles": "^(o[xyz]?|tws|twist|rsrr|rr[xyz])$"
+  },
+  "multDoubleLinear": {
+   "kind": "utility",
+   "outputs": "^o$",
+   "defaults": {
+    "i1": 0,
+    "i2": 0
+   }
+  },
+  "multMatrix": {
+   "kind": "utility",
+   "outputs": "^o$"
+  },
+  "multiplyDivide": {
+   "kind": "utility",
+   "outputs": "^o[xyz]?$",
+   "defaults": {
+    "i1": [
+     0,
+     0,
+     0
+    ],
+    "i2": [
+     1,
+     1,
+     1
+    ],
+    "op": 1
+   }
+  },
+  "nearestPointOnCurve": {
+   "kind": "utility",
+   "outputs": "^(p[xyz]?|pr|position[XYZ]?|parameter)$"
+  },
+  "nurbsCurve": {
+   "kind": "geometry",
+   "outputs": "^(ws|worldSpace|l|local)(\\[\\d+\\])?$"
+  },
+  "orientConstraint": {
+   "kind": "constraint",
+   "outputs": "^cr[xyz]?$",
+   "angles": "^(o[xyz]?|rsrr|rr[xyz])$"
+  },
+  "pairBlend": {
+   "kind": "utility",
+   "outputs": "^o[tr][xyz]?$",
+   "defaults": {
+    "w": 1,
+    "it1": [
+     0,
+     0,
+     0
+    ],
+    "it2": [
+     0,
+     0,
+     0
+    ],
+    "ir1": [
+     0,
+     0,
+     0
+    ],
+    "ir2": [
+     0,
+     0,
+     0
+    ],
+    "ri": 0
+   },
+   "angles": "^ir[12][xyz]?$"
+  },
+  "parentConstraint": {
+   "kind": "constraint",
+   "outputs": "^c[tr][xyz]?$",
+   "angles": "^(tg\\[\\d+\\]\\.tor[xyz]?|rsrr|rr[xyz])$"
+  },
+  "plusMinusAverage": {
+   "kind": "utility",
+   "outputs": "^o(1|2[xy]?|3[xyz]?)$",
+   "defaults": {
+    "op": 1
+   }
+  },
+  "pointConstraint": {
+   "kind": "constraint",
+   "outputs": "^ct[xyz]?$"
+  },
+  "pointOnCurveInfo": {
+   "kind": "utility",
+   "outputs": "^(p|n|t|nn|nt|cc)[xyz]?$|^cr$",
+   "defaults": {
+    "pr": 0,
+    "top": 0
+   }
+  },
+  "poleVectorConstraint": {
+   "kind": "constraint",
+   "outputs": "^ct[xyz]?$"
+  },
+  "quatInvert": {
+   "kind": "utility",
+   "outputs": "^oq[xyzw]?$",
+   "defaults": {
+    "iq": [
+     0,
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  "quatNormalize": {
+   "kind": "utility",
+   "outputs": "^oq[xyzw]?$",
+   "defaults": {
+    "iq": [
+     0,
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  "quatProd": {
+   "kind": "utility",
+   "outputs": "^oq[xyzw]?$",
+   "defaults": {
+    "iq1": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "iq2": [
+     0,
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  "quatSlerp": {
+   "kind": "utility",
+   "outputs": "^oq[xyzw]?$",
+   "defaults": {
+    "iq1": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "iq2": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "it": 0
+   }
+  },
+  "quatToEuler": {
+   "kind": "utility",
+   "outputs": "^ort[xyz]?$",
+   "defaults": {
+    "iq": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "iro": 0
+   }
+  },
+  "rebuildCurve": {
+   "kind": "geometry",
+   "outputs": "^oc$"
+  },
+  "remapValue": {
+   "kind": "utility",
+   "outputs": "^(ov|outValue)$",
+   "defaults": {
+    "i": 0,
+    "imn": 0,
+    "imx": 1,
+    "omn": 0,
+    "omx": 1
+   }
+  },
+  "reverse": {
+   "kind": "utility",
+   "outputs": "^o[xyz]?$",
+   "defaults": {
+    "i": [
+     0,
+     0,
+     0
+    ]
+   }
+  },
+  "reverseCurve": {
+   "kind": "geometry",
+   "outputs": "^oc$"
+  },
+  "scaleConstraint": {
+   "kind": "constraint",
+   "outputs": "^cs[xyz]?$",
+   "defaults": {
+    "o": [
+     1,
+     1,
+     1
+    ]
+   }
+  },
+  "setRange": {
+   "kind": "utility",
+   "outputs": "^o[xyz]?$",
+   "defaults": {
+    "v": [
+     0,
+     0,
+     0
+    ],
+    "n": [
+     0,
+     0,
+     0
+    ],
+    "m": [
+     0,
+     0,
+     0
+    ],
+    "on": [
+     0,
+     0,
+     0
+    ],
+    "om": [
+     0,
+     0,
+     0
+    ]
+   }
+  },
+  "skinCluster": {
+   "kind": "geometry",
+   "outputs": "^og(\\[\\d+\\])?$"
+  },
+  "subCurve": {
+   "kind": "geometry",
+   "outputs": "^oc$"
+  },
+  "transformGeometry": {
+   "kind": "geometry",
+   "outputs": "^og$"
+  },
+  "tweak": {
+   "kind": "geometry",
+   "outputs": "^og(\\[\\d+\\])?$"
+  },
+  "unitConversion": {
+   "kind": "utility",
+   "outputs": "^o$",
+   "defaults": {
+    "i": 0,
+    "cf": 1
+   }
+  },
+  "vectorProduct": {
+   "kind": "utility",
+   "outputs": "^o[xyz]?$",
+   "defaults": {
+    "i1": [
+     0,
+     0,
+     0
+    ],
+    "i2": [
+     0,
+     0,
+     0
+    ],
+    "op": 1,
+    "no": 0
+   }
+  },
+  "wire": {
+   "kind": "geometry",
+   "outputs": "^og(\\[\\d+\\])?$"
+  }
+ },
+ "skipAttrs": [
+  "addDoubleLinear",
+  "aiAOVDriver",
+  "aiAOVFilter",
+  "aiImagerDenoiserOidn",
+  "aiOptions",
+  "angleBetween",
+  "animBlendNodeAdditive",
+  "animBlendNodeAdditiveDA",
+  "animBlendNodeAdditiveDL",
+  "animBlendNodeAdditiveF",
+  "animBlendNodeAdditiveFA",
+  "animBlendNodeAdditiveFL",
+  "animBlendNodeAdditiveI16",
+  "animBlendNodeAdditiveI32",
+  "animBlendNodeAdditiveRotation",
+  "animBlendNodeAdditiveScale",
+  "animBlendNodeBoolean",
+  "animBlendNodeEnum",
+  "animBlendNodeTime",
+  "animLayer",
+  "blendColors",
+  "blendMatrix",
+  "blendShape",
+  "blendTwoAttr",
+  "blendWeighted",
+  "blindDataTemplate",
+  "brush",
+  "character",
+  "choice",
+  "clamp",
+  "clipLibrary",
+  "clipScheduler",
+  "cluster",
+  "composeMatrix",
+  "condition",
+  "controller",
+  "curveInfo",
+  "decomposeMatrix",
+  "deltaMush",
+  "displayLayerManager",
+  "distanceBetween",
+  "eulerToQuat",
+  "expression",
+  "ffd",
+  "fourByFourMatrix",
+  "hikSolver",
+  "hyperGraphInfo",
+  "hyperLayout",
+  "hyperView",
+  "ikRPsolver",
+  "ikSCsolver",
+  "ikSplineSolver",
+  "ikSystem",
+  "inverseMatrix",
+  "lightLinker",
+  "motionPath",
+  "multDoubleLinear",
+  "multMatrix",
+  "multiplyDivide",
+  "network",
+  "nodeGraphEditorInfo",
+  "nonLinear",
+  "objectSet",
+  "pairBlend",
+  "partition",
+  "pickMatrix",
+  "plusMinusAverage",
+  "pointOnCurveInfo",
+  "polyBlindData",
+  "poseInterpolatorManager",
+  "quatInvert",
+  "quatNormalize",
+  "quatProd",
+  "quatSlerp",
+  "quatToEuler",
+  "reference",
+  "remapValue",
+  "renderLayer",
+  "renderLayerManager",
+  "reverse",
+  "script",
+  "sequenceManager",
+  "setRange",
+  "shapeEditorManager",
+  "strokeGlobals",
+  "tension",
+  "timeEditor",
+  "timeEditorTracks",
+  "unitConversion",
+  "vectorProduct",
+  "wire",
+  "wrap"
  ]
 }

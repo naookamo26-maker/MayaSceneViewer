@@ -162,26 +162,9 @@ _SKIN_NAMES = _XFORM_NAMES | {"wl", "pm", "gm", "skm", "mi", "nw", "wd"}
 _PLUG_RE = re.compile(r'"([^"]*)"')
 
 # setAttr を 1 つも使わず、DAG の子も持たない種類のノード（後に続く字下げされた行をまとめて読み飛ばす）
-_SKIP_ATTR_TYPES = {
-    # 一般的なユーティリティ・管理用のノード
-    "unitConversion", "multiplyDivide", "plusMinusAverage", "condition", "reverse", "clamp", "setRange",
-    "blendColors", "blendTwoAttr", "blendWeighted", "pairBlend", "multDoubleLinear", "addDoubleLinear",
-    "decomposeMatrix", "composeMatrix", "multMatrix", "inverseMatrix", "pickMatrix", "blendMatrix", "fourByFourMatrix",
-    "choice", "remapValue", "network", "expression", "script", "objectSet", "renderLayer",
-    "displayLayerManager", "renderLayerManager", "nodeGraphEditorInfo", "hyperGraphInfo", "hyperView",
-    "hyperLayout", "polyBlindData", "blindDataTemplate", "reference", "blendShape", "cluster", "ffd",
-    "nonLinear", "wire", "wrap", "deltaMush", "tension", "animLayer", "character", "clipLibrary",
-    "clipScheduler", "timeEditor", "timeEditorTracks", "sequenceManager", "shapeEditorManager",
-    "poseInterpolatorManager", "lightLinker", "partition", "brush", "strokeGlobals", "ikRPsolver",
-    "ikSCsolver", "ikSplineSolver", "ikSystem", "hikSolver", "controller",
-    "aiOptions", "aiAOVDriver", "aiAOVFilter", "aiImagerDenoiserOidn",
-    # リグの計算ノード（値は 2 段階目に属性の範囲から読む）
-    "quatToEuler", "eulerToQuat", "quatProd", "quatInvert", "quatNormalize", "quatSlerp", "curveInfo",
-    "distanceBetween", "vectorProduct", "angleBetween", "pointOnCurveInfo", "motionPath", "animBlendNodeAdditiveDL", "animBlendNodeAdditiveDA",
-    "animBlendNodeAdditiveRotation", "animBlendNodeAdditiveScale", "animBlendNodeAdditive", "animBlendNodeAdditiveF",
-    "animBlendNodeAdditiveFL", "animBlendNodeAdditiveFA", "animBlendNodeAdditiveI16", "animBlendNodeAdditiveI32",
-    "animBlendNodeBoolean", "animBlendNodeEnum", "animBlendNodeTime",
-}
+# setAttr をすべて読み飛ばす型（ma_viewer/node_types.json の skipAttrs。JS と共通の型の登録）
+from .node_types import NODE_TYPES as _NODE_TYPES  # noqa: E402
+_SKIP_ATTR_TYPES = set(_NODE_TYPES["skipAttrs"])
 # シェイプのうち、メッシュ以外（子を持たず、属性も使わない）
 _SKIP_SHAPE_TYPES = SHAPE_TYPES - {"mesh"}
 

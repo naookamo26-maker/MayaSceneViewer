@@ -17,6 +17,7 @@ import { composeLocalMatrix, decomposeMaya } from './animation.js';
 import { compileNodeDef } from './nodeDef.js';
 import { arcLength, rebuildCurve, reverseCurve } from './curve.js';
 import { MATH_DEFAULTS, mathAngleInput, mathKind, mathOutputs } from './mathNodes.js';
+import NODE_TYPES from '../../ma_viewer/node_types.json' with { type: 'json' };
 
 import { ConstraintMethods, installMethods } from './rigConstraints.js';
 import { IkMethods } from './rigIk.js';
@@ -39,82 +40,17 @@ const XY = ['x', 'y'];
 const XYZW = ['x', 'y', 'z', 'w'];
 const IDENTITY = new Matrix4();
 
-// 計算ノードの属性の既定値（ファイルに値がないとき）
-const DEFAULTS = {
-  multiplyDivide: { i1: [0, 0, 0], i2: [1, 1, 1], op: 1 },
-  plusMinusAverage: { op: 1 },
-  reverse: { i: [0, 0, 0] },
-  condition: { ft: 0, st: 0, op: 0, ct: [0, 0, 0], cf: [1, 1, 1] },
-  blendColors: { c1: [1, 0, 0], c2: [0, 0, 1], b: 0.5 },
-  pairBlend: { w: 1, it1: [0, 0, 0], it2: [0, 0, 0], ir1: [0, 0, 0], ir2: [0, 0, 0], ri: 0 },
-  unitConversion: { i: 0, cf: 1 },
-  ikHandle: { pv: [0, 0, 1], twi: 0, ikb: 1 },              // Maya の既定の極ベクトルは Z 軸（既定値はファイルに書かれない）
-  scaleConstraint: { o: [1, 1, 1] },
-  aimConstraint: { a: [1, 0, 0], u: [0, 1, 0], wu: [0, 1, 0], wut: 3, o: [0, 0, 0] },
-  // カメラとエイムの lookAt: カメラは −Z を向くので aim の既定は (0, 0, −1)
-  lookAt: { a: [0, 0, -1], u: [0, 1, 0], wu: [0, 1, 0], wut: 3, o: [0, 0, 0], tws: 0, twist: 0 },
-  decomposeMatrix: { ro: 0 },
-  composeMatrix: { it: [0, 0, 0], ir: [0, 0, 0], is: [1, 1, 1], ish: [0, 0, 0], iro: 0, uer: 1 },
-  quatToEuler: { iq: [0, 0, 0, 1], iro: 0 },
-  eulerToQuat: { irt: [0, 0, 0], iro: 0 },
-  quatProd: { iq1: [0, 0, 0, 1], iq2: [0, 0, 0, 1] },
-  quatInvert: { iq: [0, 0, 0, 1] },
-  quatNormalize: { iq: [0, 0, 0, 1] },
-  quatSlerp: { iq1: [0, 0, 0, 1], iq2: [0, 0, 0, 1], it: 0 },
-  displayLayer: { v: 1, dt: 0, e: 1 },
-  addDoubleLinear: { i1: 0, i2: 0 },
-  multDoubleLinear: { i1: 0, i2: 0 },                                    // Maya の既定値は 0（書かれていなければ 0）
-  clamp: { ip: [0, 0, 0], mn: [0, 0, 0], mx: [0, 0, 0] },
-  setRange: { v: [0, 0, 0], n: [0, 0, 0], m: [0, 0, 0], on: [0, 0, 0], om: [0, 0, 0] },
-  remapValue: { i: 0, imn: 0, imx: 1, omn: 0, omx: 1 },
-  distanceBetween: { p1: [0, 0, 0], p2: [0, 0, 0] },
-  vectorProduct: { i1: [0, 0, 0], i2: [0, 0, 0], op: 1, no: 0 },
-  blendTwoAttr: { ab: 0 },
-  blendWeighted: {},
-  choice: { s: 0 },
-  animBlendNodeAdditiveDL: { ia: 0, ib: 0, wa: 1, wb: 1 },
-  animBlendNodeAdditiveDA: { ia: 0, ib: 0, wa: 1, wb: 1 },
-  animBlendNodeAdditiveRotation: { ia: [0, 0, 0], ib: [0, 0, 0], wa: 1, wb: 1 },
-  // Maya の既定値は ia・ib 0、acm 0（足し算）。ふつうは acm にレイヤーの .sam（既定 1 = かけ算）が接続される
-  animBlendNodeAdditiveScale: { ia: 0, ib: 0, wa: 1, wb: 1, acm: 0 },
-  // ウェイト .wgth・ミュート .mt・Override .ovrd・Passthrough .pthg（既定 1）・ソロ .sl・
-  // 回転の重ね方 .ram（0 = 成分ごと、1 = レイヤーごと（クォータニオン））・スケールの重ね方 .sam（0 = 足し算、1 = かけ算）・
-  // 親のレイヤーから: ウェイト .pwth・ミュート .pmte・兄弟のソロ .sslo（Maya の技術資料。古いサンプルの .w・.m も読むので、
-  // それらは既定値を持たせない）
-  animLayer: { wgth: 1, mt: 0, ovrd: 0, pthg: 1, sl: 0, ram: 0, sam: 1, pwth: 1, pmte: 0, sslo: 0 },
-  cluster: { en: 1 },
-  pointOnCurveInfo: { pr: 0, top: 0 },
-};
-// ikHandle の属性の既定値（スプライン IK を含む）
-// （前向きの軸は .dpa。古いサンプルの .dfa も読むので、dpa は既定値を持たせない）
-DEFAULTS.ikHandle = { ...DEFAULTS.ikHandle, roc: 0, off: 0, rol: 0, dtce: 0, dwut: 0, dwua: 3, dfa: 0,
-  dwuv: [0, 1, 0], dwve: [0, 1, 0], twt: 0, rtm: 0, dtvt: 0, dtst: 0, dten: 0 };
+// 型ごとの既定値（ファイルに値がないとき）・出力の属性・角度の属性は、ma_viewer/node_types.json の types（Python と共通の
+// 型の登録。整備計画の D5）。ikHandle の極ベクトルの既定値は Z 軸、lookAt の aim は −Z、前向きの軸は .dpa（古いサンプルの
+// .dfa も読むので dpa は既定値を持たせない）、animLayer の .w・.m（古い名前）も既定値を持たせない、などは JSON の値のまま
+const DEFAULTS = Object.fromEntries(Object.entries(NODE_TYPES.types).filter(([, e]) => e.defaults).map(([t, e]) => [t, e.defaults]));
 
 // 型ごとの出力の属性（これ以外の名前で計算結果を探さない。入力を読むときに自分の計算へ戻らないため）
-const OUTPUTS = {
-  unitConversion: /^o$/, multiplyDivide: /^o[xyz]?$/, plusMinusAverage: /^o(1|2[xy]?|3[xyz]?)$/,
-  reverse: /^o[xyz]?$/, condition: /^oc[rgb]?$/, blendColors: /^op[rgb]?$/, pairBlend: /^o[tr][xyz]?$/,
-  pointConstraint: /^ct[xyz]?$/, poleVectorConstraint: /^ct[xyz]?$/, orientConstraint: /^cr[xyz]?$/,
-  parentConstraint: /^c[tr][xyz]?$/, scaleConstraint: /^cs[xyz]?$/, aimConstraint: /^cr[xyz]?$/, lookAt: /^cr[xyz]?$/,
-  distanceDimShape: /^(dist|distance)$/,
-  quatToEuler: /^ort[xyz]?$/, eulerToQuat: /^oq[xyzw]?$/, quatProd: /^oq[xyzw]?$/, quatInvert: /^oq[xyzw]?$/,
-  quatNormalize: /^oq[xyzw]?$/, quatSlerp: /^oq[xyzw]?$/, curveInfo: /^(al|arcLength)$/,
-  nurbsCurve: /^(ws|worldSpace|l|local)(\[\d+\])?$/, skinCluster: /^og(\[\d+\])?$/, tweak: /^og(\[\d+\])?$/,
-  groupParts: /^og$/, transformGeometry: /^og$/,
-  rebuildCurve: /^oc$/, reverseCurve: /^oc$/, subCurve: /^oc$/, detachCurve: /^oc\[\d+\]$/,
-  nearestPointOnCurve: /^(p[xyz]?|pr|position[XYZ]?|parameter)$/, wire: /^og(\[\d+\])?$/, locator: /^(wp|worldPosition)(\[\d+\])?$/, expression: /^(out|output)\[\d+\]$/,
-  addDoubleLinear: /^o$/, multDoubleLinear: /^o$/, clamp: /^op[rgb]?$/, setRange: /^o[xyz]?$/, remapValue: /^(ov|outValue)$/,
-  distanceBetween: /^d$/, vectorProduct: /^o[xyz]?$/, blendTwoAttr: /^o$/, blendWeighted: /^o$/, choice: /^o$/,
-  animBlendNodeAdditiveDL: /^o$/, animBlendNodeAdditiveDA: /^o$/, animBlendNodeAdditiveRotation: /^o[xyz]?$/, animLayer: /^(fgwt|fo|bgwt|omte|oram|csol)$/,
-  animBlendNodeAdditive: /^o$/, animBlendNodeAdditiveF: /^o$/, animBlendNodeAdditiveFL: /^o$/, animBlendNodeAdditiveFA: /^o$/,
-  animBlendNodeAdditiveI16: /^o$/, animBlendNodeAdditiveI32: /^o$/, animBlendNodeAdditiveScale: /^o$/,
-  animBlendNodeBoolean: /^o$/, animBlendNodeEnum: /^o$/, animBlendNodeTime: /^o$/,
-  cluster: /^og(\[\d+\])?$/, pointOnCurveInfo: /^(p|n|t|nn|nt|cc)[xyz]?$|^cr$/,
-  animCurveUA: /^(o|output)$/, animCurveUL: /^(o|output)$/, animCurveUU: /^(o|output)$/,
-  character: /^(lv|av|uv|tv)\[\d+\]$/,
-  multMatrix: /^o$/, decomposeMatrix: /^o(t|r|s|sh)[xyz]?$|^oq[xyzw]?$/, composeMatrix: /^omat$/, inverseMatrix: /^omat$/,
-  fourByFourMatrix: /^(o|output)$/,
-};
+const OUTPUTS = Object.fromEntries(Object.entries(NODE_TYPES.types).filter(([, e]) => e.outputs)
+  .map(([t, e]) => [t, new RegExp(e.outputs)]));
+// ファイルの値が度で書かれている角度の属性（内部ではラジアンで扱う）
+const ANGLE_ATTRS = Object.fromEntries(Object.entries(NODE_TYPES.types).filter(([, e]) => e.angles)
+  .map(([t, e]) => [t, new RegExp(e.angles)]));
 // DAG ノードの、値が決まると行列が変わる属性
 // ローカル行列を決める属性（移動・回転・スケール・ピボット・rotateAxis・jointOrient・せん断・回転順）。CHANNEL_RE は opm も
 const CHANNEL_ATTR_RE = /^((t|r|s|jo|ra|rp|sp|rpt|spt)[xyz]?|sh|shxy|shxz|shyz|ro)$/;
@@ -286,19 +222,8 @@ const AIM_MODES = [
 function isAngleAttr(type, attr) {
   const mk = mathKind(type);
   if (mk) return mathAngleInput(mk, attr);                       // 新しい計算ノード（mathNodes.js）
-  switch (type) {
-    case 'pairBlend': return /^ir[12][xyz]?$/.test(attr);
-    // オフセット・レスト回転（.rsrr。成分は .rrx など）
-    case 'orientConstraint': case 'aimConstraint': return /^(o[xyz]?|rsrr|rr[xyz])$/.test(attr);
-    case 'lookAt': return /^(o[xyz]?|tws|twist|rsrr|rr[xyz])$/.test(attr);
-    case 'composeMatrix': return /^ir[xyz]?$/.test(attr);
-    case 'eulerToQuat': return /^irt[xyz]?$/.test(attr);
-    case 'parentConstraint': return /^(tg\[\d+\]\.tor[xyz]?|rsrr|rr[xyz])$/.test(attr);
-    case 'ikHandle': return attr === 'twi' || attr === 'rol';         // ツイスト・ロール（.ma は度）
-    case 'animBlendNodeAdditiveDA': case 'animBlendNodeAdditiveFA': return /^i[ab]$/.test(attr);
-    case 'animBlendNodeAdditiveRotation': return /^i[ab][xyz]?$/.test(attr);
-    default: return false;
-  }
+  const re = ANGLE_ATTRS[type];
+  return re ? re.test(attr) : false;
 }
 
 /** かけ算で重ねるスケールの x^w（負のスケールは向きを残して大きさだけを w 乗する） */

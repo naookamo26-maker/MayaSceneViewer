@@ -33,7 +33,6 @@
 """
 from __future__ import annotations
 
-import os
 import re
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -41,34 +40,15 @@ from .ma_scene import _LIMIT_ENABLES, LIMIT_ATTRS, XFORM_KEYS, MaNode, MaScene, 
 from . import ma_reader as R
 from .place2d import PROP_ALIASES as PLACE2D_ALIASES, PROP_KEYS as PLACE2D_KEYS
 
+from .node_types import NODE_TYPES, types_of_kind  # noqa: E402  ma_viewer/node_types.json（JS と共通の型の登録）
+
 CURVE_TYPES = {"animCurveTL", "animCurveTA", "animCurveTU"}
 # lookAt: Maya の「カメラとエイム」のグループ。aimConstraint と同じ働きに、視線のまわりの回転（twist）を足したもの
-CONSTRAINT_TYPES = {"pointConstraint", "orientConstraint", "parentConstraint", "scaleConstraint", "poleVectorConstraint",
-                    "aimConstraint", "lookAt"}
-def _load_node_types() -> dict:
-    """ノードの型の登録（ma_viewer/node_types.json。JS と共通の一覧）"""
-    import json
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "node_types.json"), encoding="utf-8") as f:
-        return json.load(f)
-
-
+CONSTRAINT_TYPES = types_of_kind("constraint")    # node_types.json の kind
 # Maya 2024 以降の計算ノード・Maya 2020 以降の行列ノード・時間の変換・Maya 2026 からの単位つきの版（DL）と、
 # 名前の変わった addDL・multDL（評価は web_src/src/mathNodes.js。JS の MATH_TYPES と同じ一覧にする）
-MATH_TYPES = set(_load_node_types()["math"])    # ma_viewer/node_types.json（JS の mathNodes.js と共通）
-UTILITY_TYPES = {"unitConversion", "pairBlend", "blendColors", "multiplyDivide", "plusMinusAverage", "reverse",
-                 "condition", "multMatrix", "decomposeMatrix", "composeMatrix", "inverseMatrix", "fourByFourMatrix",
-                 "quatToEuler", "eulerToQuat", "quatProd", "quatInvert", "quatNormalize", "quatSlerp", "curveInfo",
-                 "displayLayer", "expression", "addDoubleLinear", "multDoubleLinear", "clamp", "setRange", "remapValue",
-                 "distanceBetween", "vectorProduct", "blendTwoAttr", "blendWeighted", "choice",
-                 "animBlendNodeAdditiveDL", "animBlendNodeAdditiveDA", "animBlendNodeAdditiveRotation", "animLayer",
-                 # アニメーションレイヤー（属性の型ごとのノード）
-                 "animBlendNodeAdditive", "animBlendNodeAdditiveF", "animBlendNodeAdditiveFL", "animBlendNodeAdditiveFA",
-                 "animBlendNodeAdditiveI16", "animBlendNodeAdditiveI32", "animBlendNodeAdditiveScale",
-                 "animBlendNodeBoolean", "animBlendNodeEnum", "animBlendNodeTime",
-                 "animCurveUA", "animCurveUL", "animCurveUU", "pointOnCurveInfo", "character",
-                 "distanceDimShape",                  # 距離の寸法（2 点の距離。伸びる IK などに使う）
-                 "distanceBetweenDL",
-                 "nearestPointOnCurve"} | MATH_TYPES  # カーブ上のいちばん近い点（位置とパラメータ）    # distanceBetweenDL は distanceBetween と同じ（Maya 2026 からの単位つきの版）
+MATH_TYPES = set(NODE_TYPES["math"])    # ma_viewer/node_types.json（JS の mathNodes.js と共通）
+UTILITY_TYPES = types_of_kind("utility") | MATH_TYPES    # 計算ノード（node_types.json の kind が utility）
 # 入力をたどらない（値を読むだけの）ノード
 _NO_INPUT_TYPES = {"displayLayer"}
 # 入力のうち、決まった属性だけをたどるノード。animLayer はウェイト・ミュート・ソロ・モードと、親のレイヤーからの
@@ -76,8 +56,7 @@ _NO_INPUT_TYPES = {"displayLayer"}
 # （blend ノード）・.cdly（子のレイヤー）はメンバーの登録用（たどると blend ノードとの循環になる）
 _SOME_INPUTS = {"animLayer": re.compile(r"^(wgth|w|mt|m|sl|ovrd|pthg|ram|sam|pwth|pmte|sslo|chsl\[\d+\])$")}
 # カーブと、それを動かすノード（必要な入力だけをたどる）
-GEOMETRY_TYPES = {"nurbsCurve", "skinCluster", "tweak", "groupParts", "locator", "wire", "cluster", "transformGeometry",
-                  "rebuildCurve", "reverseCurve", "detachCurve", "subCurve"}
+GEOMETRY_TYPES = types_of_kind("geometry")    # カーブと、それを動かすノード（node_types.json の kind）
 _GEOMETRY_INPUTS = {
     "nurbsCurve": re.compile(r"^(cr|cp\[\d+\].*)$"),            # create・controlPoints
     "skinCluster": re.compile(r"^(ma\[\d+\]|pm\[\d+\]|ip\[\d+\]\.ig)$"),
