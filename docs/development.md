@@ -106,6 +106,17 @@ push と pull_request で、Python（numpy あり・なし）と Node.js のテ�
 
 Maya で書き出した正解（各フレームのワールド行列と表示。`tools/maya_export_truth.py`）とビューアの評価は `python -m ma_viewer verify scene.ma truth.json` で比べます。手順は [docs/maya_verification.md](maya_verification.md) です。
 
+## ノードの型を足す
+
+ノードの型の登録は `ma_viewer/node_types.json` の 1 か所で、Python（`rig.py`・`ma_scene.py`）と JS（`rig.js`・`mathNodes.js`）が同じものを読みます。
+
+- Maya 2024 以降の新しい計算ノード（sum・multiply など）は `math` に名前を足し、計算を `web_src/src/mathNodes.js` に書きます（`web_src/tests/math.test.mjs` が、登録と実装が同じかを確かめます）。
+- そのほかの評価する型は `types` に足します。`kind`（Python がたどる種類: utility・constraint・geometry）、`outputs`（出力の属性の名前の正規表現）、`defaults`（ファイルに値がないときの既定値）、`angles`（ファイルに度で書かれる角度の属性）を書き、計算を `web_src/src/rigMath.js`（計算ノード）などに書きます。
+- 1 段階目で setAttr を読み飛ばしてよい型は `skipAttrs` に足します。
+- 属性の長い名前 → 短い名前は `ma_viewer/attr_names.json`（`python tools/make_attr_names.py` で Autodesk の技術資料から作り直す）です。
+
+`RigEvaluator` は種類ごとのファイル（`rigPlayback.js`・`rigDag.js`・`rigPlug.js`・`rigNodeDef.js`・`rigMath.js`・`rigConstraints.js`・`rigIk.js`・`rigDisplay.js`）に分けてあり、`rig.js` の `installMethods` でプロトタイプに足します。使う `rig.js` の名前は import します（`web_src/tests/rigSplit.test.mjs` が漏れを確かめます）。
+
 ## ビューア（JS）の変更
 
 `web_src/src/` を編集したら、`web_src` で `npm run build` を実行します。`ma_viewer/web/viewer.bundle.js` が更新されます。配布には Node.js は不要で、ビルド済みの bundle を同梱しています。
