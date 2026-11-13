@@ -124,8 +124,7 @@ _STANDARD_ATTRS = _CHANNEL_KEYS | {"jo", "jox", "joy", "joz", "ra", "rax", "ray"
                                    } | set(_LIMIT_ENABLES)   # 移動・回転・スケールの制限（rest_entry の lim）
 # _CHANNEL_KEYS のうち、値は rest_entry で渡すもの（offsetParentMatrix も含む）
 
-_SETATTR_RE = re.compile(r"setAttr\b([^;]*);")
-_ADDATTR_RE = re.compile(r"addAttr\b([^;]*);")
+_SETATTR, _ADDATTR = ("setAttr",), ("addAttr",)
 _TG_RE = re.compile(r"^tg\[(\d+)\]\.(\w+)$")
 _RANGE_RE = re.compile(r"^(.*?)\[(\d+):(\d+)\](.*)$")   # 最初の範囲（wl[0].w[0:5] も）
 
@@ -664,20 +663,21 @@ def parse_attrs(text: str, node: MaNode, skip=(), angle_k: Optional[float] = Non
     angles = set()
     if angle_k is not None:
         for a, b in spans:
-            for m in _ADDATTR_RE.finditer(text, a, b):
-                for name in _addattr_angle_names(m.group(1)):
+            for _at, _cmd, body in R.iter_commands(text, a, b, _ADDATTR):
+                for name in _addattr_angle_names(body):
                     angles.update((name, R.normalize_attr(name)))   # setAttr の属性名は読み替える（roll → rol など）
     for a, b in spans:
-        for m in _ADDATTR_RE.finditer(text, a, b):
-            d = _addattr_default(m.group(1))
+        for _at, _cmd, body in R.iter_commands(text, a, b, _ADDATTR):
+            d = _addattr_default(body)
             if d is not None:
                 sn, ln, dv = d
                 for name in (sn, ln):
                     if name and _base(name) not in skip:
                         out[name] = dv
-    for m in (m for a, b in spans for m in _SETATTR_RE.finditer(text, a, b)):
-        sa = R.parse_setattr(m.group(1))
-        if sa is not None and not sa.plug.startswith(".") and named and any(a <= m.start() < b for a, b in named):
+    # 文の切り出しは 1 段階目と同じ（R.iter_commands。文字列の中の ; では切らない）
+    for at, _cmd, body in (x for a, b in spans for x in R.iter_commands(text, a, b, _SETATTR)):
+        sa = R.parse_setattr(body)
+        if sa is not None and not sa.plug.startswith(".") and named and any(a <= at < b for a, b in named):
             sa.plug = "." + R.split_node_attr(sa.plug)[1]    # "curveShapeOrig.cc" → ".cc"
         if sa is None or not sa.plug.startswith(".") or sa.type == "string":
             continue

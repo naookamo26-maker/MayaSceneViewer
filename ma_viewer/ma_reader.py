@@ -234,6 +234,24 @@ def statement_end(text: str, pos: int, end: int) -> int:
     return m.end() - 1 if m else len(text)
 
 
+def iter_commands(text: str, a: int, b: int, names) -> Iterator[Tuple[int, str, str]]:
+    """text[a:b] の文のうち、コマンドが names にあるものを順に返す: (コマンドの位置, コマンド, コマンドのあとの本文)。
+    文の区切りは 1 段階目の読み込みと同じ statement_end で探す（文字列の中の ; では切らない）。
+    a は文の始まりにする（ノードのブロックの範囲など）。終わりの ; のない文は返さない"""
+    find = text.find
+    match = _CMD_RE.match
+    pos = a
+    while pos < b:
+        semi = find(";", pos, b)
+        if semi < 0:
+            return
+        end = statement_end(text, pos, semi)
+        m = match(text, pos)
+        if m is not None and m.end() <= end and m.group(1) in names:
+            yield m.start(1), m.group(1), text[m.end():end]
+        pos = end + 1
+
+
 def strip_line_comments(text: str) -> str:
     """行頭の // コメントを除く。Maya のコメントはファイルの先頭と末尾の行頭にしかないので、
     行頭の // を文字列検索で探してその行だけ除く（ファイル全体に正規表現をかけるより速い）。

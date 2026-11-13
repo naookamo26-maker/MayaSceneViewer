@@ -52,7 +52,8 @@ _CM_PER_UNIT = {"mm": 0.1, "cm": 1.0, "m": 100.0, "km": 100000.0, "in": 2.54, "f
                 "yd": 91.44, "mi": 160934.4}
 
 # カーブのブロック内の setAttr: 属性名・添字（範囲）・値
-_SETATTR_RE = re.compile(r'setAttr\b[^";]*"\.(\w+)(?:\[(\d+)(?::(\d+))?\])?"([^;]*);')
+# setAttr の本文（コマンドのあと）: フラグ・プラグ（".ktv[0:3]" など）・値。文の切り出しは R.iter_commands
+_SETATTR_BODY_RE = re.compile(r'[^"]*"\.(\w+)(?:\[(\d+)(?::(\d+))?\])?"(.*)', re.S)
 _PLAYBACK_RE = re.compile(r"playbackOptions\b([^;\"]*)")
 _PLAYBACK_FLAGS = {"-min": "min", "-minTime": "min", "-max": "max", "-maxTime": "max",
                    "-ast": "animStart", "-animationStartTime": "animStart",
@@ -128,7 +129,10 @@ def parse_curve(text: str, node: MaNode) -> Curve:
     cv = Curve(node, CURVE_KINDS[node.type])
     pieces: List[Tuple[int, object]] = []            # (先頭の添字, [時刻, 値, 時刻, 値, ...])
     a, b = node.span
-    for m in _SETATTR_RE.finditer(text, a, b):
+    for _at, _cmd, stmt in R.iter_commands(text, a, b, ("setAttr",)):
+        m = _SETATTR_BODY_RE.match(stmt)
+        if m is None:
+            continue
         name, i0, body = m.group(1), m.group(2), m.group(4)
         start = int(i0) if i0 is not None else 0
         if name in ("ktv", "keyTimeValue"):

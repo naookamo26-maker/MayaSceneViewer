@@ -31,7 +31,8 @@ Maya で確かめられないことから、次のルールで進めます。
 | 2 | 1.32.0（段階 0〜1 と同じブランチ・同じ PR なので、1.31.7 を含めて 1 回だけ上げた）: M4・M5 は済み（下の「段階 2 の資料の確認」） |
 | 3 | 1.32.0 に含めた: P3・P5 は済み（付録 D のシーンで `wire_shapes` 1.34 → 0.016 秒、読み込み 2.57 → 1.17 秒。結果は処理時間の値のほかは同じ）。P2 は済み（コードは変えない。下の「P2 について」）。**P4 は未着手**（Maya で確かめられないため、計画どおり Maya が使えるようになるまで待つ）。**P1 は未着手**（優先度が低い。0-b のベンチとプロファイルから始める） |
 | IK | 1.33.0（計画の外。下の「IK（回転プレーン・シングルチェーン）の資料の確認」） |
-| 4〜5 | 未着手 |
+| 4 | D6・D8 は済み（版は上げない: 動作の変わらない内部の整理とドキュメント）。D6: `rig.parse_attrs`・`component_tags`・`animation.parse_curve` の setAttr・addAttr の切り出しを、1 段階目と同じ `ma_reader.iter_commands`（`statement_end`）にした（samples/ の結果と読み込みの速さは同じ）。D8: README の「対応範囲と制限」「構成」「開発」「動作確認の状況」を `docs/support_and_limits.md`・`docs/development.md`・`docs/verification_status.md` に分け、テストの件数・Maya での確認の行・構成のフォルダ名を直した。**D1・D5 は未着手**（大きいので PR を分ける） |
+| 5 | 未着手 |
 
 M2・M3 の資料の確認（Autodesk Maya 2024 のノードの技術資料。help.autodesk.com の Maya-Tech-Docs/Nodes の setRange.html・vectorProduct.html）:
 - M3: vectorProduct の normalizeOutput の説明に「内積（ベクトルを出さない）では、オンにすると出力が -1〜1 に収まる。実質的に入力ベクトルの間の角度の cos」とある。これに合わせて、op 1 で `.no` がオンなら入力を正規化してから内積にした（長さ 0 のベクトルは 0）。テストは `tests/test_node_math.py`（汎用の経路と専用の評価の両方）。
