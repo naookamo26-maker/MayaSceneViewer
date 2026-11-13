@@ -165,7 +165,7 @@ def curve_tan():
     return rows
 
 
-@check("orientConstraint の interpType（2・3 ターゲット）", "常に平均（符号をそろえた四元数の和の正規化）")
+@check("orientConstraint の interpType（2・3 ターゲット）", "Average と 2 ターゲットの Shortest（slerp）。ほかは平均（符号をそろえた四元数の和の正規化）")
 def constraint_interp():
     rows = []
     targets = ((0, 0, 0), (0, 170, 0), (0, -100, 30))
@@ -184,7 +184,7 @@ def constraint_interp():
     return rows
 
 
-@check("pairBlend の四元数補間（.ri 1）と回転順（.ro）", "回転順 xyz 固定")
+@check("pairBlend の四元数補間（.ri 1）と回転順（.ro）", "回転順 .ro で四元数にして slerp（rig.js の pairBlend）")
 def pair_blend_ro():
     rows = []
     for ro in range(6):
@@ -199,7 +199,7 @@ def pair_blend_ro():
     return rows
 
 
-@check("リファレンスの編集の属性名（長い名前か短い名前か）", "両方に対応（1.31.7）")
+@check("リファレンスの編集の属性名（長い名前か短い名前か）", "両方に対応（1.32.0）")
 def reference_edit_names():
     import tempfile
     tmp = tempfile.mkdtemp(prefix="maya_node_check_")

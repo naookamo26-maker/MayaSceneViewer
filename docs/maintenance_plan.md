@@ -27,12 +27,18 @@ Maya で確かめられないことから、次のルールで進めます。
 | 段階 | 状態 |
 |---|---|
 | 0 | 済み: CI（`.github/workflows/test.yml`）・大きなリグのベンチ（`tools/make_big_rig_sample.py`・`--file`。[benchmark.md](benchmark.md)）・正解と比べる道具（`tools/maya_export_truth.py`・`python -m ma_viewer verify`・`tools/maya_node_check.py`。[maya_verification.md](maya_verification.md)） |
-| 1 | 1.31.7: B1・B2・B3・M1・M3 は済み。M2 は変えない（下の「M2・M3 の資料の確認」） |
-| 2〜5 | 未着手 |
+| 1 | 1.32.0 に含めた（当初の予定は 1.31.7）: B1・B2・B3・M1・M3 は済み。M2 は変えない（下の「M2・M3 の資料の確認」） |
+| 2 | 1.32.0（段階 0〜1 と同じブランチ・同じ PR なので、1.31.7 を含めて 1 回だけ上げた）: M4・M5 は済み（下の「段階 2 の資料の確認」） |
+| 3〜5 | 未着手 |
 
 M2・M3 の資料の確認（Autodesk Maya 2024 のノードの技術資料。help.autodesk.com の Maya-Tech-Docs/Nodes の setRange.html・vectorProduct.html）:
 - M3: vectorProduct の normalizeOutput の説明に「内積（ベクトルを出さない）では、オンにすると出力が -1〜1 に収まる。実質的に入力ベクトルの間の角度の cos」とある。これに合わせて、op 1 で `.no` がオンなら入力を正規化してから内積にした（長さ 0 のベクトルは 0）。テストは `tests/test_node_math.py`（汎用の経路と専用の評価の両方）。
 - M2: setRange の資料にある式は `OutValue = Min + (((Value-OldMin)/(OldMax-OldMin)) * (Max-Min))` だけで、範囲外の値を止める（clamp）とは書かれていない。いまの実装（外へ延ばす）はこの式のとおりなので、変えない。Maya での実際の動作は「8」で確かめる。
+
+段階 2 の資料の確認（同じ技術資料の orientConstraint.html・parentConstraint.html・pairBlend.html）:
+- M4: interpType（.int。既定 1）は「0 No Flip（前のフレームに依存）・1 Average（四元数の平均）・2 Shortest（ターゲットの間の最短の経路）・3 Longest（最長の経路）・4 Cache（キャッシュした結果）。ターゲットが 1 つなら補間しない」。式どおりに評価できる 2 ターゲットの Shortest を最短の弧の slerp にした（汎用の経路の `constraintQuat` と専用の評価の `averageQuat`）。ほかは平均のまま、警告を出す（`animation._interp_warning`。リグの診断にも出る）。
+- M5: pairBlend の rotateOrder（.ro）は「動かされるノードの回転順。それに合わせて回転の値を出す」。四元数補間（.ri 1）の入力と出力に使うようにした。既定 0 では計算の手順も結果も変わらない。
+- テストは `tests/test_node_math.py`（汎用と専用の両方。期待値は Python で別に計算）。
 
 P2 について: 0-b のベンチで、再生キャッシュの実際のメモリ（キャッシュあり・なしの評価器の、GC 後の `heapUsed + external` の増加の差）を測り直すと、`playbackStats().bytes` の 1.04〜1.05 倍だった（[benchmark.md](benchmark.md)）。下の「2.2〜3.4 倍」は、キャッシュ以外の増加も含めて測っていたと考えられる。段階 3 の P2 の受け入れ（1.3 倍以内）は、いまの時点で満たしている。
 
@@ -245,12 +251,12 @@ Maya が使えるようになったら、0-c の `tools/maya_node_check.py` で�
 | 項目 | いまの実装 | 確かめること |
 |---|---|---|
 | setRange の範囲外（M2） | 外へ延ばす（資料の式のとおり。資料に clamp の記述はない） | oldMin・oldMax の外の入力の出力。oldMin > oldMax のとき |
-| vectorProduct の内積と `.no`（M3） | 1.31.7 で資料に合わせて直した（正規化した内積） | `.no` オン・op 1 の出力（資料どおりか）・長さ 0 のとき |
+| vectorProduct の内積と `.no`（M3） | 1.32.0 で資料に合わせて直した（正規化した内積） | `.no` オン・op 1 の出力（資料どおりか）・長さ 0 のとき |
 | 表示（bool）に入る小数 | 0.5 以上で表示（`rig.js:471`） | animCurveTU の値 0.3・0.5・0.7 が `.v` につながるときの表示 |
 | enum・整数の属性に入る小数 | `Math.round`（condition の `.op`、choice の `.s` など） | 1.4・1.5・1.6 を入れたときの扱い（丸め・切り捨て） |
 | multiplyDivide の 0 割り | 入力 1 をそのまま返す（`rig.js:2545`） | 割る数 0 のときの出力 |
 | `.tan` が書かれていないカーブ | オート（`animation.js:34`） | Maya が `.tan` を書かないのはどの種類のときか |
-| コンストレイントの補間の種類（M4） | 平均 | No Flip・Shortest・Longest・Cache の結果。3 ターゲット以上 |
+| コンストレイントの補間の種類（M4） | Average と 2 ターゲットの Shortest（slerp）。ほかは平均（警告） | No Flip・Longest・Cache の結果。3 ターゲット以上の Shortest。2 ターゲットの Shortest が slerp と一致するか |
 | cm 以外の単位の .ma の書式 | 対応しない | （参考）移動は作業単位、行列・頂点は cm で書かれるか |
 | リファレンスの編集の属性名 | B1 で両方に対応 | 編集の connectAttr・setAttr・プレースホルダーが長い名前で書かれるか |
 | Maya 内の収集の時間（P4） | 未計測 | 大きなシーンで、収集（画面が止まる時間）の内訳 |

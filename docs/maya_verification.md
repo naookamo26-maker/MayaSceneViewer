@@ -60,8 +60,8 @@ Maya が使えるようになったら、上から順に実行してください
 | enum・整数の属性に入る小数（condition の `.op`・choice の `.s`） | 四捨五入（`Math.round`） |
 | multiplyDivide の 0 割り | 入力 1 をそのまま返す |
 | `.tan` が書かれないカーブ（接線の既定の種類ごと） | オート |
-| orientConstraint の interpType（2・3 ターゲット） | 常に平均 |
-| pairBlend の四元数補間と回転順 | 回転順 xyz 固定 |
+| orientConstraint の interpType（2・3 ターゲット） | Average と 2 ターゲットの Shortest（slerp）。ほかは平均として評価 |
+| pairBlend の四元数補間と回転順 | 回転順 .ro で補間（資料に合わせた） |
 | リファレンスの編集の属性名（長い名前・短い名前） | 両方に対応 |
 | cm 以外の作業単位の .ma の書式 | 対応しない（警告） |
 

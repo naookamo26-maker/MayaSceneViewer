@@ -258,6 +258,26 @@ def curve_record(cv: Curve, offset: int, fps: float, ang_k: float, cm: float):
     return _scaled(cv.values, vk), chunk, fixed, meta
 
 
+# orientConstraint・parentConstraint の補間の種類（interpType。.int）。Autodesk の技術資料の名前
+INTERP_NAMES = {0: "No Flip", 1: "Average", 2: "Shortest", 3: "Longest", 4: "Cache"}
+
+
+def _interp_warning(g: dict) -> Optional[str]:
+    """補間の種類を、ビューアが式どおりに評価できないときの警告（なければ None）。
+    ビューアは 1 Average（平均）と、2 ターゲットの 2 Shortest（最短の弧の slerp）だけを式どおりに評価し、
+    ほか（No Flip・Longest・Cache、3 ターゲット以上の Shortest）は平均として評価する。ターゲットが 1 つなら補間しない"""
+    if g["type"] not in ("orientConstraint", "parentConstraint"):
+        return None
+    v = (g.get("attrs") or {}).get("int")
+    if not isinstance(v, (int, float)):
+        return None
+    interp, count = int(round(v)), len(g.get("targets") or [])
+    if interp == 1 or count <= 1 or (interp == 2 and count == 2):
+        return None
+    return ("アニメーション: %s の補間の種類 %s（ターゲット %d 個）は平均（Average）として評価します"
+            "（Maya と向きが違うことがあります）。" % (g["name"], INTERP_NAMES.get(interp, str(interp)), count))
+
+
 def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn = None) -> Optional[dict]:
     """表示するノード（out_index にあるノード）を動かすカーブを読み、共通 JSON の animation を作る。
 
@@ -355,6 +375,9 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         for g in graph_nodes:
             if g["type"].endswith("Constraint") and not g.get("targets"):
                 warnings.append("アニメーション: %s にターゲットがないため、評価しません。" % g["name"])
+            w = _interp_warning(g)
+            if w:
+                warnings.append(w)
     props_out = build_props(ms, info, out_index, curve_index) if has_graph else []
     # 値を求められないノード: バインドポーズの形で推定する（fallback）・推定もできない（tainted）
     fallback, tainted = [], []
