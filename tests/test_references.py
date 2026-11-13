@@ -197,6 +197,137 @@ class TestFiles(unittest.TestCase):
         text = "\n".join(_ref_edit_section(ms))
         self.assertIn("|m:gone（mRN の編集: setAttr 1 件）", text)
 
+    # 付録 A（docs/maintenance_plan.md の B1）: 独自の属性の、長い名前で書いた編集と短い名前で書いた接続
+    RIG_B1 = ('createNode transform -n "ctrl";\n'
+              '\taddAttr -ci true -sn "ikfk" -ln "ikFkBlend" -min 0 -max 1 -at "double";\n'
+              '\tsetAttr -k on ".ikfk";\n'
+              'createNode joint -n "jnt";\n'
+              'createNode multiplyDivide -n "md";\n'
+              '\tsetAttr ".i2" -type "float3" 10 10 10 ;\n'
+              'connectAttr "ctrl.ikfk" "md.i1x";\n'
+              'connectAttr "md.ox" "jnt.tx";\n')
+
+    def shot_b1(self, edits):
+        self.write("rig.ma", self.RIG_B1)
+        return self.write("shot.ma", 'createNode reference -n "rigRN";\n'
+                                     '\tsetAttr -s 2 ".phl";\n'
+                                     '\tsetAttr ".phl[1]" 0;\n'
+                                     '\tsetAttr ".ed" -type "dataReferenceEdits" \n'
+                                     '\t\t"rigRN"\n'
+                                     '\t\t"rigRN" 0\n'
+                                     '\t\t"rigRN" %d\n%s;\n'
+                                     'createNode animCurveTU -n "ctrl_ikFkBlend";\n'
+                                     '\tsetAttr ".tan" 2;\n'
+                                     '\tsetAttr -s 2 ".ktv[0:1]"  1 0 24 1;\n'
+                                     'createNode script -n "sceneConfigurationScriptNode";\n'
+                                     '\tsetAttr ".b" -type "string" "playbackOptions -min 1 -max 24 -ast 1 -aet 24 ";\n'
+                                     '\tsetAttr ".st" 6;\n'
+                                     'connectAttr "ctrl_ikFkBlend.o" "rigRN.phl[1]";\n'
+                                     % (len(edits), "\n".join("\t\t" + e for e in edits)),
+                          refs='file -rdi 1 -ns "rig" -rfn "rigRN" -op "v=0;" -typ "mayaAscii" "rig.ma";\n'
+                               'file -r -ns "rig" -dr 1 -rfn "rigRN" -op "v=0;" -typ "mayaAscii" "rig.ma";\n')
+
+    def test_custom_attr_long_name_edit(self):
+        """B1: 編集の長い名前（ctrl.ikFkBlend）を、リグの中の接続の短い名前（ctrl.ikfk）にそろえる。
+        カーブが再生され（警告なし）、編集の setAttr の値も短い名前で読める"""
+        p = self.shot_b1(['5 4 "rigRN" "|rig:ctrl.ikFkBlend" "rigRN.placeHolderList[1]" ""',
+                          '2 "|rig:ctrl" "ikFkBlend" " 0.5"'])
+        ms = parse_ma_file(p)
+        ctrl = ms.resolve("rig:ctrl")
+        self.assertEqual(ctrl.custom_names, {"ikFkBlend": "ikfk"})
+        self.assertEqual(ctrl.inputs["ikfk"][0].name, "ctrl_ikFkBlend")
+        self.assertNotIn("ikFkBlend", ctrl.inputs)
+        self.assertEqual(parse_attrs(ms.text, ctrl)["ikfk"], 0.5)
+        scene = load_ma(p, animation=True)
+        anim = scene["animation"]
+        self.assertEqual(len(anim["curves"]), 1)
+        self.assertFalse([w for w in anim.get("warnings", []) if "ikFkBlend" in w], anim.get("warnings"))
+        self.assertEqual(self.eval_tx(scene, "jnt", [1, 12.5, 24]), [0.0, 5.0, 10.0])
+
+    def eval_tx(self, scene, name, frames):
+        """ビューアの評価（Node.js）でのノードのワールドの移動 X。Node がなければテストを飛ばす"""
+        import json
+        import subprocess
+        node = shutil.which("node")
+        web = os.path.join(ROOT, "web_src")
+        if node is None or not os.path.isdir(os.path.join(web, "node_modules")):
+            self.skipTest("Node.js と web_src の npm ci が要る")
+        sj = os.path.join(self.dir, "scene.json")
+        with open(sj, "w", encoding="utf-8") as f:
+            json.dump(scene, f)
+        code = ("import { readFileSync } from 'node:fs';"
+                "import { makeViewer, viewerFrame } from './tools/verify.mjs';"
+                "const s = JSON.parse(readFileSync(process.argv[1], 'utf8')); const v = makeViewer(s);"
+                "const i = s.nodes.findIndex((n) => n.name.endsWith(process.argv[2]));"
+                "console.log(JSON.stringify(JSON.parse(process.argv[3]).map((f) => "
+                "+viewerFrame(v, f).world[i].elements[12].toFixed(6))));")
+        out = subprocess.run([node, "--input-type=module", "-e", code, sj, name, json.dumps(frames)], cwd=web,
+                             check=True, capture_output=True, text=True).stdout
+        return json.loads(out)
+
+    def test_custom_attr_short_name_edit_unchanged(self):
+        """短い名前で書いた編集は今までどおり"""
+        p = self.shot_b1(['5 4 "rigRN" "|rig:ctrl.ikfk" "rigRN.placeHolderList[1]" ""'])
+        ms = parse_ma_file(p)
+        self.assertEqual(ms.resolve("rig:ctrl").inputs["ikfk"][0].name, "ctrl_ikFkBlend")
+
+    def test_custom_names_in_skipped_block_and_compound(self):
+        """属性を読み飛ばすノード（計算ノード）のブロックの中の addAttr・複合の属性の子（-p）・ノード名つきの addAttr。
+        接続を書いた名前（長い・短い）によらず同じキーになる"""
+        p = self.write("a.ma", 'createNode multiplyDivide -n "md";\n'
+                               '\taddAttr -ci true -sn "amt" -ln "amount" -at "double";\n'
+                               '\taddAttr -ci true -uac -sn "vec" -ln "vector" -at "double3" -nc 3;\n'
+                               '\taddAttr -ci true -sn "vx" -ln "vectorX" -at "double" -p "vector";\n'
+                               '\tsetAttr ".i2" -type "float3" 1 1 1 ;\n'
+                               'createNode transform -n "a";\n'
+                               'createNode transform -n "b";\n'
+                               'addAttr -ci true -sn "gn" -ln "gain" -at "double" "b";\n'
+                               'connectAttr "a.tx" "md.amount";\n'
+                               'connectAttr "a.ty" "md.vector.vectorX";\n'
+                               'connectAttr "md.amt" "b.gain";\n')
+        ms = parse_ma_file(p)
+        md, b = ms.resolve("md"), ms.resolve("b")
+        self.assertEqual(md.custom_names, {"amount": "amt", "vector": "vec", "vectorX": "vx"})
+        self.assertEqual(sorted(md.inputs), ["amt", "vec.vx"])
+        self.assertEqual(b.inputs["gn"], (md, "amt"))
+
+    def test_custom_attr_added_by_edit(self):
+        """リファレンスの編集の addAttr（code 1）で足した属性: 長い名前で書いた接続も短い名前にそろえる"""
+        self.write("rig.ma", 'createNode transform -n "ctrl";\n')
+        p = self.write("shot.ma", 'createNode transform -n "drv";\n'
+                                  'createNode reference -n "rigRN";\n'
+                                  '\tsetAttr ".ed" -type "dataReferenceEdits" \n'
+                                  '\t\t"rigRN" "rigRN" 3\n'
+                                  '\t\t1 "|rig:ctrl" "extra" "ex" " -ci 1 -sn \\"ex\\" -ln \\"extra\\" -at \\"double\\""\n'
+                                  '\t\t3 "|drv.tx" "|rig:ctrl.extra" ""\n'
+                                  '\t\t2 "|rig:ctrl" "extra" " 2";\n',
+                       refs='file -r -ns "rig" -rfn "rigRN" "rig.ma";\n')
+        ms = parse_ma_file(p)
+        ctrl = ms.resolve("rig:ctrl")
+        self.assertEqual(ctrl.custom_names, {"extra": "ex"})
+        self.assertEqual(ctrl.inputs["ex"][0].name, "drv")
+        self.assertEqual(parse_attrs(ms.text, ctrl)["ex"], 2.0)
+
+    def test_unit_warnings(self):
+        """M1: cm 以外の作業単位は対応しない（警告だけ）。リファレンスは長さ・角度・時間の違いを警告する"""
+        path = os.path.join(self.dir, "inch.ma")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('requires maya "2024";\ncurrentUnit -l inch -a degree -t film;\ncreateNode joint -n "j";\n')
+        scene = load_ma(path)
+        self.assertTrue(any("作業単位が in です。cm 以外の作業単位には対応していません" in w and "保存し直して" in w
+                            for w in scene["warnings"]), scene["warnings"])
+        ref = os.path.join(self.dir, "ref.ma")
+        with open(ref, "w", encoding="utf-8") as f:
+            f.write('requires maya "2024";\ncurrentUnit -l centimeter -a radian -t ntsc;\ncreateNode joint -n "k";\n')
+        p = self.write("main.ma", "", refs='file -r -ns "r" -rfn "rRN" "ref.ma";\n')
+        ms = parse_ma_file(p)
+        w = [x for x in ms.warnings if "リファレンス「r」の作業単位" in x]
+        self.assertEqual(len(w), 1, ms.warnings)
+        self.assertIn("（角度 rad・時間 ntsc）がシーン（角度 deg・時間 film）と違います", w[0])
+        self.write("same.ma", 'requires maya "2024";\ncurrentUnit -l centimeter -a degree -t film;\n')
+        ms = parse_ma_file(self.write("main2.ma", "", refs='file -r -ns "s" -rfn "sRN" "same.ma";\n'))
+        self.assertFalse([x for x in ms.warnings if "作業単位" in x])
+
     def test_rename_prefix_and_default_namespace(self):
         """古い形式の -rpr（名前の前置き）と、名前空間の指定がないとき（ファイル名）"""
         self.write("prop.ma", 'createNode transform -n "p";\n')

@@ -15,7 +15,7 @@
 // 評価のあとで RigEvaluator がキャッシュから求める）。ポーズ確認の追加分があるあいだは RigEvaluator が評価する。
 import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { clampLimits, composeLocalMatrix, decomposeMaya, evaluateCurve, mayaEuler } from './animation.js';
-import { solveIKCore } from './rig.js';
+import { INTERP_SHORTEST, solveIKCore } from './rig.js';
 import { mathKind } from './mathNodes.js';
 import { enterDeep, leaveDeep, mayOverflow, newDeepState, runDeep, useOrder } from './deepEval.js';
 
@@ -165,8 +165,12 @@ function build(rig, deps, useMath) {
     const c = {
       id, type, driven, targets, total, rest,
       joInv: rest.joint && rest.jo ? eulerQuat(rest.jo, 0, new Quaternion()).invert() : null, ro: rest.ro || 0,
-      ref: null, stamp: -1, ct: [0, 0, 0], cr: [0, 0, 0], cs: [0, 0, 0], out: {},
+      ref: null, stamp: -1, ct: [0, 0, 0], cr: [0, 0, 0], cs: [0, 0, 0], out: {}, interp: 1,
     };
+    if (type === 'orientConstraint' || type === 'parentConstraint') {
+      if (!need('int')) return `${type} の時間で変わる補間の種類`;
+      c.interp = Math.round(rig.num(id, 'int', 1));
+    }
     const vecOf = (attr, def) => (need(attr) ? rig.vec(id, attr, def) : undefined);
     if (type === 'parentConstraint' || type === 'pointConstraint') {
       c.crp = vecOf('crp'); c.crt = vecOf('crt');
@@ -897,8 +901,12 @@ function targetMatrix(plan, ni, withScale, withInverseScale, m) {
   return m;
 }
 
-/** 重み付きの回転の平均（RigEvaluator の averageQuat と同じ）。targets の q を使う */
+/** 重み付きの回転の平均（RigEvaluator の constraintQuat と同じ。2 ターゲットの Shortest は slerp）。targets の q を使う */
 function averageQuat(c, out) {
+  if (c.interp === INTERP_SHORTEST && c.targets.length === 2) {
+    const [a, b] = c.targets, s = a.w + b.w;
+    if (s > EPS) return out.copy(a.q).slerp(b.q, b.w / s);
+  }
   const ref = c.targets[0].q;
   out.set(0, 0, 0, 0);
   for (const t of c.targets) {

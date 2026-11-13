@@ -242,22 +242,55 @@ def _curve_without_shape(ms: MaScene, curve: MaNode):
 def wire_shapes(ms: MaScene, wire: MaNode) -> Dict[int, MaNode]:
     """デフォーマ（wire・cluster）の出力（og[k]）の先にある、変形されるカーブ（ほかのデフォーマを経由してもよい）"""
     out: Dict[int, MaNode] = {}
-    for src, sattr, dst, _dattr in ms.connections:
-        m = _DEFORM_OUT.match(sattr) if src is wire else None
+    outgoing = ms.outgoing()                    # 元のノードごとの接続（接続のリストの順。全体を毎回走査しない）
+    for sattr, dst, _dattr in outgoing.get(id(wire), ()):
+        m = _DEFORM_OUT.match(sattr)
         if not m:
             continue
         x, seen = dst, set()
         while x is not None and x.type != "nurbsCurve" and id(x) not in seen:
             seen.add(id(x))
             nxt = None
-            for s2, a2, d2, _ in ms.connections:
-                if s2 is x and (a2 == "og" or a2.startswith("og[")):
+            for a2, d2, _ in outgoing.get(id(x), ()):
+                if a2 == "og" or a2.startswith("og["):
                     nxt = d2
                     break
             x = nxt
         if x is not None and x.type == "nurbsCurve" and x.parent is not None:
             out[int(m.group(1))] = x
     return out
+
+
+def _trampoline(gen):
+    """ジェネレーターを回し、その戻り値を返す。yield されたジェネレーター（下の呼び出し）は、その場で最後まで回し、
+    戻り値を yield の値として返す（v = yield sub(...)）。再帰と同じ順番で、Python のスタックは深くならない。
+    下の呼び出しで起きた例外は、呼んだ側のジェネレーターに投げ直す"""
+    stack = [gen]
+    value = None
+    error: Optional[BaseException] = None
+    while True:
+        top = stack[-1]
+        try:
+            if error is not None:
+                exc, error = error, None
+                sub = top.throw(exc)
+            else:
+                sub = top.send(value)
+        except StopIteration as stop:
+            stack.pop()
+            value = stop.value
+            if not stack:
+                return value
+            continue
+        except BaseException as exc:          # noqa: B036 - 呼んだ側へ伝える
+            stack.pop()
+            if not stack:
+                raise
+            error = exc
+            continue
+        value = None
+        if sub is not None:
+            stack.append(sub)
 
 
 def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
@@ -269,7 +302,9 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
     world_done: Set[int] = set()
     plug_done: Set[Tuple[int, str]] = set()
 
-    def add_edge(consumer: MaNode, key: str):
+    # 上流へたどる関数は、下の呼び出しを yield で返すジェネレーターにして、_trampoline で順に回す
+    # （長い鎖・深い階層でも Python の再帰の上限に当たらない。たどる順は再帰で書いたときと同じ）
+    def add_edge_g(consumer: MaNode, key: str):
         if (id(consumer), key) in plug_done:
             return
         plug_done.add((id(consumer), key))
@@ -277,23 +312,23 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
         info.edges.setdefault(id(consumer), {})[key] = (src, sattr)
         if _dag_like(consumer):
             info.dag[id(consumer)] = consumer
-        need_plug(src, sattr, consumer, key)
+        yield need_plug_g(src, sattr, consumer, key)
 
-    def need_channels(n: MaNode, base: Optional[str] = None):
+    def need_channels_g(n: MaNode, base: Optional[str] = None):
         for key in list(n.inputs):
             kb = _base(key)
             if kb in _CHANNEL_KEYS and (base is None or xform_group(kb) == xform_group(base)):
-                add_edge(n, key)
+                yield add_edge_g(n, key)
 
-    def need_world(n: Optional[MaNode]):
+    def need_world_g(n: Optional[MaNode]):
         while n is not None and id(n) not in world_done:
             world_done.add(id(n))
             if _dag_like(n):
                 info.dag[id(n)] = n
-            need_channels(n)
+            yield need_channels_g(n)
             n = n.parent
 
-    def need_plug(n: MaNode, attr: str, consumer: MaNode, ckey: str):
+    def need_plug_g(n: MaNode, attr: str, consumer: MaNode, ckey: str):
         if n.type in CURVE_TYPES:
             info.curves[id(n)] = n
             return
@@ -326,7 +361,7 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
                                 continue                 # メンバーの登録・クリップの管理用の接続
                         if _base(key) in _DISPLAY_KEYS:
                             continue                     # 表示だけの接続（コンストレイントのディスプレイレイヤーなど）
-                        add_edge(n, key)
+                        yield add_edge_g(n, key)
             return
         if n.type in GEOMETRY_TYPES:
             if id(n) not in info.dg:
@@ -334,31 +369,43 @@ def discover(ms: MaScene, keep: Set[int], geometry=(), props=()) -> GraphInfo:
                 pat = _GEOMETRY_INPUTS[n.type]
                 for key in list(n.inputs):
                     if pat is not None and pat.match(key):
-                        add_edge(n, key)
+                        yield add_edge_g(n, key)
                 if n.type in ("nurbsCurve", "locator"):
-                    need_world(n.parent)                 # ワールド空間（ws・worldPosition）は親の行列から
+                    yield need_world_g(n.parent)         # ワールド空間（ws・worldPosition）は親の行列から
                 if n.type in ("wire", "cluster"):
                     for shape in wire_shapes(ms, n).values():
-                        need_world(shape.parent)         # ワイヤーはワールド空間で変形する（変形するカーブの位置）
+                        yield need_world_g(shape.parent)  # ワイヤーはワールド空間で変形する（変形するカーブの位置）
             return
         if _value_shape(n):
             # シェイプの属性（カメラのシェイプの独自の属性など）: ファイルの値を読み、接続があればたどる
             info.dg[id(n)] = n
             if attr in n.inputs:
-                add_edge(n, attr)
+                yield add_edge_g(n, attr)
             return
         if _dag_like(n):
             info.dag[id(n)] = n
             b = _base(attr)
             if b in _MATRIX_PLUGS:
-                need_world(n)
+                yield need_world_g(n)
             elif b in _CHANNEL_KEYS:
-                need_channels(n, b)
+                yield need_channels_g(n, b)
             elif attr in n.inputs:                       # 独自の属性（IK/FK の切り替えなど）・表示（.v）
-                add_edge(n, attr)
+                yield add_edge_g(n, attr)
             return
         info.unsupported.setdefault(n.type, []).append((n.name, consumer.name, ckey))
         info.unsupported_at.append((n, consumer, ckey))
+
+    def add_edge(consumer: MaNode, key: str):
+        _trampoline(add_edge_g(consumer, key))
+
+    def need_channels(n: MaNode, base: Optional[str] = None):
+        _trampoline(need_channels_g(n, base))
+
+    def need_world(n: Optional[MaNode]):
+        _trampoline(need_world_g(n))
+
+    def need_plug(n: MaNode, attr: str, consumer: MaNode, ckey: str):
+        _trampoline(need_plug_g(n, attr, consumer, ckey))
 
     # 表示するノードのチャンネルの入力
     for n in ms.nodes:
@@ -479,8 +526,8 @@ def _drop_soft_unsupported(info: GraphInfo):
     bad_ids = {id(n) for n, _c, _k in info.unsupported_at}
     memo: Dict[Tuple[int, str], Optional[MaNode]] = {}
 
-    def bad_up(src: MaNode, sattr: str, seen: Set[Tuple[int, str]]) -> Optional[MaNode]:
-        """src.sattr の上流にある未対応のノード（なければ None）"""
+    def bad_up_g(src: MaNode, sattr: str, seen: Set[Tuple[int, str]]):
+        """src.sattr の上流にある未対応のノード（なければ None）。_trampoline で回す（長い鎖でも再帰しない）"""
         key = (id(src), sattr)
         if key in memo:
             return memo[key]
@@ -492,11 +539,14 @@ def _drop_soft_unsupported(info: GraphInfo):
         ups = _upstream_of(info, src, sattr)
         found = None
         for s2, a2 in ups:
-            found = bad_up(s2, a2, seen)
+            found = yield bad_up_g(s2, a2, seen)
             if found is not None:
                 break
         memo[key] = found
         return found
+
+    def bad_up(src: MaNode, sattr: str, seen: Set[Tuple[int, str]]) -> Optional[MaNode]:
+        return _trampoline(bad_up_g(src, sattr, seen))
 
     for cid, edges in list(info.edges.items()):
         consumer = info.dg.get(cid) or info.dag.get(cid)
@@ -516,12 +566,14 @@ def _drop_soft_unsupported(info: GraphInfo):
     seen: Set[Tuple[int, str]] = set()
 
     def mark(src: MaNode, sattr: str):
-        if (id(src), sattr) in seen:
-            return
-        seen.add((id(src), sattr))
-        reached.add(id(src))
-        for s2, a2 in _upstream_of(info, src, sattr):
-            mark(s2, a2)
+        stack = [(src, sattr)]                            # 集めるだけなので順番は問わない（スタックでたどる）
+        while stack:
+            x, a = stack.pop()
+            if (id(x), a) in seen:
+                continue
+            seen.add((id(x), a))
+            reached.add(id(x))
+            stack.extend(_upstream_of(info, x, a))
 
     for cid, edges in info.edges.items():
         n = info.dg.get(cid)
@@ -629,7 +681,7 @@ def parse_attrs(text: str, node: MaNode, skip=(), angle_k: Optional[float] = Non
             sa.plug = "." + R.split_node_attr(sa.plug)[1]    # "curveShapeOrig.cc" → ".cc"
         if sa is None or not sa.plug.startswith(".") or sa.type == "string":
             continue
-        key = R.normalize_attr(sa.plug[1:])
+        key = MaScene.custom_attr(node, R.normalize_attr(sa.plug[1:]))   # 独自の属性の長い名前 → 短い名前
         if not key or _base(key) in skip:
             continue
         vals = []
@@ -785,7 +837,9 @@ def analyze_fallback(info: GraphInfo, kept: List[MaNode], bind_ids: Set[int], ou
             for j in e["chain"][:-1]:
                 ik_of[id(j)] = e["handle"]
 
-    def guarded(kind, n, fn, optimistic):
+    # 互いに呼び合う関数は、下の呼び出しを yield で返すジェネレーターにして _trampoline で回す（長い鎖・深い階層でも
+    # 再帰の上限に当たらない）。呼ぶ順番・any の短絡・循環のときの値は、再帰で書いたときと同じ
+    def guarded_g(kind, n, calc, optimistic):
         key = (kind, id(n))
         if key in memo:
             return memo[key]
@@ -793,7 +847,7 @@ def analyze_fallback(info: GraphInfo, kept: List[MaNode], bind_ids: Set[int], ou
             return optimistic
         busy.add(key)
         try:
-            v = fn()
+            v = yield calc()
         finally:
             busy.discard(key)
         memo[key] = v
@@ -802,7 +856,13 @@ def analyze_fallback(info: GraphInfo, kept: List[MaNode], bind_ids: Set[int], ou
     def parent_of(n):
         return n.parent if n.parent is not None and n.flag("it", True) else None
 
-    def bad_source(src: MaNode, sattr: str) -> bool:
+    def any_bad_g(edges):
+        for s, a in edges:
+            if (yield bad_source_g(s, a)):
+                return True
+        return False
+
+    def bad_source_g(src: MaNode, sattr: str):
         if src.type in CURVE_TYPES:
             return False
         if src.type in SUPPORTED_DG or src.type in GEOMETRY_TYPES or src.node_def is not None:
@@ -810,43 +870,53 @@ def analyze_fallback(info: GraphInfo, kept: List[MaNode], bind_ids: Set[int], ou
                 return True
             if src.type == "expression" and id(src) not in info.expressions:
                 return True
-            if src.type in ("nurbsCurve", "locator") and tainted(src.parent):
+            if src.type in ("nurbsCurve", "locator") and (yield tainted_g(src.parent)):
                 return True
-            return guarded("dg", src, lambda: any(bad_source(s, a) for s, a in info.edges.get(id(src), {}).values()),
-                           False)
+            return (yield guarded_g("dg", src, lambda: any_bad_g(list(info.edges.get(id(src), {}).values())),
+                                    False))
         if _dag_like(src):
             b = _base(sattr)
             if b in _PARENT_MATRIX_PLUGS:
-                return tainted(parent_of(src))
+                return (yield tainted_g(parent_of(src)))
             if b in _MATRIX_PLUGS:
-                return tainted(src)
+                return (yield tainted_g(src))
             if b in _CHANNEL_KEYS:
-                return any(xform_group(k.split("（")[0]) == xform_group(b) for k in unresolved(src))   # "r（IK: …）" も
+                keys = yield unresolved_g(src)
+                return any(xform_group(k.split("（")[0]) == xform_group(b) for k in keys)   # "r（IK: …）" も
             e = info.edges.get(id(src), {}).get(sattr)
-            return bad_source(*e) if e else False
+            return (yield bad_source_g(*e)) if e else False
         if _value_shape(src):                            # シェイプの属性: 接続があればその先、なければファイルの値
             e = info.edges.get(id(src), {}).get(sattr)
-            return bad_source(*e) if e else False
+            return (yield bad_source_g(*e)) if e else False
         return True                                      # 未対応のノード
 
-    def unresolved(n: MaNode) -> List[str]:
+    def unresolved_g(n: MaNode):
         def calc():
-            keys = [k for k, (s, a) in info.edges.get(id(n), {}).items()
-                    if _base(k) in _CHANNEL_KEYS and bad_source(s, a)]
+            keys = []
+            for k, (s, a) in list(info.edges.get(id(n), {}).items()):
+                if _base(k) in _CHANNEL_KEYS and (yield bad_source_g(s, a)):
+                    keys.append(k)
             h = ik_of.get(id(n))
-            if h is not None and (tainted(h) or any(bad_source(s, a) for s, a in info.edges.get(id(h), {}).values())):
+            if h is not None and ((yield tainted_g(h))
+                                  or (yield any_bad_g(list(info.edges.get(id(h), {}).values())))):
                 keys.append("r（IK: %s）" % h.name)
             return keys
-        return guarded("unres", n, calc, [])
+        return (yield guarded_g("unres", n, calc, []))
 
-    def tainted(n: Optional[MaNode]) -> bool:
+    def tainted_g(n: Optional[MaNode]):
         if n is None:
             return False
 
         def calc():
-            bad = bool(unresolved(n)) or tainted(parent_of(n))
+            bad = bool((yield unresolved_g(n))) or (yield tainted_g(parent_of(n)))
             return bad and id(n) not in bind_ids          # バインドポーズの情報があれば推定できる
-        return guarded("taint", n, calc, False)
+        return (yield guarded_g("taint", n, calc, False))
+
+    def unresolved(n: MaNode) -> List[str]:
+        return _trampoline(unresolved_g(n))
+
+    def tainted(n: Optional[MaNode]) -> bool:
+        return _trampoline(tainted_g(n))
 
     fallback, tainted_out = [], []
     for n in kept:

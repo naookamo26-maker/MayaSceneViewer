@@ -57,7 +57,7 @@ class RefInfo:
         self.reason = ""                    # 読み込まなかった理由
         self.parent = parent
         self.node_count = 0
-        self.units: Optional[Tuple[str, str]] = None   # リファレンスのファイルの (長さ, 角度) の単位
+        self.units: Optional[Tuple[str, str, str]] = None   # リファレンスのファイルの (長さ, 角度, 時間) の単位
 
     def to_dict(self) -> dict:
         return {"namespace": self.namespace, "path": self.path, "resolved": self.resolved, "rfn": self.rfn,

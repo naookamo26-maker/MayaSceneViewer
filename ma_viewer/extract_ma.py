@@ -73,14 +73,18 @@ class _Ctx:
         m = self.world.get(id(n))
         if m is not None:
             return m
-        loc = self.local_matrix(n)
-        p = n.parent
-        if p is not None and n.flag("it", True):
-            m = M.mul(loc, self.world_matrix(p))
-        else:
-            m = loc
-        self.world[id(n)] = m
-        return m
+        # 祖先をたどり、まだ求めていないものを根の側から順に求める（深い階層でも再帰しない）
+        chain = []
+        x: Optional[MaNode] = n
+        while x is not None and id(x) not in self.world:
+            chain.append(x)
+            x = x.parent if x.flag("it", True) else None
+        for x in reversed(chain):
+            loc = self.local_matrix(x)
+            p = x.parent
+            m = M.mul(loc, self.world[id(p)]) if p is not None and x.flag("it", True) else loc
+            self.world[id(x)] = m
+        return self.world[id(n)]
 
 
 def _visible_self(n: MaNode) -> bool:
@@ -1309,7 +1313,8 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
                 % (t, "、".join(names[:5]), " ほか %d 個" % (len(names) - 5) if len(names) > 5 else ""),
                 key="#自作の transform " + t)
     if ms.linear_unit != "cm":
-        ms.warn("作業単位が %s です。値はファイルに書かれたまま表示します（cm 以外は未検証）。" % ms.linear_unit)
+        ms.warn("作業単位が %s です。cm 以外の作業単位には対応していません。移動の値と、行列・頂点の値の単位が"
+                "合わないため、形が崩れます。Maya で作業単位を cm にして保存し直してください。" % ms.linear_unit)
     if ms.angular_unit not in ("deg", "rad"):
         ms.warn("角度単位 %s は未対応です（度として扱います）。" % ms.angular_unit)
         ctx.ang = math.pi / 180.0
@@ -1563,25 +1568,29 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     # バインド時のワールド行列（情報源のないノードはファイル上のローカル値のまま親についていく）
     bind_local: Dict[int, List[float]] = {}
 
-    def bind_visit(x: MaNode, parent_world: List[float]):
-        if id(x) not in keep or x.is_shape:
-            return
-        pw = parent_world if (x.parent is not None and x.flag("it", True)) else M.identity()
-        b = bind_src.get(id(x))
-        if b and b[1] == "world":
-            W = b[0]
-            bind_local[id(x)] = M.mul(W, M.inverse_or_identity(pw))
-        elif b:
-            W = M.mul(b[0], pw)
-            bind_local[id(x)] = b[0]
-        else:
-            W = M.mul(ctx.local_matrix(x), pw)
-        for c in x.children:
-            bind_visit(c, W)
+    def bind_visit(root: MaNode):
+        # 深さ優先（子は書かれた順）。深い階層でも再帰しないようにスタックでたどる
+        stack = [(root, M.identity())]
+        while stack:
+            x, parent_world = stack.pop()
+            if id(x) not in keep or x.is_shape:
+                continue
+            pw = parent_world if (x.parent is not None and x.flag("it", True)) else M.identity()
+            b = bind_src.get(id(x))
+            if b and b[1] == "world":
+                W = b[0]
+                bind_local[id(x)] = M.mul(W, M.inverse_or_identity(pw))
+            elif b:
+                W = M.mul(b[0], pw)
+                bind_local[id(x)] = b[0]
+            else:
+                W = M.mul(ctx.local_matrix(x), pw)
+            for c in reversed(x.children):
+                stack.append((c, W))
 
     for n in ms.nodes:
         if n.parent is None and n.is_dag:
-            bind_visit(n, M.identity())
+            bind_visit(n)
 
     # 「ファイルの値」でも、接続で値が決まるノードはバインドポーズの姿勢に置き換える
     node_of = {id(x): x for x in ms.nodes}
@@ -1613,9 +1622,10 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
     out_nodes = []
     index_of: Dict[int, int] = {}
 
-    def visit(x: MaNode, parent_idx: int):
+    def visit(x: MaNode, parent_idx: int) -> bool:
+        """1 ノードを出力に足す（子は呼んだ側がたどる）。足したら True"""
         if id(x) not in keep or x.is_shape:
-            return
+            return False
         idx = len(out_nodes)
         index_of[id(x)] = idx
         ro_i = int(x.xattrs.get("ro", 0) or 0)
@@ -1694,12 +1704,18 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         if id(x) in driven:
             entry["drivenBy"] = driven[id(x)]
         out_nodes.append(entry)
-        for c in x.children:
-            visit(c, idx)
+        return True
 
+    # 出力の番号は深さ優先（子は書かれた順）。深い階層でも再帰しないようにスタックでたどる
     for n in ms.nodes:
         if n.parent is None and n.is_dag:
-            visit(n, -1)
+            stack = [(n, -1)]
+            while stack:
+                x, parent_idx = stack.pop()
+                if visit(x, parent_idx):
+                    idx = len(out_nodes) - 1
+                    for c in reversed(x.children):
+                        stack.append((c, idx))
 
     lap("ノードの出力（行列）")
     # --- メッシュの出力 ---------------------------------------------------

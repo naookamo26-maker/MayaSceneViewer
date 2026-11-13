@@ -426,6 +426,20 @@ function radQuat(rad, target = new Quaternion()) {
   return target.setFromEuler(_e.set(rad[0], rad[1], rad[2], 'ZYX'));     // 回転順 xyz
 }
 
+/**
+ * orientConstraint・parentConstraint の回転の補間（interpType。.int）。Autodesk の技術資料: 0 No Flip・1 Average（四元数の
+ * 平均。既定）・2 Shortest（ターゲットの間の最短の経路）・3 Longest・4 Cache。ターゲットが 1 つなら補間しない。
+ * 式が分かる 2 ターゲットの Shortest だけを最短の弧の slerp にし、ほかは平均にする（警告は Python 側で出す）
+ */
+export const INTERP_SHORTEST = 2;
+export function constraintQuat(list, interp) {
+  if (interp === INTERP_SHORTEST && list.length === 2) {
+    const s = list[0].w + list[1].w;
+    if (s > EPS) return list[0].q.clone().slerp(list[1].q, list[1].w / s);
+  }
+  return averageQuat(list);
+}
+
 /** 重み付きの回転の平均（符号をそろえた四元数の和を正規化） */
 function averageQuat(list) {
   const out = new Quaternion(0, 0, 0, 0);
@@ -2134,12 +2148,17 @@ export class RigEvaluator {
         const a = new Vector3(...this.vec(id, 'i1')), b = new Vector3(...this.vec(id, 'i2'));
         const op = Math.round(this.num(id, 'op', 1));
         let r;
-        if (op === 1) { const d = a.dot(b); r = new Vector3(d, d, d); }
-        else if (op === 2) r = a.clone().cross(b);
+        const no = this.num(id, 'no', 0) >= 0.5;
+        if (op === 1) {
+          // 内積で normalizeOutput がオンなら、入力を正規化してからの内積（角度の cos。-1〜1）。長さ 0 のベクトルは 0。
+          // 出典: Autodesk Maya ノードの技術資料「vectorProduct」（normalizeOutput の説明）
+          const d = no ? a.clone().normalize().dot(b.clone().normalize()) : a.dot(b);
+          r = new Vector3(d, d, d);
+        } else if (op === 2) r = a.clone().cross(b);
         else if (op === 3) r = a.clone().applyMatrix3(new Matrix3().setFromMatrix4(this.mat(id, 'm')));   // 移動を除く
         else if (op === 4) r = a.clone().applyMatrix4(this.mat(id, 'm'));
         else r = a.clone();
-        if (this.num(id, 'no', 0) >= 0.5 && op !== 1) r.normalize();
+        if (no && op !== 1) r.normalize();
         o = expand('o', r.toArray(), XYZ);
         break;
       }
@@ -2617,8 +2636,11 @@ export class RigEvaluator {
     if (rotMode === 1 || rotMode === 2) {                  // 回転は入力 1（または 2）だけ
       or = (rotMode === 1 ? r1 : r2).slice();
     } else if (Math.round(this.num(id, 'ri', 0)) === 1) {        // 四元数で補間
-      const q = radQuat(r1).slerp(radQuat(r2, new Quaternion()), w);
-      const e = new Euler().setFromQuaternion(q, 'ZYX');
+      // 入力と出力の回転は、動かされるノードの回転順（.ro。Autodesk の技術資料「pairBlend」の rotateOrder）
+      const order = THREE_ORDER[Math.round(this.num(id, 'ro', 0))] || 'ZYX';
+      const quat = (r) => new Quaternion().setFromEuler(_e.set(r[0], r[1], r[2], order));
+      const q = quat(r1).slerp(quat(r2), w);
+      const e = new Euler().setFromQuaternion(q, order);
       or = [e.x, e.y, e.z];
     } else {
       // 回転のモードは .rm（3 軸に共通。Maya の技術資料）で、ここでは混ぜる（0）。
@@ -2689,7 +2711,8 @@ export class RigEvaluator {
       case 'orientConstraint': {
         // ターゲットの向き = targetParentMatrix · 親のスケールの打ち消し · jointOrient · rotate（rotateAxis は入力にない）
         const o = this.vec(id, 'o');
-        const q = averageQuat(targets.map((t) => ({ q: rotationOf(this.targetMatrix(t.ni, false, true)), w: t.w })));
+        const q = constraintQuat(targets.map((t) => ({ q: rotationOf(this.targetMatrix(t.ni, false, true)), w: t.w })),
+          Math.round(this.num(id, 'int', 1)));
         return expand('cr', toRotate(q.multiply(radQuat(o)), { compensate: true }), XYZ);
       }
       case 'parentConstraint': {
@@ -2706,7 +2729,7 @@ export class RigEvaluator {
         });
         const pos = new Vector3();
         for (const { m, w } of list) pos.addScaledVector(positionOf(m, _v.clone()), w / total);
-        const q = averageQuat(list.map(({ m, w }) => ({ q: rotationOf(m), w })));
+        const q = constraintQuat(list.map(({ m, w }) => ({ q: rotationOf(m), w })), Math.round(this.num(id, 'int', 1)));
         const lr = g.attrs && Array.isArray(g.attrs.lr) ? g.attrs.lr : null;
         return expandInto(expand('ct', toTranslate(pos), XYZ), 'cr', toRotate(q, { ref: lr }), XYZ);
       }
