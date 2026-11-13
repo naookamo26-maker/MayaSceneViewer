@@ -4,6 +4,8 @@
 // 属性の名前・既定値は Maya 2027 の技術資料（ノードの属性表）に合わせる。
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { composeMaya, decomposeMaya, mayaEuler } from './animation.js';
+// 対応する型の名前の一覧は Python と共通（ma_viewer/node_types.json。整備計画の D5）
+import NODE_TYPES from '../../ma_viewer/node_types.json' with { type: 'json' };
 
 const XYZ = ['x', 'y', 'z'];
 const XYZW = ['x', 'y', 'z', 'w'];
@@ -38,8 +40,11 @@ const DL_TYPES = [
   'normalizeDL', 'pointMatrixMultDL', 'powerDL', 'rotateVectorDL', 'roundDL', 'rowFromMatrixDL', 'scaleFromMatrixDL',
   'sinDL', 'smoothStepDL', 'subtractDL', 'sumDL', 'tanDL', 'translationFromMatrixDL', 'truncateDL',
 ];
-/** 対応する型の名前（Python の rig.py の MATH_TYPES と同じにする） */
-export const MATH_TYPES = [...KINDS, ...DL_TYPES, 'addDL', 'multDL'];
+/** 対応する型の名前（ma_viewer/node_types.json の math。Python の rig.py の MATH_TYPES も同じものを読む）。
+ * 計算の実装（KINDS・DL_TYPES と mathKind）と食い違わないことは web_src/tests/math.test.mjs で確かめる */
+export const MATH_TYPES = [...NODE_TYPES.math];
+/** 実装している型（テスト用） */
+export const IMPLEMENTED_MATH_TYPES = [...KINDS, ...DL_TYPES, 'addDL', 'multDL'];
 
 /** 出力の属性の名前（これ以外の名前で計算結果を探さない） */
 export function mathOutputs(kind) {
