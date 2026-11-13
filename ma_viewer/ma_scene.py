@@ -150,11 +150,14 @@ def xform_group(key: str) -> Optional[str]:
 
 
 _BOOL_ATTRS = {"v", "io", "it", "ssc", "ove", "ovv", "lodv", "ovrgbf", "tmp"}   # tmp: テンプレート
-_INT_ATTRS = {"ro", "ovc", "ovdt"}    # ovc・ovdt: 描画のオーバーライドの色番号・表示の種類
+_INT_ATTRS = {"ro", "ovc", "ovdt", "vnm", "dsm"}    # ovc・ovdt: 描画のオーバーライドの色番号・表示の種類。vnm・dsm: メッシュ
 _FLOAT_ATTRS = {"radi"}
 # ノードの種類ごとに使う属性（これ以外の setAttr は値を解析せずに読み飛ばす）
 _XFORM_NAMES = _VEC3_ATTRS | set(_COMPONENT_ATTRS) | set(_LIMIT_ENABLES) | _BOOL_ATTRS | _INT_ATTRS | _FLOAT_ATTRS | {"bps", "opm", "ovrgb"}
-_MESH_NAMES = _XFORM_NAMES | {"vt", "pt", "ed", "fc", "cuvs", "uvst", "iog"}
+_MESH_NAMES = _XFORM_NAMES | {"vt", "pt", "ed", "fc", "cuvs", "uvst", "iog",
+                              "vnm", "dsm"}    # 頂点法線の重みの種類・スムーズメッシュプレビュー（mesh の技術資料）
+# メッシュのユーザーが指定した法線（.n）の値のうち、Maya が計算した法線の印（1e+20）でない数
+_USER_NORMAL_RE = re.compile(r'(?<![\w.+-])(?!1e\+0*20\b|1\.?0*e\+0*20\b)[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?(?![\w"])')
 _SKIN_NAMES = _XFORM_NAMES | {"wl", "pm", "gm", "skm", "mi", "nw", "wd"}
 _PLUG_RE = re.compile(r'"([^"]*)"')
 
@@ -638,6 +641,12 @@ class MaScene:
                 cut = i
         base = R.ATTR_ALIASES.get(attr[:cut], attr[:cut])
         if node.mesh is not None:
+            if base in ("n", "normals"):
+                # ユーザーが指定した法線（ロックした法線）。値は読まない（使わない）が、あれば警告する
+                body = rest[m.end():]
+                if _USER_NORMAL_RE.search(body):
+                    node.xattrs["userNormals"] = True
+                return False
             return base in _MESH_NAMES
         if node.skin is not None:
             return base in _SKIN_NAMES

@@ -767,7 +767,7 @@ function buildMesh(m, meshIndex, nodeObjects, poolMaterials, materialFor, option
   const vertexCount = positions.length / 3;
   const tri = triangulatePolygons(positions, m.counts, m.indices);
   const wire = buildWireIndex(m.counts, m.indices, vertexCount);
-  const cn = cornerNormals(positions, m.counts, m.indices, m.hardEdges, vertexCount);
+  const cn = cornerNormals(positions, m.counts, m.indices, m.hardEdges, vertexCount, m.normalMethod ?? 3);
   const topo = buildRenderTopology(m, vertexCount, cn.group);
   const { origOf, firstRender, cornerRender } = topo;
   // 表示用頂点の法線（同じまとまりのコーナーは同じ法線）

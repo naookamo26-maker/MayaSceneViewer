@@ -32,7 +32,7 @@ Maya で確かめられないことから、次のルールで進めます。
 | 3 | 1.32.0 に含めた: P3・P5 は済み（付録 D のシーンで `wire_shapes` 1.34 → 0.016 秒、読み込み 2.57 → 1.17 秒。結果は処理時間の値のほかは同じ）。P2 は済み（コードは変えない。下の「P2 について」）。**P4 は未着手**（Maya で確かめられないため、計画どおり Maya が使えるようになるまで待つ）。**P1 は未着手**（優先度が低い。0-b のベンチとプロファイルから始める） |
 | IK | 1.33.0（計画の外。下の「IK（回転プレーン・シングルチェーン）の資料の確認」） |
 | 4 | D6・D8 は済み（版は上げない: 動作の変わらない内部の整理とドキュメント）。D6: `rig.parse_attrs`・`component_tags`・`animation.parse_curve` の setAttr・addAttr の切り出しを、1 段階目と同じ `ma_reader.iter_commands`（`statement_end`）にした（samples/ の結果と読み込みの速さは同じ）。D8: README の「対応範囲と制限」「構成」「開発」「動作確認の状況」を `docs/support_and_limits.md`・`docs/development.md`・`docs/verification_status.md` に分け、テストの件数・Maya での確認の行・構成のフォルダ名を直した。D1 は 1.34.0 で済み（下の「D1 の作り」）。**D5 は未着手** |
-| 5 | 未着手 |
+| 5 | 1.35.0: M6 は済み（下の「M6 の資料の確認」） |
 
 M2・M3 の資料の確認（Autodesk Maya 2024 のノードの技術資料。help.autodesk.com の Maya-Tech-Docs/Nodes の setRange.html・vectorProduct.html）:
 - M3: vectorProduct の normalizeOutput の説明に「内積（ベクトルを出さない）では、オンにすると出力が -1〜1 に収まる。実質的に入力ベクトルの間の角度の cos」とある。これに合わせて、op 1 で `.no` がオンなら入力を正規化してから内積にした（長さ 0 のベクトルは 0）。テストは `tests/test_node_math.py`（汎用の経路と専用の評価の両方）。
@@ -48,6 +48,8 @@ IK（回転プレーン・シングルチェーン）の資料の確認（技術
 - 資料にあるがビューアが使わないもの: ジョイントの jointType（.jt・.jtx/.jty/.jtz・.dm。ない回転の軸は IK で使わない）、stiffness（.st）、回転の制限の減衰（.ndr/.nst・.xdr/.xst）。式がないので計算は変えず、IK のチェーンで使われていれば警告とリグの診断に出すようにした（`rig.ik_joint_notes`）。シングルチェーンは「位置を合わせたあと、開始 → エフェクタの線のまわりに開始ジョイントを回して、エフェクタの向きをハンドルにできるだけ合わせる」とあるが、ビューアはハンドルの向きを使わない（FK の形の面を保つ）。基準の向き（作ったときのずれをどう扱うか）が書かれていないので、変えていない。
 - 資料に式がないもの: twist の符号と 0 の基準の面（reference plane の決め方）、面が反転する境目。
 - 式のないものは「8」に足し、`tools/maya_node_check.py` に確かめる項目（`rp_twist`・`sc_handle_rotation`・`ik_joint_type`）を足した。
+
+M6 の資料の確認（技術資料「mesh」）: vertexNormalMethod（.vnm。既定 3）は「頂点法線は隣の面の法線を合わせて求める。Unweighted は単純な平均、Angle Weighted は面の辺がその頂点で作る角度の重み付き和、Area Weighted は面積の重み付き和、Angle And Area Weighted（既定）は角度と面積の両方を使った重み付き和」。両方を使う式は書かれていないので、角度 × 面積とした（`web_src/src/normals.js`。Maya で確かめる項目に足した）。.vnm を共通 JSON の meshes の `normalMethod` に出す（既定の 3 は省く）。ユーザーが指定した法線（.n。1e+20 は Maya が計算した法線の印）とスムーズメッシュプレビュー（.dsm）は使わず、警告を出す。頂点カラーは対応しない（計画どおり）。
 
 D1 の作り: 型ごとの属性名の表 `ma_viewer/attr_names.json` を、Autodesk の技術資料（Maya 2024。2024 にない DL 版の計算ノードは 2026）の属性の表から `tools/make_attr_names.py` で作った（型 214・名前約 3,000。親の型の名前は親に入れ、`attr_names.names_for` が合わせる）。資料にない型（四元数ノード・inverseMatrix などのプラグインのノード）は全体の表のまま。`MaScene.attr_key` が、型の表 → 独自の属性 → 全体の表（`ATTR_ALIASES`）の順に読み替え、接続・プレースホルダー・リファレンスの編集・`parse_attrs` で使う（1 段階目の setAttr は Maya が短い名前で書くので変えていない）。`rig.js` の既定値の表の名前がすべて資料の名前にあることを確かめた。Maya が使えるなら `tools/maya_dump_attr_names.py`（未実行）で Maya から作り直せる。
 
@@ -276,6 +278,7 @@ Maya が使えるようになったら、0-c の `tools/maya_node_check.py` で�
 | シングルチェーン IK のハンドルの回転 | 使わない（FK の形の面を保つ） | `sc_handle_rotation`: ハンドルを回したとき、チェーンが開始 → エフェクタの線のまわりに回るか・作ったときのずれの扱い |
 | IK と jointType・stiffness・damping | 使わない（警告） | `ik_joint_type`: 肘を z だけにしたとき・stiffness を付けたときの解 |
 | Maya 内の収集の時間（P4） | 未計測 | 大きなシーンで、収集（画面が止まる時間）の内訳 |
+| 頂点法線の重み（角度と面積） | 角度 × 面積 | Maya の頂点法線（`polyNormalPerVertex -q -xyz`）と、ビューアの法線の比較 |
 | 全体の再現性 | 保存時のフレームだけ | 0-c の正解の JSON との差（実物のリグで） |
 
 ## 付録 A. B1 を再現するシーン
