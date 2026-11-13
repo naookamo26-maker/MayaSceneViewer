@@ -369,9 +369,10 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
 
     graph_nodes, moving = [], set()
     if has_graph:
-        from .rig import build_graph, graph_warnings
+        from .rig import build_graph, graph_warnings, ik_joint_notes
         graph_nodes, moving = build_graph(ms, info, out_index, curve_index, getattr(ms, "curve_shapes", {}))
         warnings.extend(graph_warnings(info))
+        warnings.extend(ik_joint_notes(ms, info))
         for g in graph_nodes:
             if g["type"].endswith("Constraint") and not g.get("targets"):
                 warnings.append("アニメーション: %s にターゲットがないため、評価しません。" % g["name"])
