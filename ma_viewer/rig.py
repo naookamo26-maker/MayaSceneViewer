@@ -33,6 +33,7 @@
 """
 from __future__ import annotations
 
+import os
 import re
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -44,24 +45,16 @@ CURVE_TYPES = {"animCurveTL", "animCurveTA", "animCurveTU"}
 # lookAt: Maya の「カメラとエイム」のグループ。aimConstraint と同じ働きに、視線のまわりの回転（twist）を足したもの
 CONSTRAINT_TYPES = {"pointConstraint", "orientConstraint", "parentConstraint", "scaleConstraint", "poleVectorConstraint",
                     "aimConstraint", "lookAt"}
+def _load_node_types() -> dict:
+    """ノードの型の登録（ma_viewer/node_types.json。JS と共通の一覧）"""
+    import json
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "node_types.json"), encoding="utf-8") as f:
+        return json.load(f)
+
+
 # Maya 2024 以降の計算ノード・Maya 2020 以降の行列ノード・時間の変換・Maya 2026 からの単位つきの版（DL）と、
 # 名前の変わった addDL・multDL（評価は web_src/src/mathNodes.js。JS の MATH_TYPES と同じ一覧にする）
-MATH_TYPES = {
-    "absolute", "absoluteDL", "acos", "acosDL", "addDL", "addMatrix", "aimMatrix", "and", "angleBetween",
-    "angleBetweenDL", "asin", "asinDL", "atan", "atan2", "atan2DL", "atanDL", "average", "averageDL",
-    "axisFromMatrix", "axisFromMatrixDL", "blendMatrix", "ceil", "ceilDL", "clampRange", "clampRangeDL",
-    "columnFromMatrix", "columnFromMatrixDL", "cos", "cosDL", "crossProduct", "crossProductDL", "determinant",
-    "determinantDL", "divide", "divideDL", "dotProduct", "dotProductDL", "equal", "equalDL", "floor", "floorDL",
-    "greaterThan", "greaterThanDL", "holdMatrix", "inverseLerp", "inverseLerpDL", "length", "lengthDL", "lerp",
-    "lerpDL", "lessThan", "lessThanDL", "log", "logDL", "max", "maxDL", "min", "minDL", "modulo", "moduloDL",
-    "multDL", "multiply", "multiplyDL", "multiplyPointByMatrix", "multiplyPointByMatrixDL", "multiplyVectorByMatrix",
-    "multiplyVectorByMatrixDL", "negate", "negateDL", "normalize", "normalizeDL", "not", "or", "parentMatrix", "pi",
-    "pickMatrix", "pointMatrixMult", "pointMatrixMultDL", "power", "powerDL", "rotateVector", "rotateVectorDL",
-    "rotationFromMatrix", "round", "roundDL", "rowFromMatrix", "rowFromMatrixDL", "scaleFromMatrix",
-    "scaleFromMatrixDL", "sin", "sinDL", "smoothStep", "smoothStepDL", "subtract", "subtractDL", "sum", "sumDL",
-    "tan", "tanDL", "timeToUnitConversion", "translationFromMatrix", "translationFromMatrixDL", "truncate",
-    "truncateDL", "unitToTimeConversion", "wtAddMatrix",
-}
+MATH_TYPES = set(_load_node_types()["math"])    # ma_viewer/node_types.json（JS の mathNodes.js と共通）
 UTILITY_TYPES = {"unitConversion", "pairBlend", "blendColors", "multiplyDivide", "plusMinusAverage", "reverse",
                  "condition", "multMatrix", "decomposeMatrix", "composeMatrix", "inverseMatrix", "fourByFourMatrix",
                  "quatToEuler", "eulerToQuat", "quatProd", "quatInvert", "quatNormalize", "quatSlerp", "curveInfo",

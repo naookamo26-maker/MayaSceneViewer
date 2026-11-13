@@ -55,7 +55,9 @@ class AttrNamesTest(unittest.TestCase):
 
     def test_spec_includes_table(self):
         with open(os.path.join(ROOT, "packaging", "maya_ma_viewer.spec"), encoding="utf-8") as f:
-            self.assertIn("attr_names.json", f.read())          # exe に同梱する
+            text = f.read()
+        self.assertIn("attr_names.json", text)                  # exe に同梱する
+        self.assertIn("node_types.json", text)
 
 
 if __name__ == "__main__":

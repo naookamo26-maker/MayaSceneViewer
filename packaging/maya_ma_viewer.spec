@@ -31,6 +31,7 @@ a = Analysis(
           + [(p, os.path.join("ma_viewer", "node_defs")) for p in sorted(glob.glob(os.path.join(NODE_DEFS, "*.json")))]
           + [(ICON, os.path.join("ma_viewer", "icon"))]       # ウィンドウのアイコン（resources.icon_path が読む）
           + [(os.path.join(ROOT, "ma_viewer", "attr_names.json"), "ma_viewer")]   # 型ごとの属性名（attr_names.py が読む）
+          + [(os.path.join(ROOT, "ma_viewer", "node_types.json"), "ma_viewer")]   # ノードの型の登録（rig.py が読む）
           + PILLOW_METADATA,
     # Pillow はパッケージ（.msv）のテクスチャを WebP にするのに使う（ma_viewer/package.py が関数の中で import する）
     hiddenimports=["PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebChannel",

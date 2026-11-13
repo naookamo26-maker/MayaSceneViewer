@@ -8,7 +8,7 @@ import path from 'node:path';
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { AnimationClip } from '../src/animation.js';
 import { RigEvaluator } from '../src/rig.js';
-import { MATH_TYPES } from '../src/mathNodes.js';
+import { IMPLEMENTED_MATH_TYPES, MATH_TYPES, mathKind } from '../src/mathNodes.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const data = JSON.parse(readFileSync(path.resolve(here, '../../samples/math_sample.json'), 'utf8'));
@@ -37,11 +37,10 @@ test('新しいノードは評価できるノード（警告しない）', () =>
   }
 });
 
-test('Python と JS の対応する型の一覧が同じ', () => {
-  const py = readFileSync(path.resolve(here, '../../ma_viewer/rig.py'), 'utf8');
-  const block = /MATH_TYPES = \{([^}]*)\}/.exec(py)[1];
-  const list = [...block.matchAll(/"(\w+)"/g)].map((m) => m[1]).sort();
-  assert.deepEqual(list, [...MATH_TYPES].sort());
+test('型の登録（ma_viewer/node_types.json。Python と共通）と、JS の計算の実装が同じ', () => {
+  // 登録した型はすべて計算の種類がある・実装した型はすべて登録してある（型を足すときは両方）
+  assert.deepEqual([...MATH_TYPES].sort(), [...IMPLEMENTED_MATH_TYPES].sort());
+  for (const t of MATH_TYPES) assert.ok(mathKind(t), t);
 });
 
 test('スカラー: addDL・multDL・sum・multiply・subtract・clampRange・smoothStep・divide → lerp', () => {
