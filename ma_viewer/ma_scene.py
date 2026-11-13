@@ -743,6 +743,15 @@ class MaScene:
         return True
 
     @staticmethod
+    def attr_key(node: "MaNode", attr: str) -> str:
+        """接続・リファレンスの編集・setAttr の読み直しで使う属性のキー: 型の表（attr_names。Autodesk の技術資料）→
+        独自の属性（custom_names）→ 全体の表（ma_reader.ATTR_ALIASES）の順に、長い名前を短い名前にする"""
+        from .attr_names import names_for
+        tbl = names_for(node.type)
+        key = R.normalize_attr(attr) if tbl is None else R.normalize_attr_typed(attr, tbl)
+        return MaScene.custom_attr(node, key)
+
+    @staticmethod
     def custom_attr(node: "MaNode", key: str) -> str:
         """正規化した属性のキー（R.normalize_attr）の、独自の属性の長い名前を短い名前にする
         （"ikFkBlend" → "ikfk"。複合の属性の子の名前も）"""
@@ -792,11 +801,11 @@ class MaScene:
         src = self.resolve(self.qualify(sn))
         dst = self.resolve(self.qualify(dn))
         if src is None and dst is not None and connect and self.qualify(sn).lstrip(":") == "time1":
-            self.time_inputs.append((dst, self.custom_attr(dst, R.normalize_attr(dattr))))
+            self.time_inputs.append((dst, self.attr_key(dst, dattr)))
         if src is None or dst is None:
             return
-        key = self.custom_attr(dst, R.normalize_attr(dattr))
-        skey = self.custom_attr(src, R.normalize_attr(sattr))
+        key = self.attr_key(dst, dattr)
+        skey = self.attr_key(src, sattr)
         if connect:
             dst.inputs[key] = (src, skey)
             conns = self.connections
@@ -1059,7 +1068,7 @@ class MaScene:
             if node is None:
                 return self.qualify(args[0])
             value = args[2] if args[2][:1].isspace() else " " + args[2]
-            attr = self.custom_attr(node, args[1])          # 独自の属性の長い名前は短い名前にする
+            attr = self.attr_key(node, args[1])             # 長い名前（標準の属性・独自の属性）は短い名前にする
             self.current = None
             prefix, self.prefix = self.prefix, ""          # ノードはフルパスで指す（名前空間は付いている）
             self.handle("setAttr", '"%s.%s"%s' % (node.path, attr, value))
@@ -1132,7 +1141,7 @@ class MaScene:
             nname, attr = R.split_node_attr(plug)
             node = self.resolve(nname)
             if node is not None and attr:
-                real[key] = (node, self.custom_attr(node, R.normalize_attr(attr)))
+                real[key] = (node, self.attr_key(node, attr))
         if not real:
             return
         out = []

@@ -305,5 +305,54 @@ class IkJointNotesTest(unittest.TestCase):
         self.assertFalse([w for w in self.load('\tsetAttr ".jt" -type "string" "xyz";') if "IK ハンドル" in w])
 
 
+@unittest.skipUnless(NODE and os.path.isdir(os.path.join(WEB, "node_modules")), "Node.js と web_src の npm ci が要る")
+class LongAttrNamesTest(unittest.TestCase):
+    """標準のノードの属性を長い名前で書いた接続（スクリプトで作ったリグなど）も、短い名前で書いたときと同じに評価する（D1）。
+    型で意味の違う名前（unitConversion の input は i。全体の表では ip）も型の表で読み替える"""
+
+    def eval(self, text):
+        tmp = tempfile.mkdtemp()
+        try:
+            path = os.path.join(tmp, "s.ma")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            scene = load_ma(path, animation=True)
+            sj = os.path.join(tmp, "s.json")
+            with open(sj, "w", encoding="utf-8") as f:
+                json.dump(scene, f)
+            code = ("import { readFileSync } from 'node:fs';"
+                    "import { makeViewer, viewerFrame } from './tools/verify.mjs';"
+                    "const s = JSON.parse(readFileSync(process.argv[1], 'utf8')); const v = makeViewer(s);"
+                    "const r = {}; for (const f of [1, 24]) { const w = viewerFrame(v, f).world;"
+                    "  s.nodes.forEach((n, i) => { (r[n.name] = r[n.name] || []).push(+w[i].elements[12].toFixed(6)); }); }"
+                    "console.log(JSON.stringify(r));")
+            out = subprocess.run([NODE, "--input-type=module", "-e", code, sj], cwd=WEB, check=True,
+                                 capture_output=True, text=True).stdout
+            return scene, json.loads(out)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def scene(self, long_names: bool) -> str:
+        n = (lambda ln, sn: ln if long_names else sn)
+        return (HEAD + 'createNode transform -n "ctrl";\n'
+                'createNode animCurveTL -n "ctrl_tx";\n\tsetAttr -s 2 ".ktv[0:1]"  1 0 24 10;\n'
+                'createNode multiplyDivide -n "md";\n\tsetAttr ".i2" -type "float3" 3 1 1 ;\n'
+                'createNode unitConversion -n "uc";\n\tsetAttr ".cf" 0.5;\n'
+                'createNode joint -n "j1";\ncreateNode joint -n "j2";\n'
+                'connectAttr "ctrl_tx.%s" "ctrl.%s";\n' % (n("output", "o"), n("translateX", "tx"))
+                + 'connectAttr "ctrl.%s" "md.%s";\n' % (n("translateX", "tx"), n("input1X", "i1x"))
+                + 'connectAttr "md.%s" "j1.%s";\n' % (n("outputX", "ox"), n("translateX", "tx"))
+                + 'connectAttr "ctrl.%s" "uc.%s";\n' % (n("translateX", "tx"), n("input", "i"))
+                + 'connectAttr "uc.%s" "j2.%s";\n' % (n("output", "o"), n("translateX", "tx")))
+
+    def test_long_names_match_short(self):
+        _s1, short = self.eval(self.scene(False))
+        scene, long_ = self.eval(self.scene(True))
+        self.assertEqual(short["j1"], [0.0, 30.0])
+        self.assertEqual(short["j2"], [0.0, 5.0])
+        self.assertEqual(long_, short)
+        self.assertFalse(scene["animation"].get("warnings"), scene["animation"].get("warnings"))
+
+
 if __name__ == "__main__":
     unittest.main()

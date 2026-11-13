@@ -3,3 +3,4 @@ __pycache__/
 web_src/node_modules/
 build/
 dist/
+.attr_names_cache/
