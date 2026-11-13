@@ -54,8 +54,8 @@ Maya が使えるようになったら、上から順に実行してください
 
 | 項目 | いまのビューアの実装 |
 |---|---|
-| setRange の oldMin・oldMax の外の入力・oldMin > oldMax | 外へ延ばす |
-| vectorProduct の内積（op 1）と normalizeOutput | 正規化しない |
+| setRange の oldMin・oldMax の外の入力・oldMin > oldMax | 外へ延ばす（資料の式のとおり） |
+| vectorProduct の内積（op 1）と normalizeOutput | 正規化した内積（角度の cos。長さ 0 は 0。資料に合わせた） |
 | 表示（bool）に入る小数（0.3・0.5・0.7） | 0.5 以上で表示 |
 | enum・整数の属性に入る小数（condition の `.op`・choice の `.s`） | 四捨五入（`Math.round`） |
 | multiplyDivide の 0 割り | 入力 1 をそのまま返す |

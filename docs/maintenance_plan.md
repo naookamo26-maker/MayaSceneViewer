@@ -27,8 +27,12 @@ Maya で確かめられないことから、次のルールで進めます。
 | 段階 | 状態 |
 |---|---|
 | 0 | 済み: CI（`.github/workflows/test.yml`）・大きなリグのベンチ（`tools/make_big_rig_sample.py`・`--file`。[benchmark.md](benchmark.md)）・正解と比べる道具（`tools/maya_export_truth.py`・`python -m ma_viewer verify`・`tools/maya_node_check.py`。[maya_verification.md](maya_verification.md)） |
-| 1 | 1.31.7: B1・B2・B3・M1 は済み。**M2・M3 は保留**（作業した環境から Autodesk の資料（help.autodesk.com）を開けなかったため、ルールどおり変えていない。「8」に残す） |
+| 1 | 1.31.7: B1・B2・B3・M1・M3 は済み。M2 は変えない（下の「M2・M3 の資料の確認」） |
 | 2〜5 | 未着手 |
+
+M2・M3 の資料の確認（Autodesk Maya 2024 のノードの技術資料。help.autodesk.com の Maya-Tech-Docs/Nodes の setRange.html・vectorProduct.html）:
+- M3: vectorProduct の normalizeOutput の説明に「内積（ベクトルを出さない）では、オンにすると出力が -1〜1 に収まる。実質的に入力ベクトルの間の角度の cos」とある。これに合わせて、op 1 で `.no` がオンなら入力を正規化してから内積にした（長さ 0 のベクトルは 0）。テストは `tests/test_node_math.py`（汎用の経路と専用の評価の両方）。
+- M2: setRange の資料にある式は `OutValue = Min + (((Value-OldMin)/(OldMax-OldMin)) * (Max-Min))` だけで、範囲外の値を止める（clamp）とは書かれていない。いまの実装（外へ延ばす）はこの式のとおりなので、変えない。Maya での実際の動作は「8」で確かめる。
 
 P2 について: 0-b のベンチで、再生キャッシュの実際のメモリ（キャッシュあり・なしの評価器の、GC 後の `heapUsed + external` の増加の差）を測り直すと、`playbackStats().bytes` の 1.04〜1.05 倍だった（[benchmark.md](benchmark.md)）。下の「2.2〜3.4 倍」は、キャッシュ以外の増加も含めて測っていたと考えられる。段階 3 の P2 の受け入れ（1.3 倍以内）は、いまの時点で満たしている。
 
@@ -240,8 +244,8 @@ Maya が使えるようになったら、0-c の `tools/maya_node_check.py` で�
 
 | 項目 | いまの実装 | 確かめること |
 |---|---|---|
-| setRange の範囲外（M2） | 外へ延ばす（資料で確かめられたら段階 1 で直す） | oldMin・oldMax の外の入力の出力。oldMin > oldMax のとき |
-| vectorProduct の内積と `.no`（M3） | 正規化しない（同上） | `.no` オン・op 1 の出力 |
+| setRange の範囲外（M2） | 外へ延ばす（資料の式のとおり。資料に clamp の記述はない） | oldMin・oldMax の外の入力の出力。oldMin > oldMax のとき |
+| vectorProduct の内積と `.no`（M3） | 1.31.7 で資料に合わせて直した（正規化した内積） | `.no` オン・op 1 の出力（資料どおりか）・長さ 0 のとき |
 | 表示（bool）に入る小数 | 0.5 以上で表示（`rig.js:471`） | animCurveTU の値 0.3・0.5・0.7 が `.v` につながるときの表示 |
 | enum・整数の属性に入る小数 | `Math.round`（condition の `.op`、choice の `.s` など） | 1.4・1.5・1.6 を入れたときの扱い（丸め・切り捨て） |
 | multiplyDivide の 0 割り | 入力 1 をそのまま返す（`rig.js:2545`） | 割る数 0 のときの出力 |

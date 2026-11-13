@@ -57,7 +57,7 @@ def _at(f, attr):
     return v[0] if isinstance(v, list) and len(v) == 1 else v
 
 
-@check("setRange: oldMin・oldMax の外の入力", "外へ延ばす（rig.js の setRange）")
+@check("setRange: oldMin・oldMax の外の入力", "外へ延ばす（rig.js の setRange。資料の式のとおり）")
 def set_range():
     _new()
     rows = []
@@ -73,7 +73,7 @@ def set_range():
     return rows
 
 
-@check("vectorProduct: 内積（op 1）と normalizeOutput", "正規化しない（rig.js の vectorProduct）")
+@check("vectorProduct: 内積（op 1）と normalizeOutput", "正規化した内積（角度の cos。長さ 0 は 0。rig.js の vectorProduct）")
 def vector_product():
     _new()
     rows = []

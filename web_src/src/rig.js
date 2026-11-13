@@ -2134,12 +2134,17 @@ export class RigEvaluator {
         const a = new Vector3(...this.vec(id, 'i1')), b = new Vector3(...this.vec(id, 'i2'));
         const op = Math.round(this.num(id, 'op', 1));
         let r;
-        if (op === 1) { const d = a.dot(b); r = new Vector3(d, d, d); }
-        else if (op === 2) r = a.clone().cross(b);
+        const no = this.num(id, 'no', 0) >= 0.5;
+        if (op === 1) {
+          // 内積で normalizeOutput がオンなら、入力を正規化してからの内積（角度の cos。-1〜1）。長さ 0 のベクトルは 0。
+          // 出典: Autodesk Maya ノードの技術資料「vectorProduct」（normalizeOutput の説明）
+          const d = no ? a.clone().normalize().dot(b.clone().normalize()) : a.dot(b);
+          r = new Vector3(d, d, d);
+        } else if (op === 2) r = a.clone().cross(b);
         else if (op === 3) r = a.clone().applyMatrix3(new Matrix3().setFromMatrix4(this.mat(id, 'm')));   // 移動を除く
         else if (op === 4) r = a.clone().applyMatrix4(this.mat(id, 'm'));
         else r = a.clone();
-        if (this.num(id, 'no', 0) >= 0.5 && op !== 1) r.normalize();
+        if (no && op !== 1) r.normalize();
         o = expand('o', r.toArray(), XYZ);
         break;
       }
