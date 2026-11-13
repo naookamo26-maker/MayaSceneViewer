@@ -600,6 +600,16 @@ def _addattr_angle_names(rest: str) -> List[str]:
     return [x for x in (opts.get("-sn") or opts.get("-shortName"), opts.get("-ln") or opts.get("-longName")) if x]
 
 
+def _addattr_names(rest: str) -> List[str]:
+    """addAttr の短い名前と長い名前（あるものだけ）"""
+    toks = R.tokenize(rest)
+    opts, _pos = R.parse_flags(toks, ["-sn", "-shortName", "-ln", "-longName", "-dv", "-defaultValue", "-at",
+                                      "-attributeType", "-dt", "-dataType", "-p", "-parent", "-nc", "-numberOfChildren",
+                                      "-min", "-max", "-smn", "-smx", "-en", "-enumName", "-h", "-k", "-ci", "-dcb"])
+    return [x for x in (opts.get("-sn") or opts.get("-shortName"), opts.get("-ln") or opts.get("-longName"))
+            if isinstance(x, str) and x]
+
+
 def _addattr_default(rest: str):
     """addAttr の (短い名前, 長い名前, 既定値 -dv)。既定値のない（数値でない）属性は None"""
     toks = R.tokenize(rest)
@@ -637,15 +647,28 @@ def parse_attrs(text: str, node: MaNode, skip=(), angle_k: Optional[float] = Non
         for a, b in spans:
             for _at, _cmd, body in R.iter_commands(text, a, b, _ADDATTR):
                 for name in _addattr_angle_names(body):
-                    angles.update((name, R.normalize_attr(name)))   # setAttr の属性名は読み替える（roll → rol など）
+                    # setAttr・接続と同じ読み替え（roll → rol など）。読み替える前の名前も残す
+                    angles.update((name, MaScene.attr_key(node, name)))
+    # 独自の属性（addAttr）のキー。読み替えると標準の属性と同じ名前になっても（transform の radius → radi など）、
+    # skip（DAG ノードの標準の属性）では除かない
+    custom: Set[str] = set()
     for a, b in spans:
         for _at, _cmd, body in R.iter_commands(text, a, b, _ADDATTR):
             d = _addattr_default(body)
             if d is not None:
                 sn, ln, dv = d
                 for name in (sn, ln):
-                    if name and _base(name) not in skip:
-                        out[name] = dv
+                    if not name:
+                        continue
+                    # 読む側（setAttr・接続）は attr_key で読み替えたキーで引くので、同じキーにも入れる
+                    # （独自の属性の名前が全体の表と同じとき: roll → rol・twist → twi など）
+                    for key in (name, MaScene.attr_key(node, name)):
+                        if key:
+                            custom.add(key)
+                            out[key] = dv
+            elif skip:
+                for name in _addattr_names(body):
+                    custom.update((name, MaScene.attr_key(node, name)))
     # 文の切り出しは 1 段階目と同じ（R.iter_commands。文字列の中の ; では切らない）
     for at, _cmd, body in (x for a, b in spans for x in R.iter_commands(text, a, b, _SETATTR)):
         sa = R.parse_setattr(body)
@@ -654,7 +677,7 @@ def parse_attrs(text: str, node: MaNode, skip=(), angle_k: Optional[float] = Non
         if sa is None or not sa.plug.startswith(".") or sa.type == "string":
             continue
         key = MaScene.attr_key(node, sa.plug[1:])        # 長い名前（型の表・独自の属性）→ 短い名前
-        if not key or _base(key) in skip:
+        if not key or (_base(key) in skip and _base(key) not in custom):
             continue
         vals = []
         toks = sa.values()

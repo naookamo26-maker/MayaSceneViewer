@@ -197,6 +197,24 @@ class TestUnits(unittest.TestCase):
         self.assertEqual(unpack(anim["values"]), [1, 2, 3])
         self.assertEqual(unpack(anim["tangentTypes"]), [0, 0, 0, 0, 0, 5])
 
+    def test_tangent_type_numbers(self):
+        """接線の種類は資料の番号（27 = オートミックス・28 = オートイーズ）のまま渡す。カスタム（19〜26）・予約（30 以上）は
+        警告を出し、1 バイトに入らない番号は 255（表にない種類）にする"""
+        body = ('createNode joint -n "j";\n'
+                'createNode animCurveTU -n "j_sx";\n'
+                '\tsetAttr -s 3 ".ktv[0:2]"  1 1 5 2 9 3;\n'
+                '\tsetAttr -s 3 ".kit[0:2]"  27 28 19;\n'
+                '\tsetAttr -s 3 ".kot[0:2]"  27 28 300;\n'
+                'connectAttr "j_sx.o" "j.sx";\n')
+        _sc, anim = scene_from_text(body)
+        self.assertEqual(unpack(anim["tangentTypes"]), [27, 27, 28, 28, 19, 255])
+        msgs = [w for w in anim["warnings"] if "カスタムの接線の種類" in w]
+        self.assertEqual(len(msgs), 2, anim["warnings"])
+        self.assertIn("19", msgs[0])
+        self.assertIn("300", msgs[1])
+        _sc, anim = scene_from_text(body.replace(" 19;", " 18;").replace(" 300;", " 29;"))
+        self.assertFalse([w for w in anim["warnings"] if "接線" in w], anim["warnings"])
+
     def test_current_time(self):
         body = ('createNode joint -n "j";\n'
                 'createNode animCurveTU -n "j_sx";\n\tsetAttr -s 2 ".ktv[0:1]"  1 1 9 3;\n'

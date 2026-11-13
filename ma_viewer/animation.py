@@ -230,6 +230,27 @@ def _scaled(values, k: float):
     return [v * k for v in values]
 
 
+# 接線の種類のうち、ビューアが計算の決まった種類として扱うもの（web_src/src/animation.js の TANGENT）。
+# Autodesk の技術資料（animCurve の tangentType）: 18 = Auto、27 = AutoMix、28 = AutoEase、29 = AutoCustom、
+# 19〜26 はユーザーが使えるカスタムの種類、30〜63 は予約、64〜32767 は ADN で予約するカスタムの種類
+KNOWN_TANGENTS = frozenset((1, 2, 3, 5, 6, 7, 9, 10, 16, 17, 18, 27, 28, 29))
+UNKNOWN_TANGENT_BYTE = 255        # 1 バイトに入らない種類（256 以上）。表にないので、ビューアはスプラインとして評価する
+
+
+def _type_byte(v: int) -> int:
+    """接線の種類を共通 JSON の 1 バイトにする（0〜255 はそのまま。それ以外は表にない種類 255）。"""
+    return v if 0 <= v <= 255 else UNKNOWN_TANGENT_BYTE
+
+
+def custom_tangent_types(cv: Curve) -> set:
+    """カーブで使われている、カスタム・予約の接線の種類（19〜26・30 以上。スプラインとして評価する）。"""
+    found = set()
+    for v in (cv.tan, *cv.kit.values(), *cv.kot.values()):
+        if 19 <= v <= 26 or v >= 30:
+            found.add(v)
+    return found
+
+
 def curve_record(cv: Curve, offset: int, fps: float, ang_k: float, cm: float):
     """1 本のカーブを共通 JSON の形にする（単位をそろえる）。
 
@@ -242,10 +263,10 @@ def curve_record(cv: Curve, offset: int, fps: float, ang_k: float, cm: float):
     chunk = bytearray(2 * n)
     for k, v in cv.kit.items():
         if 0 <= k < n:
-            chunk[2 * k] = v & 255
+            chunk[2 * k] = _type_byte(v)
     for k, v in cv.kot.items():
         if 0 <= k < n:
-            chunk[2 * k + 1] = v & 255
+            chunk[2 * k + 1] = _type_byte(v)
     fixed: List[float] = []
     fx = cv.fixed
     nan = float("nan")
@@ -345,6 +366,7 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
     range_chunks = []                                      # 時間のカーブのキーの時刻（再生範囲に使う）
     types = bytearray()                                    # キーごとに (入りの種類, 出の種類)。0 はカーブの既定
     fixed: List[float] = []
+    custom_tangents: Dict[int, int] = {}                  # カスタム・予約の接線の種類 → カーブの数
     offset = 0
     total = max(len(order), 1)
     for ci, node in enumerate(order):
@@ -355,6 +377,8 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         if n == 0:
             continue
         values, chunk, fixed_k, meta = curve_record(cv, offset, fps, ang_k, cm)
+        for v in custom_tangent_types(cv):
+            custom_tangents[v] = custom_tangents.get(v, 0) + 1
         times_chunks.append(cv.times)
         trax = id(node) in trax_curves
         if cv.kind[0] == "T" and not trax:
@@ -370,6 +394,9 @@ def build_animation(ms: MaScene, out_index: Dict[int, int], progress: ProgressFn
         for ni, attr in targets.get(id(node), ()):
             channels_out.append({"node": ni, "attr": attr, "curve": index})
         offset += n
+    for v in sorted(custom_tangents):
+        warnings.append("アニメーション: カスタムの接線の種類 %d はスプラインとして評価します（カーブ %d 本）。"
+                        % (v, custom_tangents[v]))
 
     graph_nodes, moving = [], set()
     if has_graph:

@@ -83,6 +83,19 @@ python tests/qt_rig_test.py                             # リグ（IK・コン�
 python tests/qt_playback_cache_test.py                  # リグの再生キャッシュ（空き時間に作る・ポーズ確認で作り直す・元に戻すと残したものを使う・キーのある値は作り直さない・タイムラインの帯と表示・上限の設定と保存）
 ```
 
+画面のない環境（Linux のサーバー・CI）では、仮の画面（Xvfb）と、WebGL のソフトウェア描画（SwiftShader）で Qt のテストを動かします。
+GPU がないと、指定なしでは「WebGL のコンテキストを作れない」で失敗します。Qt の xcb プラグインが読めない
+（「Could not load the Qt platform plugin "xcb"」）ときは、足りないライブラリを `ldd` で調べます（`libxcb-icccm4`・`libxcb-keysyms1` など）。
+CI の qt のジョブ（手動実行。`.github/workflows/test.yml`）も同じ指定です。
+
+```
+apt-get install -y xvfb libegl1 libgl1 libnss3 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1
+pip install PySide6 numpy Pillow
+export QTWEBENGINE_DISABLE_SANDBOX=1
+export QTWEBENGINE_CHROMIUM_FLAGS="--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader --ignore-gpu-blocklist --enable-webgl"
+for t in tests/qt_*.py; do xvfb-run -a python "$t" || echo "失敗: $t"; done
+```
+
 アニメーションカーブの評価は、Autodesk の animX（Maya と同じ評価をする公開ライブラリ）を書き写した参照実装と `web_src/tests/animx.test.mjs` で比べています。Maya との違いの調査結果と、Maya で評価した値と比べる手順（`tools/maya_anim_curve_check.py`・`tools/compare_anim_curves.py`）は [docs/animation_curves.md](animation_curves.md) にあります。
 
 リグの評価には、どんなグラフでも評価できる汎用の経路（`web_src/src/rig.js` の RigEvaluator）と、扱える種類のノードだけでできたリグを計画どおりに速く計算する専用の評価（`web_src/src/rigCompiled.js`。最初の評価のあとで計画を作り、ポーズ確認の追加分がないあいだ使う）があります。専用の評価は汎用の経路と同じ数式を同じ順番で計算し、結果はビット単位で同じです（`web_src/tests/compiled.test.mjs`。サンプルは `python tools/make_compiled_sample.py`）。キーで動くノードと、parent・point・orient・scale・aim コンストレイント、lookAt（world up がシーンの上・ベクトル・なし）で動くノードと、IK（回転プレーン・シングルチェーン。poleVectorConstraint の極ベクトルを含む。解き方の関数は汎用の経路と共有）で動くジョイントと、計算ノード（multiplyDivide・plusMinusAverage・decomposeMatrix・アニメーションレイヤー（animBlendNode・animLayer）・expression（入力とフレームだけで出力が決まる式）・Maya 2024 以降の計算ノード・自作ノードの定義など。入力だけで出力が決まるもの。計算は汎用の経路のものを、値の読み方だけ差し替えて使う）・DAG ノードの直接の接続で動くノードを専用に計算し、それ以外のノード（スプライン IK・カーブの形を読むノード・形の変わるカーブなど）は汎用の経路に任せて、同じフレームの中で混ぜて計算します（任せた理由と件数は `rig.compiledPlan.delegated`）。専用に計算できるノードがない・評価が循環するリグは汎用の経路だけで評価します（`rig.compiledReason` に理由。原因のノードの名前と、同じ条件のノードの数も入れます。評価のプロファイラの「専用の評価」にも出ます）。動かないノード（HumanIK の部位に割り当てていない途中のジョイントなど）が、親のスケールの打ち消しの元を持っていても、その元を先に計算して専用の評価で扱います（`web_src/tests/compiled.test.mjs`。サンプルは `python tools/make_static_is_sample.py`）。リグの評価の速さは `cd web_src && npm run bench` で測れます（samples/ のアニメーションを全フレーム評価し、1 フレームあたりの時間を 1 周目・2 周目以降・再生キャッシュなし・汎用の経路だけ・時間で変わらない値の使い回しなしに分けて出し、専用の評価を使ったかも出します）。評価の高速化の前後で結果が変わらないことは、`npm run bench -- --save before.json` で変更前の結果を保存し、変更後に `npm run bench -- --check before.json` で確かめます。描画の準備も、大きなシーン向けに次のようにしています。(1) 同じジョイントを同じバインド行列で使うスキン付きメッシュは、1 つの Skeleton（骨の和集合）を共有し、骨の行列の計算と GPU への転送を、メッシュの数からまとまりの数に減らします（`sceneBuilder.js` の `shareSkeletons`。各メッシュの骨の番号を和集合の番号に振り直す。変形の結果は同じ。`web_src/tests/scene.test.mjs`、サンプルは `python tools/make_shared_skin_sample.py`）。(2) フレームを変えただけのとき（再生・スクラブ）は、動くノード（と子）の下だけ行列を計算し直し、描画のときにシーン全体を計算し直しません（ポーズ確認・設定の変更などのあとは、これまでどおり全体を計算します）。(3) メッシュ・カーブの線（子を持たない表示用のオブジェクト）は、非表示のあいだワールド行列を計算せず（表示に切り替えると、次の描画の前に計算し直す）、表示中は親のワールド行列をコピーします（`installLeafUpdate`）。(4) 画面の外のメッシュは描きません（視錐台カリング）。動かないメッシュは形の範囲で、スキン付きメッシュは、同じジョイントを使うメッシュのまとまり（ほぼキャラクター単位）ごとに、骨ごとにその骨が影響する頂点を包む球を読み込み時に求めておき、描画のたびにいまのジョイントの行列で移した球を包む球で判定します（計算は骨の数だけで、メッシュの数に比例しない。まとまりごと画面の外のときに描かない。ウェイトの合計が 1 の混ぜ合わせなので、変形した頂点は必ずこの中に入る。`web_src/tests/scene.test.mjs` で、せん断を含むジョイントの動きでも全頂点が入ることを確かめる）。ウェイトの合計が 1 でない頂点のあるメッシュは、範囲を保証できないので判定しません。リグの評価のキャッシュのテストは `web_src/tests/cache.test.mjs` です（キャッシュを使わずに毎回評価した結果と比べる）。評価のプロファイラのテストは `web_src/tests/profiler.test.mjs` です（記録しても評価の結果が変わらないこと・種類ごと・経路ごと・ノードごとの集計・文字の結果）。

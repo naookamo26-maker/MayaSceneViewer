@@ -240,6 +240,29 @@ class TestSmallRigs(unittest.TestCase):
         self.assertEqual(graph["j_scaleY_L1"]["inputs"]["acm"], {"node": graph["L1"]["id"], "attr": "sam"})
         self.assertFalse([w for w in anim.get("warnings", []) if "循環" in w], anim.get("warnings"))
 
+    def test_custom_attr_default_with_alias_name(self):
+        """独自の属性の名前が全体の表（ATTR_ALIASES）と同じでも、addAttr の既定値（-dv）と setAttr の値を、
+        接続が読むキー（roll → rol など）で渡す。transform の radius（読み替えると joint の radi）も除かない"""
+        def value_seen(name, sn=None, extra="", at="double", dv="1"):
+            body = ('createNode transform -n "ctrl";\n'
+                    '\taddAttr -ci true -sn "%s" -ln "%s" -dv %s -at "%s";\n'
+                    '\tsetAttr -k on ".%s"%s;\n'
+                    'createNode joint -n "jnt";\n'
+                    'createNode multiplyDivide -n "md";\n\tsetAttr ".i2" -type "float3" 10 10 10 ;\n'
+                    'connectAttr "ctrl.%s" "md.i1x";\n'
+                    'connectAttr "md.ox" "jnt.tx";\n') % (sn or name, name, dv, at, name, extra, name)
+            _sc, anim = from_text(body)
+            graph = {g["name"]: g for g in anim["graph"]}
+            src = graph["md"]["inputs"]["i1x"]
+            self.assertEqual(src["node"], graph["ctrl"]["id"])
+            return graph["ctrl"].get("attrs", {}).get(src["attr"])
+
+        for name in ("roll", "twist", "ikBlend", "radius", "target", "input", "foo"):
+            self.assertEqual(value_seen(name), 1.0, name)
+        self.assertEqual(value_seen("roll", sn="rl"), 1.0)
+        self.assertEqual(value_seen("radius", extra=" 0.5"), 0.5)          # setAttr の値も（以前は除いていた）
+        self.assertAlmostEqual(value_seen("roll", at="doubleAngle", dv="90"), 3.141592653589793 / 2)
+
 
 
 class TestStage3(unittest.TestCase):
