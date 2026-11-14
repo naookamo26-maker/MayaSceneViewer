@@ -72,11 +72,14 @@ export function cornerNormals(positions, counts, indices, hardEdges, vertexCount
 
   // ハードエッジ（少ないので Set で十分）
   const hard = new Set();
+  const onHard = new Uint8Array(vertexCount);            // ハードエッジの端の頂点か（Set を引く回数を減らす）
   for (let i = 0; i + 1 < (hardEdges ? hardEdges.length : 0); i += 2) {
     const a = hardEdges[i], b = hardEdges[i + 1];
     hard.add(a < b ? a * vertexCount + b : b * vertexCount + a);
+    if (a < vertexCount) onHard[a] = 1;
+    if (b < vertexCount) onHard[b] = 1;
   }
-  const smooth = (v, u) => !hard.size || !hard.has(v < u ? v * vertexCount + u : u * vertexCount + v);
+  const smooth = (v, u) => !onHard[v] || !onHard[u] || !hard.has(v < u ? v * vertexCount + u : u * vertexCount + v);
 
   const parent = new Int32Array(nCorner);
   for (let c = 0; c < nCorner; c++) parent[c] = c;

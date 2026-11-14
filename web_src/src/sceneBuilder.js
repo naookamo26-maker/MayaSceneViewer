@@ -245,13 +245,13 @@ function mulInto(a, b, out) {
 }
 
 // ---------------------------------------------------------------------- 視錐台カリング（画面の外のメッシュを描かない）
-const _m4 = new Matrix4(), _w = new Matrix4(), _cv = new Vector3(), _sph = new Sphere();
+const _m4 = new Matrix4(), _w = new Matrix4(), _sph = new Sphere();
 
 /**
  * 3x3 部分の拡大率の上限（球の半径に掛ける）。列が直交していれば最大の列の長さ（正確）、せん断があれば
  * フロベニウスノルム（必ず大きめ）
  */
-function scaleBound(m) {
+export function scaleBound(m) {
   const e = m.elements;
   const ax = e[0], ay = e[1], az = e[2], bx = e[4], by = e[5], bz = e[6], cx = e[8], cy = e[9], cz = e[10];
   const la = ax * ax + ay * ay + az * az, lb = bx * bx + by * by + bz * bz, lc = cx * cx + cy * cy + cz * cz;
@@ -287,44 +287,78 @@ export function buildSkinCull(e) {
   const g = e.geometry, sk = e.skeleton, sm = e.skinned;
   if (!g || !sk || !sm) return null;
   const pos = g.attributes.position.array;
-  const sets = [[g.attributes.skinIndex, g.attributes.skinWeight], [g.attributes.skinIndex1, g.attributes.skinWeight1]];
-  const n = g.attributes.position.count;
+  const A = g.attributes;
+  const ias = [], was = [];
+  if (A.skinIndex && A.skinWeight) { ias.push(A.skinIndex.array); was.push(A.skinWeight.array); }
+  if (A.skinIndex1 && A.skinWeight1) { ias.push(A.skinIndex1.array); was.push(A.skinWeight1.array); }
+  const n = A.position.count;
   const nb = sk.bones.length;
-  // 骨ごとの変換（骨の逆行列 · bindMatrix）と、骨のローカル空間の点の範囲（箱 → 球）
-  const toBone = new Map();
-  const box = new Map();                           // 骨 → [minx, miny, minz, maxx, maxy, maxz]
-  const pts = new Map();                           // 骨 → 点（球の半径を求める）
+  const nSet = ias.length;
+  // 1 回目: ウェイトを確かめ、点の数を数える（null の条件はどれに当たっても null なので、調べる順は問わない）
+  let total = 0;
+  for (let s = 0; s < nSet; s++) {
+    const wa = was[s], ia = ias[s];
+    for (let i = 0, m = n * 4; i < m; i++) {
+      const w = wa[i];
+      if (w === 0) continue;
+      if (!(w > 0)) return null;                   // 負のウェイト（範囲を保証できない）
+      if (ia[i] >= nb) return null;
+      total++;
+    }
+  }
   for (let v = 0; v < n; v++) {
     let sum = 0;
-    for (const [ia, wa] of sets) {
-      if (!ia || !wa) continue;
-      for (let k = 0; k < 4; k++) {
-        const w = wa.array[v * 4 + k];
-        if (w === 0) continue;
-        if (!(w > 0)) return null;                 // 負のウェイト（範囲を保証できない）
-        sum += w;
-        const b = ia.array[v * 4 + k];
-        if (b >= nb) return null;
-        let m = toBone.get(b);
-        if (!m) toBone.set(b, m = new Matrix4().multiplyMatrices(sk.boneInverses[b], sm.bindMatrix));
-        _cv.set(pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]).applyMatrix4(m);
-        let bx = box.get(b);
-        if (!bx) { box.set(b, bx = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]); pts.set(b, []); }
-        bx[0] = Math.min(bx[0], _cv.x); bx[1] = Math.min(bx[1], _cv.y); bx[2] = Math.min(bx[2], _cv.z);
-        bx[3] = Math.max(bx[3], _cv.x); bx[4] = Math.max(bx[4], _cv.y); bx[5] = Math.max(bx[5], _cv.z);
-        pts.get(b).push(_cv.x, _cv.y, _cv.z);
-      }
-    }
+    for (let s = 0; s < nSet; s++) { const wa = was[s], o = v * 4; for (let k = 0; k < 4; k++) sum += wa[o + k]; }
     if (Math.abs(sum - 1) > 1e-4) return null;     // ウェイトの合計が 1 でない
   }
+  // 骨ごとの変換（骨の逆行列 · bindMatrix）と、骨のローカル空間の点の範囲（箱 → 球）。点は型付き配列に入れる
+  const mats = new Array(nb).fill(null);
+  const box = new Float64Array(nb * 6);            // 骨 → minx, miny, minz, maxx, maxy, maxz
+  const seen = new Uint8Array(nb);
+  const order = [];                                // 骨を初めて見た順（結果の並び）
+  const px = new Float64Array(total * 3), pb = new Int32Array(total);
+  let t = 0;
+  for (let v = 0; v < n; v++) {
+    const x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2];
+    for (let s = 0; s < nSet; s++) {
+      const wa = was[s], ia = ias[s];
+      for (let k = 0; k < 4; k++) {
+        const i = v * 4 + k;
+        if (wa[i] === 0) continue;
+        const b = ia[i];
+        let m = mats[b];
+        if (!m) m = mats[b] = new Matrix4().multiplyMatrices(sk.boneInverses[b], sm.bindMatrix).elements;
+        // Vector3.applyMatrix4 と同じ式（w で割る）
+        const w = 1 / (m[3] * x + m[7] * y + m[11] * z + m[15]);
+        const cx = (m[0] * x + m[4] * y + m[8] * z + m[12]) * w;
+        const cy = (m[1] * x + m[5] * y + m[9] * z + m[13]) * w;
+        const cz = (m[2] * x + m[6] * y + m[10] * z + m[14]) * w;
+        const o = b * 6;
+        if (!seen[b]) { seen[b] = 1; order.push(b); box[o] = box[o + 3] = cx; box[o + 1] = box[o + 4] = cy; box[o + 2] = box[o + 5] = cz; }
+        else {
+          if (cx < box[o]) box[o] = cx;
+          if (cy < box[o + 1]) box[o + 1] = cy;
+          if (cz < box[o + 2]) box[o + 2] = cz;
+          if (cx > box[o + 3]) box[o + 3] = cx;
+          if (cy > box[o + 4]) box[o + 4] = cy;
+          if (cz > box[o + 5]) box[o + 5] = cz;
+        }
+        px[t * 3] = cx; px[t * 3 + 1] = cy; px[t * 3 + 2] = cz; pb[t++] = b;
+      }
+    }
+  }
+  const r2 = new Float64Array(nb);
+  for (let i = 0; i < t; i++) {
+    const b = pb[i], o = b * 6;
+    const dx = px[i * 3] - (box[o] + box[o + 3]) / 2, dy = px[i * 3 + 1] - (box[o + 1] + box[o + 4]) / 2, dz = px[i * 3 + 2] - (box[o + 2] + box[o + 5]) / 2;
+    const d = dx * dx + dy * dy + dz * dz;
+    if (d > r2[b]) r2[b] = d;
+  }
   const bones = [], data = [];
-  for (const [b, bx] of box) {
-    const cx = (bx[0] + bx[3]) / 2, cy = (bx[1] + bx[4]) / 2, cz = (bx[2] + bx[5]) / 2;
-    let r2 = 0;
-    const p = pts.get(b);
-    for (let i = 0; i < p.length; i += 3) r2 = Math.max(r2, (p[i] - cx) ** 2 + (p[i + 1] - cy) ** 2 + (p[i + 2] - cz) ** 2);
+  for (const b of order) {
+    const o = b * 6;
     bones.push(b);
-    data.push(cx, cy, cz, Math.sqrt(r2) * (1 + 1e-6) + 1e-9);
+    data.push((box[o] + box[o + 3]) / 2, (box[o + 1] + box[o + 4]) / 2, (box[o + 2] + box[o + 5]) / 2, Math.sqrt(r2[b]) * (1 + 1e-6) + 1e-9);
   }
   return { bones: Int32Array.from(bones), spheres: Float64Array.from(data) };
 }
@@ -772,7 +806,13 @@ function buildMesh(m, meshIndex, nodeObjects, poolMaterials, materialFor, option
   const { origOf, firstRender, cornerRender } = topo;
   // 表示用頂点の法線（同じまとまりのコーナーは同じ法線）
   const renderNormals = new Float32Array(topo.renderCount * 3);
-  for (let c = 0; c < cornerRender.length; c++) renderNormals.set(cn.normals.subarray(c * 3, c * 3 + 3), cornerRender[c] * 3);
+  {
+    const src = cn.normals;                         // 要素を直接写す（コーナーごとに subarray を作らない）
+    for (let c = 0, n = cornerRender.length; c < n; c++) {
+      const d = cornerRender[c] * 3, o = c * 3;
+      renderNormals[d] = src[o]; renderNormals[d + 1] = src[o + 1]; renderNormals[d + 2] = src[o + 2];
+    }
+  }
 
   // 面ごとのマテリアル（UDIM ならタイルごと）→ このメッシュ内のスロット
   const faceMat = m.faceMaterials || null;
