@@ -81,6 +81,7 @@ python tests/qt_maya_fake_test.py                       # Maya 用ウィンド�
 python tests/qt_animation_test.py                       # アニメーション（2 段階読み込み・タイムライン・読み込み中の中止・JSON の往復）
 python tests/qt_rig_test.py                             # リグ（IK・コンストレイントの再生、コントローラーを動かしたときの追従と元に戻す、キーのないリグ、行列ノード・SC IK、多関節 IK・スプライン IK、カーブの表示と expression、cluster・ドリブンキー・リグの診断）
 python tests/qt_playback_cache_test.py                  # リグの再生キャッシュ（空き時間に作る・ポーズ確認で作り直す・元に戻すと残したものを使う・キーのある値は作り直さない・タイムラインの帯と表示・上限の設定と保存）
+python tests/qt_load_test.py                            # 読み込み中の動き（前のシーンの再生・再生キャッシュの作成を止める・同じファイルは読み直さない・別のファイルを開くと中止して最後のものだけ読む・失敗しても前のシーンが残る）
 ```
 
 画面のない環境（Linux のサーバー・CI）では、仮の画面（Xvfb）と、WebGL のソフトウェア描画（SwiftShader）で Qt のテストを動かします。

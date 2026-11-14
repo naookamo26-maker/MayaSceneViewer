@@ -118,6 +118,8 @@ class ViewerApp {
     this.frame = 0;             // 現在のフレーム
     this.playing = false;
     this.sceneLoading = false;  // シーンの転送が終わり、組み立てを待っている間
+    this.loadSeq = 0;           // 読み込みの番号（新しく読み込み始めるたびに増やす。古い読み込みの続きは捨てる）
+    this.loadBusy = false;      // 読み込み中（前のシーンの再生・再生キャッシュの作成を止めておく）
     this.pendingAnimation = null;   // シーンの組み立て前に届いたアニメーション
     this.poseSourceChosen = false;  // 読み込んでから、姿勢の基準を自分で切り替えたか（アニメーションの読み込みで自動で切り替えない）
     this.cameras = [];              // シーンのカメラ（共通 JSON の cameras）
@@ -471,43 +473,84 @@ class ViewerApp {
   }
 
   // ------------------------------------------------------------------ 読み込み
+  /**
+   * 新しいシーンを読み込み始める。前のシーンの再生・シーケンスの再生・再生キャッシュの作成を止める（読み込みの
+   * 処理と CPU を取り合わないように。どのみち新しいシーンで捨てる）。戻り値は読み込みの番号（あとで古い読み込みか確かめる）
+   */
+  beginLoad() {
+    this.loadSeq++;
+    this.loadBusy = true;
+    this.pause();
+    this.pauseSequence();
+    this.stopBake();
+    return this.loadSeq;
+  }
+
+  /** 読み込みが失敗した・中止された（前のシーンが残る）: 止めていた再生キャッシュの作成を続ける */
+  endLoad() {
+    if (!this.loadBusy) return;
+    this.loadBusy = false;
+    if (this.built) this.scheduleBake();
+  }
+
+  /** 番号 seq の読み込みが、あとから始めた読み込みで置き換わったか */
+  staleLoad(seq) { return seq !== this.loadSeq; }
+
   loadFile(file) {
     if (/\.(ma|mb)$/i.test(file.name)) {
       this.ui.showError(`${file.name} はブラウザでは直接読めません。\n`
         + 'パッケージ（.msv）・共通 JSON を開いてください。');
       return;
     }
+    const seq = this.beginLoad();
     this.ui.showLoading(`${file.name} を読み込み中`);
-    file.arrayBuffer().then((buf) => this.loadBuffer(file.name, buf, { sourceUrl: null }))
-      .catch((err) => { this.ui.hideLoading(); this.ui.showError(`${file.name} を読めませんでした。\n${err.message}`); });
+    file.arrayBuffer().then((buf) => {
+      if (this.staleLoad(seq)) return false;                // 読み込み中に別のファイルを開いた: 続きは捨てる
+      return this.loadBuffer(file.name, buf, { sourceUrl: null, seq });
+    }).catch((err) => {
+      if (this.staleLoad(seq)) return;
+      this.endLoad();
+      this.ui.hideLoading();
+      this.ui.showError(`${file.name} を読めませんでした。\n${err.message}`);
+    });
   }
 
   /**
    * 読み込んだデータ（.msv か共通 JSON）を開く。中身で判定する（.msv は zip）。
    * opts.sourceUrl: URL から読んだときの URL（［URL をコピー］で file= に入れる）
+   * opts.seq: 読み込みの番号（beginLoad。省略時はここで始める）。あとから別の読み込みを始めたら、続きは捨てる
    */
   loadBuffer(name, buffer, opts = {}) {
+    const seq = opts.seq ?? this.beginLoad();
     const fail = (what, err) => {
+      if (this.staleLoad(seq)) return false;
+      this.endLoad();
       this.ui.hideLoading();
       this.ui.showError(`${name} を${what}として読めませんでした。\n${err.message || err}`);
       return false;
+    };
+    // 組み立てる直前に、同梱のテクスチャ（.msv）と URL をそのシーンの分だけ渡す（続けて開いたとき、別のファイルの
+    // パッケージを持っていかないように）
+    const open = (scene, pkg) => {
+      if (this.staleLoad(seq)) return;
+      this.pendingPackage = pkg;
+      this.pendingSourceUrl = opts.sourceUrl || null;
+      this.loadScene(scene);
     };
     this.ui.showLoading(`${name} を読み込み中`);
     if (isZip(buffer)) {
       // パッケージ（.msv）: zip をメモリの上で展開する。テクスチャは表示に必要になったときに展開する
       return openPackage(buffer).then(({ scene, pkg }) => {
+        if (this.staleLoad(seq)) return false;
         if (scene.source && !scene.source.name) scene.source.name = name;
-        this.pendingPackage = pkg;
-        this.pendingSourceUrl = opts.sourceUrl || null;
-        setTimeout(() => this.loadScene(scene), 0);
+        setTimeout(() => open(scene, pkg), 0);
         return true;
       }).catch((err) => fail('パッケージ（.msv）', err));
     }
     try {
       const data = JSON.parse(new TextDecoder().decode(buffer));
       if (data.source && !data.source.name) data.source.name = name;
-      this.pendingSourceUrl = opts.sourceUrl || null;
-      setTimeout(() => this.loadScene(data), 0);
+      setTimeout(() => open(data, null), 0);
       return Promise.resolve(true);
     } catch (err) {
       return Promise.resolve(fail(PACKAGE_EXT.test(name) ? 'パッケージ（.msv）' : 'パッケージ（.msv）・共通 JSON', err));
@@ -519,10 +562,13 @@ class ViewerApp {
    * ログインが必要な場所（Teams・SharePoint など）や、この PC 上のファイル（file://）は、ブラウザの制限で読めない
    */
   async loadUrl(text) {
+    const seq = this.beginLoad();
     // 思わぬ失敗でも黙って止まらず、理由を出す（押しても何も起きないように見えないように）
     try {
-      return await this.loadUrlInner(text);
+      return await this.loadUrlInner(text, seq);
     } catch (err) {
+      if (this.staleLoad(seq)) return false;
+      this.endLoad();
       this.ui.hideLoading();
       this.ui.showError(`読み込めませんでした。\n${(err && err.message) || err}`);
       this.log('error', err && err.stack || err);
@@ -530,17 +576,20 @@ class ViewerApp {
     }
   }
 
-  async loadUrlInner(text) {
+  async loadUrlInner(text, seq) {
     let url;
     try {
       url = new URL(String(text).trim(), location.href);
     } catch (err) {
+      this.endLoad();
       this.ui.showError(`URL として読めません: ${text}`);
       return false;
     }
     let name = url.pathname.split('/').pop() || url.host || url.href;
     try { name = decodeURIComponent(name); } catch (err) { /* % の並びが崩れた名前はそのまま */ }
     const fail = (info) => {
+      if (this.staleLoad(seq)) return false;
+      this.endLoad();
       this.ui.hideLoading();
       this.ui.showError(fetchFailureMessage({ url: url.href, page: location.href, ...info }));
       return false;
@@ -559,7 +608,8 @@ class ViewerApp {
     const buffer = await res.arrayBuffer().catch((err) => null);
     if (!buffer) return fail({ error: new Error('ダウンロードが途中で止まりました') });
     if (/text\/html/i.test(type) && !isZip(buffer)) return fail({ contentType: type });
-    return this.loadBuffer(name, buffer, { sourceUrl: url.href });
+    if (this.staleLoad(seq)) return false;                  // ダウンロード中に別のファイルを開いた
+    return this.loadBuffer(name, buffer, { sourceUrl: url.href, seq });
   }
 
   /** 表示の設定の既定値（クエリ・URL のコピーで使う項目と型） */
@@ -685,6 +735,7 @@ class ViewerApp {
 
   loadScene(data) {
     this.sceneLoading = false;
+    this.loadBusy = false;                 // 組み立てる（このあと新しいシーンで再生キャッシュを作る）
     // ブラウザで開いた .msv（同梱のテクスチャを読む）。Qt から届いたシーンは Python から受け取る
     this.package = this.pendingPackage || null;
     this.pendingPackage = null;
@@ -1844,12 +1895,21 @@ class ViewerApp {
     }, have);
   }
 
+  /** 再生キャッシュの作成を止める（作ったフレームは残る。scheduleBake で続きから作る） */
+  stopBake() {
+    clearTimeout(this.bakeTimer);
+    this.bakeTimer = null;
+    if (this.bakeHandle) { (window.cancelIdleCallback || clearTimeout)(this.bakeHandle); this.bakeHandle = null; }
+    if (this.bakers) this.bakers.cancel();
+  }
+
   /**
    * 再生キャッシュ（RigEvaluator.bake）を空き時間に少しずつ作る。2 周目を待たずに、再生が実時間で進むようにする。
    * 再生で使う追加分（updatePlaybackPose）のレイヤーを作る。ポーズ確認でリグに効く追加分を変えると、新しいレイヤーを
    * 影響を受けるノードだけ計算して作る（前と同じ追加分に戻せば、前のレイヤーをそのまま使う）
    */
   scheduleBake() {
+    if (this.loadBusy) { this.stopBake(); return; }       // 読み込み中は作らない（終わってから作る）
     clearTimeout(this.bakeTimer);
     if (this.bakeHandle) { (window.cancelIdleCallback || clearTimeout)(this.bakeHandle); this.bakeHandle = null; }
     if (!this.rig || !this.hasTimeline || this.rig.playbackFull) { this.bakers.cancel(); return; }
@@ -1960,7 +2020,7 @@ class ViewerApp {
 
   /** 再生（実時間。間に合わないときはフレームを飛ばす。範囲の最後まで行くと先頭に戻る） */
   play() {
-    if (!this.hasTimeline || this.playing) return;
+    if (!this.hasTimeline || this.playing || this.loadBusy) return;     // 読み込み中は前のシーンを再生しない
     this.pauseSequence();
     if (this.seqFollow) this.setSequenceFollow(false);
     this.ensureAnimatedPose();
@@ -2915,7 +2975,7 @@ class ViewerApp {
 
   /** シーケンスを実時間で再生する（最後まで行くと先頭に戻る） */
   playSequence() {
-    if (!this.sequence || this.seqPlaying) return;
+    if (!this.sequence || this.seqPlaying || this.loadBusy) return;
     this.pause();
     this.seqFollow = true;
     this.endCameraEdit();
@@ -3443,6 +3503,7 @@ function showTransferProgress() {
 function failTransfer(err) {
   app.transfer = null;
   app.sceneLoading = false;
+  app.endLoad();
   app.ui.hideLoading();
   app.ui.showError('データを受け取れませんでした。\n' + (err && err.message ? err.message : String(err)));
   return false;
@@ -3468,11 +3529,17 @@ window.mayaViewer = {
       return app.loadScene(obj);
     } catch (err) {
       app.sceneLoading = false;
+      app.endLoad();
       app.ui.hideLoading();
       app.ui.showError('データを読めませんでした。\n' + err.message);
       return false;
     }
   },
+  /**
+   * 新しいシーンを読み込み始めた（Qt が .ma などを読み始めたとき）。前のシーンの再生・再生キャッシュの作成を止め、
+   * まだ組み立てていない前の読み込みのシーンは捨てる
+   */
+  beginLoad() { app.beginLoad(); return app.loadSeq; },
   /**
    * 大きなデータを分割して受け取る（Python の runJavaScript 用。viewer.py の set_scene）。大きな数値の配列は JSON から
    * 抜き出して先に届く（appendBlobChunk・endBlob。その場でバイト列に戻す）。そのあと JSON の骨組み（appendChunk）が届く。
@@ -3507,7 +3574,13 @@ window.mayaViewer = {
     app.sceneLoading = true;            // 組み立てまでに届いたアニメーションは、組み立て後に読み込む
     app.timing = { transfer: performance.now() - (app.transferStart || performance.now()) };
     app.ui.showLoading('シーンを組み立て中');
-    setTimeout(() => this.loadScene(obj), 16);
+    const seq = app.loadSeq;
+    app.buildSeq = seq;
+    // 組み立てを待つあいだに次の読み込みが始まったら（beginLoad）、このシーンは組み立てない
+    setTimeout(() => {
+      if (!app.staleLoad(seq)) { this.loadScene(obj); return; }
+      if (app.buildSeq === seq) app.sceneLoading = false;   // 次のシーンがまだ届いていなければ、組み立て待ちを解く
+    }, 16);
     return tr.received;
   },
   /** アニメーションを分割して受け取る（シーンのあとに届く。受け取り方はシーンと同じ） */
@@ -3539,8 +3612,8 @@ window.mayaViewer = {
   play() { app.play(); },
   pause() { app.pause(); },
   showLoading(text, frac, subText, subFrac) { app.ui.setEmpty(false); app.ui.showLoading(text, frac, subText, subFrac); },
-  hideLoading() { app.ui.hideLoading(); if (!app.built) app.ui.setEmpty(true); },
-  showError(text) { app.ui.hideLoading(); app.ui.showError(text); },
+  hideLoading() { app.endLoad(); app.ui.hideLoading(); if (!app.built) app.ui.setEmpty(true); },
+  showError(text) { app.endLoad(); app.ui.hideLoading(); app.ui.showError(text); },
   setMessage(text) { app.ui.setMessage(text); },
   selectByPath(path) { return app.selectByPath(path); },
   /** パスの一覧で選ぶ（最後がリード。Maya の選択に合わせるとき） */
