@@ -39,6 +39,7 @@ import { bakeFrames, createBaker } from './rigBakeCore.js';
 import { EvalProfiler } from './profiler.js';
 import { ProfilerPanel } from './profilerPanel.js';
 import { BATCHED_LAYER, MeshBatches, SkinBatches } from './meshBatches.js';
+import { intersectNearest, skinnedWorldPositions } from './skinPick.js';
 import { TransferBuffer } from './transfer.js';
 
 // ビューアのバージョン（ma_viewer/version.py。ビルド時に build.mjs が埋め込む）
@@ -2234,18 +2235,21 @@ class ViewerApp {
       this.poseDirty = false;
     }
     const targets = [];
+    const fast = new Map();                              // スキン付きメッシュ → エントリ（skinPick.js で調べる）
     for (const e of this.built.meshes) {
       if (!e.visible || !(force || !e.data.unselectable)) continue;
-      targets.push(useSkin && e.skinned ? e.skinned : e.staticMesh);
+      const o = useSkin && e.skinned ? e.skinned : e.staticMesh;
+      targets.push(o);
+      if (o === e.skinned) fast.set(o, e);
     }
-    const hits = this.raycaster.intersectObjects(targets, false);
-    if (curveHit.node >= 0 && (!hits.length || curveHit.distance <= hits[0].distance)) {
+    // いちばん手前の当たり（three.js の intersectObjects の先頭と同じ。スキン付きメッシュは骨ごとの行列を 1 回だけ作って調べる）
+    const h = intersectNearest(this.raycaster, targets, (o) => fast.get(o));
+    if (curveHit.node >= 0 && (!h || curveHit.distance <= h.distance)) {
       this.select(curveHit.node, { notify: true, mode });
       return;
     }
     // 何もないところ: 選び直すときだけ解除する（Maya と同じく、Shift・Ctrl では何もしない）
-    if (!hits.length) { if (mode === 'replace') this.clearSelection({ notify: true }); return; }
-    const h = hits[0];
+    if (!h) { if (mode === 'replace') this.clearSelection({ notify: true }); return; }
     const e = this.built.meshes[h.object.userData.meshIndex];
     if (this.settings.pickMode !== 'vertex') {
       // オブジェクトの選択: メッシュの transform を選ぶ
@@ -2329,9 +2333,12 @@ class ViewerApp {
       const geo = e.geometry;
       const n = geo.attributes.position.count;
       const w = new Float32Array(n * 3);
-      for (let rv = 0; rv < n; rv++) {
-        renderVertexWorldPosition(e, rv, useSkin, _v2);
-        w[rv * 3] = _v2.x; w[rv * 3 + 1] = _v2.y; w[rv * 3 + 2] = _v2.z;
+      // スキン付きメッシュは、変形した位置（skinPick.js。骨ごとの行列を 1 回だけ作る）をまとめて使う。値は頂点ごとに求めるのと同じ
+      if (!(useSkin && e.skinned && skinnedWorldPositions(e, leafWorldMatrix(e.skinned), w))) {
+        for (let rv = 0; rv < n; rv++) {
+          renderVertexWorldPosition(e, rv, useSkin, _v2);
+          w[rv * 3] = _v2.x; w[rv * 3 + 1] = _v2.y; w[rv * 3 + 2] = _v2.z;
+        }
       }
       if (trianglesHitRect(w, geo.index ? geo.index.array : null, project, rect)) out.add(e.transform);
     }
