@@ -8,6 +8,7 @@ import { Matrix4, Quaternion, Vector3 } from 'three';
 import { AnimationClip } from '../src/animation.js';
 import { RigEvaluator } from '../src/rig.js';
 import { bakeFrames, createBaker, decodeBaked } from '../src/rigBakeCore.js';
+import { near } from './near.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dir = path.resolve(here, '../../samples');
@@ -19,15 +20,15 @@ function mainRig(data) {
   return new RigEvaluator(new AnimationClip(data.animation), data.nodes, (ni) => statics[ni]);
 }
 
-/** フレーム f の値（行列・props・カーブの形）を比べられる形にする */
+/** フレーム f の値（行列・props・カーブの形）を比べられる形にする（near で比べる。キャッシュの値は 32 ビットに丸めてある） */
 function snapshotOf(rig, f, poseOf, poseKey) {
   const mats = rig.evaluate(f, poseOf, new Map(), poseKey);
-  const r = (x) => (Math.abs(x) < 1e-12 ? 0 : +x.toPrecision(11));
-  return JSON.stringify({
+  const r = (x) => (Math.abs(x) < 1e-12 ? 0 : x);
+  return JSON.parse(JSON.stringify({
     mats: [...mats].sort((a, b) => a[0] - b[0]).map(([ni, m]) => [ni, m.elements.map(r)]),
     props: (rig.props.length ? rig.evaluateProps() : []).map((p) => [p.kind, p.index, Object.entries(p.values)]),
     curves: rig.curveIds().map((g) => { const c = rig.curveShape(g); return c && c.cvs ? c.cvs.map((p) => [r(p.x), r(p.y), r(p.z)]) : c; }),
-  });
+  }));
 }
 
 /** ワーカーと同じ処理（postMessage の代わりに structuredClone）で作って取り込む */
@@ -59,8 +60,8 @@ test('ワーカーで作った再生キャッシュは、画面のスレッド�
     for (const fr of frames) assert.ok(b.snapshots.has(fr) && a.snapshots.has(fr), `${f} フレーム ${fr} が再生キャッシュにある`);
     for (const fr of frames) {
       const want = snapshotOf(fresh, fr);
-      assert.equal(snapshotOf(b, fr), want, `${f} フレーム ${fr}（取り込んだもの）`);
-      assert.equal(snapshotOf(a, fr), want, `${f} フレーム ${fr}（画面のスレッド）`);
+      near(snapshotOf(b, fr), want, `${f} フレーム ${fr}（取り込んだもの）`);
+      near(snapshotOf(a, fr), want, `${f} フレーム ${fr}（画面のスレッド）`);
     }
   }
 });
@@ -81,12 +82,12 @@ test('追加分（ポーズ確認）があっても同じ。取り込んだあ�
     const poseOf1 = (ni) => p1.get(ni) || null;
     b.setPlaybackPose(poseOf1, k1);
     assert.equal(bakeInWorker(b, data, frames), frames.length, f);
-    for (const fr of frames) assert.equal(snapshotOf(b, fr, poseOf1, k1), snapshotOf(fresh, fr, poseOf1, k1), `${f} 追加分あり ${fr}`);
+    for (const fr of frames) near(snapshotOf(b, fr, poseOf1, k1), snapshotOf(fresh, fr, poseOf1, k1), `${f} 追加分あり ${fr}`);
     // 1 つ目のノードだけ追加分を変える: 取り込んだフレームから、影響を受けないノードを写して作る（seed）
     const p2 = new Map(p1); p2.set(drivers[0], mk(-40).get(drivers[0]));
     const k2 = new Map(k1); k2.set(drivers[0], 'p2');
     const poseOf2 = (ni) => p2.get(ni) || null;
-    for (const fr of frames) assert.equal(snapshotOf(b, fr, poseOf2, k2), snapshotOf(fresh, fr, poseOf2, k2), `${f} 追加分を変えた ${fr}`);
+    for (const fr of frames) near(snapshotOf(b, fr, poseOf2, k2), snapshotOf(fresh, fr, poseOf2, k2), `${f} 追加分を変えた ${fr}`);
     checked++;
   }
   assert.ok(checked >= 5, `コントローラーのあるサンプル ${checked} 個`);
@@ -102,11 +103,13 @@ test('上限に達したら途中で止め、動くノードの数が違う結�
   b.clearPlayback();
   b.setPlaybackLimit(one * 5.5);
   const n = bakeInWorker(b, data, frames);
-  assert.ok(n >= 4 && n <= 6 && n < frames.length, `上限まで: ${n} / ${frames.length}`);
+  // 1 フレーム目には時間で変わらないカーブの形の分も入るので、入るフレームは 5 より少ないこともある
+  assert.ok(n >= 2 && n <= 6 && n < frames.length, `上限まで: ${n} / ${frames.length}`);
+  assert.ok(b.playbackStats().bytes <= b.playbackStats().limit, '上限を超えない');
   const c = mainRig(data);
   c.setPlaybackLimit(1e12);
   const pose = c.playbackPoseData();
-  assert.equal(c.importSnapshots(pose.keys, [{ f: 1, mats: new Float64Array(16), props: null, curves: new Map() }]), 0);
+  assert.equal(c.importSnapshots(pose.keys, [{ f: 1, mats: new Float32Array(16), props: null, curves: new Map() }]), 0);
 });
 
 test('キーのデータを型付き配列にして送ったアニメーション（takeKeyArrays）でも、同じ再生キャッシュになる', () => {
@@ -124,12 +127,11 @@ test('キーのデータを型付き配列にして送ったアニメーショ�
   }
 });
 
-test('ワーカーと同じ作り方で 32 ビット（f32）: Float32Array で送り、取り込める', () => {
+test('ワーカーと同じ作り方: 行列は Float32Array で送り、取り込める', () => {
   const data = JSON.parse(readFileSync(path.join(dir, 'rig6_mapped.json'), 'utf8'));
   const rig = mainRig(data);
-  rig.setCachePrecision(true);
   const baker = createBaker(JSON.stringify(data.animation), structuredClone(data.nodes));
-  const msg = structuredClone(bakeFrames(baker, { frames: [1, 2, 3], poses: [], f32: true }));
+  const msg = structuredClone(bakeFrames(baker, { frames: [1, 2, 3], poses: [] }));
   assert.ok(msg.frames.every((fr) => fr.mats instanceof Float32Array));
   const r = decodeBaked(msg);
   assert.equal(rig.importSnapshots(rig.playbackPoseData().keys, r.frames, r.deps, r.poseReads), 3);

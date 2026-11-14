@@ -10,7 +10,7 @@ import { makeCurve } from './curve.js';
  * 評価器を作る。動かないノードのローカル行列は nodes の matrix（ビューアの fileMatrix と同じ値）
  * @param anim 共通 JSON の animation（オブジェクトか JSON の文字列）  @param nodes 共通 JSON の nodes
  */
-export function createBaker(anim, nodes, opts = {}) {
+export function createBaker(anim, nodes) {
   const t0 = performance.now();
   const data = typeof anim === 'string' ? JSON.parse(anim) : anim;
   const parseMs = performance.now() - t0;
@@ -20,8 +20,7 @@ export function createBaker(anim, nodes, opts = {}) {
   const t1 = performance.now();
   const rig = new RigEvaluator(clip, nodes, (ni) => statics[ni]);
   const rigMs = performance.now() - t1;
-  rig.setPlaybackLimit(Number.MAX_SAFE_INTEGER);
-  if (opts.chainSolver) rig.setChainSolver(opts.chainSolver);   // 3 ボーン以上の IK の解き方（ビューアと同じにする）      // 作ったフレームはすぐ送って捨てるので、上限はなし
+  rig.setPlaybackLimit(Number.MAX_SAFE_INTEGER);      // 作ったフレームはすぐ送って捨てるので、上限はなし
   // timing: 評価のプロファイラに出す、ワーカーの中の時間（準備・最初のフレーム）
   return { rig, sentDeps: new Map(), sentReads: new Set(),
     timing: { createMs: performance.now() - t0, parseMs, clipMs, rigMs, defsMs: rig.defsMs, recvMs: null, firstMs: null,
@@ -58,7 +57,7 @@ export function decodeCurve(c) {
 /**
  * フレームを評価して、再生キャッシュに入れる値を返す。
  * @param req { frames: 整数のフレーム, poses: [[ノード番号, 行列の 16 要素 | null, 目印]]（RigEvaluator.playbackPoseData） }
- * @returns { frames: [{ f, mats: Float64Array, props, curves: [[グラフの id, カーブ]] }], deps: [[動くノード, ノード…]],
+ * @returns { frames: [{ f, mats: Float32Array, props, curves: [[グラフの id, カーブ]] }], deps: [[動くノード, ノード…]],
  *   poseReads: [追加分を読んだノード], ms: 評価にかかった時間, timing: bakerTiming }。deps・poseReads は前回から増えたものだけ
  */
 export function bakeFrames(baker, req) {
@@ -73,7 +72,6 @@ export function bakeFrames(baker, req) {
   const scratch = new Map();
   const frames = [];
   const t0 = performance.now();
-  rig.setCachePrecision(!!req.f32);                     // 再生キャッシュの精度（画面側の設定）
   for (const f of req.frames) {
     const tf = baker.timing.firstMs === null ? performance.now() : 0;
     rig.evaluate(f, poseOf, scratch, poseKey);

@@ -10,13 +10,13 @@ self.onmessage = (e) => {
     if (m.type === 'init') {
       // 受け取り: 画面のスレッドが送ってから、ここに届くまで（複製を受け取る時間・ワーカーの起動を含む）
       const recvMs = m.sentAt ? performance.timeOrigin + performance.now() - m.sentAt : null;
-      baker = createBaker(m.anim, m.nodes, { chainSolver: m.chainSolver });
+      baker = createBaker(m.anim, m.nodes);
       baker.timing.recvMs = recvMs;
       token = m.token;
       self.postMessage({ type: 'ready', token });
     } else if (m.type === 'probe') {
       // ［このフレームを確かめる］: 指定したフレームを評価して、値とワーカーの中の状態を返す（新しい評価器か、いまの評価器で）
-      const b = m.fresh ? createBaker(m.anim, m.nodes, { chainSolver: m.chainSolver }) : (m.token === token ? baker : null);
+      const b = m.fresh ? createBaker(m.anim, m.nodes) : (m.token === token ? baker : null);
       if (!b) { self.postMessage({ type: 'probe', id: m.id, frames: null }); return; }
       const r = bakeFrames(b, { frames: m.frames, poses: [] });
       self.postMessage({ type: 'probe', id: m.id, frames: r.frames.map((fr) => ({ f: fr.f, mats: fr.mats })), info: bakerInfo(b) });

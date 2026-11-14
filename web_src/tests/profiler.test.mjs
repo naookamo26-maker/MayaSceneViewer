@@ -146,7 +146,7 @@ test('再生キャッシュのフレームはコピーとして数え、キャ�
   assert.equal(ci.moving, rig.moving.size);
   assert.equal(ci.frames, frames.length);
   assert.equal(ci.range, frames.length);
-  assert.ok(ci.perFrame >= rig.moving.size * 96);   // 行列は 12 個ずつ（再生キャッシュ）
+  assert.ok(ci.perFrame >= rig.moving.size * 48);   // 行列は 32 ビットの数で 12 個ずつ（再生キャッシュ）
   assert.deepEqual(ci.fits.map(([mb]) => mb), [128, 256, 512, 1024, 2048]);
   assert.ok(ci.fits.every(([, n]) => n > frames.length), '小さいリグなら範囲の全フレームが入る（範囲で頭打ちにしない）');
   assert.deepEqual(ci.fits.map(([mb, n]) => n), ci.fits.map(([mb]) => Math.floor(mb * 1024 * 1024 / ci.perFrame)));

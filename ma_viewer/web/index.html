@@ -89,11 +89,6 @@
           <div class="menu-sep"></div>
           <p class="menu-label">リグの再生キャッシュ（メモリの上限）</p>
           <div class="choices grid cols3" id="opt-playback-cache" role="radiogroup" aria-label="リグの再生キャッシュの上限" data-setting="playbackCacheMB" title="リグの評価結果をフレームごとに覚えて、2 周目以降の再生を速くする（オフにすると毎回計算する）。設定は次回の起動でも使う"><button type="button" role="radio" aria-checked="false" data-value="0">オフ</button><button type="button" role="radio" aria-checked="false" data-value="128">128MB</button><button type="button" role="radio" aria-checked="false" data-value="256">256MB</button><button type="button" role="radio" aria-checked="false" data-value="512">512MB</button><button type="button" role="radio" aria-checked="false" data-value="1024">1GB</button><button type="button" role="radio" aria-checked="false" data-value="2048">2GB</button></div>
-          <p class="menu-label">再生キャッシュの精度</p>
-          <div class="choices grid cols2" id="opt-playback-precision" role="radiogroup" aria-label="再生キャッシュの精度" data-setting="playbackCachePrecision" title="32 ビット: 同じメモリにおよそ 2 倍のフレームを覚える（値を 32 ビットに丸める。描画も 32 ビットなので、見た目にはほぼ出ない）。64 ビット: 計算した値をそのまま覚える。変えると覚えたフレームを作り直す。設定は次回の起動でも使う"><button type="button" role="radio" aria-checked="false" data-value="float32">32 ビット</button><button type="button" role="radio" aria-checked="false" data-value="float64">64 ビット</button></div>
-          <div class="menu-sep"></div>
-          <p class="menu-label">IK の解き方（3 ボーン以上）</p>
-          <div class="choices grid cols2" id="opt-ik-chain" role="radiogroup" aria-label="IK の解き方（3 ボーン以上）" data-setting="ikChainSolver" title="ジョイントが 4 つ以上の IK（回転プレーン・シングルチェーン）の解き方。反復: FK の形から、反復（FABRIK）で届かせる。優先角から曲げる: 優先角（Preferred Angle）の形から、関節ごとの曲がりの比を保ったまま曲げて届かせる（FK の値によらない）。設定は次回の起動でも使う"><button type="button" role="radio" aria-checked="false" data-value="fabrik">反復（FABRIK）</button><button type="button" role="radio" aria-checked="false" data-value="preferred">優先角から曲げる</button></div>
         </div>
       </div>
       <div class="menu">

@@ -8,6 +8,7 @@ import path from 'node:path';
 import { Matrix4 } from 'three';
 import { AnimationClip } from '../src/animation.js';
 import { RigEvaluator } from '../src/rig.js';
+import { near } from './near.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SAMPLES = ['ctrl_sample', 'ik_sample', 'rig6_mapped', 'stretch_spline_mapped', 'trax_sample', 'nodedef_sample',
@@ -50,7 +51,7 @@ test('前後に飛びながら同じ評価器で評価しても、毎回新し�
     const rig = makeRig(data);
     const frames = framesOf(rig);
     const order = [...frames, ...[...frames].reverse(), ...frames.filter((_, i) => i % 5 === 0), 1.5, frames[0]];
-    for (const f of order) assert.deepEqual(state(rig, f), fresh(data, f), `${name} フレーム ${f}`);
+    for (const f of order) near(state(rig, f), fresh(data, f), `${name} フレーム ${f}`);
     assert.ok(rig.snapshots.size > 0 || rig.moving.size === 0, `${name}: 再生キャッシュを作る`);
   }
 });
@@ -91,7 +92,7 @@ test('ポーズ確認の追加分を変えると、キャッシュを捨てて�
     const steps = [[1, undefined, undefined], [5, ofA, 1], [6, ofA, 1], [5, ofA, 1], [5, ofB, 2], [6, ofB, 2], [5, undefined, undefined],
       [6, ofA, 3], [6, ofA, undefined]];
     for (const [f, of, key] of steps) {
-      assert.deepEqual(state(rig, f, of, key), fresh(data, f, of, key), `${name} フレーム ${f}・版 ${key}`);
+      near(state(rig, f, of, key), fresh(data, f, of, key), `${name} フレーム ${f}・版 ${key}`);
     }
   }
 });
@@ -108,9 +109,9 @@ test('再生キャッシュを先に作っても、いまのフレームの値�
     const after = {
       mats: [...rig.matrices].sort((a, b) => a[0] - b[0]).map(([ni, m]) => [ni, m.elements.map((x) => Math.round(x * 1e9) / 1e9 + 0)]),
     };
-    assert.deepEqual(after.mats, before.mats, name);
+    near(after.mats, before.mats, name);
     assert.equal(rig.frame, 7);
-    for (const f of [frames[0], 12, frames[frames.length - 1]]) assert.deepEqual(state(rig, f), fresh(data, f), `${name} フレーム ${f}`);
+    for (const f of [frames[0], 12, frames[frames.length - 1]]) near(state(rig, f), fresh(data, f), `${name} フレーム ${f}`);
     // 続けて作ると、途中で止められる
     const rig2 = makeRig(data);
     rig2.evaluate(2.5);
@@ -127,7 +128,7 @@ test('再生キャッシュは上限を超えて覚えない（カーブの形�
     const frames = framesOf(rig);
     rig.bake(frames.slice(0, 1));
     const one = rig.snapshotBytes;
-    assert.ok(one >= rig.moving.size * 128, name);
+    assert.ok(one >= rig.moving.size * 48, name);          // 行列だけで 32 ビットの数 12 個ずつ
     rig.setPlaybackLimit(one * 5 + 10);
     rig.bake(frames);
     const st = rig.playbackStats();
@@ -135,7 +136,7 @@ test('再生キャッシュは上限を超えて覚えない（カーブの形�
     assert.ok(st.frames >= 5 && st.frames < frames.length, `${name}: ${st.frames} フレーム`);
     assert.ok(st.bytes <= st.limit, `${name}: ${st.bytes} <= ${st.limit}`);
     assert.ok(st.full, name);
-    assert.deepEqual(state(rig, 20), fresh(data, 20), name);
+    near(state(rig, 20), fresh(data, 20), name);
   }
 });
 
@@ -144,7 +145,7 @@ test('時間で形が変わるカーブは、フレームごとに大きさを�
   const rig = makeRig(data);
   const frames = framesOf(rig);
   rig.bake(frames);
-  const matsOnly = frames.length * (rig.moving.size * 128);
+  const matsOnly = frames.length * (rig.moving.size * 48);
   const shapes = rig.curveIds().map((gid) => [...rig.snapshots.values()].map((sn) => sn.curves.get(gid)));
   const varying = shapes.filter((list) => new Set(list).size > 1).length;
   assert.ok(varying > 0, '形が変わるカーブがある');
@@ -163,13 +164,13 @@ test('上限を下げると先に覚えたフレームから捨て、0 にする
   assert.ok(rig.snapshotBytes <= half, `${rig.snapshotBytes} <= ${half}`);
   assert.ok(rig.hasSnapshot(30), 'いまのフレームは残す');
   assert.ok(!rig.hasSnapshot(frames[0]), '先に覚えたフレームから捨てる');
-  assert.deepEqual(state(rig, 1), fresh(data, 1));
+  near(state(rig, 1), fresh(data, 1));
   rig.setPlaybackLimit(0);
   assert.equal(rig.snapshots.size, 0);
   assert.equal(rig.bake(frames), 0);
   state(rig, 3);
   assert.equal(rig.snapshots.size, 0, 'オフのあいだは覚えない');
-  assert.deepEqual(state(rig, 4), fresh(data, 4));
+  near(state(rig, 4), fresh(data, 4));
 });
 
 test('再現チェックのあとも、評価の結果は変わらない', () => {
@@ -182,7 +183,7 @@ test('再現チェックのあとも、評価の結果は変わらない', () =>
     clean.evaluate(clean.clip.current);
     const fl = (r) => (ni) => r.fileRestLocal(ni);
     assert.deepEqual(JSON.parse(JSON.stringify(rig.verifySaved(fl(rig)))), JSON.parse(JSON.stringify(clean.verifySaved(fl(clean)))), name);
-    for (const f of [10, 21]) assert.deepEqual(state(rig, f), fresh(data, f), `${name} フレーム ${f}`);
+    for (const f of [10, 21]) near(state(rig, f), fresh(data, f), `${name} フレーム ${f}`);
   }
 });
 
@@ -216,7 +217,7 @@ test('リグが読まないノードを動かしても、再生キャッシュ�
     const keepSize = rig.keep.local.size + rig.keep.world.size + rig.keep.chan.size;
     const [of, key] = posed([[unread, new Matrix4().makeTranslation(3, 0, 0)]]);
     const c = countLocal(rig);
-    for (const f of frames) assert.deepEqual(state(rig, f, of, key), fresh(data, f, of, key), `${name} フレーム ${f}`);
+    for (const f of frames) near(state(rig, f, of, key), fresh(data, f, of, key), `${name} フレーム ${f}`);
     assert.equal(c.n, 0, `${name}: 計算し直さない`);
     assert.equal(rig.snapshots.size, frames.length, name);
     assert.equal(rig.layers.length, 1, `${name}: 新しいレイヤーを作らない`);
@@ -233,14 +234,14 @@ test('追加分を前と同じに戻すと、前のレイヤーをそのまま�
     // リグが読むコントローラー（読まないものは、動かしても同じレイヤーを使う）
     const driver = [...rig.directDrivers].sort((a, b) => a - b).find((ni) => rig.poseReads.has(ni));
     const [ofA, keyA] = posed([[driver, new Matrix4().makeTranslation(0.5, 1, -0.25)]]);
-    assert.deepEqual(state(rig, 5, ofA, keyA), fresh(data, 5, ofA, keyA), name);
+    near(state(rig, 5, ofA, keyA), fresh(data, 5, ofA, keyA), name);
     assert.equal(rig.layers.length, 2, `${name}: 追加分のレイヤーを作る`);
     const c = countLocal(rig);
-    for (const f of frames) assert.deepEqual(state(rig, f), fresh(data, f), `${name} フレーム ${f}`);
+    for (const f of frames) near(state(rig, f), fresh(data, f), `${name} フレーム ${f}`);
     assert.equal(c.n, 0, `${name}: 追加分を戻したら、計算し直さない`);
     // 同じ追加分（別の Map でも中身が同じ）に戻すと、そのフレームも計算し直さない
     const [ofA2, keyA2] = posed([[driver, new Matrix4().makeTranslation(0.5, 1, -0.25)]]);
-    assert.deepEqual(state(rig, 5, ofA2, keyA2), fresh(data, 5, ofA, keyA), name);
+    near(state(rig, 5, ofA2, keyA2), fresh(data, 5, ofA, keyA), name);
     assert.equal(c.n, 0, `${name}: 同じ追加分のフレームは計算し直さない`);
   }
 });
@@ -264,7 +265,7 @@ test('新しい追加分のフレームは、影響を受けるノードだけ�
       assert.ok(c.n <= cFull.n, `${name}: ${c.n} <= ${cFull.n}`);
       if (rig.seeded > 0) seededSome = true;
       rig.bake(frames);
-      for (const f of frames) assert.deepEqual(state(rig, f, of, key), fresh(data, f, of, key), `${name} ノード ${ni} フレーム ${f}`);
+      for (const f of frames) near(state(rig, f, of, key), fresh(data, f, of, key), `${name} ノード ${ni} フレーム ${f}`);
       rig.setPlaybackPose(null);
     }
   }
@@ -283,7 +284,7 @@ test('追加分を変えると、変えたノードを読んだ keep の値だ�
   rig.evaluate(2, of, undefined, key);
   const after = rig.keep.chan.size + rig.keep.world.size + rig.keep.local.size + rig.keep.posed.size;
   assert.ok(before > 0 && after > 0, `${before} → ${after}`);
-  for (const f of [2, 7, 30]) assert.deepEqual(state(rig, f, of, key), fresh(data, f, of, key), `フレーム ${f}`);
+  for (const f of [2, 7, 30]) near(state(rig, f, of, key), fresh(data, f, of, key), `フレーム ${f}`);
 });
 
 test('再生で使う追加分（setPlaybackPose）で作り、タイムラインの帯はそのレイヤーを示す', () => {
@@ -308,7 +309,7 @@ test('再生で使う追加分（setPlaybackPose）で作り、タイムライ�
   assert.equal(rig.snapshots.size, 1, 'いまのフレームだけ');
   rig.bake(frames);
   assert.equal(rig.snapshots.size, frames.length);
-  for (const f of [1, 24, 48]) assert.deepEqual(state(rig, f, of, key), fresh(data, f, of, key), `フレーム ${f}`);
+  for (const f of [1, 24, 48]) near(state(rig, f, of, key), fresh(data, f, of, key), `フレーム ${f}`);
 });
 
 test('いろいろな追加分を行き来しても、毎回新しく評価した結果と同じ（上限が小さくても）', () => {
@@ -332,7 +333,7 @@ test('いろいろな追加分を行き来しても、毎回新しく評価し�
         const [of, key] = posed(poses[Math.floor(rnd() * poses.length)]);
         if (rnd() < 0.5) { rig.setPlaybackPose(of, key); rig.bake(frames, (() => { let k = 0; return () => ++k < 6; })()); }
         const f = frames[Math.floor(rnd() * frames.length)];
-        assert.deepEqual(state(rig, f, of, key), fresh(data, f, of, key), `${name}${small ? '（上限小）' : ''} ステップ ${step} フレーム ${f}`);
+        near(state(rig, f, of, key), fresh(data, f, of, key), `${name}${small ? '（上限小）' : ''} ステップ ${step} フレーム ${f}`);
       }
       assert.ok(rig.layers.length <= 6, name);
       assert.ok(rig.snapshotBytes <= rig.playbackLimit, name);
@@ -341,7 +342,7 @@ test('いろいろな追加分を行き来しても、毎回新しく評価し�
 });
 
 const AFFINE_OTHERS = (e) => [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14].map((k) => e[k]);
-test('再生キャッシュの行列は 12 個ずつ持ち（最後の行 0, 0, 0, 1 を省く）、読むとビット単位で同じ。最後の行が違えば 16 個ずつ', async () => {
+test('再生キャッシュの行列は 32 ビットの数で 12 個ずつ持ち（最後の行 0, 0, 0, 1 を省く）、読むと 32 ビットに丸めた値。最後の行が違えば 16 個ずつ', async () => {
   const { packSnapshotMats, readSnapshotMat, snapshotStride } = await import('../src/rig.js');
   const a = new Matrix4().makeRotationX(0.3).setPosition(1.5, -2, 3e-7);
   a.elements[1] = -0;                                         // -0 もそのまま戻る
@@ -349,18 +350,19 @@ test('再生キャッシュの行列は 12 個ずつ持ち（最後の行 0, 0, 
   const moving = new Set([4, 7]);
   const target = new Map([[4, a], [7, b]]);
   const packed = packSnapshotMats(target, moving);
+  assert.ok(packed instanceof Float32Array);
   assert.equal(packed.length, 24);
   assert.equal(snapshotStride(packed, 2), 12);
   for (const [i, m] of [[0, a], [1, b]]) {
     const back = readSnapshotMat(packed, 12, i, new Matrix4()).elements;
-    m.elements.forEach((v, k) => assert.ok(Object.is(back[k], v), `${i} の ${k}: ${back[k]} と ${v}`));
+    m.elements.forEach((v, k) => assert.ok(Object.is(back[k], Math.fround(v)), `${i} の ${k}: ${back[k]} と ${v}`));
   }
   // 最後の行が 0, 0, 0, 1 でない行列（射影）があれば、そのフレームは 16 個ずつ
   const p = new Matrix4().makePerspective(-1, 1, 1, -1, 0.1, 10);
   const full = packSnapshotMats(new Map([[4, a], [7, p]]), moving);
   assert.equal(snapshotStride(full, 2), 16);
-  assert.deepEqual([...readSnapshotMat(full, 16, 1, new Matrix4()).elements], [...p.elements]);
-  assert.equal(snapshotStride(new Float64Array(20), 2), 0, '数が合わない');
+  assert.deepEqual([...readSnapshotMat(full, 16, 1, new Matrix4()).elements], p.elements.map(Math.fround));
+  assert.equal(snapshotStride(new Float32Array(20), 2), 0, '数が合わない');
   // 最後の行が丸めの誤差だけ違う（コンストレイントの計算などで 1 が 0.9999999999999998 になる）ときも 12 個ずつ。読むと 0, 0, 0, 1
   const c = a.clone();
   c.elements[15] = 0.9999999999999998;
@@ -369,26 +371,22 @@ test('再生キャッシュの行列は 12 個ずつ持ち（最後の行 0, 0, 
   assert.equal(snapshotStride(near, 2), 12);
   const back = readSnapshotMat(near, 12, 0, new Matrix4()).elements;
   assert.deepEqual([back[3], back[7], back[11], back[15]], [0, 0, 0, 1]);
-  assert.deepEqual(AFFINE_OTHERS(back), AFFINE_OTHERS(c.elements));
+  assert.deepEqual(AFFINE_OTHERS(back), AFFINE_OTHERS(c.elements).map(Math.fround));
 });
 
-test('32 ビットの再生キャッシュ: Float32Array で持ち、読んだ値は 64 ビットの値とごく近い。精度を変えると覚えたフレームを捨てる', () => {
+test('再生キャッシュの値は、キャッシュを使わずに評価した値とごく近い（32 ビットに丸めた分だけ）', () => {
   const data = load('rig6_mapped');
-  const a = makeRig(data), b = makeRig(data);
-  b.setCachePrecision(true);
+  const a = makeRig(data), b = makeRig(data, false);
   const frames = framesOf(a).slice(0, 6);
-  for (const f of frames) { a.evaluate(f); b.evaluate(f); }
+  for (const f of frames) a.evaluate(f);
   for (const f of frames) {
-    const x = a.evaluate(f, undefined, new Map()), y = b.evaluate(f, undefined, new Map());
-    assert.equal(b.lastPath, 'cache');
-    assert.ok(b.snapshots.get(f).mats instanceof Float32Array);
+    const x = b.evaluate(f, undefined, new Map()), y = a.evaluate(f, undefined, new Map());
+    assert.equal(a.lastPath, 'cache');
+    assert.ok(a.snapshots.get(f).mats instanceof Float32Array);
     for (const [ni, m] of x) {
       m.elements.forEach((v, k) => assert.ok(Math.abs(y.get(ni).elements[k] - v) <= 1e-6 * (1 + Math.abs(v)), `フレーム ${f}・${ni}・${k}`));
     }
   }
-  assert.ok(b.playbackStats().bytes < a.playbackStats().bytes * 0.6, '大きさがおよそ半分');
-  b.setCachePrecision(false);
-  assert.equal(b.playbackStats().bytes, 0, '精度を変えたら捨てる');
 });
 
 test('変化のないフレームは、隣のフレームと行列のデータを共有し、行列の分を数えない。上限を下げて捨てても数えた大きさが合う', () => {

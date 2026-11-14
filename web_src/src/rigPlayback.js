@@ -4,7 +4,7 @@ import { Matrix4 } from 'three';
 import { enterDeep, isStackOverflow, leaveDeep, mayOverflow, runDeep, useOrder } from './deepEval.js';
 import { buildPlan, runPlan } from './rigCompiled.js';
 import {
-  BUSY, CHAIN_SOLVERS, copyKeys, deepHooks, diffKeys, MAX_LAYERS, NO_FRAMES, NO_KEYS, NO_POSE, OPAQUE,
+  BUSY, copyKeys, deepHooks, diffKeys, MAX_LAYERS, NO_FRAMES, NO_KEYS, NO_POSE, OPAQUE,
   overflowReason, packSnapshotMats, poseKeysOf, readSnapshotMat, sameMats, SNAPSHOT_BASE, snapshotStride,
 } from './rig.js';
 
@@ -110,29 +110,6 @@ export class PlaybackMethods {
       return true;
     }
     return false;
-  }
-
-  /**
-   * 3 ボーン以上の IK の解き方（CHAIN_SOLVERS の 1 つ）。変えたら、覚えた値・専用の評価の計画・再生キャッシュを捨てる。
-   * 変えたら true
-   */
-  setChainSolver(mode) {
-    mode = CHAIN_SOLVERS.includes(mode) ? mode : 'fabrik';
-    if (this.chainSolver === mode) return false;
-    this.chainSolver = mode;
-    this.compiledPlan = undefined;
-    this.clearPlayback();
-    this.reset();
-    return true;
-  }
-
-  /** 再生キャッシュの精度（true: 32 ビット）。変えたら覚えたフレームを捨てる（作り直す） */
-  setCachePrecision(f32) {
-    f32 = !!f32;
-    if (this.cacheFloat32 === f32) return;
-    this.cacheFloat32 = f32;
-    this.frameBytes = this.moving.size * (f32 ? 48 : 96) + SNAPSHOT_BASE;
-    this.clearPlayback();
   }
 
   /** 再生キャッシュの上限（バイト。0 なら使わない）。いまの大きさが上限を超えたら、古いレイヤー・先に覚えたフレームから捨てる */
@@ -337,7 +314,7 @@ export class PlaybackMethods {
 
   /** フレーム f の動くノードのローカル行列を、再生キャッシュのレイヤー layer に入れる */
   storeSnapshot(f, layer, target) {
-    const mats = packSnapshotMats(target, this.moving, this.cacheFloat32);
+    const mats = packSnapshotMats(target, this.moving);
     this.current = { mats, props: null, curves: new Map(), bytes: 0, layer };
     layer.frames.set(f, this.current);
     this.addSnapshotBytes(this.current, this.shareMats(layer, f, this.current) ? SNAPSHOT_BASE : mats.byteLength + SNAPSHOT_BASE);
@@ -399,7 +376,7 @@ export class PlaybackMethods {
 
   /**
    * ほかの評価器（ワーカー）が作った再生キャッシュを、目印 keys のレイヤーに入れる（bake の代わり）。
-   * @param frames [{ f, mats（動くノードの順の Float64Array）, props, curves: Map（グラフの id → カーブの形） }]
+   * @param frames [{ f, mats（動くノードの順の Float32Array）, props, curves: Map（グラフの id → カーブの形） }]
    * @param deps [[動くノード, 読んだ追加分のノード…]]（nodeDeps に足す）  @param poseReads 追加分を読んだノード
    * @returns 入れたフレームの数（上限に達したら途中で止める）
    */
