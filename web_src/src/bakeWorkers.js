@@ -91,7 +91,7 @@ export class BakeWorkers {
     if (w.token === this.token) return;
     const t = performance.now();
     w.worker.postMessage({ type: 'init', token: this.token, anim: this.init.anim, nodes: this.init.nodes,
-      chainSolver: this.rig.chainSolver, sentAt: performance.timeOrigin + t });
+      sentAt: performance.timeOrigin + t });
     this.stat.sendMs += performance.now() - t;
     w.token = this.token;
     w.sent = 0;
@@ -173,7 +173,7 @@ export class BakeWorkers {
     job.busy++;
     w.frames = frames;
     for (const f of frames) job.inflight.add(f);
-    w.worker.postMessage({ type: 'bake', token: this.token, job: job.id, sig: job.sig, frames, poses: job.poses, f32: !!this.f32 });
+    w.worker.postMessage({ type: 'bake', token: this.token, job: job.id, sig: job.sig, frames, poses: job.poses });
   }
 
   /**
@@ -196,8 +196,7 @@ export class BakeWorkers {
           done(e.data.frames ? e.data : null);
         };
         worker.onerror = () => { worker.terminate(); done(null); };
-        worker.postMessage({ type: 'probe', id, fresh: true, frames, anim: this.init.anim, nodes: this.init.nodes,
-          chainSolver: this.rig && this.rig.chainSolver });
+        worker.postMessage({ type: 'probe', id, fresh: true, frames, anim: this.init.anim, nodes: this.init.nodes });
         return;
       }
       const w = this.workers.find((x) => x.token === this.token);

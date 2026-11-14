@@ -49,6 +49,7 @@ class Bridge(QtCore.QObject):
         self.allowed_files = set()   # JS に渡してよいファイル（読み込んだシーンのテクスチャ）
         self.package_path = None     # 開いている .msv（同梱のテクスチャを渡す）
         self.package_names = set()   # JS に渡してよい .msv の中の名前
+        _settings_remove(self.DROPPED_SETTINGS)
 
     @Slot()
     def jsReady(self):
@@ -91,8 +92,9 @@ class Bridge(QtCore.QObject):
         self.loadEventSignal.emit(name, detail)
 
     # JS から保存・読み戻しできる設定（キー → QSettings のキー）
-    SAVED_SETTINGS = {"playbackCacheMB": "viewer/playbackCacheMB", "playbackCachePrecision": "viewer/playbackCachePrecision",
-                      "ikChainSolver": "viewer/ikChainSolver"}
+    SAVED_SETTINGS = {"playbackCacheMB": "viewer/playbackCacheMB"}
+    # 以前の版が保存していた、いまは使わない設定（起動時に消す）: 再生キャッシュの精度・3 ボーン以上の IK の解き方
+    DROPPED_SETTINGS = ("viewer/playbackCachePrecision", "viewer/ikChainSolver")
 
     @Slot(str, str)
     def saveSetting(self, key, value):
@@ -560,6 +562,16 @@ def _settings_bool(key: str, default: bool) -> bool:
 def _settings_set(key: str, value) -> None:
     try:
         _settings().setValue(key, value)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _settings_remove(keys) -> None:
+    try:
+        s = _settings()
+        for key in keys:
+            if s.contains(key):
+                s.remove(key)
     except Exception:  # noqa: BLE001
         pass
 

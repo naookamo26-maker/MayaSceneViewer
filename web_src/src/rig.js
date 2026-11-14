@@ -93,14 +93,14 @@ const isAffine = (e) => Math.abs(e[3]) <= AFFINE_TOL && Math.abs(e[7]) <= AFFINE
   && Math.abs(e[15] - 1) <= AFFINE_TOL;
 
 /**
- * 動くノード（moving の順）のローカル行列（target）を、再生キャッシュの並びにする。f32: 32 ビットの数で持つ（大きさが半分。
- * 値は 32 ビットに丸める。描画は GPU で 32 ビットなので、見た目にはほぼ出ない）
+ * 動くノード（moving の順）のローカル行列（target）を、再生キャッシュの並びにする。32 ビットの数で持つ（64 ビットの半分の
+ * 大きさ。値は 32 ビットに丸めるが、描画は GPU で 32 ビットなので、見た目にはほぼ出ない）
  */
-export function packSnapshotMats(target, moving, f32 = false) {
+export function packSnapshotMats(target, moving) {
   let affine = true;
   for (const ni of moving) if (!isAffine(target.get(ni).elements)) { affine = false; break; }
   const stride = affine ? 12 : 16;
-  const mats = new (f32 ? Float32Array : Float64Array)(moving.size * stride);
+  const mats = new Float32Array(moving.size * stride);
   let o = 0;
   for (const ni of moving) {
     const e = target.get(ni).elements;
@@ -513,7 +513,6 @@ export class RigEvaluator {
     this.bypassCache = false;                // 再生キャッシュを使わずに評価する（評価のプロファイラの「キャッシュを使わずに測る」）
     this.lastPath = null;                    // 直前の evaluate の経路（'cache' 再生キャッシュ / 'compiled' 専用の評価 / 'generic' 汎用の経路）
     this.ikVariant = null;                   // 再現チェックで試す IK の解き方の候補（ふだんは null）
-    this.chainSolver = 'fabrik';             // 3 ボーン以上の IK の解き方（CHAIN_SOLVERS。setChainSolver）
     this.aimMode = null;                     // aim と up が平行な aimConstraint の解き方（再現チェックで試す。null = parent）
     this.frame = 0;
     this.poseOf = NO_POSE;                   // ポーズ確認の追加分（evaluate で受け取る。リグの中では poseAt を通して読む）
@@ -538,7 +537,7 @@ export class RigEvaluator {
     // （ikVariant・aimMode）が変わったらすべて捨てる（keepFor と比べる）
     this.keep = emptyCache();
     this.keepKeys = NO_KEYS;
-    this.keepFor = { ikVariant: null, aimMode: null, chainSolver: this.chainSolver };
+    this.keepFor = { ikVariant: null, aimMode: null };
     this.keepStatic = true;                  // false なら keep を使わない（毎フレームすべて計算する）
     this.plans = new Map();                  // グラフの id → 属性 → 値の求め方（plugPlan）
     // 専用の評価（rigCompiled.js）。最初の評価のあとで計画を作る（undefined = まだ・null = 扱えないリグ）。
@@ -550,7 +549,7 @@ export class RigEvaluator {
     this.curveAttrs = new Map();             // AnimationClip のノードの材料 → カーブが動かす属性（curveAttrsOf）
     this.varying = false;                    // いま計算中の値が、時間で変わる値を読んだか
     // 再生キャッシュ: 追加分ごとのレイヤー { keys（追加分の目印）, frames（整数のフレーム → { mats（動くノードのローカル
-    // 行列を並べた Float64Array）, props, curves, bytes, layer }）, bytes }。後ろほど新しく使ったもの。
+    // 行列を並べた Float32Array）, props, curves, bytes, layer }）, bytes }。後ろほど新しく使ったもの。
     // 2 周目以降の再生はコピーだけにする。追加分を前と同じに戻せば（元に戻す・キーのある値をカーブに戻す）前のレイヤーを
     // そのまま使い、新しい追加分のフレームは、ほかのレイヤーの同じフレームから影響のないノードの行列を写して作る（seed）。
     // 上限（バイト）を超えたら古いレイヤーから捨てる。0 なら使わない（setPlaybackLimit）
@@ -558,8 +557,7 @@ export class RigEvaluator {
     this.layer = null;                       // いまのフレームの評価に使ったレイヤー
     this.play = null;                        // 再生で使う追加分 { poseOf, key, keys }（setPlaybackPose。null = いまの追加分）
     this.snapshotBytes = 0;                  // 再生キャッシュの大きさ（全レイヤー。カーブの形・属性の値を含む目安）
-    this.cacheFloat32 = false;                               // 再生キャッシュを 32 ビットの数で持つか（setCachePrecision）
-    this.frameBytes = this.moving.size * 96 + SNAPSHOT_BASE;    // 1 フレームの大きさの見込み（12 個ずつ。覚えたフレームの最大）
+    this.frameBytes = this.moving.size * 48 + SNAPSHOT_BASE;    // 1 フレームの大きさの見込み（32 ビットの数を 12 個ずつ。覚えたフレームの最大）
     this.countedCurves = new WeakSet();      // 大きさを数えたカーブの値（時間で変わらない形は全フレームで同じものを使う）
     this.playbackLimit = 512 * 1024 * 1024;
     this.current = null;                     // いまのフレームの再生キャッシュ（覚えないフレームは null）
@@ -572,9 +570,9 @@ export class RigEvaluator {
   /** 1 回の評価の準備。追加分・再現チェックの候補が変わっていたら、それを読んだ keep の値を捨てる */
   reset() {
     const k = this.keepFor;
-    if (k.ikVariant !== this.ikVariant || k.aimMode !== this.aimMode || k.chainSolver !== this.chainSolver) {
+    if (k.ikVariant !== this.ikVariant || k.aimMode !== this.aimMode) {
       this.keep = emptyCache();
-      this.keepFor = { ikVariant: this.ikVariant, aimMode: this.aimMode, chainSolver: this.chainSolver };
+      this.keepFor = { ikVariant: this.ikVariant, aimMode: this.aimMode };
       this.keepKeys = copyKeys(this.poseKeys);
     } else if (this.keepKeys !== this.poseKeys) {
       const d = diffKeys(this.keepKeys, this.poseKeys);
@@ -890,15 +888,8 @@ export function rotateAlong(ev, fk, q, delta, twistOf = null) {
   return out;
 }
 
-/**
- * 3 ボーン以上の IK の解き方（CHAIN_SOLVERS）。'fabrik': FK の形から、面の上で FABRIK（反復）で解く（既定）。
- * 'preferred': 優先角（.pa）の形から、関節ごとの曲がりの比を保ったまま曲がり具合だけを変えて届かせる（solveChainPreferred）
- */
-export const CHAIN_SOLVERS = ['fabrik', 'preferred'];
-
 /** 3 本以上のジョイントの IK（回転プレーン・シングルチェーン）: 面の上で FABRIK を解く */
 export function solveChain(ev, id) {
-  if (ev.chainSolver === 'preferred') return solveChainPreferred(ev, id);
   const g = ev.byId.get(id);
   const chain = g.ik.chain;
   if (chain.some((ni) => !ev.rest(ni))) return null;
@@ -958,149 +949,6 @@ export function solveChain(ev, id) {
     }
   }
   return ikLocals(ev, id, chain, fk.P, rotateAlong(ev, fk, q, R1));
-}
-
-/**
- * 3 ボーン以上の IK（優先角から曲げる。オプション）。FK の値によらず、毎回同じ形（優先角の形）から解く:
- *   1. 優先角（.pa。ファイルになければ Maya の既定値 0）で組んだ形を基準にする
- *   2. 基準の形が曲がっている面（開始 → 終端の軸と、途中のジョイントのずれの側）の法線のまわりで、途中の各ジョイントの
- *      曲がる角度を、同じ倍率 k で増やす・減らす（関節ごとの曲がりの比を保つ）。まっすぐな形は、どのジョイントも同じ角度で曲げる
- *   3. 開始から終端までの距離がハンドルまでの距離になる k を探す（k = 0 がいちばん伸びた形。届かなければ k = 0）
- *   4. 形を丸ごと回して、終端をハンドルの方へ、曲がる側を極ベクトル（＋ひねり）の側へ向ける。シングルチェーンは
- *      最短の回転でハンドルの方へ向ける（曲がる側は基準の形のまま）
- */
-export function solveChainPreferred(ev, id) {
-  const g = ev.byId.get(id);
-  const chain = g.ik.chain;
-  if (chain.some((ni) => !ev.rest(ni))) return null;
-  const n = chain.length;
-  // 1. 優先角の形（ワールド）
-  const P = ev.parentWorld(chain[0]);
-  const W = [];
-  let m = P;
-  chain.forEach((ni, i) => {
-    let c;
-    if (i === n - 1) c = ev.chan(ni, 't');
-    else {
-      const node = ev.dagGraph.get(ni);
-      const pa = node && node.attrs && Array.isArray(node.attrs.pa) ? node.attrs.pa : [0, 0, 0];
-      c = { ...ev.chan(ni, 'fk'), r: pa };
-    }
-    m = new Matrix4().multiplyMatrices(m, composeLocalMatrix(c, ev.isScaleOf(ni), new Matrix4()));
-    W.push(m);
-  });
-  const pos = W.map((w) => positionOf(w));
-  const bones = [];
-  for (let i = 0; i < n - 1; i++) bones.push(new Vector3().subVectors(pos[i + 1], pos[i]));
-  const total = bones.reduce((t, b) => t + b.length(), 0);
-  if (bones.some((b) => b.length() < EPS)) return null;
-  const A = pos[0];
-  const H = positionOf(ev.world(g.dag));
-  const u = new Vector3().subVectors(H, A);
-  const dist = u.length();
-  if (dist < EPS) return null;
-  u.divideScalar(dist);
-  const rp = g.ik.solver === 'ikRPsolver';
-  // 極ベクトルの側（ハンドルの方向に垂直な成分。ひねりで回す）
-  let side = null;
-  if (rp) {
-    const pv = ev.pvWorld(ev.vec(id, 'pv', [0, 0, 1]), g.dag, chain[0]);
-    side = pv.addScaledVector(u, -pv.dot(u));
-    if (ev.ikVariant && ev.ikVariant.side === -1) side.negate();
-    if (side.lengthSq() < EPS) side = null;
-  }
-  // 2. 曲がる面: 軸（開始 → 終端）と、途中のジョイントの軸からのずれの和の側。まっすぐなら極ベクトルの側
-  let axis = new Vector3().subVectors(pos[n - 1], A);
-  if (axis.lengthSq() < EPS) axis = bones[0].clone();
-  axis.normalize();
-  const off = new Vector3();
-  for (let i = 1; i < n - 1; i++) {
-    const v = new Vector3().subVectors(pos[i], A);
-    off.add(v.addScaledVector(axis, -v.dot(axis)));
-  }
-  let bendSide = off.lengthSq() > EPS * total * total ? off.clone() : null;
-  if (!bendSide && side) bendSide = side.clone().addScaledVector(axis, -side.dot(axis));
-  if (!bendSide || bendSide.lengthSq() < EPS) {
-    bendSide = new Vector3(0, 1, 0).cross(axis);
-    if (bendSide.lengthSq() < EPS) bendSide = new Vector3(1, 0, 0).cross(axis);
-  }
-  bendSide.normalize();
-  const nrm = new Vector3().crossVectors(axis, bendSide).normalize();   // このまわりの正の回転で、軸が曲がる側へ向く
-  // 途中の各ジョイントの曲がる角度（nrm のまわり、符号つき）
-  const rest = [];
-  for (let i = 1; i < n - 1; i++) {
-    rest.push(Math.atan2(nrm.dot(new Vector3().crossVectors(bones[i - 1], bones[i])), bones[i - 1].dot(bones[i])));
-  }
-  const maxAbs = rest.reduce((t, a) => Math.max(t, Math.abs(a)), 0);
-  const straight = maxAbs < 1e-6;
-  // 倍率 k のときの角度: 曲がった形は rest × k（k = 1 が基準の形）、まっすぐな形は、どのジョイントも -k（曲がる側へ）
-  // ボーン i の基準からの回転 = 途中のジョイント 1..i の角度の変化の和
-  const turnsAt = (k) => {
-    const out = [0];
-    let sum = 0;
-    for (let i = 1; i < n - 1; i++) {
-      sum += straight ? -k : rest[i - 1] * (k - 1);
-      out.push(sum);
-    }
-    return out;
-  };
-  const endAt = (k) => {
-    const t = turnsAt(k);
-    const e = new Vector3();
-    for (let i = 0; i < n - 1; i++) e.add(bones[i].clone().applyAxisAngle(nrm, t[i]));
-    return e;
-  };
-  const reach = (k) => endAt(k).length();
-  // 3. 届く距離になる倍率を探す（k = 0 から、どこかの関節が半回転するまで。最初に届いたところを二分法で詰める）
-  const kMax = straight ? Math.PI : Math.PI / maxAbs;
-  let k = 0;
-  if (reach(0) > dist) {
-    const STEPS = 96;
-    let prev = 0, best = 0, bestErr = Infinity, found = false;
-    for (let s = 1; s <= STEPS && !found; s++) {
-      const kk = (kMax * s) / STEPS;
-      const r = reach(kk);
-      if (Math.abs(r - dist) < bestErr) { bestErr = Math.abs(r - dist); best = kk; }
-      if (r <= dist) {
-        let lo = prev, hi = kk;
-        for (let it = 0; it < 50; it++) {
-          const mid = (lo + hi) / 2;
-          if (reach(mid) > dist) lo = mid; else hi = mid;
-        }
-        k = (lo + hi) / 2;
-        found = true;
-      }
-      prev = kk;
-    }
-    if (!found) k = best;
-  }
-  const turns = turnsAt(k);
-  const end = endAt(k);
-  // 4. 形を丸ごと回す: 終端の向き x0 → u。曲がる側は、RP なら極ベクトルの側、SC なら最短の回転
-  const x0 = end.lengthSq() > EPS ? end.clone().normalize() : axis.clone();
-  let R;
-  if (rp) {
-    let v = side ? side.clone() : null;
-    if (!v) {
-      const sd = new Vector3().crossVectors(nrm, x0).applyQuaternion(new Quaternion().setFromUnitVectors(x0, u));
-      v = sd.addScaledVector(u, -sd.dot(u));
-    }
-    const twist = ev.num(id, 'twi', 0) * ev.twistSign();
-    if (Math.abs(twist) > EPS) v.applyQuaternion(new Quaternion().setFromAxisAngle(u, twist));
-    v.normalize();
-    // 解いた形の曲がる側は nrm × x0。（向き, 曲がる側）の組を（u, v）へ
-    const sd0 = new Vector3().crossVectors(nrm, x0).normalize();
-    const basis = (a, b) => new Matrix4().makeBasis(a, b, a.clone().cross(b));
-    R = new Quaternion().setFromRotationMatrix(basis(u, v).multiply(basis(x0, sd0).transpose()));
-  } else {
-    R = new Quaternion().setFromUnitVectors(x0, u);
-  }
-  // ジョイントのワールドの回転 = 全体の回転 × 面の法線のまわりの回転 × 優先角の形の回転
-  const Q = [];
-  for (let i = 0; i < n - 1; i++) {
-    Q.push(R.clone().multiply(new Quaternion().setFromAxisAngle(nrm, turns[i])).multiply(rotationOf(W[i])));
-  }
-  return ikLocals(ev, id, chain, P, Q);
 }
 
 // 種類ごとのファイル（rigConstraints.js など）が使う、このファイルの定数・作業用のオブジェクト・補助関数
