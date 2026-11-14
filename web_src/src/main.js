@@ -792,7 +792,6 @@ class ViewerApp {
       this.maps.reset(data);
       this.requestMaps();
       mark('マテリアル');
-      const renderStart = performance.now();
       this.ui.setMessage(`読み込みました（${Math.round(performance.now() - t0)} ms）`
         + (this.viewCamera >= 0 ? `。Maya のビューと同じく、カメラ ${this.cameras[this.viewCamera].name} から表示しています（Shift+C で自由視点）` : ''), 6000);
       // 読み込みの内訳（ビューア側）。最初の描画が終わったところまでを測る
@@ -800,12 +799,13 @@ class ViewerApp {
       const setupStart = tb + buildMs;
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const ms = (x) => `${(x / 1000).toFixed(2)} 秒`;
-        marks.push(['最初の描画', performance.now() - renderStart]);
+        mark('最初の描画');                    // アニメーション・表示の状態の準備のあと、描き終わるまで待った時間
         this.lastTiming = { transfer: tm.transfer || 0, parse: tm.parse || 0, build: buildMs, setup: performance.now() - setupStart,
           setupParts: Object.fromEntries(marks) };
         this.log('info', `読み込みの内訳（ビューア）: 受け渡し ${ms(this.lastTiming.transfer)}・JSON の解釈 ${ms(this.lastTiming.parse)}`
           + `・シーンの組み立て ${ms(buildMs)}・画面の準備と最初の描画 ${ms(this.lastTiming.setup)}`
-          + `（${marks.map(([k, v]) => `${k} ${ms(v)}`).join('・')}）`);
+          + `（${marks.map(([k, v]) => `${k} ${ms(v)}`).join('・')}）`
+          + (animParts ? `。アニメーションの準備の内訳: ${animParts.map(([k, v]) => `${k} ${ms(v)}`).join('・')}` : ''));
         this.timing = null;
         this.loadEvent('scene');
       }));
@@ -813,6 +813,8 @@ class ViewerApp {
       const anim = this.pendingAnimation || data.animation;
       this.pendingAnimation = null;
       if (anim) this.setAnimation(anim);
+      const animParts = anim ? this.animParts : null;
+      if (anim) mark('アニメーション');
       // .msv に保存した表示の状態（カメラ・表示設定・非表示・フレーム・ポーズ）
       if (data.savedView) {
         try {
@@ -824,6 +826,7 @@ class ViewerApp {
         }
       }
       // URL のクエリの指定（フレーム・カメラ・表示の設定）。最初に開いたシーンにだけ入れる
+      const qvUsed = !!this.queryView;
       if (this.queryView) {
         const qv = this.queryView;
         this.queryView = null;
@@ -835,6 +838,7 @@ class ViewerApp {
         }
       }
       this.updateToolbarHints();
+      if (data.savedView || qvUsed) mark('表示の状態');
       return true;
     } catch (err) {
       this.ui.hideLoading();
@@ -1406,6 +1410,11 @@ class ViewerApp {
       this.pendingAnimation = anim;
       return true;
     }
+    // 準備の内訳（シーンと一緒に読み込んだときは、読み込みの内訳のログに出す）
+    const parts = [];
+    let tp = performance.now();
+    const part = (label) => { const t = performance.now(); parts.push([label, t - tp]); tp = t; };
+    this.animParts = parts;
     let clip;
     try {
       clip = new AnimationClip(anim, { keepKeyArrays: true });   // キーのデータは型付き配列にしてワーカーに送る
@@ -1417,6 +1426,7 @@ class ViewerApp {
       this.loadEvent('animation', 'failed');
       return false;
     }
+    part('カーブ');
     this.pause();
     this.clip = clip;
     this.data.animation = anim;
@@ -1434,11 +1444,13 @@ class ViewerApp {
     this.rig.setCachePrecision(this.settings.playbackCachePrecision !== 'float64');
     this.rig.setChainSolver(this.settings.ikChainSolver);
     this.bakers.f32 = this.rig.cacheFloat32;
+    part('評価器');
     // ワーカーにも同じアニメーションを渡す（受け取った JSON の文字列があれば、それを渡す。複製より速い）
     // 文字列がなければ、キーのデータを型付き配列にしたもの（数のリストのままより、送る・受け取るときの複製がずっと速い）
     const compact = clip.takeKeyArrays(anim);
     const sent = this.animationText && this.animationText.anim === anim ? this.animationText.text : compact;
     this.bakers.reset(this.rig, sent, this.data.nodes);
+    part('ワーカー');
     this.profiler.clear();
     this.animationText = null;
     const touched = new Set();
@@ -1461,6 +1473,7 @@ class ViewerApp {
     for (const [ni, m] of this.rig.evaluate(clip.current, undefined, new Map())) {
       this.built.nodeObjects[ni].userData.savedMatrix.copy(m);
     }
+    part('最初の評価');
     const warnings = clip.warnings.concat([...this.rig.problems].map((p) => `アニメーション: リグの評価を打ち切りました（${p}）。`));
     if (warnings.length) this.ui.setWarnings((this.ui.warnings || []).concat(warnings));
     // 推定・不明のノードをジョイントの表示で色分けする
@@ -1475,6 +1488,7 @@ class ViewerApp {
     this.overlay.setControllers(controls, roles, characterRadius(this.built) || this.sceneRadius);
     this.applyControlOptions();
     this.ui.setControlCounts(this.overlay.ctrl.counts());
+    part('コントローラー');
     // リグで形が変わるカーブ（skinCluster・制御点の接続）: 共通 JSON の curves の番号 → グラフの id
     this.rigCurves = (anim.graph || []).filter((g) => g.type === 'nurbsCurve' && g.shape >= 0).map((g) => [g.shape, g.id]);
     // キーがなくリグだけのときは、タイムラインは出さずに評価だけする（ポーズ確認でコントローラーを動かせる）
@@ -1482,12 +1496,14 @@ class ViewerApp {
     this.timeline.setClip(this.hasTimeline ? clip : null);
     this.curveEditor.setClip(clip.curves.length ? clip : null, this.rig);
     this.updateTimelineKeys();
+    part('タイムライン・カーブエディタ');
     // キーのあるアニメーションは「ファイルの値」で見る（バインドポーズのままではアニメーションが見えないため）。
     // 読み込みのあとで自分でバインドポーズを選んでいたら、そのままにする
     const switched = this.hasTimeline && !this.poseSourceChosen && this.settings.poseSource === 'bind' && hasBindPose(this.built);
     if (switched) this.setSetting('poseSource', 'file');
     this.applyFrame(clip.current);
     if (this.seqFollow) this.applySequence();
+    part('フレームの反映');
     this.fpsMeter = null;
     this.updateHud();
     // 読み込みの経過（Qt のログ）: アニメーションの準備が終わった。再生キャッシュは、ここから作り終わるまでを測る
