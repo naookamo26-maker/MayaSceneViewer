@@ -342,6 +342,11 @@ python -m ma_viewer pack rig.ma --take shot010.ma --take shot020.msva -o rig.msv
 
 ## 進め方
 
+**進み具合**: 段階 1 は 1.41.0 で実装しました（形式・`takes.js`・`restNodes`・`names`・一覧・読み込みとドロップ・Qt 版の `.msva` と .msv への書き出し）。
+.msv・共通 JSON からの取り出し（B）は JS にあり、`.ma` からの取り出し（A、`take.py`）・コマンドライン・ブラウザの `.msva` の書き出しは段階 2 です。
+段階 1 では、`samples/*.json` は作り直していません（`restNodes` のない古い形のまま。当てる側の代わりの処理を確かめる材料にしている）。
+`bindings[].prop`（props への結び付けの種類）を形式に足しました（[data_format.md](data_format.md) の「テイク」）。
+
 段階ごとに PR を分けるのを勧めます。どの段階も、単独で使える状態にします。
 
 | 段階 | 内容 |

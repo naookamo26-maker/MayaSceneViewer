@@ -627,6 +627,29 @@ def _addattr_default(rest: str):
         return None
 
 
+def custom_attr_names(text: str, node: MaNode) -> Dict[str, str]:
+    """独自の属性（addAttr）の、長い名前 → 短い名前（違うものだけ）。テイクを当てるときに、長い名前で書かれた
+    属性を短い名前で引くのに使う（共通 JSON の animation.graph[].names）"""
+    out: Dict[str, str] = {}
+    if not text or node.attr_map or node.node_def is not None:
+        return out
+    for a, b in [s for s in (node.span, node.espan) if s is not None]:
+        for _at, _cmd, body in R.iter_commands(text, a, b, _ADDATTR):
+            toks = R.tokenize(body)
+            opts, _pos = R.parse_flags(toks, ["-sn", "-shortName", "-ln", "-longName", "-dv", "-defaultValue", "-at",
+                                              "-attributeType", "-dt", "-dataType", "-p", "-parent", "-nc",
+                                              "-numberOfChildren", "-min", "-max", "-smn", "-smx", "-en", "-enumName",
+                                              "-h", "-k", "-ci", "-dcb"])
+            sn = opts.get("-sn") or opts.get("-shortName")
+            ln = opts.get("-ln") or opts.get("-longName")
+            if not (isinstance(sn, str) and sn and isinstance(ln, str) and ln):
+                continue
+            key = MaScene.attr_key(node, sn) or sn
+            if ln != key:
+                out[ln] = key
+    return out
+
+
 def parse_attrs(text: str, node: MaNode, skip=(), angle_k: Optional[float] = None) -> Dict[str, object]:
     """ノードのブロック（span）の setAttr から、数値の属性を読む（ノード名つきのプラグは対象外）。
 
@@ -743,6 +766,9 @@ def build_graph(ms: MaScene, info: GraphInfo, out_index: Dict[int, int], curve_i
                     attrs[key] = 0.0 if d >= 0.5 else 1.0
         if attrs:
             entry["attrs"] = attrs
+        names = custom_attr_names(ms.text, n)
+        if names:
+            entry["names"] = names                        # 独自の属性の長い名前 → 短い名前（テイクを当てるときに使う）
         inputs = {}
         for key, (src, sattr) in info.edges.get(id(n), {}).items():
             if src.type in CURVE_TYPES:

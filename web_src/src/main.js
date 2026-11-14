@@ -15,7 +15,9 @@ import {
 } from './sceneBuilder.js';
 import { base64ToArrayBuffer } from './textures.js';
 import { MapManager, usageFor } from './mapManager.js';
-import { PACKAGE_EXT, openPackage } from './package.js';
+import { PACKAGE_EXT, TAKES_EXT, openPackage, openTakes } from './package.js';
+import { chooseNamespace, composeAnimation, decodeTake, encodeTake, reasonText, splitAnimation, takeNamespaces } from './takes.js';
+import { TakePanel } from './takePanel.js';
 import { buildShareQuery, fetchFailureMessage, isZip, parseShareQuery } from './share.js';
 import { base64ToBytes } from './arrays.js';
 import { JointOverlay } from './jointOverlay.js';
@@ -123,6 +125,12 @@ class ViewerApp {
     this.loadSeq = 0;           // 読み込みの番号（新しく読み込み始めるたびに増やす。古い読み込みの続きは捨てる）
     this.loadBusy = false;      // 読み込み中（前のシーンの再生・再生キャッシュの作成を止めておく）
     this.pendingAnimation = null;   // シーンの組み立て前に届いたアニメーション
+    // テイク（アニメーションだけ。takes.js）: 一覧 [{ take, namespace: 当てる先の名前空間, report }]・いまのテイク（-1 は
+    // シーンのアニメーション）・シーンのアニメーション（setAnimation で受け取ったもの）・名前空間ごとの土台
+    this.takes = [];
+    this.activeTake = -1;
+    this.sceneAnim = null;
+    this.takeBases = new Map();
     this.poseSourceChosen = false;  // 読み込んでから、姿勢の基準を自分で切り替えたか（アニメーションの読み込みで自動で切り替えない）
     this.cameras = [];              // シーンのカメラ（共通 JSON の cameras）
     this.viewCamera = -1;           // いま見ているカメラ（-1 は自由視点）
@@ -137,6 +145,7 @@ class ViewerApp {
     this.ui = new UI(this);
     this.timeline = new Timeline(this);
     this.seqPanel = new SequencerPanel(this);
+    this.takePanel = new TakePanel(this);
     this.curveEditor = new CurveEditor(this);   // 画面の下のカーブエディタ（初期状態では最小化）
     this.ui.setHost(isQtHost() ? 'qt' : 'browser');
     this.ui.syncSettings(this.settings);     // ツールバーの表示を初期設定（DEFAULTS）に合わせる
@@ -508,13 +517,23 @@ class ViewerApp {
     });
     // ブラウザで開いたときの JSON ドロップ（Qt 版はウィンドウ側で .ma を受け取る）
     if (!isQtHost()) {
-      document.addEventListener('dragover', (e) => { e.preventDefault(); document.body.classList.add('drag-over'); });
-      document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('drag-over'); });
+      document.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        document.body.classList.add('drag-over');
+        this.takePanel.dragOver(e.clientX, e.clientY);      // テイクの一覧の上なら、一覧の枠を強調する
+      });
+      document.addEventListener('dragleave', (e) => {
+        if (e.relatedTarget) return;
+        document.body.classList.remove('drag-over');
+        this.takePanel.dragOver(-1, -1);
+      });
       document.addEventListener('drop', (e) => {
         e.preventDefault();
         document.body.classList.remove('drag-over');
-        const f = e.dataTransfer.files && e.dataTransfer.files[0];
-        if (f) this.loadFile(f);
+        const at = this.takePanel.dropIndex(e.clientX, e.clientY);     // テイクの一覧の中なら、入れる位置（外は -1）
+        this.takePanel.dragOver(-1, -1);
+        const files = [...(e.dataTransfer.files || [])];
+        if (files.length) this.dropFiles(files, at);
       });
     }
     window.addEventListener('error', (e) => this.ui.setMessage('エラー: ' + e.message, 8000));
@@ -569,7 +588,59 @@ class ViewerApp {
   /** 番号 seq の読み込みが、あとから始めた読み込みで置き換わったか */
   staleLoad(seq) { return seq !== this.loadSeq; }
 
+  /**
+   * 落としたファイルを開く。テイクの一覧の中（at >= 0。入れる位置）ならテイクとして足し（.msva・.msv・共通 JSON）、
+   * 外ならいままでどおりシーンを開く。.msva はどこに落としてもテイクとして足す
+   */
+  dropFiles(files, at = -1) {
+    const takes = files.filter((f) => TAKES_EXT.test(f.name));
+    if (at < 0 && takes.length === files.length) return this.loadTakeFiles(takes, -1, true);
+    if (at < 0) return this.loadFile(files.find((f) => !TAKES_EXT.test(f.name)));
+    return this.loadTakeFiles(files, at, true);
+  }
+
+  /**
+   * ファイルからテイクを読み込んで、一覧の at の位置に足す（-1 は末尾）。ファイル名の順に足す。
+   * drop: ドロップで足す（いまのシーンに当たらないテイクは足さない）
+   */
+  async loadTakeFiles(files, at = -1, drop = false) {
+    if (!this.built) { this.ui.setMessage('先にシーンを開いてください（テイクはシーンに当てて使います）', 6000); return 0; }
+    const list = [];
+    for (const f of [...files].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+      if (/\.(ma|mb)$/i.test(f.name)) {
+        this.ui.setMessage(`${f.name}: ブラウザでは .ma・.mb からテイクを取り出せません（.msva・.msv・共通 JSON を使ってください）`, 8000);
+        continue;
+      }
+      try {
+        list.push(...await this.readTakes(f.name, await f.arrayBuffer()));
+      } catch (err) {
+        this.ui.showError(`${f.name} からテイクを読めませんでした。\n${err && err.message || err}`);
+      }
+    }
+    return list.length ? this.addTakes(list, { at, drop }) : 0;
+  }
+
+  /** ファイルの中身（.msva・.msv・共通 JSON）→ テイクの一覧（.msv・共通 JSON はアニメーションから取り出す） */
+  async readTakes(name, buffer) {
+    if (TAKES_EXT.test(name)) return openTakes(buffer);
+    if (isZip(buffer)) {
+      const { scene } = await openPackage(buffer);
+      return this.extractTakes(scene, name);
+    }
+    return this.extractTakes(JSON.parse(new TextDecoder().decode(buffer)), name);
+  }
+
+  /** 読み込んだシーン（共通 JSON・.msv）から、名前空間ごとのテイクを取り出す（.msv に入っているテイクも含める） */
+  extractTakes(scene, fileName = '') {
+    const base = String(fileName || (scene.source && scene.source.name) || 'take').split(/[\\/]/).pop().replace(/\.[^.]*$/, '');
+    const nss = takeNamespaces(scene);
+    const out = nss.map((ns) => splitAnimation(scene, ns, { name: nss.length > 1 ? `${base} (${ns || '名前空間なし'})` : base }).take);
+    return out.concat(scene.savedTakes || []);
+  }
+
   loadFile(file) {
+    if (!file) return;
+    if (TAKES_EXT.test(file.name)) { this.loadTakeFiles([file], -1, false); return; }
     if (/\.(ma|mb)$/i.test(file.name)) {
       this.ui.showError(`${file.name} はブラウザでは直接読めません。\n`
         + 'パッケージ（.msv）・共通 JSON を開いてください。');
@@ -932,6 +1003,9 @@ class ViewerApp {
       if (anim) this.setAnimation(anim);
       const animParts = anim ? this.animParts : null;
       if (anim) mark('アニメーション');
+      // .msv に入れたテイク（一覧に足すだけ。選んでいたものは表示の状態で戻す）
+      if (data.savedTakes && data.savedTakes.length) this.addTakes(data.savedTakes, { quiet: true });
+      this.takePanel.render();
       // .msv に保存した表示の状態（カメラ・表示設定・非表示・フレーム・ポーズ）
       if (data.savedView) {
         try {
@@ -966,6 +1040,11 @@ class ViewerApp {
   }
 
   clearScene() {
+    this.takes = [];
+    this.activeTake = -1;
+    this.sceneAnim = null;
+    this.takeBases.clear();
+    if (this.takePanel) this.takePanel.render();
     this.pauseSequence();
     this.sequence = null;
     this.seqFollow = false;
@@ -1511,12 +1590,30 @@ class ViewerApp {
 
   // ------------------------------------------------------------------ 選択
   // ------------------------------------------------------------------ アニメーション
-  /** アニメーション（共通 JSON の animation）を読み込む。シーンの組み立て前なら、組み立て後に読み込む */
+  /**
+   * シーンのアニメーション（共通 JSON の animation）を読み込む。シーンの組み立て前なら、組み立て後に読み込む。
+   * テイクの一覧の「シーンのアニメーション」として覚える（テイクを選んでいれば、その土台を作り直して当て直す）
+   */
   setAnimation(anim) {
     if (this.sceneLoading || !this.built) {
       this.pendingAnimation = anim;
       return true;
     }
+    this.sceneAnim = anim;
+    this.takeBases.clear();
+    for (const e of this.takes) e.report = null;          // 土台が変わったので、当たり方を調べ直す
+    if (this.activeTake >= 0 && this.takes[this.activeTake]) return this.setTake(this.activeTake);
+    this.activeTake = -1;
+    const ok = this.applyAnimation(anim);
+    this.takePanel.render();
+    return ok;
+  }
+
+  /**
+   * アニメーションを評価器・再生キャッシュ・タイムライン・カーブエディタに入れる（シーンのアニメーションか、テイクを
+   * 当てたもの）。opts.take: テイクの切り替え（警告の一覧に足さない・読み込みの経過を知らせない）
+   */
+  applyAnimation(anim, opts = {}) {
     // 準備の内訳（シーンと一緒に読み込んだときは、読み込みの内訳のログに出す）
     const parts = [];
     let tp = performance.now();
@@ -1535,6 +1632,7 @@ class ViewerApp {
     }
     part('カーブ');
     this.pause();
+    if (this.rig) this.resetMovedNodes();          // 前のアニメーションだけが動かしていたノードは、ファイルの値に戻す
     this.clip = clip;
     this.data.animation = anim;
     // 前のアニメーションで決めた表示・カメラの値を捨てる（このあとの applyFrame で評価し直す）
@@ -1579,7 +1677,7 @@ class ViewerApp {
     }
     part('最初の評価');
     const warnings = clip.warnings.concat([...this.rig.problems].map((p) => `アニメーション: リグの評価を打ち切りました（${p}）。`));
-    if (warnings.length) this.ui.setWarnings((this.ui.warnings || []).concat(warnings));
+    if (warnings.length && !opts.take) this.ui.setWarnings((this.ui.warnings || []).concat(warnings));
     // 推定・不明のノードをジョイントの表示で色分けする
     this.overlay.setStatus(this.rig.fallback.size || this.rig.tainted.size ? (ni) => this.rig.statusOf(ni) : null);
     // コントローラー（ジョイント・メッシュ以外でリグを動かすノード）の目印。役割（IK・ポールベクターなど）で形を変える
@@ -1611,14 +1709,194 @@ class ViewerApp {
     this.fpsMeter = null;
     this.updateHud();
     // 読み込みの経過（Qt のログ）: アニメーションの準備が終わった。再生キャッシュは、ここから作り終わるまでを測る
-    this.bakeClock = { rig: this.rig, start: performance.now(), reported: !this.hasTimeline };
-    this.loadEvent('animation');
+    this.bakeClock = { rig: this.rig, start: performance.now(), reported: !this.hasTimeline || !!opts.take };
+    if (!opts.take) this.loadEvent('animation');
     this.updateToolbarHints();
     const st = anim.stats || {};
-    this.ui.setMessage(`アニメーションを読み込みました（カーブ ${num(st.curves ?? clip.curves.length)} 本・`
+    if (!opts.take) this.ui.setMessage(`アニメーションを読み込みました（カーブ ${num(st.curves ?? clip.curves.length)} 本・`
       + `動くノード ${num(this.rig.moving.size)} 個・${clip.start}〜${clip.end} フレーム）`
       + (switched ? '。姿勢の基準を「ファイルの値」に切り替えました（B でバインドポーズ）' : ''), 6000);
     return true;
+  }
+
+  /** いまのアニメーションで動いていたノード（と子）を、ファイルの値に戻す（アニメーションを入れ替える前） */
+  resetMovedNodes() {
+    if (!this.built || !this.rig) return;
+    const mode = this.settings.poseSource;
+    const sceneHasBind = hasBindPose(this.built);
+    for (const ni of this.rig.moving) {
+      const ud = this.built.nodeObjects[ni].userData;
+      const m = this.data.nodes[ni].matrix;
+      ud.fileMatrix.fromArray(m);
+      ud.savedMatrix.fromArray(m);
+      ud.baseMatrix.copy(poseBaseMatrix(ud, mode, sceneHasBind));
+    }
+    if (this.pose) for (const ni of this.animTouched || []) this.pose.apply(ni);
+    this.worldNeedsFull = true;
+  }
+
+  /** アニメーションを外す（アニメーションのないシーンで、テイクから「アニメーションなし」に戻すとき） */
+  clearAnimation() {
+    this.pause();
+    this.resetMovedNodes();
+    this.clip = null;
+    this.rig = null;
+    this.data.animation = undefined;
+    this.bakers.reset(null);
+    this.profiler.clear();
+    this.rigHidden.clear();
+    this.rigShown.clear();
+    for (const e of this.built.meshes) { e.rigHidden = false; e.rigShown = false; }
+    this.cameraProps = new Map();
+    this.rigCurves = null;
+    this.animTouched = [];
+    this.touchedRoots = null;
+    this.worldList = null;
+    this.overlay.setStatus(null);
+    this.overlay.setControllers([], new Map(), this.sceneRadius);
+    this.ui.setControlCounts(null);
+    this.timeline.setClip(null);
+    this.curveEditor.setClip(null, null);
+    this.updateVisibility();
+    this.built.root.updateMatrixWorld(true);
+    this.updateCacheView();
+    this.updateHud();
+    this.updateToolbarHints();
+    this.requestRender();
+  }
+
+  // ------------------------------------------------------------------ テイク
+  /** テイクを当てるシーン（いまのシーンと、シーンのアニメーション） */
+  takeScene() { return { ...this.data, animation: this.sceneAnim || undefined }; }
+
+  /** テイクを土台に当てた animation と report（土台は名前空間ごとに 1 回作る） */
+  composeTake(e) {
+    const scene = this.takeScene();
+    let base = this.takeBases.get(e.namespace);
+    if (!base) {
+      base = splitAnimation(scene, e.namespace).base;
+      this.takeBases.set(e.namespace, base);
+    }
+    return composeAnimation(scene, base, [{ take: e.take, namespace: e.namespace }]);
+  }
+
+  /** テイクの当たり方（行の警告の印。まだ調べていなければ調べる） */
+  takeReport(i) {
+    const e = this.takes[i];
+    if (!e) return null;
+    if (!e.report && this.built) {
+      try { e.report = this.composeTake(e).report; } catch (err) { e.report = { applied: 0, missed: [], staticsMissed: 0, warnings: [String(err && err.message || err)] }; }
+    }
+    return e.report;
+  }
+
+  /**
+   * テイクを一覧に足す（数値の配列は base64・数のリスト・型付き配列のどれでもよい）。当てる先の名前空間は、当たる結び付けの
+   * いちばん多いもの。opts: { at: 入れる位置（省略・-1 は末尾）, drop: ドロップ（当たらないテイクは足さない）, quiet }
+   * 戻り値: 足した数
+   */
+  addTakes(list, opts = {}) {
+    if (!this.built) { this.ui.setMessage('先にシーンを開いてください（テイクはシーンに当てて使います）', 6000); return 0; }
+    const scene = this.takeScene();
+    const entries = [];
+    const skipped = [];
+    for (const raw of list || []) {
+      let take;
+      try { take = decodeTake(raw); } catch (err) { this.log('warn', `テイクを読めません: ${err && err.message || err}`); continue; }
+      const pick = chooseNamespace(scene, take);
+      if (pick.count === 0 && opts.drop) { skipped.push(take.name); continue; }
+      entries.push({ take, namespace: pick.namespace, report: null });
+    }
+    const at = Number.isInteger(opts.at) && opts.at >= 0 ? Math.min(opts.at, this.takes.length) : this.takes.length;
+    this.takes.splice(at, 0, ...entries);
+    if (this.activeTake >= at) this.activeTake += entries.length;
+    entries.forEach((_, k) => this.takeReport(at + k));
+    const missed = entries.reduce((n, e) => n + ((e.report && e.report.missed.length) || 0), 0);
+    if (skipped.length) this.log('info', `テイク: いまのシーンに当たらないため足しませんでした: ${skipped.join('・')}`);
+    if (missed) this.log('info', `テイク: 当たらなかった結び付け ${missed} 件（一覧の行の印から確かめられます）`);
+    if (!opts.quiet) {
+      this.ui.setMessage(entries.length ? `テイクを ${entries.length} 個足しました`
+        + (skipped.length ? `（当たらない ${skipped.length} 個は足しません）` : '') + '。一覧の行をクリックすると切り替えます'
+        : 'いまのシーンに当たるテイクがありませんでした', 6000);
+    }
+    this.takePanel.render();
+    return entries.length;
+  }
+
+  /**
+   * テイクに切り替える（-1 はシーンのアニメーション）。範囲とフレームレートはテイクのものにし、先頭のフレームへ移す。
+   * 再生中なら再生を続ける
+   */
+  setTake(i, opts = {}) {
+    if (!this.built) return false;
+    const wasPlaying = this.playing;
+    let ok = true;
+    if (!(i >= 0 && this.takes[i])) {
+      this.activeTake = -1;
+      if (this.sceneAnim) ok = this.applyAnimation(this.sceneAnim, { take: true });
+      else if (this.clip) this.clearAnimation();
+      if (!opts.quiet) this.ui.setMessage(this.sceneAnim ? 'シーンのアニメーションに戻しました' : 'アニメーションを外しました', 4000);
+    } else {
+      const e = this.takes[i];
+      let r;
+      try {
+        r = this.composeTake(e);
+      } catch (err) {
+        this.log('error', err && err.stack || err);
+        this.ui.showError(`テイク ${e.take.name} を当てられませんでした。\n${err && err.message || err}`);
+        return false;
+      }
+      e.report = r.report;
+      this.activeTake = i;
+      if (this.seqFollow) this.setSequenceFollow(false);    // テイクのあいだは、シーケンスで見る表示を外す
+      ok = this.applyAnimation(r.animation, { take: true });
+      const sceneFps = this.sceneAnim ? +this.sceneAnim.fps : null;
+      if (sceneFps && +e.take.fps && Math.abs(sceneFps - e.take.fps) > 1e-6) {
+        this.log('info', `テイク ${e.take.name}: フレームレート ${e.take.fps} fps で再生します（シーンは ${sceneFps} fps）`);
+      }
+      if (!opts.quiet) {
+        const n = r.report.missed.length;
+        this.ui.setMessage(`テイク ${e.take.name} に切り替えました（${e.take.start}〜${e.take.end}）`
+          + (n ? `。当たらなかった結び付け ${n} 件` : ''), 5000);
+      }
+    }
+    this.takePanel.render();
+    if (ok && wasPlaying) this.play();
+    return ok;
+  }
+
+  /** テイクを一覧から消す（選んでいたものなら、シーンのアニメーションに戻す） */
+  removeTake(i) {
+    if (!this.takes[i]) return;
+    const name = this.takes[i].take.name;
+    if (i === this.activeTake) this.setTake(-1, { quiet: true });
+    this.takes.splice(i, 1);
+    if (this.activeTake > i) this.activeTake--;
+    this.takePanel.render();
+    this.ui.setMessage(`テイク ${name} を一覧から消しました`, 4000);
+  }
+
+  renameTake(i, name) {
+    const e = this.takes[i];
+    const v = String(name || '').trim();
+    if (!e || !v) return;
+    e.take.name = v;
+    this.takePanel.render();
+  }
+
+  /** テイクを書き出せる形（JSON の文字列。数値の配列は base64）。indices を省くとすべて */
+  takesJson(indices = null) {
+    const list = indices ? indices.map((i) => this.takes[i]).filter(Boolean) : this.takes;
+    return JSON.stringify(list.map((e) => encodeTake(e.take)));
+  }
+
+  /** 当たらなかった結び付けの一覧（行の警告の印から開く） */
+  takeMissedText(i) {
+    const r = this.takeReport(i);
+    if (!r) return '';
+    const lines = r.missed.map((m) => `${m.target}.${m.attr}（${reasonText(m.reason)}）`);
+    if (r.staticsMissed) lines.push(`キーのない値 ${r.staticsMissed} 個を当てられませんでした`);
+    return lines.concat(r.warnings).join('\n');
   }
 
   /** 現在のフレームの、リグ（カーブ・コンストレイント・IK）を評価した値 { t, r, s }（動かないノードは null） */
@@ -2074,6 +2352,12 @@ class ViewerApp {
     if (end < start) [start, end] = [end, start];
     this.clip.start = start;
     this.clip.end = end;
+    if (this.activeTake >= 0 && this.takes[this.activeTake]) {       // テイクの範囲として覚える（書き出しにも入る）
+      const t = this.takes[this.activeTake].take;
+      t.start = start;
+      t.end = end;
+      this.takePanel.render();
+    }
     this.timeline.setRange(start, end);
     this.curveEditor.render();
     if (this.frame < start || this.frame > end) this.scrubTo(Math.min(Math.max(this.frame, start), end));
@@ -3343,6 +3627,7 @@ class ViewerApp {
       v.range = [this.clip.start, this.clip.end];
     }
     if (this.sequence) v.sequence = { follow: !!this.seqFollow, frame: this.seqFrame };
+    if (this.takes.length) v.takes = { active: this.activeTake };
     // 自分で変えた表示だけ（ファイルのままのものは入れない）
     const hidden = [], shown = [];
     nodes.forEach((n, i) => {
@@ -3377,7 +3662,9 @@ class ViewerApp {
       if (k === 'poseSource' || !(k in st)) continue;
       this.setSetting(k, k === 'maps' ? { ...this.settings.maps, ...st.maps } : st[k]);
     }
-    // 2. 再生範囲とフレーム
+    // 2. テイク（選んでいたもの）、再生範囲とフレーム
+    const ta = v.takes && Number.isInteger(v.takes.active) ? v.takes.active : -1;
+    if (ta >= 0 && this.takes[ta] && ta !== this.activeTake) this.setTake(ta, { quiet: true });
     if (this.clip && Number.isFinite(v.frame)) {
       if (Array.isArray(v.range) && v.range.length === 2) this.setPlaybackRange(+v.range[0], +v.range[1]);
       if (this.hasTimeline) this.scrubTo(+v.frame);
@@ -3682,6 +3969,43 @@ window.mayaViewer = {
   setFrame(f) { app.scrubTo(+f); return app.frame; },
   /** 表示の状態（.msv の view.json）を JSON の文字列で返す（Qt の書き出しで使う。シーンがなければ空文字） */
   getViewState() { const v = app.viewState(); return v ? JSON.stringify(v) : ''; },
+  // テイク（Qt 版: Python が読んだ .msva のテイク・.msv/共通 JSON のシーンを受け取る。書き出しはテイクの JSON を返す）
+  /** テイクを足す（text: テイクの配列の JSON。at: 入れる位置（-1 は末尾）。drop: 当たらないテイクは足さない） */
+  addTakes(text, at = -1, drop = false) { return app.addTakes(JSON.parse(text), { at, drop }); },
+  /** シーン（共通 JSON）からテイクを取り出して足す */
+  extractTakes(text, fileName = '', at = -1, drop = false) {
+    try {
+      return app.addTakes(app.extractTakes(JSON.parse(text), fileName), { at, drop });
+    } catch (err) {
+      app.ui.showError(`${fileName} からテイクを取り出せませんでした。\n${err && err.message || err}`);
+      return 0;
+    }
+  },
+  /**
+   * いくつかのファイルのテイクを、ファイルの順に足す（Qt 版。Python が読んだもの）。
+   * text: [{ kind: 'takes', takes } | { kind: 'scene', scene, name }] の JSON（シーンはアニメーションから取り出す）
+   */
+  addTakeSources(text, at = -1, drop = false) {
+    const list = [];
+    for (const src of JSON.parse(text)) {
+      try {
+        if (src.kind === 'takes') list.push(...(src.takes || []));
+        else if (src.kind === 'scene') list.push(...app.extractTakes(src.scene, src.name || ''));
+      } catch (err) {
+        app.ui.showError(`${src.name || ''} からテイクを取り出せませんでした。\n${err && err.message || err}`);
+      }
+    }
+    if (!list.length) { app.ui.setMessage('テイクが見つかりませんでした', 5000); return 0; }
+    return app.addTakes(list, { at, drop });
+  },
+  /** 一覧のテイク（JSON の文字列。indices（JSON の配列）を省くとすべて） */
+  getTakes(indices = '') { return app.takesJson(indices ? JSON.parse(indices) : null); },
+  takeCount() { return app.takes.length; },
+  setTake(i) { return app.setTake(i); },
+  activeTake() { return app.activeTake; },
+  /** ページの座標 (x, y)（CSS の px）がテイクの一覧の中なら、入れる位置（外は -1）。ドラッグ中の強調もする */
+  takeDropIndex(x, y) { return app.takePanel.dropIndex(x, y); },
+  takeDragOver(x, y) { return app.takePanel.dragOver(x, y); },
   play() { app.play(); },
   pause() { app.pause(); },
   showLoading(text, frac, subText, subFrac) { app.ui.setEmpty(false); app.ui.showLoading(text, frac, subText, subFrac); },

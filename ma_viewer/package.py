@@ -15,6 +15,12 @@
   textures/*      同梱したテクスチャ（Pillow があれば WebP にする。textures[i].packed がその名前）
   view.json       書き出したときの表示の状態（カメラ・表示設定・非表示・フレーム・ポーズ。省略可）。
                   ビューアが作る（web_src/src/main.js の viewState）。読み込むと scene["savedView"] に入る
+  takes.json      テイク（アニメーションだけ。省略可）{"takes": [...]}。数値の配列は bin/takes.bin に入れる
+                  （scene.json と同じ形）。読み込むと scene["savedTakes"] に入る。古い版は知らない中身を読まないので、
+                  入れてもシーンとしてはそのまま開ける
+
+テイクだけのファイル（.msva）も同じ作りの zip で、manifest.json（format: maya-scene-viewer-takes）・takes.json・
+bin/takes.bin を持つ（write_takes・read_takes）。
 
 zip の圧縮は、JSON とバイナリは deflate、WebP・PNG・JPEG（もともと圧縮されている画像）は無圧縮で入れる。
 読み込みは一時ファイルを作らず、メモリの上で展開する。
@@ -44,6 +50,12 @@ FORMAT_NAME = "maya-scene-viewer-package"
 FORMAT_VERSION = 2               # 2: 数値の配列を詰め直す（encoding）。1 の .msv も読める
 BIN_NAME = "bin/data.bin"
 VIEW_NAME = "view.json"
+TAKES_EXT = ".msva"
+TAKES_FORMAT = "maya-scene-viewer-takes"
+TAKES_VERSION = 1
+TAKES_NAME = "takes.json"
+TAKES_BIN = "bin/takes.bin"
+TAKES_ONLY = "テイクだけのファイル（.msva）です。シーンを開いてから、テイクとして読み込んでください"
 _RUNTIME_KEYS = ("packagePath", )          # source の中の、読み込み時だけ付けるキー（書き出さない）
 TEXTURE_MODES = ("albedo", "all", "none")
 DEFAULT_TEXTURES = "albedo"
@@ -53,6 +65,11 @@ _STORED_EXT = (".webp", ".png", ".jpg", ".jpeg")
 _DTYPE_SIZE = {"float32": 4, "int32": 4, "uint16": 2, "uint8": 1}
 _INT_DTYPES = {"int32": ("<u4", "I"), "uint16": ("<u2", "H"), "uint8": ("u1", "B")}   # 差を取る型（符号なしで回り込む）
 BIN_COMPRESS_LEVEL = 1           # 数値のバイナリの deflate のレベル（6 と大きさはほぼ同じで、2〜3 倍速い）
+
+
+def is_takes(path: str) -> bool:
+    """テイクだけのファイル（.msva）か（拡張子で判定）"""
+    return os.path.splitext(path)[1].lower() == TAKES_EXT
 
 
 def is_package(path: str) -> bool:
@@ -231,7 +248,7 @@ def decode_array(raw: bytes, dtype: str, encoding: Optional[str]) -> bytes:
 
 
 # ---------------------------------------------------------------------------- 書き出し
-def _move_arrays(obj, chunks: List[bytes], pos: List[int]):
+def _move_arrays(obj, chunks: List[bytes], pos: List[int], buffer: str = BIN_NAME):
     """base64 の配列をバイナリに移した、新しい入れ物を返す（元のシーンは書き換えない）"""
     if isinstance(obj, dict):
         if schema.is_packed(obj) and isinstance(obj.get("data"), str):
@@ -243,16 +260,115 @@ def _move_arrays(obj, chunks: List[bytes], pos: List[int]):
             if pad:
                 chunks.append(b"\0" * pad)
                 pos[0] += pad
-            ref = {"dtype": obj["dtype"], "count": obj["count"], "buffer": BIN_NAME, "offset": pos[0], "encoding": encoding}
+            ref = {"dtype": obj["dtype"], "count": obj["count"], "buffer": buffer, "offset": pos[0], "encoding": encoding}
             chunks.append(raw)
             pos[0] += len(raw)
             return ref
-        return {k: _move_arrays(v, chunks, pos) for k, v in obj.items()}
+        return {k: _move_arrays(v, chunks, pos, buffer) for k, v in obj.items()}
     if isinstance(obj, list):
         if not any(isinstance(v, (dict, list)) for v in obj):
             return obj
-        return [_move_arrays(v, chunks, pos) for v in obj]
+        return [_move_arrays(v, chunks, pos, buffer) for v in obj]
     return obj
+
+
+def _pack_number_lists(obj):
+    """テイクの数値の配列のうち、数値のリストのものを base64 の配列にする（バイナリに移すため）"""
+    out = dict(obj)
+    for k, dtype in (("times", "float32"), ("values", "float32"), ("tangentTypes", "uint8"), ("fixedTangents", "float32")):
+        v = out.get(k)
+        if isinstance(v, list):
+            out[k] = schema.pack_array(v, dtype)
+    return out
+
+
+def _restore_arrays(obj, zf: zipfile.ZipFile, buffers: Dict[str, bytes]):
+    """バイナリを指す配列 {"dtype", "count", "buffer", "offset", "encoding"} を、base64 の {"dtype", "count", "data"} に
+    戻す（その場で書き換える）"""
+    if isinstance(obj, dict):
+        if "buffer" in obj and "dtype" in obj and "count" in obj and "data" not in obj:
+            name = obj["buffer"]
+            if name not in buffers:
+                buffers[name] = zf.read(name)
+            size = _DTYPE_SIZE.get(obj["dtype"])
+            if size is None:
+                raise PackageError("対応していない配列の型です: %s" % obj["dtype"])
+            start = int(obj.get("offset") or 0)
+            raw = buffers[name][start:start + size * int(obj["count"])]
+            if len(raw) != size * int(obj["count"]):
+                raise PackageError("パッケージの数値のデータが足りません（壊れている可能性があります）")
+            raw = decode_array(raw, obj["dtype"], obj.get("encoding"))
+            return {"dtype": obj["dtype"], "count": obj["count"], "data": base64.b64encode(raw).decode("ascii")}
+        for k, v in obj.items():
+            if isinstance(v, (dict, list)):
+                obj[k] = _restore_arrays(v, zf, buffers)
+        return obj
+    if isinstance(obj, list):
+        for i, v in enumerate(obj):
+            if isinstance(v, (dict, list)):
+                obj[i] = _restore_arrays(v, zf, buffers)
+    return obj
+
+
+def _write_takes_entries(zf: zipfile.ZipFile, takes: List[dict]) -> None:
+    """takes.json と bin/takes.bin を zip に書く"""
+    chunks: List[bytes] = []
+    out = _move_arrays({"takes": [_pack_number_lists(t) for t in takes]}, chunks, [0], TAKES_BIN)
+    zf.writestr(zipfile.ZipInfo(TAKES_NAME, _date_time()), json.dumps(out, ensure_ascii=False, separators=(",", ":")),
+                compress_type=zipfile.ZIP_DEFLATED)
+    zf.writestr(zipfile.ZipInfo(TAKES_BIN, _date_time()), b"".join(chunks), compress_type=zipfile.ZIP_DEFLATED,
+                compresslevel=BIN_COMPRESS_LEVEL)
+
+
+def _read_takes_entries(zf: zipfile.ZipFile) -> List[dict]:
+    data = json.loads(zf.read(TAKES_NAME).decode("utf-8"))
+    takes = data.get("takes") if isinstance(data, dict) else None
+    if not isinstance(takes, list):
+        raise PackageError("takes.json の形が正しくありません（takes がありません）")
+    return _restore_arrays(takes, zf, {})
+
+
+def write_takes(takes: List[dict], path: str) -> dict:
+    """テイク（数値の配列は base64 の {"dtype", "count", "data"} か数値のリスト）を .msva に書き出す。
+    戻り値: {"path", "size", "takes"}"""
+    tmp = path + ".part"
+    try:
+        with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+            manifest = {"format": TAKES_FORMAT, "version": TAKES_VERSION, "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "generator": "MayaSceneViewer", "generatorVersion": __version__}
+            zf.writestr(zipfile.ZipInfo("manifest.json", _date_time()),
+                        json.dumps(manifest, ensure_ascii=False, indent=1), compress_type=zipfile.ZIP_DEFLATED)
+            _write_takes_entries(zf, takes)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+    return {"path": path, "size": os.path.getsize(path), "takes": len(takes)}
+
+
+def read_takes(path: str) -> List[dict]:
+    """.msva（または テイクを入れた .msv）のテイクの一覧。数値の配列は base64 の {"dtype", "count", "data"}。
+    テイクのない .msv は空の一覧"""
+    try:
+        with zipfile.ZipFile(path) as zf:
+            names = set(zf.namelist())
+            manifest = json.loads(zf.read("manifest.json")) if "manifest.json" in names else {}
+            fmt = manifest.get("format")
+            if fmt not in (None, TAKES_FORMAT, FORMAT_NAME):
+                raise PackageError("対応していないファイルです（format: %s）" % fmt)
+            if fmt == TAKES_FORMAT and int(manifest.get("version") or 1) > TAKES_VERSION:
+                raise PackageError("新しい版のビューアで作られたテイクのファイルです（version %s）。ビューアを更新してください"
+                                   % manifest.get("version"))
+            if TAKES_NAME not in names:
+                if fmt == TAKES_FORMAT:
+                    raise PackageError("%s にテイクがありません（takes.json がありません）" % os.path.basename(path))
+                return []
+            return _read_takes_entries(zf)
+    except zipfile.BadZipFile as exc:
+        raise PackageError("%s を読めません（zip として壊れています: %s）" % (os.path.basename(path), exc))
 
 
 def texture_indices(scene: dict, mode: str) -> set:
@@ -390,12 +506,13 @@ def _pack_textures(scene_out: dict, mode: str, packer: _Packer) -> None:
 def write_package(scene: dict, path: str, textures: str = DEFAULT_TEXTURES, max_size: int = DEFAULT_MAX_SIZE,
                   quality: int = DEFAULT_QUALITY, source: Optional["Package"] = None,
                   convert: Optional[bool] = None, progress: Optional[Callable[[str], None]] = None,
-                  view="keep") -> dict:
+                  view="keep", takes="keep") -> dict:
     """シーン（共通 JSON の dict）を .msv に書き出す。元のシーンは書き換えない。
     textures: "albedo"（既定。アルベドのみ）・"all"・"none"。
     source: シーンを .msv から読んだときのパッケージ（同梱のテクスチャをそのまま移す）。
     convert: テクスチャを WebP にするか（None なら Pillow があれば変換する）。
     view: 表示の状態（dict）。"keep" なら、シーンが持つもの（.msv から読んだ savedView）をそのまま入れる。None なら入れない。
+    takes: テイクの一覧（takes.json）。"keep" なら、シーンが持つもの（.msv から読んだ savedTakes）。None・空なら入れない。
     戻り値: {"path", "size", "textures", "converted", "warnings"}"""
     if textures not in TEXTURE_MODES:
         raise ValueError("textures は %s のどれかです" % " / ".join(TEXTURE_MODES))
@@ -412,7 +529,10 @@ def write_package(scene: dict, path: str, textures: str = DEFAULT_TEXTURES, max_
     scene_out = _move_arrays(scene, chunks, [0])
     if view == "keep":
         view = scene.get("savedView")
+    if isinstance(takes, str) and takes == "keep":
+        takes = scene.get("savedTakes")
     scene_out.pop("savedView", None)
+    scene_out.pop("savedTakes", None)
     if isinstance(scene_out.get("source"), dict):
         scene_out["source"] = dict(scene_out["source"])
         for k in _RUNTIME_KEYS:
@@ -442,6 +562,8 @@ def write_package(scene: dict, path: str, textures: str = DEFAULT_TEXTURES, max_
             if isinstance(view, dict):
                 zf.writestr(zipfile.ZipInfo(VIEW_NAME, _date_time()), json.dumps(view, ensure_ascii=False),
                             compress_type=zipfile.ZIP_DEFLATED)
+            if isinstance(takes, list) and takes:
+                _write_takes_entries(zf, takes)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -450,7 +572,7 @@ def write_package(scene: dict, path: str, textures: str = DEFAULT_TEXTURES, max_
             pass
         raise
     return {"path": path, "size": os.path.getsize(path), "textures": packer.count, "converted": bool(convert),
-            "view": isinstance(view, dict),
+            "view": isinstance(view, dict), "takes": len(takes) if isinstance(takes, list) else 0,
             "textureBytesIn": packer.bytes_in, "textureBytesOut": packer.bytes_out, "warnings": warnings}
 
 
@@ -463,10 +585,12 @@ class Package:
         try:
             with zipfile.ZipFile(self.path) as zf:
                 self.names = set(zf.namelist())
+                self.manifest = json.loads(zf.read("manifest.json")) if "manifest.json" in self.names else {}
+                if self.manifest.get("format") == TAKES_FORMAT:
+                    raise PackageError(TAKES_ONLY)
                 if "scene.json" not in self.names:
                     raise PackageError("%s はシーンのパッケージ（.msv）ではありません（scene.json がありません）"
                                        % os.path.basename(path))
-                self.manifest = json.loads(zf.read("manifest.json")) if "manifest.json" in self.names else {}
         except zipfile.BadZipFile as exc:
             raise PackageError("%s を読めません（zip として壊れています: %s）" % (os.path.basename(path), exc))
         if self.manifest.get("format") not in (None, FORMAT_NAME):
@@ -493,40 +617,21 @@ class Package:
     def load_scene(self) -> dict:
         """共通 JSON の dict にする（数値の配列は base64 の {"dtype", "count", "data"} に戻す。.json と同じ形）"""
         with zipfile.ZipFile(self.path) as zf:
-            scene = json.loads(zf.read("scene.json").decode("utf-8"))
-            buffers: Dict[str, bytes] = {}
-
-            def restore(obj):
-                if isinstance(obj, dict):
-                    if "buffer" in obj and "dtype" in obj and "count" in obj and "data" not in obj:
-                        name = obj["buffer"]
-                        if name not in buffers:
-                            buffers[name] = zf.read(name)
-                        size = _DTYPE_SIZE.get(obj["dtype"])
-                        if size is None:
-                            raise PackageError("対応していない配列の型です: %s" % obj["dtype"])
-                        start = int(obj.get("offset") or 0)
-                        raw = buffers[name][start:start + size * int(obj["count"])]
-                        if len(raw) != size * int(obj["count"]):
-                            raise PackageError("パッケージの数値のデータが足りません（壊れている可能性があります）")
-                        raw = decode_array(raw, obj["dtype"], obj.get("encoding"))
-                        return {"dtype": obj["dtype"], "count": obj["count"], "data": base64.b64encode(raw).decode("ascii")}
-                    for k, v in obj.items():
-                        if isinstance(v, (dict, list)):
-                            obj[k] = restore(v)
-                    return obj
-                if isinstance(obj, list):
-                    for i, v in enumerate(obj):
-                        if isinstance(v, (dict, list)):
-                            obj[i] = restore(v)
-                return obj
-            scene = restore(scene)
+            scene = _restore_arrays(json.loads(zf.read("scene.json").decode("utf-8")), zf, {})
+            takes = None
+            if TAKES_NAME in self.names:
+                try:
+                    takes = _read_takes_entries(zf)
+                except (ValueError, KeyError, PackageError) as exc:
+                    scene.setdefault("warnings", []).append("テイク（takes.json）を読めません: %s" % exc)
         src = scene.setdefault("source", {})
         src.setdefault("name", os.path.basename(self.path))
         src["packagePath"] = self.path              # 同梱のテクスチャを渡すため（書き出しには含めない）
         view = self.view()
         if view is not None:
             scene["savedView"] = view               # ビューアが読み込みの最後に入れる（書き出しでは view.json に戻す）
+        if takes:
+            scene["savedTakes"] = takes             # テイクの一覧（書き出しでは takes.json に戻す）
         return scene
 
     def view(self) -> Optional[dict]:
