@@ -77,6 +77,7 @@ const VIEW_SETTING_KEYS = ['shading', 'wire', 'skin', 'joints', 'xray', 'grid', 
 const VIEW_STATE_VERSION = 1;
 const num = (n) => n.toLocaleString('ja-JP');
 const MB = 1024 * 1024;
+const SETTLE_RENDER_MS = 200;     // 再生していないとき、描いてから描き直すまでの間（scheduleSettleRender）
 
 
 const _v = new Vector3();
@@ -274,7 +275,23 @@ class ViewerApp {
   requestRender() {
     if (this.renderPending || !this.renderer) return;
     this.renderPending = true;
-    requestAnimationFrame(() => { this.renderPending = false; this.render(); });
+    requestAnimationFrame(() => { this.renderPending = false; this.render(); this.scheduleSettleRender(); });
+  }
+
+  /**
+   * 再生していないとき、描いてから少しあとに 1 回だけ描き直す（そのあいだに描いていれば待ち直す）。
+   * Qt WebEngine では、重いシーンで GPU が詰まっているときに作った画面の合成で、ページの一部（ボタン・アイコン・
+   * タイムラインの帯など）の絵が欠けることがある。次の画面で直るが、フレームを 1 つずつ進めたあとなどは、マウスを
+   * 動かすまで次の画面が作られず、欠けたまま残る。GPU が落ち着いてから描き直して、欠けた画面を置き換える
+   */
+  scheduleSettleRender() {
+    clearTimeout(this.settleTimer);
+    if (this.playing || this.seqPlaying) return;          // 再生中は次々に描くので要らない
+    this.settleTimer = setTimeout(() => {
+      this.settleTimer = null;
+      if (this.renderPending || !this.renderer) return;   // ほかの描画が控えている（そのあとで待ち直す）
+      requestAnimationFrame(() => { if (!this.renderPending) this.render(); });
+    }, SETTLE_RENDER_MS);
   }
 
   render() {
