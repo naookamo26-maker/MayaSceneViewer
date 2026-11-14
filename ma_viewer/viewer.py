@@ -336,6 +336,11 @@ class ViewerWidget(QtWidgets.QWidget):
     def hide_loading(self):
         self._call("hideLoading")
 
+    def begin_load(self):
+        """新しいシーンを読み込み始めた: ビューアは前のシーンの再生・再生キャッシュの作成を止め、
+        まだ組み立てていない前のシーンは捨てる"""
+        self._call("beginLoad")
+
     def show_error(self, text: str):
         self._call("showError", text)
 
@@ -933,17 +938,28 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self._error(".ma・.msv・.json のどれかを指定してください。")
             return
         if self._thread is not None:
-            if self._worker is not None and self._worker.in_animation:
-                # アニメーションの読み込み中なら中止して、終わりしだい新しいファイルを開く
-                self._pending_open = path
-                self._worker.cancel()
-                self.viewer.set_animation_status("")
+            loading = self._pending_open or (self._worker.path if self._worker is not None else None)
+            if loading and os.path.normcase(os.path.abspath(loading)) == os.path.normcase(path):
+                # 同じファイルを読み込み中（投げ入れ直した）: 最初から読み直さない
+                self.statusBar().showMessage("%s を読み込み中です" % os.path.basename(path), 5000)
                 return
-            self.statusBar().showMessage("読み込み中です。完了してから開き直してください。", 5000)
+            if self._worker is None or self._worker.staged is not None:
+                self.statusBar().showMessage("読み込み中です。完了してから開き直してください。", 5000)
+                return
+            # 読み込み中に別のファイルを開いた: いまの読み込みを中止して、終わりしだい新しいファイルを開く
+            # （何度も投げ入れても、最後のものだけを読む。中止したシーンはビューアに送らない）
+            self._pending_open = path
+            self._worker.cancel()
+            self.viewer.begin_load()
+            self.viewer.set_animation_status("")
+            self.viewer.show_loading("%s を読み込み中" % os.path.basename(path))
+            self.statusBar().showMessage("読み込みを中止して、%s を開きます" % os.path.basename(path), 5000)
+            self.log("info", "読み込みを中止しました（%s を開きます）" % os.path.basename(path))
             return
         self.current_path = path
         name = os.path.basename(path)
         self.setWindowTitle("%s - %s" % (name, APP_NAME))
+        self.viewer.begin_load()                 # 前のシーンの再生・再生キャッシュの作成を止める
         self.viewer.show_loading("%s を読み込み中" % name)
         self.statusBar().showMessage("読み込み中: %s" % path)
         self.log("info", "読み込み開始: %s" % path)
@@ -976,6 +992,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
 
     @Slot(object, float, object)
     def _on_loaded(self, scene, seconds, payload=None):
+        if self._pending_open is not None:
+            return                                 # 中止した読み込み（次のファイルを開く）: ビューアに送らない
         cached = payload is not None and payload.cached
         clock = getattr(self, "load_clock", None)
         if clock is not None and not clock.finished:
@@ -1116,6 +1134,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
 
     @Slot(str, str)
     def _on_failed(self, message, detail):
+        if self._pending_open is not None and not detail:
+            return                                 # 次のファイルを開くために中止した（open_file でログに出した）: 誤りとして出さない
         if detail:
             self.log("error", detail)
         self._error("読み込めませんでした。\n%s" % message)
@@ -1394,6 +1414,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
 
         self.current_path = None
         self._maya_selection = selection_only
+        self.viewer.begin_load()                 # 前のシーンの再生・再生キャッシュの作成を止める
         QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             progress(0.0, "Maya からシーンを取得中")

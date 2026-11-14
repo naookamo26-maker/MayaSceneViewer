@@ -8,7 +8,7 @@
 
 export const PACKAGE_EXT = /\.msv$/i;
 const FORMAT_NAME = 'maya-scene-viewer-package';
-const FORMAT_VERSION = 1;
+const FORMAT_VERSION = 2;          // 2: 数値の配列を詰め直す（ref.encoding）。1 の .msv も読める
 const TYPES = { float32: Float32Array, int32: Int32Array, uint16: Uint16Array, uint8: Uint8Array };
 
 /** zip の目次: 名前 → { method, compSize, size, dataStart } */
@@ -127,9 +127,27 @@ function collectRefs(obj, out) {
 function toTyped(ref, bin) {
   const T = TYPES[ref.dtype];
   if (!T) throw new Error(`対応していない配列の型です: ${ref.dtype}`);
-  const start = ref.offset || 0, len = ref.count * T.BYTES_PER_ELEMENT;
+  const size = T.BYTES_PER_ELEMENT;
+  const start = ref.offset || 0, len = ref.count * size;
   if (start + len > bin.length) throw new Error('パッケージの数値のデータが足りません（壊れている可能性があります）');
-  return new T(bin.slice(start, start + len).buffer);
+  const enc = ref.encoding;
+  if (!enc || enc === 'none') return new T(bin.slice(start, start + len).buffer);   // そのまま並ぶ（version 1 は encoding なし）
+  if (enc !== 'shuffle' && !(enc === 'delta-shuffle' && T !== Float32Array)) {
+    throw new Error(`対応していない配列の詰め方です: ${enc}（${ref.dtype}）`);
+  }
+  // 桁ごとに並べたバイト（全要素の 1 バイト目、2 バイト目、…）を、要素ごとの並びに戻す（ma_viewer/package.py の encode_array）
+  const out = new Uint8Array(len), n = ref.count;
+  if (size === 1) out.set(bin.subarray(start, start + len));
+  else {
+    for (let b = 0; b < size; b++) {
+      const src = bin.subarray(start + b * n, start + (b + 1) * n);
+      for (let i = 0, o = b; i < n; i++, o += size) out[o] = src[i];
+    }
+  }
+  const a = new T(out.buffer);
+  // 整数: 前の要素との差を足し戻す（型の桁で回り込む。代入で Int32・Uint16・Uint8 に切り詰められる）
+  if (enc === 'delta-shuffle') for (let i = 1; i < n; i++) a[i] = a[i] + a[i - 1];
+  return a;
 }
 
 /** ArrayBuffer（.msv の中身）→ { scene, pkg } */

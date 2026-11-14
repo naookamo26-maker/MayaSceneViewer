@@ -1,5 +1,6 @@
 // パッケージ（.msv）の読み込み: zip の目次・展開・数値の配列の復元・同梱のテクスチャ
 // 前提: python -m ma_viewer pack samples/sample_arm.ma -o samples/sample_arm.msv
+//       samples/sample_arm_v1.msv は 1.39.0 で書き出した version 1（配列を詰め直していない）の .msv（互換のテスト用。作り直さない）
 //       samples/textured_sample.msv は textured_sample.ma を --textures all で、表示の状態（view.json）付きで書き出したもの
 //       （tests/test_package.py の make_textured_sample で作り直せる）
 import test from 'node:test';
@@ -37,6 +38,23 @@ test('.msv の数値の配列は、同じシーンの JSON（base64）と同じ�
   assert.equal(scene.meshes[0].positions.buffer.byteLength, scene.meshes[0].positions.byteLength);
   const built = buildScene(scene);
   assert.equal(built.meshes.length, json.meshes.length);
+});
+
+test('version 1（配列を詰め直していない）の .msv も読め、version 2 の .msv と同じ配列になる', async () => {
+  const { scene: v1 } = await openPackage(load('sample_arm_v1.msv'));
+  const { scene: v2 } = await openPackage(load('sample_arm.msv'));
+  const dir = readZipDirectory(load('sample_arm.msv'));
+  assert.ok(dir.has('bin/data.bin'));
+  assert.equal(v1.meshes.length, v2.meshes.length);
+  v1.meshes.forEach((m, i) => {
+    const n = v2.meshes[i];
+    for (const k of ['positions', 'counts', 'indices']) {
+      assert.equal(m[k].constructor, n[k].constructor, k);
+      assert.deepEqual(Array.from(m[k]), Array.from(n[k]), `${m.name}.${k}`);
+    }
+    if (m.skin) for (const k of ['counts', 'indices', 'weights']) assert.deepEqual(Array.from(m.skin[k]), Array.from(n.skin[k]), `skin.${k}`);
+    if (m.uv) for (const k of ['values', 'indices']) assert.deepEqual(Array.from(m.uv[k]), Array.from(n.uv[k]), `uv.${k}`);
+  });
 });
 
 test('同梱のテクスチャは WebP で、目次から読める。見つからないテクスチャは理由つき', async () => {

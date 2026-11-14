@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+import zlib
 from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -88,6 +89,19 @@ class PackageTest(unittest.TestCase):
             self.assertEqual(pos["buffer"], package.BIN_NAME)
             self.assertNotIn("data", pos)
             self.assertEqual(pos["offset"] % 4, 0)
+            self.assertEqual(manifest["version"], package.FORMAT_VERSION)
+            # 配列ごとに詰め方を選んで記録する（いちばん小さく縮むもの）
+            refs = [pos, scene["meshes"][0]["indices"], scene["meshes"][0]["counts"]]
+            for ref in refs:
+                self.assertIn(ref["encoding"], package.ENCODINGS)
+                raw = zf.read(package.BIN_NAME)[ref["offset"]:ref["offset"] + 4 * ref["count"]]
+                for enc in package.ENCODINGS:
+                    if enc == "delta-shuffle" and ref["dtype"] == "float32":
+                        continue
+                    plain = package.decode_array(raw, ref["dtype"], ref["encoding"])
+                    other, _ = package.encode_array(plain, ref["dtype"], enc)
+                    self.assertLessEqual(len(zlib.compress(raw, package.BIN_COMPRESS_LEVEL)),
+                                         len(zlib.compress(other, package.BIN_COMPRESS_LEVEL)), (ref["dtype"], enc))
             for info in zf.infolist():                 # 画像は無圧縮、ほかは deflate
                 want = zipfile.ZIP_STORED if info.filename.endswith((".webp", ".png", ".jpg")) else zipfile.ZIP_DEFLATED
                 self.assertEqual(info.compress_type, want, info.filename)
@@ -226,6 +240,46 @@ class PackageTest(unittest.TestCase):
         self.assertIsNone(package.Package(dropped).view())
         with open(js, encoding="utf-8") as f:
             self.assertNotIn("savedView", json.load(f))
+
+    def test_array_encoding_roundtrip(self):
+        """配列の詰め方: 戻すと元のバイト列。numpy がなくても同じバイト列になる。型の桁で回り込む差も戻る"""
+        import random
+        import struct
+        r = random.Random(7)
+        cases = {"int32": ("<i", lambda: r.randint(-2 ** 31, 2 ** 31 - 1)), "uint16": ("<H", lambda: r.randint(0, 65535)),
+                 "uint8": ("<B", lambda: r.randint(0, 255)), "float32": ("<f", lambda: r.uniform(-1e6, 1e6))}
+        for dtype, (fmt, gen) in cases.items():
+            for n in (0, 1, 2, 1001):
+                raw = b"".join(struct.pack(fmt, gen()) for _ in range(n))
+                for encoding in package.ENCODINGS + (None, ):
+                    if encoding == "delta-shuffle" and dtype == "float32":
+                        continue
+                    enc, used = package.encode_array(raw, dtype, encoding)
+                    self.assertEqual(len(enc), len(raw))
+                    self.assertEqual(package.decode_array(enc, dtype, used), raw, (dtype, n, encoding))
+                    saved = package._np
+                    package._np = lambda: None
+                    try:
+                        self.assertEqual(package.encode_array(raw, dtype, encoding), (enc, used), (dtype, n, "numpy なし"))
+                        self.assertEqual(package.decode_array(enc, dtype, used), raw, (dtype, n, "numpy なし"))
+                    finally:
+                        package._np = saved
+        # 番号が少しずつ増える配列は差を取り、ばらばらの浮動小数点は並べ替える（選び方の例）
+        steps = b"".join(struct.pack("<i", i * 3 + (i % 5)) for i in range(5000))
+        self.assertEqual(package.encode_array(steps, "int32")[1], "delta-shuffle")
+        self.assertEqual(package.decode_array(b"\1\2", "uint8", None), b"\1\2")       # version 1: そのまま
+        with self.assertRaises(package.PackageError):
+            package.encode_array(b"\0" * 4, "float32", "delta-shuffle")
+        with self.assertRaises(package.PackageError):
+            package.decode_array(b"\0" * 4, "int32", "zstd")
+
+    def test_reads_version_1(self):
+        """version 1（配列を詰め直していない）の .msv も読める。中身は version 2 の .msv と同じ"""
+        v1, _ = package.read_package(os.path.join(ROOT, "samples", "sample_arm_v1.msv"))
+        v2, _ = package.read_package(os.path.join(ROOT, "samples", "sample_arm.msv"))
+        self.assertEqual(package.Package(os.path.join(ROOT, "samples", "sample_arm_v1.msv")).manifest["version"], 1)
+        strip = lambda sc: {k: v for k, v in _strip(sc).items() if k != "source"}
+        self.assertEqual(strip(v1), strip(v2))
 
     def test_sample_up_to_date(self):
         """samples/textured_sample.msv（JS のテスト用）に表示の状態が入っている"""
