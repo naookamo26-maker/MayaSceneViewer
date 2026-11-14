@@ -2142,9 +2142,15 @@ def load_staged(parse: Callable[[ProgressFn], MaScene], progress: ProgressFn = N
         if not ms.text:
             return None
         from .animation import build_animation
+        # 解析・変換と同じく、カーブを読むあいだもガベージコレクションを止める（大量のオブジェクトを作り、循環参照は
+        # ほぼ作らない。リグの多いシーンでは、生きているオブジェクトが多いほど回収が長くなり、ノード数より速く重くなる）
+        gc_was2 = gc.isenabled()
+        gc.disable()
         try:
             return build_animation(ms, getattr(ms, "out_index", {}), progress2)
         finally:
+            if gc_was2:
+                gc.enable()
             ms.text = ""                 # 読み終えたら本文を手放す
 
     load_animation.scene = ms            # 解析したシーン（変換結果のキャッシュが、変換に影響した外部の状態を記録するため）

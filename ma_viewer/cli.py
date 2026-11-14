@@ -21,6 +21,7 @@ import os
 import sys
 import time
 from . import schema
+from . import package as package_defaults
 
 
 def _progress(frac, msg):
@@ -338,7 +339,8 @@ def main(argv=None) -> int:
     pk.add_argument("--textures", choices=("albedo", "all", "none"), default="albedo",
                     help="同梱するテクスチャ（既定 albedo: アルベドのみ。all: すべてのマップ。none: 入れない）")
     pk.add_argument("--max-size", type=int, default=2048, help="テクスチャの長い辺の上限（px。既定 2048。0 で縮めない）")
-    pk.add_argument("--quality", type=int, default=80, help="WebP の品質（1〜100。既定 80）")
+    pk.add_argument("--quality", type=int, default=package_defaults.DEFAULT_QUALITY,
+                    help="WebP の品質（1〜100。既定 %d）" % package_defaults.DEFAULT_QUALITY)
     pk.add_argument("--keep-textures", action="store_true", help="テクスチャを WebP にせず、元のファイルのまま入れる")
     pk.add_argument("--no-animation", action="store_true", help="アニメーションを書き出さない")
     pk.add_argument("--no-view", action="store_true", help="元の .msv の表示の状態（カメラ・表示設定など）を引き継がない")

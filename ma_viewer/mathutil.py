@@ -28,13 +28,20 @@ def identity() -> Mat:
 
 
 def mul(a: Sequence[float], b: Sequence[float]) -> Mat:
-    """a * b（行ベクトル規約では a を先に適用）。"""
-    r = [0.0] * 16
-    for i in range(4):
-        a0, a1, a2, a3 = a[i * 4], a[i * 4 + 1], a[i * 4 + 2], a[i * 4 + 3]
-        for j in range(4):
-            r[i * 4 + j] = a0 * b[j] + a1 * b[4 + j] + a2 * b[8 + j] + a3 * b[12 + j]
-    return r
+    """a * b（行ベクトル規約では a を先に適用）。
+
+    16 個の式に展開してある（ループより速い。リグの多いシーンの読み込みで何万回も呼ぶ）。
+    足す順は、要素ごとに a[i*4]·b[j] + a[i*4+1]·b[4+j] + a[i*4+2]·b[8+j] + a[i*4+3]·b[12+j]（ループで書いたときと同じ）"""
+    a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15 = a
+    b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15 = b
+    return [a0 * b0 + a1 * b4 + a2 * b8 + a3 * b12, a0 * b1 + a1 * b5 + a2 * b9 + a3 * b13,
+            a0 * b2 + a1 * b6 + a2 * b10 + a3 * b14, a0 * b3 + a1 * b7 + a2 * b11 + a3 * b15,
+            a4 * b0 + a5 * b4 + a6 * b8 + a7 * b12, a4 * b1 + a5 * b5 + a6 * b9 + a7 * b13,
+            a4 * b2 + a5 * b6 + a6 * b10 + a7 * b14, a4 * b3 + a5 * b7 + a6 * b11 + a7 * b15,
+            a8 * b0 + a9 * b4 + a10 * b8 + a11 * b12, a8 * b1 + a9 * b5 + a10 * b9 + a11 * b13,
+            a8 * b2 + a9 * b6 + a10 * b10 + a11 * b14, a8 * b3 + a9 * b7 + a10 * b11 + a11 * b15,
+            a12 * b0 + a13 * b4 + a14 * b8 + a15 * b12, a12 * b1 + a13 * b5 + a14 * b9 + a15 * b13,
+            a12 * b2 + a13 * b6 + a14 * b10 + a15 * b14, a12 * b3 + a13 * b7 + a14 * b11 + a15 * b15]
 
 
 def mul_chain(*mats: Sequence[float]) -> Mat:

@@ -337,13 +337,24 @@ three.js では `SkinnedMesh` を detached モードにし、`bind(skeleton, gm)
 
 | 中身 | 内容 |
 |---|---|
-| `manifest.json` | `{"format": "maya-scene-viewer-package", "version": 1, "textures": "albedo" \| "all" \| "none", "textureFormat": "webp" \| "original", "maxSize": 2048, "created": ..., "generator": "MayaSceneViewer", "generatorVersion": "1.0.0"}`（generatorVersion は作ったビューアのバージョン） |
-| `scene.json` | 共通 JSON（animation を含む）。数値の配列（base64 の `{"dtype", "count", "data"}`）は `{"dtype", "count", "buffer": "bin/data.bin", "offset": バイト位置}` に置き換える |
-| `bin/data.bin` | 数値の配列を並べたリトルエンディアンのバイナリ。各配列の先頭は 4 バイト境界 |
+| `manifest.json` | `{"format": "maya-scene-viewer-package", "version": 2, "textures": "albedo" \| "all" \| "none", "textureFormat": "webp" \| "original", "maxSize": 2048, "created": ..., "generator": "MayaSceneViewer", "generatorVersion": "1.0.0"}`（generatorVersion は作ったビューアのバージョン） |
+| `scene.json` | 共通 JSON（animation を含む）。数値の配列（base64 の `{"dtype", "count", "data"}`）は `{"dtype", "count", "buffer": "bin/data.bin", "offset": バイト位置, "encoding": 詰め方}` に置き換える |
+| `bin/data.bin` | 数値の配列を並べたバイナリ。各配列の先頭は 4 バイト境界。配列はよく縮むように詰め直す（下の表） |
 | `textures/*` | 同梱したテクスチャ（`textures/<textures の番号>.webp`、UDIM は `textures/<番号>.<タイル>.webp`） |
 | `view.json` | 書き出したときの表示の状態（省略可。下の「view.json」） |
 
-JSON とバイナリは deflate で圧縮し、画像（WebP・PNG・JPEG）は無圧縮で入れます。ZIP64（4 GB 超）には対応していません。
+JSON とバイナリは deflate で圧縮し（バイナリはレベル 1。レベル 6 と大きさはほぼ同じで、2〜3 倍速い）、画像（WebP・PNG・JPEG）は無圧縮で入れます。ZIP64（4 GB 超）には対応していません。
+
+配列の詰め方（`encoding`。大きさは配列の要素数 × 型の大きさのまま）。書き出すときに配列ごとに試して、いちばん小さく縮むものを選びます（データで向き不向きが違う: 頂点の順がばらばらの面の番号は差を取るとかえって大きく、同じ値の多いウェイトは並べ替えると大きくなる）:
+
+| `encoding` | 型 | 内容 |
+|---|---|---|
+| `none` | すべて | リトルエンディアンの値がそのまま並ぶ |
+| `shuffle` | すべて | リトルエンディアンの値のバイトを、桁ごとに並べ替える（全要素の 1 バイト目、全要素の 2 バイト目、…の順）。同じ桁どうしが並び、deflate でよく縮む |
+| `delta-shuffle` | `int32`・`uint16`・`uint8` | 前の要素との差（符号なしの型の桁で回り込む。先頭は 0 との差）にしてから、`shuffle` と同じく並べ替える。面の頂点番号など、少しずつ変わる番号がよく縮む |
+| （キーなし） | すべて | `none` と同じ（version 1 の .msv） |
+
+version 1 の .msv も読めます（1.40.0 より前の版では、新しい .msv は読めません）。
 
 textures の各項目は、次のように書き換えます。`path` などほかのキーはそのままです。
 
