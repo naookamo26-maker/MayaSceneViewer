@@ -147,6 +147,26 @@ class TestTakeFiles(unittest.TestCase):
         package.write_package(scene2, self.path("s3.msv"), textures="none", takes=None)
         self.assertEqual(package.read_takes(self.path("s3.msv")), [])
 
+    def test_overwrite_same_files(self):
+        """開いている .msv（同梱のテクスチャあり）・.msva に、同じ名前で上書きできる"""
+        import shutil
+        from ma_viewer import package
+        p = self.path("tex.msv")
+        shutil.copy(os.path.join(ROOT, "samples", "textured_sample.msv"), p)
+        scene, pkg = package.read_package(p)
+        before = sorted(n for n in pkg.names if n.startswith("textures/"))
+        self.assertTrue(before)
+        r = package.write_package(scene, p, textures="all", source=package.Package(p), takes=[sample_take()])
+        self.assertEqual(r["textures"], len(before))
+        scene2, pkg2 = package.read_package(p)
+        self.assertEqual(sorted(n for n in pkg2.names if n.startswith("textures/")), before, "同梱のテクスチャを残す")
+        self.assertEqual(len(scene2["savedTakes"]), 1)
+        self.assertFalse(os.path.exists(p + ".part"))
+        q = self.path("t.msva")
+        package.write_takes([sample_take("a")], q)
+        package.write_takes(package.read_takes(q) + [sample_take("b")], q)
+        self.assertEqual([t["name"] for t in package.read_takes(q)], ["a", "b"])
+
     def test_old_reader_ignores_takes(self):
         """takes.json を読まない読み方（1.40 の read_package と同じ: scene.json と bin/data.bin だけ）で、シーンが同じ"""
         from ma_viewer import package

@@ -2,7 +2,7 @@
 // 状態は ViewerApp（main.js の takes・activeTake）が持ち、ここは表示と操作の受け付けだけ。
 //   行: 名前・範囲・フレーム数・当てている相手（名前空間）・警告の印（当たらなかった結び付け。クリックで中身）
 //   行の操作: 名前の変更（F2・ダブルクリック）・削除（Delete）・.msva に書き出す（Qt 版）
-//   一覧の操作: 読み込む（ファイルを選ぶ）・すべて書き出す（Qt 版）。ファイルを一覧に落とすとテイクとして足す
+//   一覧の操作: 読み込む（ファイルを選ぶ）・すべて書き出す（Qt 版）。ファイルを一覧にドラッグ＆ドロップするとテイクとして足す
 import { takeFrames } from './takes.js';
 
 const $ = (id) => document.getElementById(id);
@@ -174,7 +174,7 @@ export class TakePanel {
     if (all) all.hidden = !this.qt('exportTakes') || !takes.length;
     const hint = $('take-hint');
     if (hint) {
-      hint.textContent = app.built ? '.msva・.msv・共通 JSON をここに落とすと、テイクとして足します（行をクリックで切り替え）'
+      hint.textContent = app.built ? (this.qt('importTakes') ? '.msva・.ma・.msv・共通 JSON' : '.msva・.msv・共通 JSON') + ' をここにドラッグ＆ドロップすると、テイクとして足します（行をクリックで切り替え）'
         : 'シーンを開くと、テイク（ほかのシーンのアニメーション）を当てて切り替えられます';
     }
     const html = [];
@@ -232,7 +232,7 @@ export class TakePanel {
   dropIndex(x, y) {
     if (!this.root || !this.app.built || x < 0) return -1;
     const tab = $('tab-takes');
-    if (tab) {                                     // タブ［テイク］に落としても足す（末尾）
+    if (tab) {                                     // タブ［テイク］にドロップしても足す（末尾）
       const t = tab.getBoundingClientRect();
       if (t.width && x >= t.left && x <= t.right && y >= t.top && y <= t.bottom) return this.app.takes.length;
     }

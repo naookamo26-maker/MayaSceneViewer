@@ -222,6 +222,31 @@ def main() -> int:
             nxt()
         open_and_wait(saved["msv"], got)
 
+    def step_overwrite(nxt):
+        # 開いている .msv と同じ名前に上書きして、開き直す（テイクを 1 つ消してから）。.msva も同じ名前に上書きする
+        out = saved["msv"]
+        orig = QtWidgets.QFileDialog.getSaveFileName
+        QtWidgets.QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (out, ""))
+
+        def removed(_r):
+            win._export_package_with(dict(win.package_options(), view=True, textures="none"))
+
+            def later():
+                QtWidgets.QFileDialog.getSaveFileName = orig
+                scene, _pkg = package.read_package(out)
+                check(len(scene.get("savedTakes") or []) == 2, "開いている .msv に上書きする: テイク %d 個" % len(scene.get("savedTakes") or []))
+                msva = os.path.join(tmp.name, "out.msva")
+                QtWidgets.QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (msva, ""))
+                win.export_takes()
+
+                def later2():
+                    QtWidgets.QFileDialog.getSaveFileName = orig
+                    check(len(package.read_takes(msva)) == 2, ".msva に上書きする")
+                    open_and_wait(out, lambda s: (check(s["count"] == 2, "上書きした .msv を開き直せる: %s" % s["rows"]), nxt()))
+                QtCore.QTimer.singleShot(1200, later2)
+            QtCore.QTimer.singleShot(2500, later)
+        js("(window.mayaViewer.debug.app.removeTake(2), 1)", removed, 300)
+
     def step_drop_scene(nxt):
         # 一覧の外（ビューポート）に .json を落とすと、いままでどおりシーンを開く（一覧は空になる）
         def got_rect(r):
@@ -240,7 +265,7 @@ def main() -> int:
         app.quit()
 
     QtCore.QTimer.singleShot(500, lambda: run([step_open, step_load, step_load_ma, step_switch, step_drop_list, step_drop_tab, step_drop_msva,
-                                               step_export_msva, step_export_msv, step_reopen, step_drop_scene, finish]))
+                                               step_export_msva, step_export_msv, step_reopen, step_overwrite, step_drop_scene, finish]))
     QtCore.QTimer.singleShot(150000, lambda: (check(False, "時間切れ"), finish()))
     app.exec()
     print("ALL OK" if ok["v"] else "FAILED")

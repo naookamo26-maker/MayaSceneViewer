@@ -22,7 +22,7 @@ from .resources import index_html  # noqa: E402
 from .resources import APP_NAME  # noqa: E402  ソフト名（ウィンドウのタイトルなど。英語表記）  web 一式の場所（exe 化しても見つかるように探す）
 CHUNK_SIZE = 4 * 1024 * 1024          # runJavaScript 1 回あたりの文字数（4 の倍数: 配列の base64 をかけらごとに戻すため）
 OPENABLE_EXT = (".ma", ".json", ".msv", ".mb", ".msva")
-TAKE_EXT = ".msva"                # テイク（アニメーションだけ）のファイル。どこに落としてもテイクとして足す
+TAKE_EXT = ".msva"                # テイク（アニメーションだけ）のファイル。どこにドラッグ＆ドロップしてもテイクとして足す
 DATA_EXT = (".json", ".msv")      # 変換済みのデータ（解析しない。アニメーションも一緒に入っている）
 
 
@@ -1399,10 +1399,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
             return
         if not path.lower().endswith(package.EXT):
             path += package.EXT
+        # 開いているパッケージに上書きしてもよい（一時ファイルに書いて、同梱のテクスチャを移し終えてから置き換える）
         src_path = (self.current_scene.get("source") or {}).get("packagePath")
-        if src_path and os.path.normcase(os.path.abspath(src_path)) == os.path.normcase(os.path.abspath(path)):
-            self._error("開いているパッケージと同じファイルには書き出せません。別の名前にしてください。")
-            return
         scene = self.current_scene
 
         def write(view):

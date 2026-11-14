@@ -127,9 +127,7 @@ def cmd_pack(args) -> int:
         if not args.quiet:
             sys.stderr.write("\n")
     out = args.output or os.path.splitext(src)[0] + package.EXT
-    if os.path.abspath(out) == os.path.abspath(src):
-        print("入力と同じファイルには書き出せません: %s" % out, file=sys.stderr)
-        return 1
+    # 入力の .msv に上書きしてもよい（一時ファイルに書いて、同梱のテクスチャを移し終えてから置き換える）
     say = None if args.quiet else (lambda msg: sys.stderr.write("\r%-60s" % msg[:60]))
     r = package.write_package(scene, out, textures=args.textures, max_size=args.max_size, quality=args.quality,
                               source=source_pkg, convert=False if args.keep_textures else None, progress=say,
