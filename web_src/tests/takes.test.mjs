@@ -285,3 +285,35 @@ test('.msva・.msv: Python で書いたテイクを読んで当てると、元�
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('.msva をブラウザの処理（takeFile.js）で書くと、JS と Python の両方で読める', async (t) => {
+  const { buildTakesFile } = await import('../src/takeFile.js');
+  const scene = load('rig6_sample.json');
+  const { base, take } = splitAnimation(scene, '');
+  const bytes = await buildTakesFile([take, { ...take, name: '二つめ' }], { version: '9.9.9' });
+  const back = await openTakes(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  assert.deepEqual(back.map((x) => x.name), [take.name, '二つめ']);
+  const { animation } = composeAnimation(scene, base, [{ take: decodeTake(back[0]), namespace: '' }]);
+  assertSame(evaluateAll(scene, scene.animation), evaluateAll(scene, animation), 'JS で書いた .msva');
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'take-'));
+  try {
+    writeFileSync(path.join(dir, 't.msva'), bytes);
+    const py = 'import json, sys\nfrom ma_viewer import package\nts = package.read_takes(sys.argv[1])\n'
+      + 'm = json.loads(__import__("zipfile").ZipFile(sys.argv[1]).read("manifest.json"))\n'
+      + 'print(json.dumps([[t["name"] for t in ts], m["format"], m["generatorVersion"], len(package.schema.array_values(ts[0]["times"]))]))';
+    let out;
+    try {
+      out = execFileSync(process.env.PYTHON || 'python3', ['-c', py, path.join(dir, 't.msva')], { cwd: path.resolve(here, '../..') });
+    } catch (err) {
+      t.skip('Python で読めない');
+      return;
+    }
+    const [names, format, version, nkeys] = JSON.parse(String(out));
+    assert.deepEqual(names, [take.name, '二つめ']);
+    assert.equal(format, 'maya-scene-viewer-takes');
+    assert.equal(version, '9.9.9');
+    assert.equal(nkeys, take.times.length);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

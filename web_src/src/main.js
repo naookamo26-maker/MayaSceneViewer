@@ -16,8 +16,9 @@ import {
 import { base64ToArrayBuffer } from './textures.js';
 import { MapManager, usageFor } from './mapManager.js';
 import { PACKAGE_EXT, TAKES_EXT, openPackage, openTakes } from './package.js';
-import { chooseNamespace, composeAnimation, decodeTake, encodeTake, reasonText, splitAnimation, takeNamespaces } from './takes.js';
+import { chooseNamespace, composeAnimation, decodeTake, encodeTake, extractTakes, reasonText, splitAnimation } from './takes.js';
 import { TakePanel } from './takePanel.js';
+import { buildTakesFile } from './takeFile.js';
 import { buildShareQuery, fetchFailureMessage, isZip, parseShareQuery } from './share.js';
 import { base64ToBytes } from './arrays.js';
 import { JointOverlay } from './jointOverlay.js';
@@ -631,12 +632,7 @@ class ViewerApp {
   }
 
   /** 読み込んだシーン（共通 JSON・.msv）から、名前空間ごとのテイクを取り出す（.msv に入っているテイクも含める） */
-  extractTakes(scene, fileName = '') {
-    const base = String(fileName || (scene.source && scene.source.name) || 'take').split(/[\\/]/).pop().replace(/\.[^.]*$/, '');
-    const nss = takeNamespaces(scene);
-    const out = nss.map((ns) => splitAnimation(scene, ns, { name: nss.length > 1 ? `${base} (${ns || '名前空間なし'})` : base }).take);
-    return out.concat(scene.savedTakes || []);
-  }
+  extractTakes(scene, fileName = '') { return extractTakes(scene, fileName); }
 
   loadFile(file) {
     if (!file) return;
@@ -1889,6 +1885,28 @@ class ViewerApp {
   takesJson(indices = null) {
     const list = indices ? indices.map((i) => this.takes[i]).filter(Boolean) : this.takes;
     return JSON.stringify(list.map((e) => encodeTake(e.take)));
+  }
+
+  /** テイクを .msva にしてダウンロードする（ブラウザ。Qt 版は Python が書く）。indices を省くとすべて */
+  async downloadTakes(indices = null, name = 'takes') {
+    const list = (indices ? indices.map((i) => this.takes[i]) : this.takes).filter(Boolean);
+    if (!list.length) return false;
+    try {
+      const bytes = await buildTakesFile(list.map((e) => e.take), { version: VERSION });
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${String(name).replace(/[\\/:*?"<>|]/g, '_') || 'takes'}.msva`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      this.ui.setMessage(`テイクを書き出しました: ${a.download}（${list.length} 個）`, 6000);
+      return true;
+    } catch (err) {
+      this.ui.showError(`テイクを書き出せませんでした。\n${err && err.message || err}`);
+      return false;
+    }
   }
 
   /** 当たらなかった結び付けの一覧（行の警告の印から開く） */

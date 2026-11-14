@@ -347,6 +347,8 @@ python -m ma_viewer pack rig.ma --take shot010.ma --take shot020.msva -o rig.msv
 メッシュなどを外して B に渡しています（読み込みスレッド）。参照先のない .ma からの取り出し（A。リファレンスの編集から結び付けを作る）・
 Maya で開いているシーンからの取り出し・コマンドライン・ブラウザの `.msva` の書き出しは段階 2 です。
 画面は、テイクを右パネルの右端の縦のタブ（［プロパティ］［テイク］）に置き、行は 1 行（名前・範囲・相手・警告の印）にしました。
+段階 2 のうち、コマンドライン（`take`・`info` の .msva・`pack --take`。取り出しは Node.js で `takes.js` を動かす: `web_src/tools/takes.mjs`）と、
+ブラウザの `.msva` の書き出し（`web_src/src/takeFile.js`。zip は CompressionStream の deflate）を作りました。
 段階 1 では、`samples/*.json` は作り直していません（`restNodes` のない古い形のまま。当てる側の代わりの処理を確かめる材料にしている）。
 `bindings[].prop`（props への結び付けの種類）を形式に足しました（[data_format.md](data_format.md) の「テイク」）。
 

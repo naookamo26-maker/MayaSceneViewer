@@ -1,8 +1,8 @@
 // テイクの一覧（右パネルの右端の縦のタブ［テイク］）。行をクリックするとテイクに切り替える。先頭の行は「シーンのアニメーション」。
 // 状態は ViewerApp（main.js の takes・activeTake）が持ち、ここは表示と操作の受け付けだけ。
 //   行: 名前・範囲・フレーム数・当てている相手（名前空間）・警告の印（当たらなかった結び付け。クリックで中身）
-//   行の操作: 名前の変更（F2・ダブルクリック）・削除（Delete）・.msva に書き出す（Qt 版）
-//   一覧の操作: 読み込む（ファイルを選ぶ）・すべて書き出す（Qt 版）。ファイルを一覧にドラッグ＆ドロップするとテイクとして足す
+//   行の操作: 名前の変更（F2・ダブルクリック）・削除（Delete）・.msva に書き出す（ブラウザはダウンロード）
+//   一覧の操作: 読み込む（ファイルを選ぶ）・すべて書き出す。ファイルを一覧にドラッグ＆ドロップするとテイクとして足す
 import { takeFrames } from './takes.js';
 
 const $ = (id) => document.getElementById(id);
@@ -86,13 +86,11 @@ export class TakePanel {
 
   exportTakes(indices) {
     if (!this.app.takes.length) { this.app.ui.setMessage('書き出すテイクがありません', 4000); return; }
-    if (!this.qt('exportTakes')) {
-      this.app.ui.setMessage('テイクの書き出し（.msva）は、いまは Qt 版だけでできます', 6000);
-      return;
-    }
     const first = this.app.takes[indices ? indices[0] : 0];
     const name = indices && indices.length === 1 && first ? first.take.name : (this.app.sceneName || 'takes').replace(/\.[^.]*$/, '');
-    this.app.bridge.exportTakes(this.app.takesJson(indices), name);
+    // Qt 版は保存先を Python が聞く。ブラウザはダウンロードとして保存する
+    if (this.qt('exportTakes')) this.app.bridge.exportTakes(this.app.takesJson(indices), name);
+    else this.app.downloadTakes(indices, name);
   }
 
   onClick(e) {
@@ -171,7 +169,7 @@ export class TakePanel {
     const count = $('take-count');
     if (count) count.textContent = takes.length ? `${takes.length}` : '';
     const all = $('take-export-all');
-    if (all) all.hidden = !this.qt('exportTakes') || !takes.length;
+    if (all) all.hidden = !takes.length;
     const hint = $('take-hint');
     if (hint) {
       hint.textContent = app.built ? (this.qt('importTakes') ? '.msva・.ma・.msv・共通 JSON' : '.msva・.msv・共通 JSON') + ' をここにドラッグ＆ドロップすると、テイクとして足します（行をクリックで切り替え）'
@@ -206,7 +204,7 @@ export class TakePanel {
       + ` title="当たらなかった結び付けがあります（クリックで一覧）">⚠${missed}</button>` : '';
     const acts = i < 0 ? '' : '<span class="take-acts">'
       + '<button type="button" class="icon-btn" data-act="rename" title="名前を変える（F2）" aria-label="名前を変える">✎</button>'
-      + (this.qt('exportTakes') ? '<button type="button" class="icon-btn" data-act="export" title=".msva に書き出す" aria-label=".msva に書き出す">⤓</button>' : '')
+      + '<button type="button" class="icon-btn" data-act="export" title=".msva に書き出す" aria-label=".msva に書き出す">⤓</button>'
       + '<button type="button" class="icon-btn" data-act="delete" title="一覧から消す（Delete）" aria-label="一覧から消す">×</button>'
       + '</span>';
     const nsHtml = ns ? `<span class="take-ns">${esc(ns)}</span>` : '';

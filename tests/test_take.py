@@ -220,6 +220,51 @@ class TestTakeSources(unittest.TestCase):
         self.assertTrue(any("読み込めなかったリファレンス" in n and "armA" in n for n in notes), notes)
 
 
+class TestTakeCommand(unittest.TestCase):
+    """コマンドライン: take・info（.msva）・pack --take（Node.js と web_src の npm ci が要る。なければ飛ばす）"""
+
+    def setUp(self):
+        import shutil
+        if shutil.which("node") is None or not os.path.isdir(os.path.join(ROOT, "web_src", "node_modules")):
+            self.skipTest("Node.js か web_src/node_modules がない")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def run_cli(self, *argv):
+        import contextlib
+        import io
+        from ma_viewer.cli import main
+        buf, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            rc = main(list(argv))
+        return rc, buf.getvalue(), err.getvalue()
+
+    def test_take_info_pack(self):
+        from ma_viewer import package
+        shot = os.path.join(ROOT, "samples", "reference_project", "scenes", "shot.ma")
+        rig6 = os.path.join(ROOT, "samples", "rig6_sample.json")
+        out = os.path.join(self.tmp.name, "c.msva")
+        rc, text, _err = self.run_cli("take", shot, rig6, "-o", out, "-q")
+        self.assertEqual(rc, 0, text)
+        takes = package.read_takes(out)
+        self.assertEqual(sorted((t["name"], t["namespace"]) for t in takes), [("rig6_sample", ""), ("shot", "armA")])
+        shot_take = next(t for t in takes if t["name"] == "shot")
+        self.assertEqual(shot_take["bindings"][0]["attr"], "tx")
+        self.assertTrue(any(s["values"].get("fkik") == 1 for s in shot_take["statics"]))
+        rc, text, _err = self.run_cli("info", out)
+        self.assertEqual(rc, 0)
+        self.assertIn("テイク 2 個", text)
+        self.assertIn("名前空間 armA", text)
+        msv = os.path.join(self.tmp.name, "r.msv")
+        rig = os.path.join(ROOT, "samples", "reference_project", "assets", "arm_rig.ma")
+        rc, text, _err = self.run_cli("pack", rig, "--take", out, "--namespace", "armA", "-o", msv, "-q")
+        self.assertEqual(rc, 0, text)
+        self.assertEqual([t["name"] for t in package.read_takes(msv)], ["shot"])
+        rc, _text, err = self.run_cli("take", shot, "--namespace", "nope", "-o", os.path.join(self.tmp.name, "x.msva"), "-q")
+        self.assertEqual(rc, 1)
+        self.assertIn("見つかりません", err)
+
+
 def _refs(obj):
     if isinstance(obj, dict):
         if "buffer" in obj:

@@ -93,3 +93,48 @@ def read_sources(paths, references: bool = True, progress: ProgressFn = None):
         if src is not None:
             sources.append(src)
     return sources, notes, errors
+
+
+class TakeToolError(RuntimeError):
+    """テイクを取り出す道具（Node.js と web_src）が使えない"""
+
+
+def extract_takes(paths, namespaces=None, references: bool = True, progress: ProgressFn = None):
+    """ファイル（.msva・.ma・.msv・共通 JSON）からテイクを取り出す（コマンドライン用）。
+    シーンからの取り出しはビューアと同じ JS（web_src/src/takes.js）を Node.js で動かす（web_src の npm ci が要る）。
+    戻り値: (テイクの一覧（数値の配列は base64）, お知らせ, (ファイル名, 誤り) の一覧)"""
+    import shutil
+    import subprocess
+    import tempfile
+    sources, notes, errors = read_sources(paths, references, progress)
+    if not sources:
+        return [], notes, errors
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script = os.path.join(root, "web_src", "tools", "takes.mjs")
+    if not os.path.isfile(script) or not os.path.isdir(os.path.join(root, "web_src", "node_modules")):
+        raise TakeToolError("テイクを取り出すには、ソースのフォルダで web_src の npm install（npm ci）を済ませてください: %s"
+                            % script)
+    node = shutil.which("node")
+    if node is None:
+        raise TakeToolError("Node.js（node）が見つかりません（テイクの取り出しに使います）")
+    with tempfile.TemporaryDirectory() as tmp:
+        src = os.path.join(tmp, "sources.json")
+        out = os.path.join(tmp, "takes.json")
+        with open(src, "w", encoding="utf-8") as f:
+            json.dump(sources, f, ensure_ascii=False, separators=(",", ":"))
+        cmd = [node, script, src, out]
+        for ns in namespaces or []:
+            cmd += ["--namespace", ns]
+        r = subprocess.run(cmd, cwd=os.path.join(root, "web_src"), capture_output=True, text=True, encoding="utf-8")
+        if r.returncode != 0:
+            raise TakeToolError("テイクを取り出せませんでした: %s" % (r.stderr.strip().splitlines() or ["不明"])[-1])
+        with open(out, "r", encoding="utf-8") as f:
+            takes = json.load(f)
+    return takes, notes, errors
+
+
+def take_summary(t: dict) -> str:
+    """テイク 1 つの概要（名前・名前空間・範囲・カーブの数・結び付けの数）"""
+    return "%s  名前空間 %s・%g〜%g（%g fps）・カーブ %d 本・結び付け %d・レイヤーなどのノード %d" % (
+        t.get("name", ""), t.get("namespace") or "なし", t.get("start", 0), t.get("end", 0), t.get("fps", 24),
+        len(t.get("curves") or []), len(t.get("bindings") or []), len(t.get("nodes") or []))

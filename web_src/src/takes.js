@@ -128,6 +128,20 @@ export function takeNamespaces(scene) {
   return [...count.keys()].sort((a, b) => count.get(b) - count.get(a));
 }
 
+/**
+ * 読み込んだシーン（共通 JSON・.msv）から、名前空間ごとのテイクを取り出す（.msv に入っているテイクも含める）。
+ * 名前はファイル名（拡張子なし）。複数取れたら後ろに名前空間を付ける。namespaces を渡すと、その名前空間だけ
+ */
+export function extractTakes(scene, fileName = '', namespaces = null) {
+  const base = String(fileName || (scene.source && scene.source.name) || 'take').split(/[\\/]/).pop().replace(/\.[^.]*$/, '');
+  let nss = takeNamespaces(scene);
+  const many = nss.length > 1;
+  if (namespaces) nss = nss.filter((ns) => namespaces.includes(ns));
+  const out = nss.map((ns) => splitAnimation(scene, ns, { name: many ? `${base} (${ns || '名前空間なし'})` : base }).take);
+  const saved = (scene.savedTakes || []).filter((t) => !namespaces || namespaces.includes(t.namespace || ''));
+  return out.concat(saved);
+}
+
 /** シーンに出てくる名前空間（'' を含む） */
 function candidateNamespaces(scene) {
   const s = new Set(['']);
