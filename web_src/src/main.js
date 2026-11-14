@@ -77,7 +77,8 @@ const VIEW_SETTING_KEYS = ['shading', 'wire', 'skin', 'joints', 'xray', 'grid', 
 const VIEW_STATE_VERSION = 1;
 const num = (n) => n.toLocaleString('ja-JP');
 const MB = 1024 * 1024;
-const SETTLE_RENDER_MS = 200;     // 再生していないとき、描いてから描き直すまでの間（scheduleSettleRender）
+const SETTLE_RENDER_MS = 200;
+const GPU_WAIT_MAX_MS = 500;     // GPU が前のフレームを描き終えるのを待つ上限（gpuBusy）     // 再生していないとき、描いてから描き直すまでの間（scheduleSettleRender）
 
 
 const _v = new Vector3();
@@ -275,7 +276,57 @@ class ViewerApp {
   requestRender() {
     if (this.renderPending || !this.renderer) return;
     this.renderPending = true;
-    requestAnimationFrame(() => { this.renderPending = false; this.render(); this.scheduleSettleRender(); });
+    requestAnimationFrame(() => {
+      this.renderPending = false;
+      if (this.gpuBusy()) { this.requestRender(); return; }   // GPU がまだ前のフレームを描いている: 次の機会に描く
+      this.render();
+      this.scheduleSettleRender();
+    });
+  }
+
+  /**
+   * GPU が前のフレームをまだ描き終えていないか（render の最後に置いた印 gpuFence で調べる）。描き終えるまで次を描かない。
+   * Chromium では WebGL の命令とページの画面の合成が GPU への同じ流れに並ぶので、重いシーン（頂点の多いスキンなど。
+   * 解像度によらない）で描画を次々に積むと合成の番が回らず、Qt WebEngine ではボタン・アイコン・タイムラインの帯などの
+   * 絵が欠けて点滅する。描き終えない状態が GPU_WAIT_MAX_MS 続いたら、待たずに描く（印が来ないときに表示を止めない）。
+   * WebGL 1・コンテキストが失われたときは調べない
+   */
+  gpuBusy() {
+    const fence = this.gpuFence;
+    if (!fence) return false;
+    const gl = this.renderer.getContext();
+    let busy = false;
+    try {
+      busy = !gl.isContextLost() && gl.clientWaitSync(fence, 0, 0) === gl.TIMEOUT_EXPIRED
+        && performance.now() - this.gpuFenceAt < GPU_WAIT_MAX_MS;
+    } catch (err) {
+      busy = false;
+    }
+    if (busy) { this.gpuWaits = (this.gpuWaits || 0) + 1; return true; }
+    this.dropGpuFence();
+    return false;
+  }
+
+  /** 描いた命令の最後に「描き終えた」印を置く（WebGL 2 だけ）。前の印は捨てる */
+  markGpuFrame() {
+    this.dropGpuFence();
+    const gl = this.renderer.getContext();
+    if (typeof gl.fenceSync !== 'function' || gl.isContextLost()) return;
+    try {
+      this.gpuFence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+      this.gpuFenceAt = performance.now();
+      gl.flush();                                       // 印までの命令を GPU に送る（送らないと印がいつまでも来ない）
+    } catch (err) {
+      this.gpuFence = null;
+    }
+  }
+
+  dropGpuFence() {
+    const fence = this.gpuFence;
+    this.gpuFence = null;
+    if (!fence) return;
+    const gl = this.renderer.getContext();
+    try { if (!gl.isContextLost()) gl.deleteSync(fence); } catch (err) { /* 失われたコンテキストの印は捨てるだけ */ }
   }
 
   /**
@@ -290,7 +341,11 @@ class ViewerApp {
     this.settleTimer = setTimeout(() => {
       this.settleTimer = null;
       if (this.renderPending || !this.renderer) return;   // ほかの描画が控えている（そのあとで待ち直す）
-      requestAnimationFrame(() => { if (!this.renderPending) this.render(); });
+      requestAnimationFrame(() => {
+        if (this.renderPending) return;
+        if (this.gpuBusy()) { this.scheduleSettleRender(); return; }   // GPU が描き終えるのを待ち直す（描画は増やさない）
+        this.render();
+      });
     }, SETTLE_RENDER_MS);
   }
 
@@ -330,6 +385,7 @@ class ViewerApp {
     } finally {
       this.scene.matrixWorldAutoUpdate = true;
     }
+    this.markGpuFrame();
   }
 
   /** 描画・ピックに使うカメラ（シーンのカメラから見ているときはその視点） */
