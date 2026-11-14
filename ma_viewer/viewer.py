@@ -30,19 +30,25 @@ class _Cancelled(Exception):
     pass
 
 
-def _take_source_scene(scene: dict) -> dict:
-    """テイクを取り出すためのシーン（ビューアに渡す）。メッシュの形・テクスチャ・カーブの形を外し、ノードのパス・
-    アニメーション・カメラ・入っているテイクだけを残す"""
-    keep = ("schema", "version", "source", "nodes", "restNodes", "cameras", "animation", "savedTakes")
-    out = {k: scene[k] for k in keep if k in scene}
-    out["nodes"] = [{k: n.get(k) for k in ("name", "path", "type", "parent", "matrix", "attrs", "visible", "opm")
-                     if k in n} for n in scene.get("nodes") or []]
-    out["meshes"] = [{k: m.get(k) for k in ("name", "path", "visible") if k in m} for m in scene.get("meshes") or []]
-    out["curves"] = [{k: c.get(k) for k in ("name", "path", "visible") if k in c} for c in scene.get("curves") or []]
-    src = out.get("source")
-    if isinstance(src, dict):
-        out["source"] = {k: v for k, v in src.items() if k != "packagePath"}
-    return out
+
+class _TakeWorker(QtCore.QObject):
+    """テイクのファイル（.msva・.msv・共通 JSON・.ma）を読み込みスレッドで読む（.ma の解析で画面を止めない）"""
+    progress = Signal(str)
+    finished = Signal(object, object, object)       # テイクの元の一覧, お知らせ, (ファイル名, 誤り) の一覧
+
+    def __init__(self, paths, references: bool):
+        super().__init__()
+        self.paths = list(paths)
+        self.references = references
+
+    @Slot()
+    def run(self):
+        from .take import read_sources
+        try:
+            sources, notes, errors = read_sources(self.paths, self.references, self.progress.emit)
+        except Exception as exc:  # noqa: BLE001
+            sources, notes, errors = [], [], [("", "%s\n%s" % (exc, traceback.format_exc()))]
+        self.finished.emit(sources, notes, errors)
 
 
 # ---------------------------------------------------------------------------
@@ -662,6 +668,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.viewer.takesExportRequested.connect(self.export_takes_text)
         self.viewer.takesImportRequested.connect(self.import_takes_dialog)
         self._drag_pos = None
+        self._take_thread = None
+        self._take_worker = None
 
         self._build_log_dock()
         self._build_actions()
@@ -1449,41 +1457,59 @@ class ViewerWindow(QtWidgets.QMainWindow):
         """［ファイル］→［テイクを読み込む］・テイクの一覧の［読み込む］"""
         start = os.path.dirname(self.current_path) if self.current_path else ""
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
-            self, "テイクを読み込む", start, "テイク / パッケージ / 共通 JSON (*.msva *.msv *.json);;テイク (*.msva)")
+            self, "テイクを読み込む", start,
+            "テイク / Maya ASCII / パッケージ / 共通 JSON (*.msva *.ma *.msv *.json);;テイク (*.msva);;Maya ASCII (*.ma)")
         if paths:
             self.load_take_files(paths)
 
     def load_take_files(self, paths, at: int = -1, drop: bool = False):
         """ファイルからテイクを読んで、テイクの一覧の at の位置に足す（ファイル名の順）。.msva はテイクをそのまま、
-        .msv・共通 JSON はメッシュなどを外したシーンを渡して、ビューアがアニメーションから取り出す"""
-        from . import package
+        .ma・.msv・共通 JSON はメッシュなどを外したシーンを渡して、ビューアがアニメーションから取り出す。
+        読むのは読み込みスレッド（.ma の解析で画面を止めない）"""
         if self.current_scene is None:
             self.statusBar().showMessage("先にシーンを開いてください（テイクはシーンに当てて使います）", 6000)
             return
-        sources = []
-        for path in sorted(paths, key=lambda p: os.path.basename(p).lower()):
-            name = os.path.basename(path)
-            low = path.lower()
-            try:
-                if low.endswith(TAKE_EXT):
-                    sources.append({"kind": "takes", "takes": package.read_takes(path), "name": name})
-                elif low.endswith(".msv"):
-                    scene, _pkg = package.read_package(path)
-                    sources.append({"kind": "scene", "scene": _take_source_scene(scene), "name": name})
-                elif low.endswith(".json"):
-                    with open(path, "r", encoding="utf-8") as f:
-                        scene = json.load(f)
-                    sources.append({"kind": "scene", "scene": _take_source_scene(scene), "name": name})
-                elif low.endswith((".ma", ".mb")):
-                    self.log("warn", "%s: .ma・.mb からテイクを取り出すのは、まだできません"
-                                     "（.msv か共通 JSON に書き出してから読み込んでください）" % name)
-                    self.statusBar().showMessage("%s: .ma・.mb からはまだテイクを取り出せません" % name, 6000)
-            except Exception as exc:  # noqa: BLE001
-                self.log("error", traceback.format_exc())
-                self._error("%s からテイクを読めませんでした。\n%s" % (name, exc))
-        if not sources:
+        if self._thread is not None or getattr(self, "_take_thread", None) is not None:
+            self.statusBar().showMessage("読み込み中です。完了してからテイクを読み込んでください。", 5000)
             return
-        self.log("info", "テイクを読み込みます: %s" % "・".join(x["name"] for x in sources))
+        names = "・".join(os.path.basename(p) for p in paths)
+        self.log("info", "テイクを読み込みます: %s" % names)
+        self.statusBar().showMessage("テイクを読み込み中: %s" % names)
+        self._take_thread = QtCore.QThread(self)
+        self._take_worker = _TakeWorker(paths, self.a_refs.isChecked())
+        self._take_worker.moveToThread(self._take_thread)
+        self._take_thread.started.connect(self._take_worker.run)
+        # 信号はウィンドウのメソッドで受ける（画面のスレッドで動く。ラムダにつなぐと読み込みスレッドで動いてしまう）
+        self._take_target = (at, drop)
+        self._take_worker.progress.connect(self._on_take_progress)
+        self._take_worker.finished.connect(self._on_takes_read)
+        self._take_worker.finished.connect(self._take_thread.quit)
+        self._take_thread.finished.connect(self._on_take_thread_finished)
+        self._take_thread.start()
+
+    @Slot()
+    def _on_take_thread_finished(self):
+        self._take_thread = None
+        self._take_worker = None
+
+    @Slot(str)
+    def _on_take_progress(self, msg):
+        self.statusBar().showMessage("テイク: " + msg)
+
+    @Slot(object, object, object)
+    def _on_takes_read(self, sources, notes, errors):
+        at, drop = getattr(self, "_take_target", (-1, False))
+        for n in notes:
+            self.log("warn", n)
+        for name, err in errors:
+            self.log("error", "%s からテイクを読めませんでした: %s" % (name, err))
+        if errors:
+            self._error("テイクを読めなかったファイルがあります。\n" + "\n".join("%s: %s" % (n, e.splitlines()[0] if e else "")
+                                                                    for n, e in errors))
+        if self.current_scene is None or not sources:
+            self.statusBar().showMessage("テイクが見つかりませんでした" if not errors else "テイクを読めませんでした", 6000)
+            return
+        self.statusBar().clearMessage()
         self.viewer.add_take_sources(sources, at, drop)
 
     def export_takes(self):

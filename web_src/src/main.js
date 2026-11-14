@@ -1820,6 +1820,7 @@ class ViewerApp {
         : 'いまのシーンに当たるテイクがありませんでした', 6000);
     }
     this.takePanel.render();
+    if (entries.length && !opts.quiet) this.takePanel.showTab('tab-takes');    // 足したテイクが見えるように
     return entries.length;
   }
 

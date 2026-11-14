@@ -159,6 +159,47 @@ class TestTakeFiles(unittest.TestCase):
         self.assertTrue(all(r.get("buffer") != "bin/takes.bin" for r in _refs(raw)))
 
 
+class TestTakeSources(unittest.TestCase):
+    """テイクの元（ma_viewer.take）: .ma・.msv・共通 JSON・.msva を、ビューアに渡す形にする"""
+    SHOT = os.path.join(ROOT, "samples", "reference_project", "scenes", "shot.ma")
+
+    def test_ma_source(self):
+        from ma_viewer.take import read_sources
+        sources, notes, errors = read_sources([self.SHOT])
+        self.assertEqual(errors, [])
+        self.assertEqual(len(sources), 1)
+        src = sources[0]
+        self.assertEqual((src["kind"], src["name"]), ("scene", "shot.ma"))
+        sc = src["scene"]
+        self.assertIn("animation", sc)
+        self.assertTrue(all("positions" not in m for m in sc["meshes"]), "メッシュの形は外す")
+        self.assertTrue(any(n["path"].endswith("armA:hand_ctrl") for n in sc["nodes"]))
+        self.assertIn("hand_ctrl_translateX", [c["name"] for c in sc["animation"]["curves"]])
+
+    def test_order_and_errors(self):
+        from ma_viewer import package
+        from ma_viewer.take import read_sources
+        with tempfile.TemporaryDirectory() as d:
+            package.write_takes([sample_take("z")], os.path.join(d, "b.msva"))
+            with open(os.path.join(d, "a.json"), "w", encoding="utf-8") as f:
+                f.write("{")
+            open(os.path.join(d, "c.mb"), "wb").close()
+            sources, _notes, errors = read_sources([os.path.join(d, n) for n in ("c.mb", "b.msva", "a.json")])
+        self.assertEqual([s["kind"] for s in sources], ["takes"])
+        self.assertEqual([e[0] for e in errors], ["a.json", "c.mb"], "ファイル名の順。読めないものは理由つき")
+
+    def test_ma_without_reference_file(self):
+        """参照先のないショットの .ma: 読めるが、リファレンスのキーは取り出せないことを知らせる"""
+        import shutil
+        from ma_viewer.take import read_sources
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "shot.ma")
+            shutil.copy(self.SHOT, p)
+            sources, notes, errors = read_sources([p])
+        self.assertEqual(errors, [])
+        self.assertTrue(any("読み込めなかったリファレンス" in n and "armA" in n for n in notes), notes)
+
+
 def _refs(obj):
     if isinstance(obj, dict):
         if "buffer" in obj:

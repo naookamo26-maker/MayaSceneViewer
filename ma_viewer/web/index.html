@@ -256,7 +256,10 @@
   <aside id="right" class="panel" aria-label="プロパティ">
     <button class="panel-strip" id="right-expand" title="右パネルを開く" aria-label="右パネルを開く" aria-controls="right" aria-expanded="false"><span class="strip-icon" aria-hidden="true">‹</span><span class="strip-label">プロパティ</span></button>
     <div class="panel-content">
-      <div class="panel-head"><button class="collapse-btn" id="right-collapse" title="右パネルを最小化" aria-label="右パネルを最小化" aria-controls="right" aria-expanded="true">›</button><span>プロパティ</span></div>
+      <!-- 右端の縦のタブ（Maya のチャンネルボックス・アトリビュートエディタのタブと同じ置き方）で、プロパティとテイクを切り替える -->
+      <div class="right-main">
+      <div class="panel-head"><button class="collapse-btn" id="right-collapse" title="右パネルを最小化" aria-label="右パネルを最小化" aria-controls="right" aria-expanded="true">›</button><span id="right-title">プロパティ</span></div>
+      <div class="right-pane" id="right-pane-props" role="tabpanel" aria-labelledby="tab-props">
       <details open id="sec-select">
         <summary>選択</summary>
         <div class="sec-body">
@@ -295,19 +298,22 @@
         <summary>頂点のウェイト</summary>
         <div id="vertex-body" class="sec-body"><p class="muted">メッシュをクリックすると、いちばん近い頂点のウェイトを表示します。</p></div>
       </details>
-      <!-- テイク（同じリグのアニメーションだけ。takePanel.js）。ファイルをここに落とすとテイクとして足す -->
-      <details open id="sec-takes">
-        <summary>テイク<span class="badge" id="take-count"></span></summary>
-        <div class="sec-body">
-          <div class="take-tools">
-            <button type="button" class="btn" id="take-import" title="テイク（.msva）か、ほかのシーン（.msv・共通 JSON）のアニメーションを読み込んで、一覧に足す">読み込む…</button>
-            <button type="button" class="btn" id="take-export-all" title="一覧のテイクをすべて .msva に書き出す" hidden>すべて書き出す…</button>
-            <input type="file" id="take-input" accept=".msva,.msv,.json,application/json" multiple hidden>
-          </div>
-          <ul id="take-list" class="take-list" role="listbox" aria-label="テイク" hidden></ul>
-          <p class="muted small" id="take-hint"></p>
+      </div>
+      <!-- テイク（同じリグのアニメーションだけ。takePanel.js）。ファイルをここ（とタブ）に落とすとテイクとして足す -->
+      <div class="right-pane" id="sec-takes" role="tabpanel" aria-labelledby="tab-takes" hidden>
+        <div class="take-tools">
+          <button type="button" class="btn" id="take-import" title="テイク（.msva）か、ほかのシーン（Qt 版は .ma も）のアニメーションを読み込んで、一覧に足す">読み込む…</button>
+          <button type="button" class="btn" id="take-export-all" title="一覧のテイクをすべて .msva に書き出す" hidden>すべて書き出す…</button>
+          <input type="file" id="take-input" accept=".msva,.msv,.json,application/json" multiple hidden>
         </div>
-      </details>
+        <ul id="take-list" class="take-list" role="listbox" aria-label="テイク" hidden></ul>
+        <p class="muted small" id="take-hint"></p>
+      </div>
+      </div>
+      <div class="side-tabs" role="tablist" aria-orientation="vertical" aria-label="右パネルの表示">
+        <button type="button" role="tab" class="side-tab" id="tab-props" aria-selected="true" aria-controls="right-pane-props" data-pane="right-pane-props" tabindex="0">プロパティ</button>
+        <button type="button" role="tab" class="side-tab" id="tab-takes" aria-selected="false" aria-controls="sec-takes" data-pane="sec-takes" tabindex="-1">テイク<span class="side-badge" id="take-count"></span></button>
+      </div>
     </div>
   </aside>
 

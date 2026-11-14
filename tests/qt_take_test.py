@@ -26,7 +26,8 @@ STATE_JS = """JSON.stringify((() => {
            active: window.mayaViewer.activeTake(), count: window.mayaViewer.takeCount(),
            rows: rows.map((r) => (r.querySelector('.take-name') || {}).textContent || ''),
            activeRow: rows.findIndex((r) => r.getAttribute('aria-current') === 'true') - 1,
-           dropHighlight: document.getElementById('sec-takes').classList.contains('take-drop') };
+           dropHighlight: document.getElementById('sec-takes').classList.contains('take-drop'),
+           takesTab: !document.getElementById('sec-takes').hidden };
 })())"""
 
 
@@ -52,9 +53,16 @@ def main() -> int:
         if not cond:
             ok["v"] = False
 
+    def parse(r):
+        if isinstance(r, str) and r[:1] in "{[":
+            try:
+                return json.loads(r)
+            except ValueError:
+                return r
+        return r
+
     def js(code, then, delay=150):
-        win.viewer.run_js(code, lambda r: QtCore.QTimer.singleShot(
-            delay, lambda: then(json.loads(r) if isinstance(r, str) and r[:1] in "{[" else r)))
+        win.viewer.run_js(code, lambda r: QtCore.QTimer.singleShot(delay, lambda: then(parse(r))))
 
     def state(then):
         js(STATE_JS, then, 0)
@@ -123,6 +131,14 @@ def main() -> int:
             check(s["active"] == -1, "足しただけでは切り替えない"),
             nxt()))
 
+    def step_load_ma(nxt):
+        # .ma もテイクとして読み込める（読み込みスレッドで解析する）。読み終えたら一覧の末尾に足す
+        win.load_take_files([SHOT])
+        wait_until(lambda s: s["count"] >= 2, lambda s: (
+            check(s["rows"][-1:] == ["shot"] and s["name"] == "arm_rig.ma", ".ma からテイクを読み込む（シーンは開き直さない）: %s" % s["rows"]),
+            check(s["takesTab"], "足したらテイクのタブを出す"),
+            js("(window.mayaViewer.debug.app.removeTake(1), 1)", lambda _r: nxt(), 300)), timeout=40)
+
     def step_switch(nxt):
         js("window.mayaViewer.setTake(0)", lambda _r: state(lambda s: (
             check(s["active"] == 0 and s["activeRow"] == 0, "テイクに切り替える（行を強調）"),
@@ -142,6 +158,16 @@ def main() -> int:
                 nxt()
             drop_at([shot_json], (r[0], r[2] - 3), done)
         rect_of("#sec-takes", got_rect)
+
+    def step_drop_tab(nxt):
+        # プロパティのタブを出しているときも、縦のタブ［テイク］に落とせばテイクとして足す（末尾）
+        def got_rect(r):
+            def done(before, after):
+                check(before["takesTab"], "ドラッグでタブに載せると、テイクのタブに切り替える")
+                check(after["count"] == 3, "タブに落とした .json はテイクとして足す: %s" % after["rows"])
+                js("(window.mayaViewer.debug.app.removeTake(2), 1)", lambda _r: nxt(), 300)
+            drop_at([shot_json], (r[0], r[1]), done)
+        js("document.getElementById('tab-props').click()", lambda _r: rect_of("#tab-takes", got_rect), 200)
 
     def step_drop_msva(nxt):
         # .msva はビューポートに落としてもテイクとして足す
@@ -213,7 +239,7 @@ def main() -> int:
         tmp.cleanup()
         app.quit()
 
-    QtCore.QTimer.singleShot(500, lambda: run([step_open, step_load, step_switch, step_drop_list, step_drop_msva,
+    QtCore.QTimer.singleShot(500, lambda: run([step_open, step_load, step_load_ma, step_switch, step_drop_list, step_drop_tab, step_drop_msva,
                                                step_export_msva, step_export_msv, step_reopen, step_drop_scene, finish]))
     QtCore.QTimer.singleShot(150000, lambda: (check(False, "時間切れ"), finish()))
     app.exec()
