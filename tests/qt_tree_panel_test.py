@@ -78,7 +78,8 @@ def main() -> int:
     def s_all(nxt):
         js("JSON.stringify([__tp.visible().length, __tp.click('tree-collapse-all'), __tp.click('tree-expand-all').length])",
            lambda r: (check(r[1] == ROOTS, "すべて閉じる: ルートだけ表示 %s" % r[1]),
-                      check(r[2] == r[0] == 13, "すべて開く: 全 %d 行を表示" % r[2]), nxt()))
+                      check(r[0] == len(ROOTS), "読み込み直後はいちばん上の階層だけ（Maya のアウトライナーと同じ）: %d 行" % r[0]),
+                      check(r[2] == 13, "すべて開く: 全 %d 行を表示" % r[2]), nxt()))
 
     def s_shift(nxt):
         code = """JSON.stringify((() => {
