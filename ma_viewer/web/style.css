@@ -281,6 +281,14 @@ summary {
 .take-target { flex: 0 1 auto; min-width: 0; max-width: 88px; height: 18px; padding: 0 2px; font-size: 11px;
   background: var(--panel-2); color: var(--text-dim); border: 1px solid var(--line); border-radius: var(--radius); }
 .take-list.reordering { cursor: grabbing; user-select: none; }
+/* 読み込み中の行（takePanel.js の pendingHtml）: 進み具合の帯と割合。読めなかったら理由 */
+.take-row.pending { cursor: default; color: var(--text-dim); }
+.take-row.pending .take-name { flex: 0 1 auto; max-width: 45%; }
+.take-progress { flex: 1; min-width: 30px; height: 6px; border-radius: 3px; background: var(--chrome); overflow: hidden; }
+.take-bar { display: block; height: 100%; background: var(--joint); transition: width 0.2s; }
+.take-pct { flex: none; width: 34px; text-align: right; font-size: 11px; font-variant-numeric: tabular-nums; }
+.take-error { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--select); font-size: 11px; }
+.take-row.pending .take-acts-pending { display: inline-flex; }
 .take-row.dragging { opacity: 0.55; }
 .take-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius); }
 .take-row {

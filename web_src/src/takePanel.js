@@ -40,7 +40,7 @@ export class TakePanel {
     this.list.addEventListener('click', (e) => this.onClick(e));
     this.list.addEventListener('dblclick', (e) => {
       const row = e.target.closest('.take-row');
-      if (row && +row.dataset.index >= 0 && !e.target.closest('button')) this.startRename(+row.dataset.index);
+      if (row && +row.dataset.index >= 0 && !row.classList.contains('pending') && !e.target.closest('button')) this.startRename(+row.dataset.index);
     });
     this.list.addEventListener('keydown', (e) => this.onKey(e));
     this.list.addEventListener('change', (e) => {
@@ -91,7 +91,7 @@ export class TakePanel {
       if (e.button !== 0 || e.target.closest('button, input, select')) return;
       const row = e.target.closest('.take-row');
       const i = row ? +row.dataset.index : -1;
-      if (i < 0 || this.editing >= 0) return;
+      if (i < 0 || this.editing >= 0 || row.classList.contains('pending')) return;
       drag = { from: i, y: e.clientY, id: e.pointerId, active: false, at: -1 };
     });
     this.list.addEventListener('pointermove', (e) => {
@@ -192,6 +192,7 @@ export class TakePanel {
       return;
     }
     if (e.target.closest('input')) return;
+    if (row.classList.contains('pending')) return;     // 読み込み中の行は選べない
     if (i !== this.app.activeTake) this.app.setTake(i);
   }
 
@@ -218,8 +219,8 @@ export class TakePanel {
       const next = rows[k + (e.key === 'ArrowDown' ? 1 : -1)];
       if (next) next.focus();
     } else if (e.key === 'Enter' || e.key === ' ') {
-      if (i !== this.app.activeTake) this.app.setTake(i);
-    } else if (e.key === 'F2' && i >= 0) {
+      if (i !== this.app.activeTake && !row.classList.contains('pending')) this.app.setTake(i);
+    } else if (e.key === 'F2' && i >= 0 && !row.classList.contains('pending')) {
       this.startRename(i);
     } else if ((e.key === 'Delete' || e.key === 'Backspace') && i >= 0) {
       this.app.removeTake(i);
@@ -263,14 +264,15 @@ export class TakePanel {
     const app = this.app;
     const takes = app.takes;
     const count = $('take-count');
-    if (count) count.textContent = takes.length ? `${takes.length}` : '';
+    const ready = takes.filter((e) => !e.pending).length;
+    if (count) count.textContent = ready ? `${ready}` : '';
     const all = $('take-export-all');
     if (all) {
-      all.hidden = !takes.length && !app.sceneAnim;
-      all.title = takes.length ? '一覧のテイクをすべて .msva に書き出す' : 'シーンのアニメーションを .msva に書き出す';
+      all.hidden = !ready && !app.sceneAnim;
+      all.title = ready ? '一覧のテイクをすべて .msva に書き出す' : 'シーンのアニメーションを .msva に書き出す';
     }
     const sort = $('take-sort');
-    if (sort) sort.hidden = takes.length < 2;
+    if (sort) sort.hidden = ready < 2;
     const hint = $('take-hint');
     if (hint) {
       hint.textContent = app.built ? (this.qt('importTakes') ? '.msva・.ma・.msv・共通 JSON' : '.msva・.msv・共通 JSON') + ' をこのタブにドラッグ＆ドロップすると、テイクとして足します（行をクリックで切り替え。テイクがなければ［書き出す…］でシーンのアニメーションを .msva にできます）'
@@ -283,6 +285,7 @@ export class TakePanel {
     if (app.built) {
       html.push(this.rowHtml(-1, sceneLabel, sceneMeta, '', 0));
       takes.forEach((e, i) => {
+        if (e.pending) { html.push(this.pendingHtml(i, e)); return; }
         const t = e.take;
         const meta = `${fmtFrame(t.start)}〜${fmtFrame(t.end)}`;
         const report = e.report;
@@ -292,6 +295,35 @@ export class TakePanel {
     }
     this.list.innerHTML = html.join('');
     this.list.hidden = !app.built;
+  }
+
+  /** 読み込み中の行: ファイル名・進み具合の帯と割合（読めなかったら理由）。選べない。× で消せる */
+  pendingHtml(i, e) {
+    const pct = Math.round((e.progress || 0) * 100);
+    const del = '<span class="take-acts take-acts-pending"><button type="button" class="icon-btn" data-act="delete"'
+      + ` title="${e.error ? '一覧から消す' : '読み込みをやめて一覧から消す'}" aria-label="一覧から消す">×</button></span>`;
+    const body = e.error
+      ? `<span class="take-error">⚠ ${esc(e.error)}</span>`
+      : `<span class="take-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}">`
+        + `<span class="take-bar" style="width:${pct}%"></span></span><span class="take-pct">${pct}%</span>`;
+    return `<li class="take-row pending${e.error ? ' failed' : ''}" role="option" aria-disabled="true" tabindex="0"`
+      + ` data-index="${i}" data-pending-id="${esc(e.id)}" title="${esc(`${e.name}\n${e.status || ''}`)}">`
+      + `<span class="take-name">${esc(e.name)}</span>${body}${del}</li>`;
+  }
+
+  /** 読み込み中の行の進み具合だけを書き換える（一覧を描き直さない。ドラッグ中の並べ替えを途切れさせない） */
+  updatePending(e) {
+    if (!this.list) return;
+    const row = [...this.list.querySelectorAll('.take-row.pending')].find((r) => r.dataset.pendingId === e.id);
+    if (!row) { this.render(); return; }
+    const pct = Math.round((e.progress || 0) * 100);
+    const bar = row.querySelector('.take-bar');
+    const txt = row.querySelector('.take-pct');
+    const prog = row.querySelector('.take-progress');
+    if (bar) bar.style.width = `${pct}%`;
+    if (txt) txt.textContent = `${pct}%`;
+    if (prog) prog.setAttribute('aria-valuenow', String(pct));
+    row.title = `${e.name}\n${e.status || ''}`;
   }
 
   rowHtml(i, name, meta, target, missed, report = null) {

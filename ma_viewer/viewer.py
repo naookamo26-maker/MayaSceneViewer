@@ -32,28 +32,35 @@ class _Cancelled(Exception):
 
 
 class _TakeWorker(QtCore.QObject):
-    """テイクのファイル（.msva・.msv・共通 JSON・.ma）を読み込みスレッドで読む（.ma の解析で画面を止めない）"""
-    progress = Signal(str)
-    finished = Signal(object, object, object)       # テイクの元の一覧, お知らせ, (ファイル名, 誤り) の一覧
+    """テイクのファイル 1 つ（.msva・.msv・共通 JSON・.ma）か、Maya で開いているシーンを読み込みスレッドで読む
+    （.ma の解析で画面を止めない）。進み具合と結果は、テイクの一覧の読み込み中の行（id）に出す"""
+    progress = Signal(str, float, str)              # 行の id, 進み具合（0〜1）, 文言
+    finished = Signal(str, object, object, str)     # 行の id, テイクの元（なければ None）, お知らせ, 誤り（なければ ""）
 
-    def __init__(self, paths, references: bool, maya_state=None):
+    def __init__(self, item: dict, references: bool):
         super().__init__()
-        self.paths = list(paths)
+        self.item = item
         self.references = references
-        self.maya_state = maya_state                     # Maya で開いているシーン（maya_scene.collect の結果）
+        self._last = -1
+
+    def _fraction(self, frac, msg):
+        pct = int(frac * 100)
+        if pct != self._last:                           # 1% 刻みで知らせる（細かすぎる受け渡しを避ける）
+            self._last = pct
+            self.progress.emit(self.item["id"], float(frac), str(msg))
 
     @Slot()
     def run(self):
-        from .take import read_maya_source, read_sources
+        from .take import read_maya_source, read_source
+        it = self.item
         try:
-            if self.maya_state is not None:
-                src, notes = read_maya_source(self.maya_state, self.progress.emit)
-                sources, errors = ([src] if src is not None else []), []
+            if it.get("maya") is not None:
+                src, notes = read_maya_source(it["maya"], fraction=self._fraction)
             else:
-                sources, notes, errors = read_sources(self.paths, self.references, self.progress.emit)
+                src, notes = read_source(it["path"], self.references, fraction=self._fraction)
+            self.finished.emit(it["id"], src, notes, "")
         except Exception as exc:  # noqa: BLE001
-            sources, notes, errors = [], [], [("", "%s\n%s" % (exc, traceback.format_exc()))]
-        self.finished.emit(sources, notes, errors)
+            self.finished.emit(it["id"], None, [], "%s\n%s" % (exc, traceback.format_exc()))
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +374,10 @@ class ViewerWidget(QtWidgets.QWidget):
         self._call("addTakeSources", json.dumps(sources, ensure_ascii=True, separators=(",", ":")), at, drop,
                    callback=callback)
 
+    def end_take_load(self, item_id: str, source: dict, drop: bool):
+        """読み終えたテイクの元で、テイクの一覧の読み込み中の行を置き換える"""
+        self._call("endTakeLoad", item_id, json.dumps([source], ensure_ascii=True, separators=(",", ":")), drop)
+
     def get_takes(self, callback):
         """一覧のテイク（list。受け取れなければ None）を callback に渡す"""
         def got(raw):
@@ -675,6 +686,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self._drag_pos = None
         self._take_thread = None
         self._take_worker = None
+        self._take_queue = []              # 順番待ちのテイクのファイル（読み込み中の行の id つき）
+        self._take_seq = 0
 
         self._build_log_dock()
         self._build_actions()
@@ -1011,6 +1024,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if path.lower().endswith(TAKE_EXT):              # テイクだけのファイル: いまのシーンの一覧に足す
             self.load_take_files([path])
             return
+        self._take_queue.clear()                         # 新しいシーンを開く: 順番待ちのテイクは読まない（一覧も空になる）
         if path.lower().endswith(".mb"):
             self._error("Maya バイナリ (.mb) は読み込めません。Maya で .ma として保存し直してください。")
             return
@@ -1476,8 +1490,8 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if self.current_scene is None:
             self.statusBar().showMessage("先にシーンを開いてください（テイクはシーンに当てて使います）", 6000)
             return
-        if self._thread is not None or self._take_thread is not None:
-            self.statusBar().showMessage("読み込み中です。完了してからテイクを取り出してください。", 5000)
+        if self._thread is not None:
+            self.statusBar().showMessage("シーンを読み込み中です。完了してからテイクを取り出してください。", 5000)
             return
         from . import maya_scene
         QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -1491,34 +1505,49 @@ class ViewerWindow(QtWidgets.QMainWindow):
             return
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
-        self.log("info", "Maya で開いているシーンからテイクを取り出します: %s"
-                 % (os.path.basename(st.source_path) or "Maya シーン"))
-        self._start_take_worker(_TakeWorker([], True, maya_state=st), -1, False)
+        name = os.path.basename(st.source_path) or "Maya シーン"
+        self.log("info", "Maya で開いているシーンからテイクを取り出します: %s" % name)
+        self._queue_take_loads([{"name": name, "maya": st}], -1, False)
 
     def load_take_files(self, paths, at: int = -1, drop: bool = False):
         """ファイルからテイクを読んで、テイクの一覧の at の位置に足す（ファイル名の順）。.msva はテイクをそのまま、
         .ma・.msv・共通 JSON はメッシュなどを外したシーンを渡して、ビューアがアニメーションから取り出す。
-        読むのは読み込みスレッド（.ma の解析で画面を止めない）"""
+        まずファイルごとに読み込み中の行を足し、読み込みスレッドで 1 つずつ読んで、読み終えたものから置き換える"""
         if self.current_scene is None:
             self.statusBar().showMessage("先にシーンを開いてください（テイクはシーンに当てて使います）", 6000)
             return
-        if self._thread is not None or getattr(self, "_take_thread", None) is not None:
-            self.statusBar().showMessage("読み込み中です。完了してからテイクを読み込んでください。", 5000)
+        if self._thread is not None:
+            self.statusBar().showMessage("シーンを読み込み中です。完了してからテイクを読み込んでください。", 5000)
             return
-        names = "・".join(os.path.basename(p) for p in paths)
-        self.log("info", "テイクを読み込みます: %s" % names)
-        self.statusBar().showMessage("テイクを読み込み中: %s" % names)
-        self._start_take_worker(_TakeWorker(paths, self.a_refs.isChecked()), at, drop)
+        paths = sorted(paths, key=lambda p: os.path.basename(p).lower())
+        self.log("info", "テイクを読み込みます: %s" % "・".join(os.path.basename(p) for p in paths))
+        self._queue_take_loads([{"name": os.path.basename(p), "path": p} for p in paths], at, drop)
 
-    def _start_take_worker(self, worker: "_TakeWorker", at: int, drop: bool):
+    def _queue_take_loads(self, items, at: int, drop: bool):
+        """読み込み中の行を足し、順番待ちに入れる（読み込み中なら、終わってから読む）"""
+        for it in items:
+            self._take_seq += 1
+            it["id"] = "q%d" % self._take_seq
+            it["drop"] = drop
+        self.viewer.run_js("window.mayaViewer && window.mayaViewer.beginTakeLoads && window.mayaViewer.beginTakeLoads(%s, %d)"
+                           % (json.dumps(json.dumps([{"id": it["id"], "name": it["name"]} for it in items],
+                                                    ensure_ascii=True)), int(at)))
+        self._take_queue.extend(items)
+        self._next_take_load()
+
+    def _next_take_load(self):
+        if self._take_thread is not None or not self._take_queue:
+            return
+        it = self._take_queue.pop(0)
+        self.statusBar().showMessage("テイクを読み込み中: %s" % it["name"])
         self._take_thread = QtCore.QThread(self)
-        self._take_worker = worker
+        self._take_worker = _TakeWorker(it, self.a_refs.isChecked())
         self._take_worker.moveToThread(self._take_thread)
         self._take_thread.started.connect(self._take_worker.run)
         # 信号はウィンドウのメソッドで受ける（画面のスレッドで動く。ラムダにつなぐと読み込みスレッドで動いてしまう）
-        self._take_target = (at, drop)
+        self._take_drop = it["drop"]
         self._take_worker.progress.connect(self._on_take_progress)
-        self._take_worker.finished.connect(self._on_takes_read)
+        self._take_worker.finished.connect(self._on_take_read)
         self._take_worker.finished.connect(self._take_thread.quit)
         self._take_thread.finished.connect(self._on_take_thread_finished)
         self._take_thread.start()
@@ -1527,26 +1556,31 @@ class ViewerWindow(QtWidgets.QMainWindow):
     def _on_take_thread_finished(self):
         self._take_thread = None
         self._take_worker = None
+        self._next_take_load()
 
-    @Slot(str)
-    def _on_take_progress(self, msg):
-        self.statusBar().showMessage("テイク: " + msg)
+    @Slot(str, float, str)
+    def _on_take_progress(self, item_id, frac, msg):
+        self.viewer.run_js("window.mayaViewer && window.mayaViewer.takeLoadProgress && "
+                           "window.mayaViewer.takeLoadProgress(%s, %f, %s)"
+                           % (json.dumps(item_id), frac, json.dumps(msg, ensure_ascii=True)))
 
-    @Slot(object, object, object)
-    def _on_takes_read(self, sources, notes, errors):
-        at, drop = getattr(self, "_take_target", (-1, False))
+    @Slot(str, object, object, str)
+    def _on_take_read(self, item_id, source, notes, error):
         for n in notes:
             self.log("warn", n)
-        for name, err in errors:
-            self.log("error", "%s からテイクを読めませんでした: %s" % (name, err))
-        if errors:
-            self._error("テイクを読めなかったファイルがあります。\n" + "\n".join("%s: %s" % (n, e.splitlines()[0] if e else "")
-                                                                    for n, e in errors))
-        if self.current_scene is None or not sources:
-            self.statusBar().showMessage("テイクが見つかりませんでした" if not errors else "テイクを読めませんでした", 6000)
-            return
-        self.statusBar().clearMessage()
-        self.viewer.add_take_sources(sources, at, drop)
+        if error:
+            self.log("error", "テイクを読めませんでした: %s" % error)
+            reason = "読めませんでした: %s" % (error.splitlines()[0] if error else "")
+            self.viewer.run_js("window.mayaViewer && window.mayaViewer.failTakeLoad(%s, %s)"
+                               % (json.dumps(item_id), json.dumps(reason, ensure_ascii=True)))
+        elif source is None:
+            reason = notes[-1].split(": ", 1)[-1] if notes else "テイクが見つかりません"
+            self.viewer.run_js("window.mayaViewer && window.mayaViewer.failTakeLoad(%s, %s)"
+                               % (json.dumps(item_id), json.dumps(reason, ensure_ascii=True)))
+        else:
+            self.viewer.end_take_load(item_id, source, self._take_drop)
+        if not self._take_queue and self._take_thread is None:
+            self.statusBar().clearMessage()
 
     def export_takes(self):
         """［ファイル］→［テイクを書き出す］: 一覧のテイクをすべて .msva に書き出す"""

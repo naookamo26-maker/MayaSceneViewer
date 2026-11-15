@@ -362,6 +362,8 @@ Maya で開いているシーンからの取り出しは `take.py` の `read_may
 （同時に当てる処理は `composeAnimation` にあるので、画面と保存の形を足せばよい）。
 1.43.0 で、ドロップできる場所を［テイク］のタブ全体にし、シーンのアニメーションだけでも .msva を書き出せるようにし（`takesForExport`）、
 当てる先を階層で選んだノードにする操作（◎。`setTakeTargetNode`）と、ブラウザの［ファイル］メニューの読み込み・書き出しを足しました。
+読み込みの進み具合も一覧に出します（`beginTakeLoads`・`takeLoadProgress`・`endTakeLoad`・`failTakeLoad`。Qt 版はファイルごとに読み込みスレッドで
+読み、`take.py` の `read_source` の `fraction` で進み具合を知らせる。読み込み中に足したファイルは順番待ち）。
 段階 1 では、`samples/*.json` は作り直していません（`restNodes` のない古い形のまま。当てる側の代わりの処理を確かめる材料にしている）。
 `bindings[].prop`（props への結び付けの種類）を形式に足しました（[data_format.md](data_format.md) の「テイク」）。
 

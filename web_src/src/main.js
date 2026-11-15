@@ -612,19 +612,31 @@ class ViewerApp {
    */
   async loadTakeFiles(files, at = -1, drop = false) {
     if (!this.built) { this.ui.setMessage('先にシーンを開いてください（テイクはシーンに当てて使います）', 6000); return 0; }
-    const list = [];
-    for (const f of [...files].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
-      if (/\.(ma|mb)$/i.test(f.name)) {
-        this.ui.setMessage(`${f.name}: ブラウザでは .ma・.mb からテイクを取り出せません（.msva・.msv・共通 JSON を使ってください）`, 8000);
+    // まずファイルごとに読み込み中の行を足し（ファイル名の順）、1 つずつ読んで、読み終えたものからテイクに置き換える
+    const sorted = [...files].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    const seq = (this.takeLoadSeq = (this.takeLoadSeq || 0) + 1);
+    const items = sorted.map((f, k) => ({ id: `b${seq}-${k}`, name: f.name, file: f }));
+    this.beginTakeLoads(items, at);
+    let added = 0;
+    for (const it of items) {
+      if (this.pendingIndex(it.id) < 0) continue;         // 読み込み中に消した
+      if (/\.(ma|mb)$/i.test(it.name)) {
+        this.failTakeLoad(it.id, 'ブラウザでは .ma・.mb から取り出せません（.msva・.msv・共通 JSON を使ってください）');
         continue;
       }
       try {
-        list.push(...await this.readTakes(f.name, await f.arrayBuffer()));
+        this.takeLoadProgress(it.id, 0.1, 'ファイルを読み込み中');
+        const buf = await it.file.arrayBuffer();
+        this.takeLoadProgress(it.id, 0.5, 'テイクを取り出し中');
+        await new Promise((r) => setTimeout(r, 0));       // 進み具合を描いてから取り出す
+        const list = await this.readTakes(it.name, buf);
+        this.takeLoadProgress(it.id, 0.9, 'テイクを当てる先を調べ中');
+        added += this.endTakeLoad(it.id, list, drop);
       } catch (err) {
-        this.ui.showError(`${f.name} からテイクを読めませんでした。\n${err && err.message || err}`);
+        this.failTakeLoad(it.id, `読めませんでした: ${err && err.message || err}`);
       }
     }
-    return list.length ? this.addTakes(list, { at, drop }) : 0;
+    return added;
   }
 
   /** ファイルの中身（.msva・.msv・共通 JSON）→ テイクの一覧（.msv・共通 JSON はアニメーションから取り出す） */
@@ -1786,7 +1798,7 @@ class ViewerApp {
   /** テイクの当たり方（行の警告の印。まだ調べていなければ調べる） */
   takeReport(i) {
     const e = this.takes[i];
-    if (!e) return null;
+    if (!e || e.pending) return null;
     if (!e.report && this.built) {
       try { e.report = this.composeTake(e).report; } catch (err) { e.report = { applied: 0, missed: [], staticsMissed: 0, warnings: [String(err && err.message || err)] }; }
     }
@@ -1798,8 +1810,8 @@ class ViewerApp {
    * いちばん多いもの。opts: { at: 入れる位置（省略・-1 は末尾）, drop: ドロップ（当たらないテイクは足さない）, quiet }
    * 戻り値: 足した数
    */
-  addTakes(list, opts = {}) {
-    if (!this.built) { this.ui.setMessage('先にシーンを開いてください（テイクはシーンに当てて使います）', 6000); return 0; }
+  /** テイク（読み込んだもの）→ 一覧の項目（当てる先を決める）。drop なら、いまのシーンに当たらないものは除く */
+  makeTakeEntries(list, drop = false) {
     const scene = this.takeScene();
     const entries = [];
     const skipped = [];
@@ -1807,7 +1819,7 @@ class ViewerApp {
       let take;
       try { take = decodeTake(raw); } catch (err) { this.log('warn', `テイクを読めません: ${err && err.message || err}`); continue; }
       const pick = chooseTarget(scene, take);
-      if (pick.count === 0 && opts.drop) { skipped.push(take.name); continue; }
+      if (pick.count === 0 && drop) { skipped.push(take.name); continue; }
       // 書き出したときに当てていた先（appliedTo）が候補にあれば、それにする
       const was = take.appliedTo;
       let keep = was && pick.candidates.find((c) => c.namespace === (was.namespace || '') && (c.root || null) === (was.root || null));
@@ -1819,6 +1831,22 @@ class ViewerApp {
       delete take.appliedTo;
       entries.push({ take, namespace: target.namespace, root: target.root || null, candidates: pick.candidates, report: null });
     }
+    return { entries, skipped };
+  }
+
+  /** テイクの元（{ kind: 'takes', takes } | { kind: 'scene', scene, name, takes? }）の一覧 → テイクの一覧 */
+  takesFromSources(sources) {
+    const list = [];
+    for (const src of sources || []) {
+      if (src.kind === 'takes') list.push(...(src.takes || []));
+      else if (src.kind === 'scene') list.push(...this.extractTakes(src.scene, src.name || ''), ...(src.takes || []));
+    }
+    return list;
+  }
+
+  addTakes(list, opts = {}) {
+    if (!this.built) { this.ui.setMessage('先にシーンを開いてください（テイクはシーンに当てて使います）', 6000); return 0; }
+    const { entries, skipped } = this.makeTakeEntries(list, opts.drop);
     const at = Number.isInteger(opts.at) && opts.at >= 0 ? Math.min(opts.at, this.takes.length) : this.takes.length;
     this.takes.splice(at, 0, ...entries);
     if (this.activeTake >= at) this.activeTake += entries.length;
@@ -1836,12 +1864,74 @@ class ViewerApp {
     return entries.length;
   }
 
+  // ---- 読み込み中の行（ファイルを落とす・選ぶと、まずファイルごとに行を足し、読み終えたものからテイクに置き換える）----
+
+  /** 読み込み中の行を足す。items: [{ id, name }]（この順に at の位置へ。-1 は末尾） */
+  beginTakeLoads(items, at = -1) {
+    if (!this.built || !items || !items.length) return 0;
+    const rows = items.map((it) => ({ pending: true, id: String(it.id), name: it.name || '', progress: 0, status: '待っています', error: null }));
+    const pos = Number.isInteger(at) && at >= 0 ? Math.min(at, this.takes.length) : this.takes.length;
+    this.takes.splice(pos, 0, ...rows);
+    if (this.activeTake >= pos) this.activeTake += rows.length;
+    this.takePanel.render();
+    this.takePanel.showTab('tab-takes');
+    return rows.length;
+  }
+
+  pendingIndex(id) { return this.takes.findIndex((e) => e.pending && e.id === String(id)); }
+
+  /** 読み込み中の行の進み具合（0〜1）と、いまの段階 */
+  takeLoadProgress(id, frac, text = '') {
+    const e = this.takes[this.pendingIndex(id)];
+    if (!e || e.error) return false;
+    e.progress = Math.max(0, Math.min(1, +frac || 0));
+    if (text) e.status = String(text);
+    this.takePanel.updatePending(e);
+    return true;
+  }
+
+  /**
+   * 読み込み中の行を、読み終えたテイクに置き換える（行を消していれば何もしない）。drop: 当たらないテイクは足さない。
+   * 戻り値: 足したテイクの数
+   */
+  endTakeLoad(id, list, drop = false) {
+    const i = this.pendingIndex(id);
+    if (i < 0) return 0;
+    const name = this.takes[i].name;
+    const { entries, skipped } = this.makeTakeEntries(list, drop);
+    if (!entries.length) {
+      this.failTakeLoad(id, skipped.length ? 'いまのシーンに当たるテイクがありません' : 'テイクが見つかりません');
+      return 0;
+    }
+    this.takes.splice(i, 1, ...entries);
+    if (this.activeTake > i) this.activeTake += entries.length - 1;
+    entries.forEach((_, k) => this.takeReport(i + k));
+    if (skipped.length) this.log('info', `テイク: いまのシーンに当たらないため足しませんでした: ${skipped.join('・')}`);
+    const missed = entries.reduce((n, e) => n + ((e.report && e.report.missed.length) || 0), 0);
+    if (missed) this.log('info', `テイク: 当たらなかった結び付け ${missed} 件（一覧の行の印から確かめられます）`);
+    this.takePanel.render();
+    this.ui.setMessage(`${name}: テイクを ${entries.length} 個足しました。行をクリックすると切り替えます`, 5000);
+    return entries.length;
+  }
+
+  /** 読み込み中の行を、読めなかった印にする（理由を出し、× で消せる） */
+  failTakeLoad(id, message = '') {
+    const e = this.takes[this.pendingIndex(id)];
+    if (!e) return false;
+    e.error = String(message || '読めませんでした');
+    e.status = e.error;
+    this.log('warn', `テイク: ${e.name}: ${e.error}`);
+    this.takePanel.render();
+    return true;
+  }
+
   /**
    * テイクに切り替える（-1 はシーンのアニメーション）。範囲とフレームレートはテイクのものにし、先頭のフレームへ移す。
    * 再生中なら再生を続ける
    */
   setTake(i, opts = {}) {
     if (!this.built) return false;
+    if (this.takes[i] && this.takes[i].pending) return false;     // 読み込み中の行は選べない
     const wasPlaying = this.playing;
     let ok = true;
     if (!(i >= 0 && this.takes[i])) {
@@ -1881,7 +1971,7 @@ class ViewerApp {
   /** テイク i の当てる先を、候補の k 番目にする（選んでいるテイクなら当て直す） */
   setTakeTarget(i, k) {
     const e = this.takes[i];
-    const c = e && (e.candidates || [])[k];
+    const c = e && !e.pending && (e.candidates || [])[k];
     if (!c) return false;
     e.namespace = c.namespace;
     e.root = c.root || null;
@@ -1900,7 +1990,7 @@ class ViewerApp {
   setTakeTargetNode(i, ni) {
     const e = this.takes[i];
     const n = this.data && this.data.nodes[ni];
-    if (!e || !n) return false;
+    if (!e || e.pending || !n) return false;
     const ns = namespaceOf(n.path);
     const count = countMatches(this.takeScene(), e.take, ns, null, n.path);
     if (!count) {
@@ -1932,16 +2022,17 @@ class ViewerApp {
   sortTakes(by, desc = false) {
     const active = this.takes[this.activeTake] || null;
     const coll = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
+    // 読み込み中の行は、名前（ファイル名）で並べ、ほかの並べ方では後ろに置く
     const keyOf = {
-      name: (e) => e.take.name,
-      start: (e) => +e.take.start,
-      length: (e) => (+e.take.end) - (+e.take.start),
-      target: (e) => takeTargetLabel(e),
+      name: (e) => (e.pending ? e.name : e.take.name),
+      start: (e) => (e.pending ? Infinity : +e.take.start),
+      length: (e) => (e.pending ? Infinity : (+e.take.end) - (+e.take.start)),
+      target: (e) => (e.pending ? '\uffff' : takeTargetLabel(e)),
     }[by];
     if (!keyOf) return false;
     const cmp = (a, b) => {
       const x = keyOf(a), y = keyOf(b);
-      const c = typeof x === 'string' ? coll.compare(x, y) : x - y;
+      const c = typeof x === 'string' ? coll.compare(x, y) : (x === y ? 0 : x - y);
       return desc ? -c : c;
     };
     this.takes = this.takes.map((e, i) => [e, i]).sort((a, b) => cmp(a[0], b[0]) || a[1] - b[1]).map((x) => x[0]);
@@ -1953,7 +2044,7 @@ class ViewerApp {
   /** テイクを一覧から消す（選んでいたものなら、シーンのアニメーションに戻す） */
   removeTake(i) {
     if (!this.takes[i]) return;
-    const name = this.takes[i].take.name;
+    const name = this.takes[i].pending ? this.takes[i].name : this.takes[i].take.name;
     if (i === this.activeTake) this.setTake(-1, { quiet: true });
     this.takes.splice(i, 1);
     if (this.activeTake > i) this.activeTake--;
@@ -1964,7 +2055,7 @@ class ViewerApp {
   renameTake(i, name) {
     const e = this.takes[i];
     const v = String(name || '').trim();
-    if (!e || !v) return;
+    if (!e || e.pending || !v) return;
     e.take.name = v;
     this.takePanel.render();
   }
@@ -1976,11 +2067,12 @@ class ViewerApp {
   takesForExport(indices = null) {
     const sceneTakes = () => (this.sceneAnim && this.data
       ? extractTakes({ ...this.takeScene(), savedTakes: undefined }, this.sceneName || 'scene') : []);
-    if (!indices) return this.takes.length ? this.takes.map(withTarget) : sceneTakes();
+    const ready = this.takes.filter((e) => !e.pending);
+    if (!indices) return ready.length ? ready.map(withTarget) : sceneTakes();
     const out = [];
     for (const i of indices) {
       if (i === -1) out.push(...sceneTakes());
-      else if (this.takes[i]) out.push(withTarget(this.takes[i]));
+      else if (this.takes[i] && !this.takes[i].pending) out.push(withTarget(this.takes[i]));
     }
     return out;
   }
@@ -4108,21 +4200,33 @@ window.mayaViewer = {
    * text: [{ kind: 'takes', takes } | { kind: 'scene', scene, name }] の JSON（シーンはアニメーションから取り出す）
    */
   addTakeSources(text, at = -1, drop = false) {
-    const list = [];
-    for (const src of JSON.parse(text)) {
-      try {
-        if (src.kind === 'takes') list.push(...(src.takes || []));
-        else if (src.kind === 'scene') list.push(...app.extractTakes(src.scene, src.name || ''), ...(src.takes || []));
-      } catch (err) {
-        app.ui.showError(`${src.name || ''} からテイクを取り出せませんでした。\n${err && err.message || err}`);
-      }
+    let list = [];
+    try {
+      list = app.takesFromSources(JSON.parse(text));
+    } catch (err) {
+      app.ui.showError(`テイクを取り出せませんでした。\n${err && err.message || err}`);
     }
     if (!list.length) { app.ui.setMessage('テイクが見つかりませんでした', 5000); return 0; }
     return app.addTakes(list, { at, drop });
   },
+  /** 読み込み中の行を足す（items: [{ id, name }] の JSON）。Qt 版がファイルを読み始めるときに呼ぶ */
+  beginTakeLoads(items, at = -1) { return app.beginTakeLoads(JSON.parse(items), at); },
+  takeLoadProgress(id, frac, text = '') { return app.takeLoadProgress(id, frac, text); },
+  /** 読み終えたファイルのテイクの元（JSON の配列）で、読み込み中の行を置き換える */
+  endTakeLoad(id, sources, drop = false) {
+    try {
+      return app.endTakeLoad(id, app.takesFromSources(JSON.parse(sources)), drop);
+    } catch (err) {
+      app.failTakeLoad(id, `取り出せませんでした: ${err && err.message || err}`);
+      return 0;
+    }
+  },
+  failTakeLoad(id, message) { return app.failTakeLoad(id, message); },
+  /** 読み込み中の行の数（テスト用） */
+  pendingTakeCount() { return app.takes.filter((e) => e.pending && !e.error).length; },
   /** 一覧のテイク（JSON の文字列。indices（JSON の配列）を省くとすべて） */
   getTakes(indices = '') { return app.takesJson(indices ? JSON.parse(indices) : null); },
-  takeCount() { return app.takes.length; },
+  takeCount() { return app.takes.filter((e) => !e.pending).length; },
   setTake(i) { return app.setTake(i); },
   activeTake() { return app.activeTake; },
   /** ページの座標 (x, y)（CSS の px）がテイクの一覧の中なら、入れる位置（外は -1）。ドラッグ中の強調もする */
