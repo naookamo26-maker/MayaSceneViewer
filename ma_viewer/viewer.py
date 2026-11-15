@@ -1520,8 +1520,18 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("シーンを読み込み中です。完了してからテイクを読み込んでください。", 5000)
             return
         paths = sorted(paths, key=lambda p: os.path.basename(p).lower())
+        # いま開いているシーンのファイル自身は、テイクとして足さない（同じファイルの重複は、ビューアが一覧と比べて弾く）
+        cur = os.path.normcase(os.path.abspath(self.current_path)) if self.current_path else None
+        own = [p for p in paths if cur and os.path.normcase(os.path.abspath(p)) == cur]
+        if own:
+            self.statusBar().showMessage("いま開いているシーンのファイルは、テイクとして足しません: %s"
+                                         % os.path.basename(own[0]), 6000)
+            paths = [p for p in paths if p not in own]
+        if not paths:
+            return
         self.log("info", "テイクを読み込みます: %s" % "・".join(os.path.basename(p) for p in paths))
-        self._queue_take_loads([{"name": os.path.basename(p), "path": p} for p in paths], at, drop)
+        self._queue_take_loads([{"name": os.path.basename(p), "path": p,
+                                 "key": "path:" + os.path.normcase(os.path.abspath(p))} for p in paths], at, drop)
 
     def _queue_take_loads(self, items, at: int, drop: bool):
         """読み込み中の行を足し、順番待ちに入れる（読み込み中なら、終わってから読む）"""
@@ -1529,11 +1539,19 @@ class ViewerWindow(QtWidgets.QMainWindow):
             self._take_seq += 1
             it["id"] = "q%d" % self._take_seq
             it["drop"] = drop
-        self.viewer.run_js("window.mayaViewer && window.mayaViewer.beginTakeLoads && window.mayaViewer.beginTakeLoads(%s, %d)"
-                           % (json.dumps(json.dumps([{"id": it["id"], "name": it["name"]} for it in items],
-                                                    ensure_ascii=True)), int(at)))
-        self._take_queue.extend(items)
-        self._next_take_load()
+        by_id = {it["id"]: it for it in items}
+
+        def accepted(raw):
+            # ビューアが足した行（同じファイルの重複を除いたもの）だけを、順番待ちに入れる
+            try:
+                ids = json.loads(raw) if isinstance(raw, str) else []
+            except ValueError:
+                ids = []
+            self._take_queue.extend(by_id[i] for i in ids if i in by_id)
+            self._next_take_load()
+        self.viewer.run_js("window.mayaViewer && window.mayaViewer.beginTakeLoads ? window.mayaViewer.beginTakeLoads(%s, %d) : '[]'"
+                           % (json.dumps(json.dumps([{"id": it["id"], "name": it["name"], "key": it.get("key", "")}
+                                                     for it in items], ensure_ascii=True)), int(at)), accepted)
 
     def _next_take_load(self):
         if self._take_thread is not None or not self._take_queue:

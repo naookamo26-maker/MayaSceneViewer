@@ -36,6 +36,19 @@ def source_scene(scene: dict) -> dict:
     return out
 
 
+def _stage(progress: ProgressFn, step, name: str, lo: float, hi: float):
+    """読み込みの 1 段階の進み具合（0〜1）を、全体の lo〜hi に割り振って知らせる関数"""
+    def prog(frac, msg, *_rest):
+        if progress is not None:
+            progress("%s: %s" % (name, msg))
+        try:
+            f = float(frac)
+        except (TypeError, ValueError):
+            f = 0.0
+        step(lo + (hi - lo) * max(0.0, min(1.0, f)), msg)
+    return prog
+
+
 def _missing_references(scene: dict) -> List[dict]:
     """読み込めなかったリファレンス（いちばん外側のもの）"""
     refs = (scene.get("source") or {}).get("references") or []
@@ -71,13 +84,15 @@ def read_source(path: str, references: bool = True, progress: ProgressFn = None,
         step(0.8, "テイクを取り出し中")
         return {"kind": "scene", "scene": source_scene(scene), "name": name}, notes
     if low.endswith(".ma"):
-        from .extract_ma import load_ma
-
-        def prog(frac, msg, *_rest):
-            if progress is not None:
-                progress("%s: %s" % (name, msg))
-            step(float(frac) * 0.9, msg)                   # 残りは、参照先のないリファレンスの取り出しと受け渡し
-        scene = load_ma(path, prog, animation=True, references=references)
+        from .extract_ma import load_ma_staged
+        # 読み込みは 2 段階（シーンの解析・変換 → アニメーション）で、それぞれが 0〜1 で知らせてくる。合わせて 0〜1 に
+        # なるように割り振る（シーン 0〜0.7・アニメーション 0.7〜0.9。残りは参照先のないリファレンスの取り出しと受け渡し）
+        scene_prog = _stage(progress, step, name, 0.0, 0.7)
+        anim_prog = _stage(progress, step, name, 0.7, 0.9)
+        scene, load_animation = load_ma_staged(path, scene_prog, references=references)
+        anim = load_animation(anim_prog)
+        if anim is not None:
+            scene["animation"] = anim
         # 読み込めなかったリファレンス（参照先がない・アンロード・読まない設定）のキーは、参照先を読まずに、
         # リファレンスの編集から取り出す（takes_from_ma）
         missing = _missing_references(scene)
@@ -110,13 +125,12 @@ def read_maya_source(st, progress: ProgressFn = None, fraction: FractionFn = Non
     name = os.path.basename(getattr(st, "source_path", "") or "") or "Maya シーン"
     notes: List[str] = []
 
-    def prog(frac, msg, *_rest):
-        if progress is not None:
-            progress("%s: %s" % (name, msg))
+    def step(frac, msg):
         if fraction is not None:
-            fraction(max(0.0, min(1.0, float(frac) * 0.9)), msg)
-    scene, load_animation = load_staged(st, prog)
-    anim = load_animation(prog)
+            fraction(max(0.0, min(1.0, frac)), msg)
+    # 2 段階（シーン → アニメーション）を合わせて 0〜0.9 に割り振る（.ma と同じ）
+    scene, load_animation = load_staged(st, _stage(progress, step, name, 0.0, 0.7))
+    anim = load_animation(_stage(progress, step, name, 0.7, 0.9))
     if anim is not None:
         scene["animation"] = anim
     missing = _missing_references(scene)
