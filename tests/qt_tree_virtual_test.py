@@ -142,8 +142,11 @@ def main() -> int:
             check(s["dom"] < 150, "要素にするのは見えている範囲の行だけ: %s 行" % s["dom"])
             check(abs(s["scrollHeight"] - s["shown"] * 22) <= 40,
                   "スクロールできる高さは表示している行の数 × 22px: %s（%s 行）" % (s["scrollHeight"], s["shown"]))
-            check(s["names"][:2] == ["grp0", "g0_item0"], "先頭から描く: %s" % s["names"][:2])
-            nxt()
+            # Maya のアウトライナーと同じく、読み込み直後はいちばん上の階層だけ（下は閉じている）
+            check(s["names"][:2] == ["grp0", "grp1"], "先頭から描く（いちばん上の階層だけ）: %s" % s["names"][:2])
+            # ここからは、浅い階層（深さ 2 より上）を開き、深い階層（chain など）は閉じた状態で確かめる
+            js("(() => { const u = window.mayaViewer.debug.app.ui; for (const r of u.rows) if (r.depth < 2) u.collapsed.delete(r.key);"
+               " u.applyTreeVisibility(); return 1; })()", lambda _r: QtCore.QTimer.singleShot(300, nxt), 0)
         js(HELPER, lambda _: wait_loaded(loaded), 300)
 
     def s_scroll(nxt):

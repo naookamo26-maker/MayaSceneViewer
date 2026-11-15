@@ -30,7 +30,7 @@ code { font-family: Consolas, "SF Mono", monospace; font-size: 11px; color: var(
 
 #app {
   --left-w: var(--left-user, 260px);   /* --left-user はドラッグで変えた幅 */
-  --right-w: 300px;
+  --right-w: var(--right-user, 300px);   /* --right-user はタブごとの幅・ドラッグで変えた幅 */
   display: grid;
   grid-template-columns: var(--left-w) minmax(0, 1fr) var(--right-w);
   grid-template-rows: auto auto minmax(0, 1fr) auto auto;   /* ツールバー・カメラシーケンサ・ビューポート・カーブエディタ・ステータス */
@@ -94,7 +94,8 @@ input[type="range"] { accent-color: var(--joint); width: 72px; }
 }
 .resizer:hover, .resizer:focus-visible, .resizer.dragging { background: rgba(94, 200, 229, 0.35); outline: none; }
 body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; }
-#right { border-left: 1px solid var(--line); overflow: hidden; }
+#right { border-left: 1px solid var(--line); overflow: hidden; position: relative; }
+.resizer-right { left: 0; right: auto; }
 .panel-content { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 #right .panel-content { flex-direction: row; overflow: hidden; }
 /* 右パネル: 中身（見出しと、タブで切り替える面）と、右端の縦のタブ */
@@ -781,7 +782,7 @@ body.sequencer-collapsed #sequencer .seq-body { display: none; }
 #status-msg { margin-left: auto; overflow: hidden; text-overflow: ellipsis; }
 
 @media (max-width: 980px) {
-  #app { --left-w: var(--left-user, 210px); --right-w: 250px; }
+  #app { --left-w: var(--left-user, 210px); --right-w: var(--right-user, 250px); }
 }
 @media (max-width: 720px) {
   #app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 50vh auto auto auto auto; }

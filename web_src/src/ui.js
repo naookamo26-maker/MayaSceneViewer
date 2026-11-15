@@ -138,6 +138,78 @@ export class UI {
       e.stopPropagation();
     });
     this.setLeftWidth = setWidth;
+    this.bindRightResizer();
+  }
+
+  /**
+   * 右パネルの幅（左端のつまみ）。幅はタブ（プロパティ・テイク）ごとに覚え、タブを切り替えるとその幅にする
+   * （次に開いたときも同じ。ブラウザの保存領域に入れる）
+   */
+  bindRightResizer() {
+    const handle = $('right-resizer');
+    const app = $('app');
+    if (!handle) return;
+    const MIN = 220;
+    this.rightDefaults = { 'tab-props': 300, 'tab-takes': 400 };
+    this.rightTab = 'tab-props';
+    const maxWidth = () => Math.max(MIN, Math.min(900, Math.floor(window.innerWidth * 0.6)));
+    const current = () => $('right').getBoundingClientRect().width;
+    const key = (tab) => `msv.rightW.${tab}`;
+    const stored = (tab) => {
+      let v = null;
+      try { v = +localStorage.getItem(key(tab)); } catch (err) { v = null; }
+      return v > 0 ? v : null;
+    };
+    const setWidth = (w, remember = true) => {
+      const v = Math.round(Math.max(MIN, Math.min(maxWidth(), w)));
+      app.style.setProperty('--right-user', v + 'px');
+      handle.setAttribute('aria-valuenow', String(v));
+      if (remember) { try { localStorage.setItem(key(this.rightTab), String(v)); } catch (err) { /* 保存できなくてもよい */ } }
+      return v;
+    };
+    /** タブを切り替えたとき: そのタブの幅にする（覚えた幅か、既定の幅） */
+    this.applyRightTabWidth = (tab) => {
+      this.rightTab = tab;
+      setWidth(stored(tab) || this.rightDefaults[tab] || 300, false);
+    };
+    handle.setAttribute('aria-valuemin', String(MIN));
+    handle.setAttribute('aria-valuemax', String(maxWidth()));
+    let drag = null;
+    handle.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      drag = { x: e.clientX, w: current() };
+      try { handle.setPointerCapture(e.pointerId); } catch (err) { /* 合成イベントなど */ }
+      handle.classList.add('dragging');
+      document.body.classList.add('resizing');
+    });
+    handle.addEventListener('pointermove', (e) => {
+      if (drag) setWidth(drag.w - (e.clientX - drag.x));     // 左へドラッグすると広がる
+    });
+    const end = () => {
+      if (!drag) return;
+      drag = null;
+      handle.classList.remove('dragging');
+      document.body.classList.remove('resizing');
+    };
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+    handle.addEventListener('dblclick', () => {
+      try { localStorage.removeItem(key(this.rightTab)); } catch (err) { /* 保存できなくてもよい */ }
+      setWidth(this.rightDefaults[this.rightTab] || 300, false);
+    });
+    handle.addEventListener('keydown', (e) => {
+      const step = e.shiftKey ? 64 : 16;
+      if (e.key === 'ArrowLeft') setWidth(current() + step);
+      else if (e.key === 'ArrowRight') setWidth(current() - step);
+      else if (e.key === 'Home') setWidth(MIN);
+      else if (e.key === 'End') setWidth(maxWidth());
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    this.setRightWidth = setWidth;
+    this.applyRightTabWidth('tab-props');
   }
 
   // ---------------------------------------------------------------- パネルの最小化
@@ -542,7 +614,6 @@ export class UI {
       meshesOf.get(m.transform).push(mi);
     });
     const cameraNodes = new Set((data.cameras || []).map((c) => c.transform));
-    const collapseDeep = data.nodes.length > 400;
     // 行の要素は、アイコンとリファレンスの印の組み合わせごとのひな形を複製して作る（行ごとに HTML を解析すると、
     // ノードの多いシーンで遅いため）
     const templates = new Map();
@@ -598,7 +669,8 @@ export class UI {
         hasChildren: kids.length + meshKids.length > 0, dim: n.visible === false,
       });
       this.rowOfNode.set(ni, row);
-      if (collapseDeep && depth >= 2 && row.hasChildren) this.collapsed.add(row.key);
+      // Maya のアウトライナーと同じく、読み込み直後はいちばん上の階層だけを見せる（下は閉じておく）
+      if (row.hasChildren) this.collapsed.add(row.key);
       for (const mi of meshKids) {
         const m = data.meshes[mi];
         this.rowOfMesh.set(mi, addRow({

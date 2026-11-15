@@ -156,6 +156,8 @@ export class TakePanel {
     }
     const title = $('right-title');
     if (title) title.textContent = tab.firstChild ? tab.firstChild.textContent : '';
+    // 右パネルの幅は、タブごとに覚えた幅にする（ui.js の bindRightResizer）
+    if (this.app.ui && this.app.ui.applyRightTabWidth) this.app.ui.applyRightTabWidth(id);
     if (remember) { try { localStorage.setItem('msv.rightTab', id); } catch (err) { /* 保存できなくてもよい */ } }
   }
 
