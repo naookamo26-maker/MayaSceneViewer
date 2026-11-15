@@ -5,9 +5,14 @@
 //     （配列ごとに独立したバッファにする。Worker に送るとき、大きなバッファ全体を複製しないように）
 //   * テクスチャは read(name) で必要になったときに展開する
 //   * view.json（書き出したときの表示の状態）は scene.savedView に入れる
+//   * takes.json（テイク。数値の配列は bin/takes.bin）は scene.savedTakes に入れる。テイクだけのファイル（.msva）は openTakes
 
 export const PACKAGE_EXT = /\.msv$/i;
+export const TAKES_EXT = /\.msva$/i;
 const FORMAT_NAME = 'maya-scene-viewer-package';
+const TAKES_FORMAT = 'maya-scene-viewer-takes';
+const TAKES_VERSION = 1;
+export const TAKES_ONLY = 'テイクだけのファイル（.msva）です。シーンを開いてから、テイクとして読み込んでください';
 const FORMAT_VERSION = 2;          // 2: 数値の配列を詰め直す（ref.encoding）。1 の .msv も読める
 const TYPES = { float32: Float32Array, int32: Int32Array, uint16: Uint16Array, uint8: Uint8Array };
 
@@ -75,17 +80,14 @@ export class ScenePackage {
   /** シーン（共通 JSON）。数値の配列は型付き配列にする */
   async scene() {
     const manifest = this.has('manifest.json') ? await this.readJson('manifest.json') : {};
+    if (manifest.format === TAKES_FORMAT) throw new Error(TAKES_ONLY);
     if (manifest.format && manifest.format !== FORMAT_NAME) throw new Error(`対応していないパッケージです（format: ${manifest.format}）`);
     if ((manifest.version || 1) > FORMAT_VERSION) {
       throw new Error(`新しい版のビューアで作られたパッケージです（version ${manifest.version}）。ビューアを更新してください`);
     }
     if (!this.has('scene.json')) throw new Error('シーンのパッケージ（.msv）ではありません（scene.json がありません）');
     const data = await this.readJson('scene.json');
-    const buffers = new Map();
-    const refs = [];
-    collectRefs(data, refs);
-    for (const r of refs) if (!buffers.has(r.ref.buffer)) buffers.set(r.ref.buffer, await this.read(r.ref.buffer));
-    for (const r of refs) r.set(toTyped(r.ref, buffers.get(r.ref.buffer)));
+    await this.resolveArrays(data);
     // 書き出したときの表示の状態（カメラ・表示設定・非表示・フレーム・ポーズ）。ビューアが読み込みの最後に入れる
     if (this.has('view.json')) {
       try {
@@ -94,9 +96,48 @@ export class ScenePackage {
         (data.warnings = data.warnings || []).push(`保存された表示の状態（view.json）を読めません: ${err.message}`);
       }
     }
+    if (this.has('takes.json')) {
+      try {
+        data.savedTakes = await this.takes();
+      } catch (err) {
+        (data.warnings = data.warnings || []).push(`テイク（takes.json）を読めません: ${err.message}`);
+      }
+    }
     this.manifest = manifest;
     return data;
   }
+
+  /** バイナリを指す配列を、型付き配列に置き換える（その場で書き換える） */
+  async resolveArrays(data) {
+    const buffers = new Map();
+    const refs = [];
+    collectRefs(data, refs);
+    for (const r of refs) if (!buffers.has(r.ref.buffer)) buffers.set(r.ref.buffer, await this.read(r.ref.buffer));
+    for (const r of refs) r.set(toTyped(r.ref, buffers.get(r.ref.buffer)));
+    return data;
+  }
+
+  /** テイクの一覧（takes.json。数値の配列は型付き配列。なければ空） */
+  async takes() {
+    if (!this.has('takes.json')) return [];
+    const data = await this.resolveArrays(await this.readJson('takes.json'));
+    if (!data || !Array.isArray(data.takes)) throw new Error('takes.json の形が正しくありません（takes がありません）');
+    return data.takes;
+  }
+}
+
+/** ArrayBuffer（.msva か、テイクを入れた .msv）→ テイクの一覧 */
+export async function openTakes(buffer) {
+  const pkg = new ScenePackage(buffer);
+  const manifest = pkg.has('manifest.json') ? await pkg.readJson('manifest.json') : {};
+  if (manifest.format && manifest.format !== TAKES_FORMAT && manifest.format !== FORMAT_NAME) {
+    throw new Error(`対応していないファイルです（format: ${manifest.format}）`);
+  }
+  if (manifest.format === TAKES_FORMAT && (manifest.version || 1) > TAKES_VERSION) {
+    throw new Error(`新しい版のビューアで作られたテイクのファイルです（version ${manifest.version}）。ビューアを更新してください`);
+  }
+  if (manifest.format === TAKES_FORMAT && !pkg.has('takes.json')) throw new Error('テイクがありません（takes.json がありません）');
+  return pkg.takes();
 }
 
 function isRef(x) {

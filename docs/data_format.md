@@ -11,6 +11,7 @@
   "source": { "kind": "ma", "path": "...", "name": "scene.ma", "mayaVersion": "2024",
               "linearUnit": "cm", "angularUnit": "deg", "upAxis": "y" },
   "nodes":  [ ... ],
+  "restNodes": [ ... ],
   "meshes": [ ... ],
   "curves": [ ... ],
   "cameras": [ ... ],
@@ -70,6 +71,13 @@ transform・joint などの変換ノードです。**親は必ず子より前に
 | `color` | 描画のオーバーライドかディスプレイレイヤーの色 `[r, g, b]`（省略可。.ma のみ）。ロケーターならシェイプ、なければ transform から祖先へ、curves の color と同じ探し方。コントローラーの目印の色に使う |
 | `pivot` | コントローラーの目印を置く位置（オブジェクト空間）。回転のピボット（.rp）、ロケーターはシェイプの localPosition（省略可。0 のときと .ma 以外は省略）。フリーズしたコントローラーや cluster のハンドルは、移動が 0 でもここが形の位置になる |
 | `attrs` | 表示用の値。`t`、`r`（度）、`s`、`jo`（度、joint のみ）、`ro`（`"xyz"` など） |
+
+## restNodes
+
+nodes のローカル行列の材料（省略可）。項目の形は animation.nodes と同じ（`node`・`joint`・`ro`・`t`・`r`・`s`・`ra`・`jo`・`rp` など。角度は度）で、
+nodes のすべてに 1 つずつあります（animation.nodes と重なってよい）。テイクを当てるときに、土台でリグにつながっていないノード（FK だけのジョイントなど）に
+キーを当てるのに使います。ない古い JSON・.msv では、nodes の `attrs`（t・r・s・jo・ro）から作ります（ピボット・rotateAxis のあるノードは形がずれるので、
+当てたときに警告を出します）。
 
 ## meshes
 
@@ -256,6 +264,7 @@ NURBS カーブ（nurbsCurve のシェイプ。中間オブジェクトを除く
 | `trax` | キャラクターセット（character）の Trax のクリップ `{"clips": [...]}`。各クリップは `start`・`sourceStart`・`sourceEnd`・`scale`・`weight`・`preCycle`・`postCycle`・`hold`・`enable`・`track`・`absolute` と、`channels`（キャラクターの出力の属性 `lv[i]`・`av[i]`・`uv[i]`・`tv[i]` → animation.curves の番号）。キャラクターの出力は、カーブが直接つながる属性（`inputs`）はそのまま、ほかはそのフレームで有効なクリップの値。クリップのカーブは animation.curves で `"trax": true`（キーがクリップの中の時間なので、再生範囲・キーの印には使わない） |
 | `geom` | wire・cluster が変形するカーブの transform（`{"出力の番号 k": nodes の番号}`）。ワイヤー（`dw[i]`）・ベースワイヤー（`bw[i]`）はワールド空間なので、カーブをこの行列でワールドへ移して変形し、戻す。CV のウェイトは attrs の `wl[k].w[v]`（なければ 1）。cluster は attrs の `gm[k]` があればそちらを使う |
 | `def` | 自作ノードの定義で評価するとき、その型（`animation.nodeDefs` のキー）。属性の名前は定義の短い名前にそろえてある（`attrs`・`inputs`）。評価は `web_src/src/nodeDef.js`、定義の書き方は [node_definitions.md](node_definitions.md) |
+| `names` | 独自の属性（addAttr）の、長い名前 → 短い名前（違うものだけ。省略可）。テイクを当てるとき、長い名前で書かれた属性を短い名前で引く |
 | `skin` | カーブを動かす skinCluster のウェイト `[[CV の番号, インフルエンスの論理番号, 値], …]`、`pm`（論理番号 → 16 要素）、`gm`。インフルエンスは `inputs` の `ma[i]` |
 
 ### animation.nodeDefs
@@ -378,7 +387,81 @@ Qt 版の書き出しで「表示の状態を保存する」をオンにする�
 | `sequence` | `{"follow": シーケンスで見ているか, "frame": シーケンスのフレーム}`（シーケンサがあるときだけ） |
 | `visibility` | 自分で変えた表示。`hidden`（隠したノード）・`shown`（ファイルやリグで非表示なのに表示したノード）・`meshes`（メッシュごとの表示 `{"path", "visible"}`） |
 | `poses` | ビューアで変えたポーズ `[{"path", "t", "r", "s"}]`（ファイルの値への追加分）。アニメーションカーブのあるノードのものは含めない |
+| `takes` | `{"active": 選んでいたテイクの番号}`（-1 はシーンのアニメーション。テイクの一覧があるときだけ） |
 
 `python -m ma_viewer pack` で .msv から作り直すときは引き継ぎます（`--no-view` で外す）。`export` で JSON に戻すときは含めません。
+
+### takes.json（.msv の中のテイク）
+
+Qt 版の書き出しで、テイクの一覧のテイクを入れます（省略可）。形は下の「.msva」の `takes.json` と同じで、数値の配列は `bin/takes.bin` に入れます。
+manifest の `version` は 2 のままです（古い版は知らない中身を読まないので、シーンとしてはそのまま開けます）。scene.json の animation は、いままでどおり
+シーンのアニメーションです。Python の `read_package` は `savedTakes` に入れ、`write_package(takes="keep")` で引き継ぎます。
+
+## テイク
+
+同じリグのアニメーションだけを取り出して、別のシーンに当てる・切り替えるための形式です（計画は [take_plan.md](take_plan.md)。取り出し・当てる処理は
+`web_src/src/takes.js` の `splitAnimation`・`composeAnimation`）。テイクは名前空間 1 つ（リファレンスで読み込んだキャラクター 1 体）に対して 1 つで、
+名前空間のないシーンは、カメラを除いた全体で 1 つです。
+
+```json
+{
+  "name": "shot010", "namespace": "armA",
+  "source": { "kind": "ma", "name": "shot010.ma" },
+  "fps": 24, "timeUnit": "film", "linearUnit": "cm",
+  "start": 1001, "end": 1050, "animStart": 1001, "animEnd": 1050,
+  "curves":   [ { "name": "hand_ctrl_translateX", "type": "TL", "offset": 0, "count": 2,
+                  "tangent": 2, "weighted": false, "pre": 0, "post": 0 } ],
+  "times": { ... }, "values": { ... }, "tangentTypes": { ... }, "fixedTangents": { ... },
+  "bindings": [ { "target": "|world_grp|armA:rig_grp|armA:hand_ctrl", "attr": "tx", "curve": 0 },
+                { "target": "|armA:root|armA:arm_ctrl", "attr": "rx", "from": { "node": 0, "attr": "o" } },
+                { "target": "|armA:props_grp|armA:box", "attr": "v", "curve": 3, "prop": "node" } ],
+  "nodes":    [ { "name": "arm_ctrl_rotateX_blend", "type": "animBlendNodeAdditiveDA",
+                  "attrs": { "wa": 1, "wb": 1 },
+                  "inputs": { "ia": { "curve": 1 }, "ib": { "curve": 2 }, "wb": { "node": 1, "attr": "fgwt" } } } ],
+  "statics":  [ { "target": "|world_grp|armA:rig_grp|armA:hand_ctrl", "values": { "tz": 0, "fkik": 1 } } ],
+  "warnings": [ "..." ]
+}
+```
+
+| キー | 内容 |
+|---|---|
+| `name` | 一覧に出す名前。取り出したファイルの名前（拡張子なし）。同じファイルから複数取れたら、後ろに名前空間を付ける（`shot010 (armA)`） |
+| `namespace` | 取り出したシーンでの名前空間（なければ `""`）。入れ子の外側まで含める（`armA:prop` の小道具は別のテイク） |
+| `fps`・`timeUnit` | キーのフレームの単位。再生はこのフレームレートで行う |
+| `linearUnit` | 移動のカーブの値の単位。当てる先と違えば、当てるときに値を掛けて直す |
+| `start`〜`animEnd` | 再生範囲とアニメーションの範囲（元のフレーム番号のまま）。ビューアで範囲を狭めると、そのテイクの範囲として覚える |
+| `curves`・`times`・`values`・`tangentTypes`・`fixedTangents` | animation の同じ名前のキーと同じ形・同じ単位。`offset` と `fixedTangents` のキーの番号は、このテイクの中の番号。時間のカーブ（TL・TA・TU）だけ。Trax のクリップのカーブは `"trax": true` |
+| `bindings` | 結び付け（カーブ → 相手）。`curve`（このテイクの curves の番号）か `from`（このテイクの nodes の番号と出力の属性）のどちらかを持つ。同じ相手・同じ属性は 1 つ |
+| `bindings[].target` | 相手のノードの DAG のフルパス（取り出したシーンのまま。名前空間つき）。DAG でないノードは名前。`prop` のあるものは、メッシュ・カーブのパス |
+| `bindings[].attr` | 相手の属性。移動・回転・スケールは `tx`〜`sz`、ほかは graph の属性の名前 |
+| `bindings[].raw` | true なら、属性はファイルに書かれた名前のまま（参照先を読まずに取り出したため、短い名前がわからない）。当てる先の graph の `names` で短い名前を引く |
+| `bindings[].prop` | 表示などの属性（animation.props）への結び付けなら、その種類（`node`・`mesh`・`curve`・`shape`）。ないものは channels・graph の inputs に当てる |
+| `nodes` | 一緒に運ぶアニメーション側のノード（animLayer・animBlendNode*・Trax のクリップを持つ character）。animation.graph の項目と同じ形で、`id`・`dag` は持たない。`inputs` の `node` は、このテイクの nodes の番号。リグ側のノードの出力を読む入力は `{"target": パス, "attr": 属性}` |
+| `statics` | キーのない値。キーのある相手の、キーのない移動・回転（度）・スケールの成分（`tx` など）と、graph の attrs の独自の属性（表示の属性・優先角度を除く。graph の attrs と同じ単位）。キーのある成分には当てない |
+| `warnings` | 取り出したときの警告（ショット側で足したコンストレイントを運ばなかったなど）。当てたときに一覧の行から見られる |
+
+数値の配列は、animation と同じく base64 のバイナリ（`{"dtype", "count", "data"}`）か数値のリストです。
+
+**アニメーション側のもの**（土台から外してテイクで運ぶもの）は、リグの外（名前空間のないシーンではすべて。名前空間 X のテイクでは、名前に X の名前空間が
+付かないもの）の、時間のカーブと animLayer・animBlendNode*・Trax のクリップを持つ character です。リグの中の時間のカーブ（車輪の自動回転など）・
+ドリブンキー・リグの中の animBlend ノードは土台に残します。カメラ（cameras の transform のノードと、props の camera）への結び付けは運びません。
+
+**当て方**: 相手のパスの各階層から、テイクの名前空間を外し（`|world_grp|armA:rig_grp|armA:hand_ctrl` → `|world_grp|rig_grp|hand_ctrl`）、当てる先の
+名前空間のノードから、同じように名前空間を外して、いちばん下の名前が同じものを探します。同じ名前が複数あれば、パスの下からいちばん長く一致するもの
+にし、それでも決まらなければ「あいまい」として当てません。属性は、まず名前のまま、graph の `names` に長い名前があれば短い名前にします。当てる先の
+名前空間は、当たる結び付けのいちばん多いものです（同じなら、テイクの名前空間と同じ名前のもの）。
+
+### .msva
+
+テイクだけのファイルです。.msv と同じ作りの zip で、単体では表示できません（シーンを開いてから、テイクとして読み込む）。
+
+| 中身 | 内容 |
+|---|---|
+| `manifest.json` | `{"format": "maya-scene-viewer-takes", "version": 1, "created": ..., "generator": "MayaSceneViewer", "generatorVersion": ...}` |
+| `takes.json` | `{"takes": [テイク, ...]}`。数値の配列は `{"dtype", "count", "buffer": "bin/takes.bin", "offset", "encoding"}`（.msv の scene.json と同じ） |
+| `bin/takes.bin` | 数値の配列（.msv の `bin/data.bin` と同じ詰め方） |
+
+Python は `ma_viewer.package` の `write_takes(takes, path)`・`read_takes(path)`（.msva か、テイクを入れた .msv）、ブラウザは `web_src/src/package.js` の
+`openTakes(buffer)` で読み書きします。
 
 Python の `ma_viewer.package.read_package(path)` は、数値の配列を base64 の形に戻して、.json を読んだときと同じ dict を返します（`source.packagePath` に .msv の場所、`savedView` に view.json の中身を入れます。書き出すときは除きます）。ブラウザでは型付き配列に直接戻します。

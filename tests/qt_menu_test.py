@@ -63,7 +63,8 @@ def main() -> int:
     titles = [a.text() for a in win.menuBar().actions()]
     check(titles == ["ファイル", "編集", "ウインドウ", "設定", "ヘルプ"], "メニューの並び: %s" % titles)
     file_items = [label(a) if not a.isSeparator() else "-" for a in win.file_menu.actions()]
-    check(file_items == ["新規シーン", "-", "開く…", "再読み込み", "-", "パッケージ（.msv）として書き出し…", "-", "閉じる"],
+    check(file_items == ["新規シーン", "-", "開く…", "再読み込み", "-", "パッケージ（.msv）として書き出し…", "-",
+                         "テイクを読み込む…", "テイクを書き出す…", "-", "閉じる"],
           "［ファイル］はファイルの操作だけ: %s" % file_items)
     set_items = [a.menu().title() if a.menu() else (label(a) if not a.isSeparator() else "-")
                  for a in win.settings_menu.actions()]
@@ -173,7 +174,9 @@ def main() -> int:
 
     def step_open():
         win.open_file(TEXTURED)
-        wait(lambda: win._thread is None and win.current_scene is not None, step_save)
+        # ビューアでの読み込み（最初の描画まで）も待つ（読み込みの経過の表示が、書き出しの表示を上書きしないように）
+        wait(lambda: win._thread is None and win.current_scene is not None
+             and (win.load_clock is None or win.load_clock.finished), step_save)
 
     def step_save():
         check(win.package_options()["textures"] == "albedo" and win.package_options()["view"],

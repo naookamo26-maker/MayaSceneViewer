@@ -21,12 +21,39 @@ from . import schema  # noqa: E402
 from .resources import index_html  # noqa: E402
 from .resources import APP_NAME  # noqa: E402  ソフト名（ウィンドウのタイトルなど。英語表記）  web 一式の場所（exe 化しても見つかるように探す）
 CHUNK_SIZE = 4 * 1024 * 1024          # runJavaScript 1 回あたりの文字数（4 の倍数: 配列の base64 をかけらごとに戻すため）
-OPENABLE_EXT = (".ma", ".json", ".msv", ".mb")
+OPENABLE_EXT = (".ma", ".json", ".msv", ".mb", ".msva")
+TAKE_EXT = ".msva"                # テイク（アニメーションだけ）のファイル。どこにドラッグ＆ドロップしてもテイクとして足す
 DATA_EXT = (".json", ".msv")      # 変換済みのデータ（解析しない。アニメーションも一緒に入っている）
 
 
 class _Cancelled(Exception):
     pass
+
+
+
+class _TakeWorker(QtCore.QObject):
+    """テイクのファイル（.msva・.msv・共通 JSON・.ma）を読み込みスレッドで読む（.ma の解析で画面を止めない）"""
+    progress = Signal(str)
+    finished = Signal(object, object, object)       # テイクの元の一覧, お知らせ, (ファイル名, 誤り) の一覧
+
+    def __init__(self, paths, references: bool, maya_state=None):
+        super().__init__()
+        self.paths = list(paths)
+        self.references = references
+        self.maya_state = maya_state                     # Maya で開いているシーン（maya_scene.collect の結果）
+
+    @Slot()
+    def run(self):
+        from .take import read_maya_source, read_sources
+        try:
+            if self.maya_state is not None:
+                src, notes = read_maya_source(self.maya_state, self.progress.emit)
+                sources, errors = ([src] if src is not None else []), []
+            else:
+                sources, notes, errors = read_sources(self.paths, self.references, self.progress.emit)
+        except Exception as exc:  # noqa: BLE001
+            sources, notes, errors = [], [], [("", "%s\n%s" % (exc, traceback.format_exc()))]
+        self.finished.emit(sources, notes, errors)
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +70,8 @@ class Bridge(QtCore.QObject):
     showWarningsSignal = Signal()
     statusSignal = Signal(str, int)
     loadEventSignal = Signal(str, str)
+    exportTakesSignal = Signal(str, str)
+    importTakesSignal = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -90,6 +119,16 @@ class Bridge(QtCore.QObject):
     def loadEvent(self, name, detail):
         """読み込みの段階がビューアで終わった（scene: 最初の描画・animation: アニメーションの準備・cache: 再生キャッシュ）"""
         self.loadEventSignal.emit(name, detail)
+
+    @Slot(str, str)
+    def exportTakes(self, text, name):
+        """テイクの一覧の［書き出す］: テイク（JSON の配列の文字列）を .msva に書き出す（保存先はウィンドウが聞く）"""
+        self.exportTakesSignal.emit(text, name)
+
+    @Slot()
+    def importTakes(self):
+        """テイクの一覧の［読み込む］: ファイルを選んでテイクを足す（ウィンドウが聞く）"""
+        self.importTakesSignal.emit()
 
     # JS から保存・読み戻しできる設定（キー → QSettings のキー）
     SAVED_SETTINGS = {"playbackCacheMB": "viewer/playbackCacheMB"}
@@ -184,6 +223,8 @@ class ViewerWidget(QtWidgets.QWidget):
     showWarningsRequested = Signal()                # ビューアの警告アイコンが押された
     statusMessage = Signal(str, int)                # ビューアの操作のメッセージ（ステータスバーへ）
     loadEvent = Signal(str, str)                    # 読み込みの段階がビューアで終わった
+    takesExportRequested = Signal(str, str)         # テイクの一覧の［書き出す］（テイクの JSON, 名前）
+    takesImportRequested = Signal()                 # テイクの一覧の［読み込む］
 
     def __init__(self, parent=None):
         require_webengine()
@@ -219,6 +260,8 @@ class ViewerWidget(QtWidgets.QWidget):
         self.bridge.logSignal.connect(self.logMessage)
         self.bridge.statusSignal.connect(self.statusMessage)
         self.bridge.loadEventSignal.connect(self.loadEvent)
+        self.bridge.exportTakesSignal.connect(self.takesExportRequested)
+        self.bridge.importTakesSignal.connect(self.takesImportRequested)
         self.page.consoleMessage.connect(lambda lv, t: self.logMessage.emit(lv, "JS: " + t))
         self.page.fileDropped.connect(self.fileDropped)
         self.view.loadFinished.connect(self._on_load_finished)
@@ -317,6 +360,22 @@ class ViewerWidget(QtWidgets.QWidget):
         payload = payload or Payload.of(anim)
         self.last_dump_seconds = payload.seconds
         return self._transfer(anim, payload, "beginAnimationTransfer", "endAnimationTransfer")
+
+    def add_take_sources(self, sources: list, at: int = -1, drop: bool = False, callback=None):
+        """テイクを一覧に足す。sources: [{"kind": "takes", "takes": [...]} | {"kind": "scene", "scene": 共通 JSON, "name"}]
+        （シーンはビューアがアニメーションから取り出す）。at: 入れる位置（-1 は末尾）。drop: 当たらないテイクは足さない"""
+        self._call("addTakeSources", json.dumps(sources, ensure_ascii=True, separators=(",", ":")), at, drop,
+                   callback=callback)
+
+    def get_takes(self, callback):
+        """一覧のテイク（list。受け取れなければ None）を callback に渡す"""
+        def got(raw):
+            try:
+                v = json.loads(raw) if isinstance(raw, str) and raw else None
+            except ValueError:
+                v = None
+            callback(v if isinstance(v, list) else None)
+        self.run_js("window.mayaViewer && window.mayaViewer.getTakes ? window.mayaViewer.getTakes() : ''", got)
 
     def set_animation_status(self, text: str):
         """アニメーションの読み込み状況（タイムラインに表示）"""
@@ -611,6 +670,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
         self.load_clock = None
         self.viewer.nodeSelected.connect(self._on_viewer_selected)
         self.viewer.fileDropped.connect(self.open_file)
+        self.viewer.takesExportRequested.connect(self.export_takes_text)
+        self.viewer.takesImportRequested.connect(self.import_takes_dialog)
+        self._drag_pos = None
+        self._take_thread = None
+        self._take_worker = None
 
         self._build_log_dock()
         self._build_actions()
@@ -681,6 +745,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
         a_export_pkg = self._act("パッケージ（.msv）として書き出し…", self.export_package, "Ctrl+Shift+E",
                                  tip="前回の設定で、テクスチャ（既定はアルベドのみ）と表示の状態を入れた小さな 1 ファイルにする")
         self.a_export_pkg = a_export_pkg
+        a_import_takes = self._act("テイクを読み込む…", self.import_takes_dialog,
+                                   tip="テイク（.msva）か、同じリグのシーン（.msv・共通 JSON）のアニメーションを読み込んで、"
+                                       "テイクの一覧に足す")
+        a_export_takes = self._act("テイクを書き出す…", self.export_takes,
+                                   tip="テイクの一覧をすべて、アニメーションだけのファイル（.msva）に書き出す")
         a_close = self._act("閉じる", self.close, "Ctrl+W")
         self.a_anim = self._act("アニメーションを読み込む", self._toggle_animation, checkable=True,
                                 checked=_settings_bool("loadAnimation", True),
@@ -724,6 +793,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
         m.addAction(a_export_pkg)
         m.set_option_box(a_export_pkg, self.export_package_options)
         m.addSeparator()
+        m.addAction(a_import_takes)
+        m.addAction(a_export_takes)
+        m.addSeparator()
         m.addAction(a_close)
         ms = QtWidgets.QMenu("設定", self)           # 並びは［ヘルプ］の前（下で追加）
         self.settings_menu = ms
@@ -758,11 +830,16 @@ class ViewerWindow(QtWidgets.QMainWindow):
             a_sel = self._act("選択から読み込み", lambda: self.load_from_maya(True),
                               tip="選択したノード以下のメッシュとジョイントだけを表示")
             a_pull = self._act("Maya の選択を反映", self.pull_maya_selection)
+            a_take = self._act("開いているシーンからテイクを取り出す", self.take_from_maya,
+                               tip="Maya で開いているシーン（ショット）のアニメーションを、ビューアで開いているシーン（リグ）の"
+                                   "テイクとして足す")
             self.a_sync = self._act("ビューアの選択を Maya に反映", lambda v: None, checkable=True, checked=True)
             self.a_follow = self._act("Maya の選択に追従", self._toggle_follow, checkable=True, checked=True)
             mm = mb.addMenu("Maya")
             for a in (a_scene, a_sel, a_pull):
                 mm.addAction(a)
+            mm.addSeparator()
+            mm.addAction(a_take)
             mm.addSeparator()
             mm.addAction(self.a_sync)
             mm.addAction(self.a_follow)
@@ -897,7 +974,7 @@ class ViewerWindow(QtWidgets.QMainWindow):
     def open_dialog(self):
         start = os.path.dirname(self.current_path) if self.current_path else ""
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "ファイルを開く", start, "Maya ASCII / パッケージ / 共通 JSON (*.ma *.msv *.json);;Maya ASCII (*.ma);;パッケージ (*.msv);;JSON (*.json)")
+            self, "ファイルを開く", start, "Maya ASCII / パッケージ / 共通 JSON (*.ma *.msv *.json);;Maya ASCII (*.ma);;パッケージ (*.msv);;JSON (*.json);;テイク (*.msva)")
         if path:
             self.open_file(path)
 
@@ -930,6 +1007,9 @@ class ViewerWindow(QtWidgets.QMainWindow):
         path = os.path.abspath(path)
         if not os.path.isfile(path):
             self._error("ファイルが見つかりません:\n%s" % path)
+            return
+        if path.lower().endswith(TAKE_EXT):              # テイクだけのファイル: いまのシーンの一覧に足す
+            self.load_take_files([path])
             return
         if path.lower().endswith(".mb"):
             self._error("Maya バイナリ (.mb) は読み込めません。Maya で .ma として保存し直してください。")
@@ -1329,13 +1409,19 @@ class ViewerWindow(QtWidgets.QMainWindow):
             return
         if not path.lower().endswith(package.EXT):
             path += package.EXT
+        # 開いているパッケージに上書きしてもよい（一時ファイルに書いて、同梱のテクスチャを移し終えてから置き換える）
         src_path = (self.current_scene.get("source") or {}).get("packagePath")
-        if src_path and os.path.normcase(os.path.abspath(src_path)) == os.path.normcase(os.path.abspath(path)):
-            self._error("開いているパッケージと同じファイルには書き出せません。別の名前にしてください。")
-            return
         scene = self.current_scene
+
+        def write(view):
+            # テイクの一覧（ビューアが持つ）も入れる。受け取れなければ、元の .msv のものを引き継ぐ
+            def got_takes(takes):
+                if takes is None:
+                    self.log("warn", "テイクの一覧を受け取れなかったため、元のパッケージのテイクを引き継ぎます")
+                self._write_package(scene, path, opts, src_path, view, "keep" if takes is None else takes)
+            self.viewer.get_takes(got_takes)
         if not opts["view"]:
-            self._write_package(scene, path, opts, src_path, None)
+            write(None)
             return
 
         def got(raw):
@@ -1346,17 +1432,17 @@ class ViewerWindow(QtWidgets.QMainWindow):
                 view = None
             if view is None:
                 self.log("warn", "表示の状態を受け取れなかったため、保存せずに書き出します")
-            self._write_package(scene, path, opts, src_path, view)
+            write(view)
         self.viewer.run_js("window.mayaViewer && window.mayaViewer.getViewState ? window.mayaViewer.getViewState() : ''",
                            got)
 
-    def _write_package(self, scene, path, opts, src_path, view):
+    def _write_package(self, scene, path, opts, src_path, view, takes="keep"):
         from . import package
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
         try:
             source = package.Package(src_path) if src_path and os.path.isfile(src_path) else None
             r = package.write_package(scene, path, textures=opts["textures"], max_size=opts["maxSize"],
-                                      quality=opts["quality"], source=source, view=view)
+                                      quality=opts["quality"], source=source, view=view, takes=takes)
         except Exception as exc:  # noqa: BLE001
             QtWidgets.QApplication.restoreOverrideCursor()
             self.log("error", traceback.format_exc())
@@ -1367,37 +1453,224 @@ class ViewerWindow(QtWidgets.QMainWindow):
         used = dict(opts, view=bool(r["view"]))
         summary = self.package_options_summary(used)
         self.statusBar().showMessage("書き出しました: %s（%s・%s）" % (os.path.basename(path), size, summary), 8000)
-        self.log("info", "書き出しました: %s（%s・%s・同梱したテクスチャ %d 枚%s）"
-                 % (path, size, summary, r["textures"], "・WebP" if r["converted"] else "・元のまま" if r["textures"] else ""))
+        self.log("info", "書き出しました: %s（%s・%s・同梱したテクスチャ %d 枚%s%s）"
+                 % (path, size, summary, r["textures"], "・WebP" if r["converted"] else "・元のまま" if r["textures"] else "",
+                    "・テイク %d 個" % r["takes"] if r.get("takes") else ""))
         for w in r["warnings"]:
             self.log("warn", w)
 
 
+    # ------------------------------------------------------------------ テイク
+    def import_takes_dialog(self):
+        """［ファイル］→［テイクを読み込む］・テイクの一覧の［読み込む］"""
+        start = os.path.dirname(self.current_path) if self.current_path else ""
+        paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self, "テイクを読み込む", start,
+            "テイク / Maya ASCII / パッケージ / 共通 JSON (*.msva *.ma *.msv *.json);;テイク (*.msva);;Maya ASCII (*.ma)")
+        if paths:
+            self.load_take_files(paths)
+
+    def take_from_maya(self):
+        """［Maya］→［開いているシーンからテイクを取り出す］: Maya で開いているシーン（ショット）のアニメーションを、
+        いまビューアで開いているシーン（リグ）のテイクとして足す。集めるのは画面のスレッド、変換は読み込みスレッド"""
+        if self.current_scene is None:
+            self.statusBar().showMessage("先にシーンを開いてください（テイクはシーンに当てて使います）", 6000)
+            return
+        if self._thread is not None or self._take_thread is not None:
+            self.statusBar().showMessage("読み込み中です。完了してからテイクを取り出してください。", 5000)
+            return
+        from . import maya_scene
+        QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            self.statusBar().showMessage("テイク: Maya からシーンを取得中")
+            QtWidgets.QApplication.processEvents()
+            st = maya_scene.collect(False, lambda frac, msg, *_a: self.statusBar().showMessage("テイク: " + msg))
+        except Exception as exc:  # noqa: BLE001
+            self.log("error", traceback.format_exc())
+            self._error("Maya からデータを取得できませんでした。\n%s" % exc)
+            return
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+        self.log("info", "Maya で開いているシーンからテイクを取り出します: %s"
+                 % (os.path.basename(st.source_path) or "Maya シーン"))
+        self._start_take_worker(_TakeWorker([], True, maya_state=st), -1, False)
+
+    def load_take_files(self, paths, at: int = -1, drop: bool = False):
+        """ファイルからテイクを読んで、テイクの一覧の at の位置に足す（ファイル名の順）。.msva はテイクをそのまま、
+        .ma・.msv・共通 JSON はメッシュなどを外したシーンを渡して、ビューアがアニメーションから取り出す。
+        読むのは読み込みスレッド（.ma の解析で画面を止めない）"""
+        if self.current_scene is None:
+            self.statusBar().showMessage("先にシーンを開いてください（テイクはシーンに当てて使います）", 6000)
+            return
+        if self._thread is not None or getattr(self, "_take_thread", None) is not None:
+            self.statusBar().showMessage("読み込み中です。完了してからテイクを読み込んでください。", 5000)
+            return
+        names = "・".join(os.path.basename(p) for p in paths)
+        self.log("info", "テイクを読み込みます: %s" % names)
+        self.statusBar().showMessage("テイクを読み込み中: %s" % names)
+        self._start_take_worker(_TakeWorker(paths, self.a_refs.isChecked()), at, drop)
+
+    def _start_take_worker(self, worker: "_TakeWorker", at: int, drop: bool):
+        self._take_thread = QtCore.QThread(self)
+        self._take_worker = worker
+        self._take_worker.moveToThread(self._take_thread)
+        self._take_thread.started.connect(self._take_worker.run)
+        # 信号はウィンドウのメソッドで受ける（画面のスレッドで動く。ラムダにつなぐと読み込みスレッドで動いてしまう）
+        self._take_target = (at, drop)
+        self._take_worker.progress.connect(self._on_take_progress)
+        self._take_worker.finished.connect(self._on_takes_read)
+        self._take_worker.finished.connect(self._take_thread.quit)
+        self._take_thread.finished.connect(self._on_take_thread_finished)
+        self._take_thread.start()
+
+    @Slot()
+    def _on_take_thread_finished(self):
+        self._take_thread = None
+        self._take_worker = None
+
+    @Slot(str)
+    def _on_take_progress(self, msg):
+        self.statusBar().showMessage("テイク: " + msg)
+
+    @Slot(object, object, object)
+    def _on_takes_read(self, sources, notes, errors):
+        at, drop = getattr(self, "_take_target", (-1, False))
+        for n in notes:
+            self.log("warn", n)
+        for name, err in errors:
+            self.log("error", "%s からテイクを読めませんでした: %s" % (name, err))
+        if errors:
+            self._error("テイクを読めなかったファイルがあります。\n" + "\n".join("%s: %s" % (n, e.splitlines()[0] if e else "")
+                                                                    for n, e in errors))
+        if self.current_scene is None or not sources:
+            self.statusBar().showMessage("テイクが見つかりませんでした" if not errors else "テイクを読めませんでした", 6000)
+            return
+        self.statusBar().clearMessage()
+        self.viewer.add_take_sources(sources, at, drop)
+
+    def export_takes(self):
+        """［ファイル］→［テイクを書き出す］: 一覧のテイクをすべて .msva に書き出す"""
+        def got(takes):
+            if not takes:
+                QtWidgets.QMessageBox.information(self, "テイクを書き出す", "書き出すテイクがありません。")
+                return
+            base = os.path.splitext(os.path.basename(self.current_path))[0] if self.current_path else "takes"
+            self.write_takes_file(takes, base)
+        self.viewer.get_takes(got)
+
+    def export_takes_text(self, text: str, name: str):
+        """テイクの一覧の［書き出す］（ビューアからテイクの JSON を受け取る）"""
+        try:
+            takes = json.loads(text)
+        except ValueError:
+            takes = None
+        if not takes:
+            self.statusBar().showMessage("書き出すテイクがありません", 5000)
+            return
+        self.write_takes_file(takes, name or "takes")
+
+    def write_takes_file(self, takes: list, name: str):
+        from . import package
+        title = "テイクを書き出す"
+        start = os.path.dirname(self.current_path) if self.current_path else ""
+        safe = "".join(c if c not in '\\/:*?"<>|' else "_" for c in name).strip() or "takes"
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, title, os.path.join(start, safe + package.TAKES_EXT),
+                                                        "テイク (*.msva)")
+        if not path:
+            return
+        if not path.lower().endswith(package.TAKES_EXT):
+            path += package.TAKES_EXT
+        try:
+            r = package.write_takes(takes, path)
+        except Exception as exc:  # noqa: BLE001
+            self.log("error", traceback.format_exc())
+            self._error("書き出せませんでした。\n%s" % exc)
+            return
+        self.statusBar().showMessage("テイクを書き出しました: %s（%d 個）" % (os.path.basename(path), r["takes"]), 8000)
+        self.log("info", "テイクを書き出しました: %s（%d 個・%.1f KB）" % (path, r["takes"], r["size"] / 1024.0))
+
     # ------------------------------------------------------------------ ドロップ
     @staticmethod
-    def _dropped_path(event):
+    def _dropped_paths(event):
+        """落とされた、開けるファイルの一覧"""
         md = event.mimeData()
+        out = []
         if md.hasUrls():
             for url in md.urls():
                 if url.isLocalFile() and url.toLocalFile().lower().endswith(OPENABLE_EXT):
-                    return url.toLocalFile()
-        return None
+                    out.append(url.toLocalFile())
+        return out
+
+    @classmethod
+    def _dropped_path(cls, event):
+        paths = cls._dropped_paths(event)
+        return paths[0] if paths else None
+
+    def _page_point(self, event):
+        """ドロップの位置を、ビューアのページの座標（CSS の px）にする。ビューの外なら None"""
+        p = event.position() if hasattr(event, "position") else event.pos()
+        view = self.viewer.view
+        local = view.mapFrom(self, QtCore.QPoint(int(p.x()), int(p.y())))
+        if not view.rect().contains(local):
+            return None
+        zoom = view.zoomFactor() or 1.0                 # ページの拡大率（画面の倍率は Qt が CSS の px に合わせる）
+        return local.x() / zoom, local.y() / zoom
+
+    def _drag_highlight(self, event):
+        """ドラッグ中: テイクの一覧の上なら、一覧の枠を強調する（ビューアに位置を伝える）"""
+        pt = self._page_point(event)
+        if pt == self._drag_pos:
+            return
+        self._drag_pos = pt
+        x, y = pt if pt is not None else (-1, -1)
+        self.viewer.run_js("window.mayaViewer && window.mayaViewer.takeDragOver && window.mayaViewer.takeDragOver(%f, %f)"
+                           % (x, y))
 
     def dragEnterEvent(self, event):
-        if self._dropped_path(event):
+        if self._dropped_paths(event):
             event.acceptProposedAction()
+            self._drag_highlight(event)
         else:
             event.ignore()
 
     def dragMoveEvent(self, event):
-        if self._dropped_path(event):
+        if self._dropped_paths(event):
             event.acceptProposedAction()
+            self._drag_highlight(event)
+
+    def dragLeaveEvent(self, event):
+        self._drag_pos = None
+        self.viewer.run_js("window.mayaViewer && window.mayaViewer.takeDragOver && window.mayaViewer.takeDragOver(-1, -1)")
 
     def dropEvent(self, event):
-        path = self._dropped_path(event)
-        if path:
-            event.acceptProposedAction()
-            self.open_file(path)
+        paths = self._dropped_paths(event)
+        if not paths:
+            return
+        event.acceptProposedAction()
+        self._drag_pos = None
+        pt = self._page_point(event)
+        takes = [p for p in paths if p.lower().endswith(TAKE_EXT)]
+
+        def decide(at):
+            # テイクの一覧の中（at >= 0）ならテイクとして足す。外なら、いままでどおりシーンを開く（.msva はテイク）
+            try:
+                at = int(at)
+            except (TypeError, ValueError):
+                at = -1
+            self.viewer.run_js("window.mayaViewer && window.mayaViewer.takeDragOver && "
+                               "window.mayaViewer.takeDragOver(-1, -1)")
+            if at >= 0:
+                self.load_take_files(paths, at, True)
+            elif len(takes) == len(paths):
+                self.load_take_files(takes, -1, True)
+            else:
+                self.open_file(next(p for p in paths if not p.lower().endswith(TAKE_EXT)))
+        if pt is None or self.current_scene is None:
+            decide(-1)
+            return
+        # 位置がテイクの一覧の中か・何行目かを、ビューアに聞いてから分ける（結果は後から届く）
+        self.viewer.run_js("window.mayaViewer && window.mayaViewer.takeDropIndex ? "
+                           "window.mayaViewer.takeDropIndex(%f, %f) : -1" % pt, decide)
 
     # ------------------------------------------------------------------ Maya 連携
     def load_from_maya(self, selection_only: bool = False):

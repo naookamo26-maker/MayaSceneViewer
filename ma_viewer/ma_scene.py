@@ -419,6 +419,9 @@ class MaScene:
         self._placeholders: Dict[Tuple[int, str], str] = {}  # (reference ノード, "phl[n]") → 本当のプラグ
         # リファレンスの編集で、相手のノードが見つからなかったもの [(reference ノード, 編集の種類, 見つからない名前)]
         self.ref_edit_missing: List[Tuple[str, str, str]] = []
+        # 相手のノードがなくて当てなかったリファレンスの編集（setAttr・connectAttr・プレースホルダー）。参照先のファイルが
+        # ない・アンロードのショットからテイクを取り出すのに使う（ma_viewer/take.py）。名前空間は付けてある
+        self.ref_edits_unresolved: List[dict] = []
         # パスでは見つからず、名前（その名前のノードが 1 つだけ）で相手を決めた編集 [(書かれたパス, 当てたノードのパス)]
         self.ref_edit_by_name: List[Tuple[str, str]] = []
         self._seg_refnodes: List[List["MaNode"]] = [[]]  # 解析中のファイルごとの reference ノード
@@ -988,6 +991,8 @@ class MaScene:
                               key="#リファレンスの編集の読み取り", limit=5)
                 for code, args in edits:
                     missing = self._apply_edit(code, args, overlay, nodes_of)
+                    if missing is not None and code in (2, 3, 5):
+                        self._keep_unresolved(code, args, rn)
                     if missing is not None and not any(p in missing for p in unloaded):
                         skipped[EDIT_NAMES[code]] = skipped.get(EDIT_NAMES[code], 0) + 1
                         if len(self.ref_edit_missing) < 500:
@@ -1029,6 +1034,23 @@ class MaScene:
             self.warn("リファレンスの編集のうち %d 件は、書かれたパスのノードがなかったため、同じ名前のノード（1 つだけのもの）"
                       "に当てました（例: %s → %s）。" % ((len(self.ref_edit_by_name),) + self.ref_edit_by_name[0]),
                       key="#リファレンスの編集の名前")
+
+    def _keep_unresolved(self, code: int, args: List[str], rn: "MaNode"):
+        """当てなかった編集を、名前空間を付けた形で覚える（ref_edits_unresolved）"""
+        if code == 2:
+            self.ref_edits_unresolved.append({"code": 2, "ref": rn.name, "node": self.qualify(args[0]),
+                                              "attr": args[1], "value": args[2]})
+        elif code == 3:
+            self.ref_edits_unresolved.append({"code": 3, "ref": rn.name, "src": self._qualify_plug(args[0]),
+                                              "dst": self._qualify_plug(args[1])})
+        elif code == 5:
+            ph = next((p for p in args[1:3] if ".placeHolderList[" in p or ".phl[" in p), None)
+            other = next((p for p in args[1:3] if p is not ph), None)
+            if ph is None or other is None:
+                return
+            pn, pattr = R.split_node_attr(self._qualify_plug(ph))
+            self.ref_edits_unresolved.append({"code": 5, "ref": rn.name, "holder": pn, "phl": R.normalize_attr(pattr),
+                                              "plug": self._qualify_plug(other)})
 
     def _edit_node(self, ref: str) -> Optional[MaNode]:
         """編集に書かれたノード（名前空間を付ける前の名前・パス）。パスで見つからなければ、同じ名前のノードが

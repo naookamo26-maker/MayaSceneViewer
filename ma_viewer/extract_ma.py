@@ -1620,6 +1620,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
 
     lap("バインドポーズ")
     out_nodes = []
+    out_src: List[MaNode] = []          # 出力したノード（out_nodes と同じ順）
     index_of: Dict[int, int] = {}
 
     def visit(x: MaNode, parent_idx: int) -> bool:
@@ -1704,6 +1705,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
         if id(x) in driven:
             entry["drivenBy"] = driven[id(x)]
         out_nodes.append(entry)
+        out_src.append(x)
         return True
 
     # 出力の番号は深さ優先（子は書かれた順）。深い階層でも再帰しないようにスタックでたどる
@@ -1717,6 +1719,15 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
                     for c in reversed(x.children):
                         stack.append((c, idx))
 
+    # ローカル行列の材料（animation.nodes の項目と同じ形）。テイクを当てるときに、土台でリグにつながっていない
+    # ノード（FK だけのジョイントなど）にキーを当てるのに使う（共通 JSON の restNodes）
+    from .animation import rest_entry
+    rest_ang = 180.0 / math.pi if ms.angular_unit in ("rad", "radian") else 1.0
+    rest_nodes = []
+    for ni, x in enumerate(out_src):
+        is_src = x.inverse_scale_source()
+        is_idx = index_of.get(id(is_src)) if is_src is not None else None
+        rest_nodes.append(rest_entry(x, ni, rest_ang, is_src, is_idx))
     lap("ノードの出力（行列）")
     # --- メッシュの出力 ---------------------------------------------------
     out_meshes = []
@@ -1835,6 +1846,7 @@ def scene_to_dict(ms: MaScene, progress: ProgressFn = None) -> dict:
             "references": [ri.to_dict() for ri in getattr(ms, "ref_infos", [])],
         },
         "nodes": out_nodes,
+        "restNodes": rest_nodes,
         "meshes": out_meshes,
         "curves": out_curves,
         "cameras": out_cameras,

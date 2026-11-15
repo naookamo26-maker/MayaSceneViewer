@@ -127,24 +127,76 @@ def cmd_pack(args) -> int:
         if not args.quiet:
             sys.stderr.write("\n")
     out = args.output or os.path.splitext(src)[0] + package.EXT
-    if os.path.abspath(out) == os.path.abspath(src):
-        print("入力と同じファイルには書き出せません: %s" % out, file=sys.stderr)
-        return 1
+    # 入力の .msv に上書きしてもよい（一時ファイルに書いて、同梱のテクスチャを移し終えてから置き換える）
+    takes = "keep"
+    if args.take:
+        # 入れるテイク（元の .msv のテイクの後ろに足す）
+        try:
+            extra = _extract_takes(args.take, args.namespace, args.quiet)
+        except _TakeFail as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        takes = list(scene.get("savedTakes") or []) + extra
     say = None if args.quiet else (lambda msg: sys.stderr.write("\r%-60s" % msg[:60]))
     r = package.write_package(scene, out, textures=args.textures, max_size=args.max_size, quality=args.quality,
                               source=source_pkg, convert=False if args.keep_textures else None, progress=say,
-                              view=None if args.no_view else "keep")
+                              view=None if args.no_view else "keep", takes=takes)
     if not args.quiet:
         sys.stderr.write("\r%-60s\r" % "")
     print("書き出しました: %s（%s・%.2f 秒）" % (out, _mb(r["size"]), time.time() - t0))
     if r["textures"]:
         print("  テクスチャ %d 枚（%s → %s%s）" % (r["textures"], _mb(r["textureBytesIn"]), _mb(r["textureBytesOut"]),
                                            "・WebP" if r["converted"] else "・元のまま"))
+    if r.get("takes"):
+        print("  テイク %d 個" % r["takes"])
     for w in r["warnings"]:
         print("  警告: " + w)
     if not args.quiet:
         for w in scene.get("warnings") or []:
             print("  警告: " + w)
+    return 0
+
+
+class _TakeFail(Exception):
+    pass
+
+
+def _extract_takes(paths, namespaces, quiet):
+    """コマンドラインのテイクの取り出し（ma_viewer.take.extract_takes）。取り出せなければ _TakeFail"""
+    from .take import TakeToolError, extract_takes
+    say = None if quiet else (lambda msg: sys.stderr.write("\r%-60s" % msg[:60]))
+    try:
+        takes, notes, errors = extract_takes(paths, namespaces or None, progress=say)
+    except TakeToolError as exc:
+        raise _TakeFail(str(exc))
+    if not quiet:
+        sys.stderr.write("\r%-60s\r" % "")
+    for n in notes:
+        print("  お知らせ: " + n, file=sys.stderr)
+    for name, err in errors:
+        print("  %s を読めません: %s" % (name, err.splitlines()[0] if err else ""), file=sys.stderr)
+    if errors:
+        raise _TakeFail("テイクを読めないファイルがあります")
+    if not takes:
+        raise _TakeFail("テイクが見つかりませんでした")
+    return takes
+
+
+def cmd_take(args) -> int:
+    """.ma・.msv・.json・.msva → テイクだけのファイル（.msva）"""
+    from . import package
+    from .take import take_summary
+    t0 = time.time()
+    out = args.output or os.path.splitext(args.inputs[0])[0] + package.TAKES_EXT
+    try:
+        takes = _extract_takes(args.inputs, args.namespace, args.quiet)
+    except _TakeFail as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    r = package.write_takes(takes, out)
+    print("書き出しました: %s（テイク %d 個・%s・%.2f 秒）" % (out, r["takes"], _mb(r["size"]), time.time() - t0))
+    for t in takes:
+        print("  - " + take_summary(t))
     return 0
 
 
@@ -174,6 +226,16 @@ def cmd_build_html(args) -> int:
 
 
 def cmd_info(args) -> int:
+    from . import package
+    if package.is_takes(args.input):
+        from .take import take_summary
+        takes = package.read_takes(args.input)
+        print("ファイル: %s（テイク %d 個）" % (args.input, len(takes)))
+        for t in takes:
+            print("  - " + take_summary(t))
+            for w in t.get("warnings") or []:
+                print("      警告: " + w)
+        return 0
     from .extract_ma import load_ma
     t0 = time.time()
     scene = load_ma(args.input, animation=True)
@@ -344,7 +406,16 @@ def main(argv=None) -> int:
     pk.add_argument("--keep-textures", action="store_true", help="テクスチャを WebP にせず、元のファイルのまま入れる")
     pk.add_argument("--no-animation", action="store_true", help="アニメーションを書き出さない")
     pk.add_argument("--no-view", action="store_true", help="元の .msv の表示の状態（カメラ・表示設定など）を引き継がない")
+    pk.add_argument("--take", action="append", default=[], metavar="FILE",
+                    help="入れるテイク（.msva か、取り出す .ma・.msv・.json。何度でも指定できる。Node.js が要る）")
+    pk.add_argument("--namespace", action="append", default=[], help="--take から取り出す名前空間（省略時はすべて）")
     pk.add_argument("-q", "--quiet", action="store_true")
+    pt = sub.add_parser("take", help="アニメーションだけ（テイク）を取り出して .msva に書き出す（Node.js が要る）")
+    pt.add_argument("inputs", nargs="+", help=".ma・.msv・.json・.msva（いくつでも）")
+    pt.add_argument("-o", "--output", help="書き出す .msva（省略時は最初の入力と同じ名前）")
+    pt.add_argument("--namespace", action="append", default=[],
+                    help="取り出す名前空間（何度でも指定できる。名前空間なしは \"\"。省略時はすべて）")
+    pt.add_argument("-q", "--quiet", action="store_true")
     pb = sub.add_parser("build-html", help="ビューアを CSS・JS 込みの 1 ファイルの HTML にまとめる（Teams・Slack などで渡す用）")
     pb.add_argument("-o", "--output", help="書き出す HTML（省略時は viewer.html。--embed なら入力と同じ名前）")
     pb.add_argument("--embed", help="埋め込むシーン（.msv。.ma・.json ならパッケージにしてから入れる）。開くとこのシーンを表示する")
@@ -386,6 +457,8 @@ def main(argv=None) -> int:
         return cmd_build_html(args)
     if args.cmd == "info":
         return cmd_info(args)
+    if args.cmd == "take":
+        return cmd_take(args)
     if args.cmd == "rig":
         return cmd_rig(args)
     if args.cmd == "excerpt":
