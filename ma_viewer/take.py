@@ -18,6 +18,7 @@ from typing import Callable, List, Optional, Tuple
 TAKE_SOURCE_EXT = (".msva", ".msv", ".json", ".ma")
 
 ProgressFn = Optional[Callable[[str], None]]
+FractionFn = Optional[Callable[[float, str], None]]     # 進み具合（0〜1, 文言）。テイクの一覧の読み込み中の行に出す
 
 
 def source_scene(scene: dict) -> dict:
@@ -43,20 +44,31 @@ def _missing_references(scene: dict) -> List[dict]:
                         and r["namespace"].startswith(o["namespace"] + ":") for o in refs)]
 
 
-def read_source(path: str, references: bool = True, progress: ProgressFn = None) -> Tuple[Optional[dict], List[str]]:
-    """1 つのファイルから、テイクの元（とお知らせ）を作る。読めないものは例外"""
+def read_source(path: str, references: bool = True, progress: ProgressFn = None,
+                fraction: FractionFn = None) -> Tuple[Optional[dict], List[str]]:
+    """1 つのファイルから、テイクの元（とお知らせ）を作る。読めないものは例外。
+    progress は文言だけ（コマンドライン）、fraction は (0〜1, 文言)（テイクの一覧の読み込み中の行）"""
     from . import package
     name = os.path.basename(path)
     low = path.lower()
     notes: List[str] = []
+
+    def step(frac: float, msg: str):
+        if fraction is not None:
+            fraction(max(0.0, min(1.0, frac)), msg)
     if low.endswith(package.TAKES_EXT):
+        step(0.2, "テイクを読み込み中")
         return {"kind": "takes", "takes": package.read_takes(path), "name": name}, notes
     if low.endswith(".msv"):
+        step(0.2, "パッケージを読み込み中")
         scene, _pkg = package.read_package(path)
+        step(0.8, "テイクを取り出し中")
         return {"kind": "scene", "scene": source_scene(scene), "name": name}, notes
     if low.endswith(".json"):
+        step(0.2, "JSON を読み込み中")
         with open(path, "r", encoding="utf-8") as f:
             scene = json.load(f)
+        step(0.8, "テイクを取り出し中")
         return {"kind": "scene", "scene": source_scene(scene), "name": name}, notes
     if low.endswith(".ma"):
         from .extract_ma import load_ma
@@ -64,6 +76,7 @@ def read_source(path: str, references: bool = True, progress: ProgressFn = None)
         def prog(frac, msg, *_rest):
             if progress is not None:
                 progress("%s: %s" % (name, msg))
+            step(float(frac) * 0.9, msg)                   # 残りは、参照先のないリファレンスの取り出しと受け渡し
         scene = load_ma(path, prog, animation=True, references=references)
         # 読み込めなかったリファレンス（参照先がない・アンロード・読まない設定）のキーは、参照先を読まずに、
         # リファレンスの編集から取り出す（takes_from_ma）
@@ -71,6 +84,7 @@ def read_source(path: str, references: bool = True, progress: ProgressFn = None)
         extra: List[dict] = []
         if missing:
             spaces = [r["namespace"] for r in missing]
+            step(0.9, "リファレンスの編集から取り出し中")
             got, n2 = takes_from_ma(path, progress)
             notes.extend(n2)
             extra = [t for t in got if any(t["namespace"] == ns or t["namespace"].startswith(ns + ":") for ns in spaces)]
@@ -89,7 +103,7 @@ def read_source(path: str, references: bool = True, progress: ProgressFn = None)
     raise ValueError("テイクを読めない種類のファイルです（.msva・.msv・.json・.ma）")
 
 
-def read_maya_source(st, progress: ProgressFn = None) -> Tuple[Optional[dict], List[str]]:
+def read_maya_source(st, progress: ProgressFn = None, fraction: FractionFn = None) -> Tuple[Optional[dict], List[str]]:
     """Maya で開いているシーン（maya_scene.collect が集めた SceneText）から、テイクの元を作る。
     変換は .ma を開いたときと同じ（maya_scene.load_staged）。Maya の API は使わないので、読み込みスレッドで呼べる"""
     from .maya_scene import load_staged
@@ -99,6 +113,8 @@ def read_maya_source(st, progress: ProgressFn = None) -> Tuple[Optional[dict], L
     def prog(frac, msg, *_rest):
         if progress is not None:
             progress("%s: %s" % (name, msg))
+        if fraction is not None:
+            fraction(max(0.0, min(1.0, float(frac) * 0.9)), msg)
     scene, load_animation = load_staged(st, prog)
     anim = load_animation(prog)
     if anim is not None:

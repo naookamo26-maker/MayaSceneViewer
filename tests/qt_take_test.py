@@ -19,6 +19,14 @@ sys.path.insert(0, ROOT)
 RIG = os.path.join(ROOT, "samples", "reference_project", "assets", "arm_rig.ma")
 SHOT = os.path.join(ROOT, "samples", "reference_project", "scenes", "shot.ma")
 
+PENDING_JS = """JSON.stringify((() => {
+  const rows = [...document.querySelectorAll('#take-list .take-row')].slice(1);
+  return { pending: window.mayaViewer.pendingTakeCount(),
+           names: rows.filter((r) => r.classList.contains('pending')).map((r) => r.querySelector('.take-name').textContent),
+           failed: rows.filter((r) => r.classList.contains('failed')).map((r) => r.querySelector('.take-name').textContent),
+           last: (rows[rows.length - 1].querySelector('.take-name') || {}).textContent };
+})())"""
+
 STATE_JS = """JSON.stringify((() => {
   const s = window.mayaViewer.getStats();
   const rows = [...document.querySelectorAll('#take-list .take-row')];
@@ -151,6 +159,33 @@ def main() -> int:
             js("(window.mayaViewer.debug.app.removeTake(2), window.mayaViewer.debug.app.removeTake(1), 1)",
                lambda _r: nxt(), 300)), timeout=40)
 
+    def step_progress(nxt):
+        # 読み込み中の行: まずファイルごとに行を足し（ファイル名の順）、読み終えたものからテイクに置き換える。
+        # 読めないファイルは、理由つきの行として残り、消せる
+        bad = os.path.join(tmp.name, "a_broken.json")
+        with open(bad, "w", encoding="utf-8") as f:
+            f.write("{ broken")
+        before = {}
+
+        def first(s):
+            before.update(s)
+            win.load_take_files([SHOT, bad])
+            js(PENDING_JS, got_pending, 0)              # 行を足す呼び出しのすぐあと（ビューアへの呼び出しは送った順に動く）
+
+        def got_pending(p):
+            check(p["names"] == ["a_broken.json", "shot.ma"] and p["pending"] >= 1,
+                  "まず読み込み中の行をファイル名の順に足す: %s" % p["names"])
+            wait_until(lambda s: s["count"] == before["count"] + 1, lambda s: js(PENDING_JS, done, 0), timeout=40)
+
+        def done(p):
+            check(p["pending"] == 0 and p["failed"] == ["a_broken.json"], "読めないファイルは理由つきの行で残る: %s" % p)
+            check(p["last"] == "shot", "読み終えた .ma はテイクに置き換わる: %s" % p["last"])
+            js("(() => { const a = window.mayaViewer.debug.app; a.removeTake(a.takes.findIndex((e) => e.pending));"
+               " a.removeTake(a.takes.length - 1); return 1; })()",
+               lambda _r: state(lambda s: (check(s["count"] == before["count"] and len(s["rows"]) == before["count"] + 1,
+                                                 "読めなかった行を消せる"), nxt())), 300)
+        state(first)
+
     def step_switch(nxt):
         js("window.mayaViewer.setTake(0)", lambda _r: state(lambda s: (
             check(s["active"] == 0 and s["activeRow"] == 0, "テイクに切り替える（行を強調）"),
@@ -270,14 +305,29 @@ def main() -> int:
             drop_at([shot_json], (r[0], r[1]), done)
         rect_of("#viewport", got_rect)
 
+    def step_export_scene(nxt):
+        # テイクがなく、シーンのアニメーションだけのとき: ［テイクを書き出す…］でシーンのアニメーションを .msva にする
+        out = os.path.join(tmp.name, "scene_only.msva")
+        orig = QtWidgets.QFileDialog.getSaveFileName
+        QtWidgets.QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (out, ""))
+        win.export_takes()
+
+        def later():
+            QtWidgets.QFileDialog.getSaveFileName = orig
+            takes = package.read_takes(out) if os.path.isfile(out) else []
+            check([(t["name"], t["namespace"]) for t in takes] == [("shot", "armA")],
+                  "テイクがなければ、シーンのアニメーションを .msva に書き出す: %s" % [t["name"] for t in takes])
+            nxt()
+        QtCore.QTimer.singleShot(1500, later)
+
     def finish(*_):
         win.a_anim.setChecked(load_setting)
         win.close()
         tmp.cleanup()
         app.quit()
 
-    QtCore.QTimer.singleShot(500, lambda: run([step_open, step_load, step_load_ma, step_switch, step_drop_list, step_drop_tab, step_drop_msva,
-                                               step_export_msva, step_export_msv, step_reopen, step_overwrite, step_drop_scene, finish]))
+    QtCore.QTimer.singleShot(500, lambda: run([step_open, step_load, step_progress, step_load_ma, step_switch, step_drop_list, step_drop_tab, step_drop_msva,
+                                               step_export_msva, step_export_msv, step_reopen, step_overwrite, step_drop_scene, step_export_scene, finish]))
     QtCore.QTimer.singleShot(150000, lambda: (check(False, "時間切れ"), finish()))
     app.exec()
     print("ALL OK" if ok["v"] else "FAILED")
