@@ -2,8 +2,11 @@
 // 状態は ViewerApp（main.js の takes・activeTake）が持ち、ここは表示と操作の受け付けだけ。
 //   行: 名前・範囲・フレーム数・当てている相手（名前空間）・警告の印（当たらなかった結び付け。クリックで中身）
 //   行の操作: 名前の変更（F2・ダブルクリック）・削除（Delete）・.msva に書き出す（ブラウザはダウンロード）
-//   一覧の操作: 読み込む（ファイルを選ぶ）・すべて書き出す。ファイルを一覧にドラッグ＆ドロップするとテイクとして足す
-import { takeFrames } from './takes.js';
+//   一覧の操作: 読み込む（ファイルを選ぶ）・すべて書き出す・並べ替え（名前・開始フレーム・長さ・当てる先）。
+//   ファイルを一覧にドラッグ＆ドロップするとテイクとして足す
+//   当てる先: 候補が複数（名前空間が複数・名前空間のない同じリグが複数）なら、行の一覧で選ぶ
+//   並べ替え: 行をドラッグ、または Alt+↑↓
+import { takeFrames, takeTargetLabel } from './takes.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -40,7 +43,80 @@ export class TakePanel {
       if (row && +row.dataset.index >= 0 && !e.target.closest('button')) this.startRename(+row.dataset.index);
     });
     this.list.addEventListener('keydown', (e) => this.onKey(e));
+    this.list.addEventListener('change', (e) => {
+      const sel = e.target.closest('select.take-target');
+      const row = sel && sel.closest('.take-row');
+      if (row) this.app.setTakeTarget(+row.dataset.index, +sel.value);
+    });
+    const sort = $('take-sort');
+    if (sort) {
+      sort.addEventListener('change', () => {
+        const [by, dir] = String(sort.value).split(':');
+        sort.value = '';
+        if (by) this.app.sortTakes(by, dir === 'desc');
+      });
+      sort.addEventListener('keydown', (e) => e.stopPropagation());
+    }
+    this.bindReorder();
     this.render();
+  }
+
+  /**
+   * 行をドラッグして並べ替える（ポインターで動かす。HTML のドラッグ＆ドロップは、Qt 版の Web ビューがドロップを受けないため
+   * 使わない）。4 px 以上動かしたらドラッグとし、離したときに、線を出した位置へ動かす
+   */
+  bindReorder() {
+    let drag = null;
+    const insertAt = (y) => {
+      const rows = [...this.list.querySelectorAll('.take-row')].filter((el) => +el.dataset.index >= 0);
+      for (const el of rows) {
+        const b = el.getBoundingClientRect();
+        if (y < b.top + b.height / 2) return +el.dataset.index;
+      }
+      return this.app.takes.length;
+    };
+    const showLine = (at) => {
+      for (const el of this.list.querySelectorAll('.take-row')) {
+        const i = +el.dataset.index;
+        el.classList.toggle('drop-before', at >= 0 && i === at);
+        el.classList.toggle('drop-after', at >= 0 && at === this.app.takes.length && i === at - 1);
+        el.classList.toggle('dragging', !!drag && drag.active && i === drag.from);
+      }
+    };
+    this.list.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || e.target.closest('button, input, select')) return;
+      const row = e.target.closest('.take-row');
+      const i = row ? +row.dataset.index : -1;
+      if (i < 0 || this.editing >= 0) return;
+      drag = { from: i, y: e.clientY, id: e.pointerId, active: false, at: -1 };
+    });
+    this.list.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (!drag.active) {
+        if (Math.abs(e.clientY - drag.y) < 4) return;
+        drag.active = true;
+        try { this.list.setPointerCapture(e.pointerId); } catch (err) { /* 取れなくてもよい */ }
+        this.list.classList.add('reordering');
+      }
+      drag.at = insertAt(e.clientY);
+      showLine(drag.at);
+      e.preventDefault();
+    });
+    const end = (e, cancel) => {
+      if (!drag || (e && e.pointerId !== drag.id)) return;
+      const d = drag;
+      drag = null;
+      this.list.classList.remove('reordering');
+      showLine(-1);
+      if (!d.active) return;
+      this.suppressClick = true;                   // ドラッグの終わりのクリックで、テイクを切り替えない
+      setTimeout(() => { this.suppressClick = false; }, 0);
+      if (cancel || d.at < 0) return;
+      const to = d.at > d.from ? d.at - 1 : d.at;
+      if (this.app.moveTake(d.from, to)) this.focusRow(to);
+    };
+    this.list.addEventListener('pointerup', (e) => end(e, false));
+    this.list.addEventListener('pointercancel', (e) => end(e, true));
   }
 
   /** 右パネルの縦のタブ（プロパティ・テイク）。クリック・↑↓ キーで切り替える */
@@ -94,6 +170,8 @@ export class TakePanel {
   }
 
   onClick(e) {
+    if (this.suppressClick) return;
+    if (e.target.closest('select')) return;
     const row = e.target.closest('.take-row');
     if (!row) return;
     const i = +row.dataset.index;
@@ -113,12 +191,17 @@ export class TakePanel {
 
   onKey(e) {
     if (e.target.tagName === 'INPUT') return;
+    if (e.target.tagName === 'SELECT') { e.stopPropagation(); return; }   // 当てる先の一覧の操作はビューアに渡さない
     const row = e.target.closest('.take-row');
     if (!row) return;
     const i = +row.dataset.index;
     const rows = [...this.list.querySelectorAll('.take-row')];
     const k = rows.indexOf(row);
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && e.altKey) {
+      // Alt+↑↓: テイクを上下に動かす
+      const to = i + (e.key === 'ArrowDown' ? 1 : -1);
+      if (i >= 0 && this.app.moveTake(i, to)) this.focusRow(to);
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       const next = rows[k + (e.key === 'ArrowDown' ? 1 : -1)];
       if (next) next.focus();
     } else if (e.key === 'Enter' || e.key === ' ') {
@@ -170,6 +253,8 @@ export class TakePanel {
     if (count) count.textContent = takes.length ? `${takes.length}` : '';
     const all = $('take-export-all');
     if (all) all.hidden = !takes.length;
+    const sort = $('take-sort');
+    if (sort) sort.hidden = takes.length < 2;
     const hint = $('take-hint');
     if (hint) {
       hint.textContent = app.built ? (this.qt('importTakes') ? '.msva・.ma・.msv・共通 JSON' : '.msva・.msv・共通 JSON') + ' をここにドラッグ＆ドロップすると、テイクとして足します（行をクリックで切り替え）'
@@ -186,14 +271,14 @@ export class TakePanel {
         const meta = `${fmtFrame(t.start)}〜${fmtFrame(t.end)}`;
         const report = e.report;
         const missed = report ? report.missed.length + (report.staticsMissed ? 1 : 0) : 0;
-        html.push(this.rowHtml(i, t.name, meta, e.namespace, missed, report));
+        html.push(this.rowHtml(i, t.name, meta, e, missed, report));
       });
     }
     this.list.innerHTML = html.join('');
     this.list.hidden = !app.built;
   }
 
-  rowHtml(i, name, meta, ns, missed, report = null) {
+  rowHtml(i, name, meta, target, missed, report = null) {
     const app = this.app;
     const active = i === app.activeTake;
     const t = i >= 0 ? app.takes[i].take : null;
@@ -207,12 +292,23 @@ export class TakePanel {
       + '<button type="button" class="icon-btn" data-act="export" title=".msva に書き出す" aria-label=".msva に書き出す">⤓</button>'
       + '<button type="button" class="icon-btn" data-act="delete" title="一覧から消す（Delete）" aria-label="一覧から消す">×</button>'
       + '</span>';
-    const nsHtml = ns ? `<span class="take-ns">${esc(ns)}</span>` : '';
+    // 当てる先: 候補が複数あれば一覧で選ぶ。1 つなら、名前空間・ノードのあるときだけ名前を出す
+    let nsHtml = '';
+    const label = target ? takeTargetLabel(target) : '';
+    const cands = (target && target.candidates) || [];
+    if (cands.length > 1) {
+      const cur = cands.findIndex((c) => c.namespace === target.namespace && (c.root || null) === (target.root || null));
+      nsHtml = `<select class="take-target" aria-label="当てる先" title="当てる先（名前空間・キャラクターのいちばん上のノード）">`
+        + cands.map((c, k) => `<option value="${k}"${k === cur ? ' selected' : ''}>${esc(takeTargetLabel(c))}（${c.count}）</option>`).join('')
+        + '</select>';
+    } else if (target && (target.namespace || target.root)) {
+      nsHtml = `<span class="take-ns">${esc(label)}</span>`;
+    }
     // 行のツールチップ: 名前・範囲・フレーム数・当てている相手・警告
     const tip = [name];
     if (t) {
       tip.push(`${fmtFrame(t.start)}〜${fmtFrame(t.end)}（${takeFrames(t)} フレーム・${t.fps} fps）`);
-      tip.push(`当てている相手: ${ns || '名前空間なし'}`);
+      tip.push(`当てている先: ${label}${target.root ? `（${target.root}）` : ''}`);
       if (t.source && t.source.name) tip.push(`取り出したファイル: ${t.source.name}`);
     } else if (meta) tip.push(meta);
     if (report && report.warnings && report.warnings.length) tip.push(...report.warnings);
@@ -223,7 +319,7 @@ export class TakePanel {
     }
     return `<li class="take-row${active ? ' active' : ''}${i < 0 ? ' scene' : ''}" role="option" tabindex="0" data-index="${i}"`
       + ` aria-selected="${active}"${active ? ' aria-current="true"' : ''} title="${esc(tip.join('\n'))}">`
-      + `${nameHtml}<span class="take-range">${esc(meta)}</span>${nsHtml}${warn}${acts}</li>${detail}`;
+      + `${nameHtml}<span class="take-range">${esc(meta)}</span>${acts}${nsHtml}${warn}</li>${detail}`;
   }
 
   /** ページの座標 (x, y) がテイクの区切りの中なら、入れる位置（行のあいだ。末尾は takes.length）。外は -1 */

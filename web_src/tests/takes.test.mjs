@@ -11,7 +11,8 @@ import { Matrix4 } from 'three';
 import { AnimationClip } from '../src/animation.js';
 import { RigEvaluator } from '../src/rig.js';
 import {
-  chooseNamespace, composeAnimation, decodeTake, encodeTake, namespaceOf, splitAnimation, stripNamespace, takeNamespaces,
+  chooseNamespace, chooseTarget, composeAnimation, decodeTake, encodeTake, namespaceOf, splitAnimation, stripNamespace,
+  takeNamespaces, targetRoots,
 } from '../src/takes.js';
 import { openPackage, openTakes } from '../src/package.js';
 
@@ -393,4 +394,72 @@ test('参照先のファイルがないショット: リファレンスの編集
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+/** 同じリグを、名前空間を付けずに 2 体（|charA・|charB の下）並べたシーン（アニメーションなし） */
+function twoCopies(src) {
+  const nodes = [];
+  const restNodes = [];
+  for (const g of ['charA', 'charB']) {
+    const gi = nodes.length;
+    nodes.push({ name: g, path: `|${g}`, type: 'transform', parent: -1, matrix: new Matrix4().toArray(), attrs: { t: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1], ro: 'xyz' } });
+    restNodes.push({ node: gi, joint: false, ro: 0, t: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1], ra: [0, 0, 0] });
+    const off = nodes.length;
+    for (const n of src.nodes) {
+      nodes.push({ ...n, path: `|${g}${n.path}`, parent: n.parent >= 0 ? n.parent + off : gi });
+    }
+    // ローカル行列の材料（元のアニメーションのもの。isNode もずらす）
+    for (const e of src.animation.nodes) {
+      restNodes.push({ ...e, node: e.node + off, ...(e.isNode >= 0 ? { isNode: e.isNode + off } : {}) });
+    }
+  }
+  return { ...src, nodes, restNodes, animation: undefined, meshes: [], curves: [], cameras: [] };
+}
+
+test('名前空間のない同じリグが 2 体: いちばん上のノードで当てる先を選ぶ（ほかのキャラクターの動きは残す）', () => {
+  const src = load('anim_sample.json');
+  const { take } = splitAnimation(src, '');
+  const scene = twoCopies(src);
+  assert.deepEqual(targetRoots(scene, take, ''), ['|charA', '|charB']);
+  const pick = chooseTarget(scene, take);
+  assert.deepEqual(pick.candidates.map((c) => c.root), ['|charA', '|charB']);
+  assert.equal(pick.root, '|charA', '既定は最初のもの');
+  // 当てる先を決めないと、同じ名前が 2 つあるので当たらない（あいまい）
+  const none = composeAnimation(scene, splitAnimation(scene, '').base, [{ take, namespace: '' }]);
+  assert.equal(none.report.applied, 0);
+  assert.ok(none.report.missed.every((m) => m.reason === 'ambiguous'));
+  // charA に当てる → charB に当てる（charA の動きは土台に残る）
+  const a = composeAnimation(scene, splitAnimation(scene, '', { root: '|charA' }).base, [{ take, namespace: '', root: '|charA' }]);
+  assert.deepEqual(a.report.missed, []);
+  const withA = { ...scene, animation: a.animation };
+  const b = composeAnimation(withA, splitAnimation(withA, '', { root: '|charB' }).base, [{ take, namespace: '', root: '|charB' }]);
+  assert.deepEqual(b.report.missed, []);
+  const orig = evaluateAll(src, src.animation);
+  const both = evaluateAll(scene, b.animation);
+  const off = { charA: 1, charB: 2 + src.nodes.length };
+  // キーの相手のノードを比べる（コンストレイントで動く forearm_twist は、このシーンにリグを写していないので比べない）
+  const keyed = [...new Set(src.animation.channels.map((c) => c.node))];
+  for (let i = 0; i < orig.frames.length; i++) {
+    for (const ni of keyed) {
+      const m = orig.frames[i].mats.get(ni);
+      for (const g of ['charA', 'charB']) {
+        const o = both.frames[i].mats.get(ni + off[g]);
+        assert.ok(o, `${g} の ${src.nodes[ni].path} が動く`);
+        for (let k = 0; k < 16; k++) assert.ok(Math.abs(m[k] - o[k]) < 1e-5, `${g} ${src.nodes[ni].path} @${orig.frames[i].f}`);
+      }
+    }
+  }
+  // charB だけを外して当て直しても、charA の動きはそのまま
+  const again = composeAnimation(withA, splitAnimation(withA, '', { root: '|charB' }).base, []);
+  assert.ok(again.animation.channels.every((c) => c.node < off.charB), '土台は charA のキーだけ');
+  assert.equal(again.animation.channels.length, a.animation.channels.length);
+});
+
+test('同じリグが 1 体なら、当てる先のノードは決めない', () => {
+  const src = load('anim_sample.json');
+  const { take } = splitAnimation(src, '');
+  assert.deepEqual(targetRoots(src, take, ''), []);
+  const pick = chooseTarget(src, take);
+  assert.equal(pick.root, null);
+  assert.equal(pick.candidates.length, 1);
 });

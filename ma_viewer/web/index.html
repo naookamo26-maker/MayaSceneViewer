@@ -303,7 +303,17 @@
       <div class="right-pane" id="sec-takes" role="tabpanel" aria-labelledby="tab-takes" hidden>
         <div class="take-tools">
           <button type="button" class="btn" id="take-import" title="テイク（.msva）か、ほかのシーン（Qt 版は .ma も）のアニメーションを読み込んで、一覧に足す">読み込む…</button>
-          <button type="button" class="btn" id="take-export-all" title="一覧のテイクをすべて .msva に書き出す" hidden>すべて書き出す…</button>
+          <button type="button" class="btn" id="take-export-all" title="一覧のテイクをすべて .msva に書き出す" hidden>書き出す…</button>
+          <select id="take-sort" class="take-sort" aria-label="テイクを並べ替える" title="テイクを並べ替える（行のドラッグ・Alt+↑↓ でも動かせる）" hidden>
+            <option value="" selected>並べ替え…</option>
+            <option value="name:asc">名前（昇順）</option>
+            <option value="name:desc">名前（降順）</option>
+            <option value="start:asc">開始フレーム（早い順）</option>
+            <option value="start:desc">開始フレーム（遅い順）</option>
+            <option value="length:asc">長さ（短い順）</option>
+            <option value="length:desc">長さ（長い順）</option>
+            <option value="target:asc">当てる先</option>
+          </select>
           <input type="file" id="take-input" accept=".msva,.msv,.json,application/json" multiple hidden>
         </div>
         <ul id="take-list" class="take-list" role="listbox" aria-label="テイク" hidden></ul>
