@@ -16,7 +16,7 @@ import {
 import { base64ToArrayBuffer } from './textures.js';
 import { MapManager, usageFor } from './mapManager.js';
 import { PACKAGE_EXT, TAKES_EXT, openPackage, openTakes } from './package.js';
-import { chooseTarget, composeAnimation, decodeTake, encodeTake, extractTakes, reasonText, splitAnimation, takeTargetLabel } from './takes.js';
+import { chooseTarget, composeAnimation, countMatches, decodeTake, encodeTake, extractTakes, namespaceOf, reasonText, splitAnimation, takeTargetLabel } from './takes.js';
 import { TakePanel } from './takePanel.js';
 import { buildTakesFile } from './takeFile.js';
 import { buildShareQuery, fetchFailureMessage, isZip, parseShareQuery } from './share.js';
@@ -1810,7 +1810,11 @@ class ViewerApp {
       if (pick.count === 0 && opts.drop) { skipped.push(take.name); continue; }
       // 書き出したときに当てていた先（appliedTo）が候補にあれば、それにする
       const was = take.appliedTo;
-      const keep = was && pick.candidates.find((c) => c.namespace === (was.namespace || '') && (c.root || null) === (was.root || null));
+      let keep = was && pick.candidates.find((c) => c.namespace === (was.namespace || '') && (c.root || null) === (was.root || null));
+      if (!keep && was && was.root) {                 // 自分で選んだノード（自動の候補にないもの）
+        const n = countMatches(scene, take, was.namespace || '', null, was.root);
+        if (n) { keep = { namespace: was.namespace || '', root: was.root, count: n }; pick.candidates.push(keep); }
+      }
       const target = keep || pick;
       delete take.appliedTo;
       entries.push({ take, namespace: target.namespace, root: target.root || null, candidates: pick.candidates, report: null });
@@ -1889,6 +1893,26 @@ class ViewerApp {
     return true;
   }
 
+  /**
+   * テイク i の当てる先を、ノード ni（の下）にする（自動で見つからないとき。階層で選んだノード）。
+   * 当たる結び付けがなければ変えない。戻り値: 変えたか
+   */
+  setTakeTargetNode(i, ni) {
+    const e = this.takes[i];
+    const n = this.data && this.data.nodes[ni];
+    if (!e || !n) return false;
+    const ns = namespaceOf(n.path);
+    const count = countMatches(this.takeScene(), e.take, ns, null, n.path);
+    if (!count) {
+      this.ui.setMessage(`${n.name} の下には、テイク ${e.take.name} の相手がありません`, 6000);
+      return false;
+    }
+    const cands = e.candidates || (e.candidates = []);
+    let k = cands.findIndex((c) => c.namespace === ns && c.root === n.path);
+    if (k < 0) { cands.push({ namespace: ns, root: n.path, count }); k = cands.length - 1; }
+    return this.setTakeTarget(i, k);
+  }
+
   /** テイクを from から to の位置へ動かす（選んでいるテイクは、そのまま選んでおく） */
   moveTake(from, to) {
     const n = this.takes.length;
@@ -1945,18 +1969,33 @@ class ViewerApp {
     this.takePanel.render();
   }
 
-  /** テイクを書き出せる形（JSON の文字列。数値の配列は base64）。indices を省くとすべて */
+  /**
+   * 書き出すテイク（当てていた先 appliedTo つき）。indices の -1 はシーンのアニメーション（名前空間ごとに取り出す）。
+   * indices を省くと一覧のすべて、一覧が空ならシーンのアニメーション
+   */
+  takesForExport(indices = null) {
+    const sceneTakes = () => (this.sceneAnim && this.data
+      ? extractTakes({ ...this.takeScene(), savedTakes: undefined }, this.sceneName || 'scene') : []);
+    if (!indices) return this.takes.length ? this.takes.map(withTarget) : sceneTakes();
+    const out = [];
+    for (const i of indices) {
+      if (i === -1) out.push(...sceneTakes());
+      else if (this.takes[i]) out.push(withTarget(this.takes[i]));
+    }
+    return out;
+  }
+
+  /** テイクを書き出せる形（JSON の文字列。数値の配列は base64）。indices は takesForExport と同じ */
   takesJson(indices = null) {
-    const list = indices ? indices.map((i) => this.takes[i]).filter(Boolean) : this.takes;
-    return JSON.stringify(list.map((e) => encodeTake(withTarget(e))));
+    return JSON.stringify(this.takesForExport(indices).map(encodeTake));
   }
 
   /** テイクを .msva にしてダウンロードする（ブラウザ。Qt 版は Python が書く）。indices を省くとすべて */
   async downloadTakes(indices = null, name = 'takes') {
-    const list = (indices ? indices.map((i) => this.takes[i]) : this.takes).filter(Boolean);
-    if (!list.length) return false;
+    const list = this.takesForExport(indices);
+    if (!list.length) { this.ui.setMessage('書き出すテイクがありません（シーンにもアニメーションがありません）', 5000); return false; }
     try {
-      const bytes = await buildTakesFile(list.map(withTarget), { version: VERSION });
+      const bytes = await buildTakesFile(list, { version: VERSION });
       const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
       const a = document.createElement('a');
       a.href = url;

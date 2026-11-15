@@ -270,6 +270,21 @@ def main() -> int:
             drop_at([shot_json], (r[0], r[1]), done)
         rect_of("#viewport", got_rect)
 
+    def step_export_scene(nxt):
+        # テイクがなく、シーンのアニメーションだけのとき: ［テイクを書き出す…］でシーンのアニメーションを .msva にする
+        out = os.path.join(tmp.name, "scene_only.msva")
+        orig = QtWidgets.QFileDialog.getSaveFileName
+        QtWidgets.QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (out, ""))
+        win.export_takes()
+
+        def later():
+            QtWidgets.QFileDialog.getSaveFileName = orig
+            takes = package.read_takes(out) if os.path.isfile(out) else []
+            check([(t["name"], t["namespace"]) for t in takes] == [("shot", "armA")],
+                  "テイクがなければ、シーンのアニメーションを .msva に書き出す: %s" % [t["name"] for t in takes])
+            nxt()
+        QtCore.QTimer.singleShot(1500, later)
+
     def finish(*_):
         win.a_anim.setChecked(load_setting)
         win.close()
@@ -277,7 +292,7 @@ def main() -> int:
         app.quit()
 
     QtCore.QTimer.singleShot(500, lambda: run([step_open, step_load, step_load_ma, step_switch, step_drop_list, step_drop_tab, step_drop_msva,
-                                               step_export_msva, step_export_msv, step_reopen, step_overwrite, step_drop_scene, finish]))
+                                               step_export_msva, step_export_msv, step_reopen, step_overwrite, step_drop_scene, step_export_scene, finish]))
     QtCore.QTimer.singleShot(150000, lambda: (check(False, "時間切れ"), finish()))
     app.exec()
     print("ALL OK" if ok["v"] else "FAILED")

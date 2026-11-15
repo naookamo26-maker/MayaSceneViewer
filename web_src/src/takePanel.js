@@ -48,6 +48,10 @@ export class TakePanel {
       const row = sel && sel.closest('.take-row');
       if (row) this.app.setTakeTarget(+row.dataset.index, +sel.value);
     });
+    const mi = $('menu-take-import');
+    if (mi) mi.addEventListener('click', () => $('take-import').click());
+    const me = $('menu-take-export');
+    if (me) me.addEventListener('click', () => this.exportTakes(null));
     const sort = $('take-sort');
     if (sort) {
       sort.addEventListener('change', () => {
@@ -160,10 +164,11 @@ export class TakePanel {
   /** Qt 版のブリッジの関数があるか */
   qt(name) { return !!(this.app.bridge && typeof this.app.bridge[name] === 'function'); }
 
+  /** テイクを .msva に書き出す。indices の -1 はシーンのアニメーション。省くと一覧のすべて（空ならシーンのアニメーション） */
   exportTakes(indices) {
-    if (!this.app.takes.length) { this.app.ui.setMessage('書き出すテイクがありません', 4000); return; }
-    const first = this.app.takes[indices ? indices[0] : 0];
-    const name = indices && indices.length === 1 && first ? first.take.name : (this.app.sceneName || 'takes').replace(/\.[^.]*$/, '');
+    if (!this.app.takes.length && !this.app.sceneAnim) { this.app.ui.setMessage('書き出すテイクがありません', 4000); return; }
+    const first = indices && indices.length === 1 && indices[0] >= 0 ? this.app.takes[indices[0]] : null;
+    const name = first ? first.take.name : (this.app.sceneName || 'takes').replace(/\.[^.]*$/, '');
     // Qt 版は保存先を Python が聞く。ブラウザはダウンロードとして保存する
     if (this.qt('exportTakes')) this.app.bridge.exportTakes(this.app.takesJson(indices), name);
     else this.app.downloadTakes(indices, name);
@@ -183,10 +188,18 @@ export class TakePanel {
       else if (act === 'rename') this.startRename(i);
       else if (act === 'delete') this.app.removeTake(i);
       else if (act === 'export') this.exportTakes([i]);
+      else if (act === 'target-node') this.targetSelectedNode(i);
       return;
     }
     if (e.target.closest('input')) return;
     if (i !== this.app.activeTake) this.app.setTake(i);
+  }
+
+  /** 階層・ビューポートで選んでいるノードを、テイク i の当てる先にする */
+  targetSelectedNode(i) {
+    const ni = this.app.selected;
+    if (!(ni >= 0)) { this.app.ui.setMessage('当てる先にするノード（キャラクターのいちばん上のグループなど）を、階層で選んでください', 6000); return; }
+    this.app.setTakeTargetNode(i, ni);
   }
 
   onKey(e) {
@@ -252,12 +265,15 @@ export class TakePanel {
     const count = $('take-count');
     if (count) count.textContent = takes.length ? `${takes.length}` : '';
     const all = $('take-export-all');
-    if (all) all.hidden = !takes.length;
+    if (all) {
+      all.hidden = !takes.length && !app.sceneAnim;
+      all.title = takes.length ? '一覧のテイクをすべて .msva に書き出す' : 'シーンのアニメーションを .msva に書き出す';
+    }
     const sort = $('take-sort');
     if (sort) sort.hidden = takes.length < 2;
     const hint = $('take-hint');
     if (hint) {
-      hint.textContent = app.built ? (this.qt('importTakes') ? '.msva・.ma・.msv・共通 JSON' : '.msva・.msv・共通 JSON') + ' をここにドラッグ＆ドロップすると、テイクとして足します（行をクリックで切り替え）'
+      hint.textContent = app.built ? (this.qt('importTakes') ? '.msva・.ma・.msv・共通 JSON' : '.msva・.msv・共通 JSON') + ' をこのタブにドラッグ＆ドロップすると、テイクとして足します（行をクリックで切り替え。テイクがなければ［書き出す…］でシーンのアニメーションを .msva にできます）'
         : 'シーンを開くと、テイク（ほかのシーンのアニメーション）を当てて切り替えられます';
     }
     const html = [];
@@ -287,9 +303,11 @@ export class TakePanel {
       : `<span class="take-name">${esc(name)}</span>`;
     const warn = missed ? `<button type="button" class="take-warn" data-act="warn" aria-expanded="${this.open.has(i)}"`
       + ` title="当たらなかった結び付けがあります（クリックで一覧）">⚠${missed}</button>` : '';
-    const acts = i < 0 ? '' : '<span class="take-acts">'
+    const exportBtn = '<button type="button" class="icon-btn" data-act="export" title=".msva に書き出す" aria-label=".msva に書き出す">⤓</button>';
+    const acts = i < 0 ? (app.sceneAnim ? `<span class="take-acts">${exportBtn}</span>` : '') : '<span class="take-acts">'
       + '<button type="button" class="icon-btn" data-act="rename" title="名前を変える（F2）" aria-label="名前を変える">✎</button>'
-      + '<button type="button" class="icon-btn" data-act="export" title=".msva に書き出す" aria-label=".msva に書き出す">⤓</button>'
+      + '<button type="button" class="icon-btn" data-act="target-node" title="階層で選んでいるノードの下に当てる（当てる先が自動で見つからないとき）" aria-label="選んでいるノードに当てる">◎</button>'
+      + exportBtn
       + '<button type="button" class="icon-btn" data-act="delete" title="一覧から消す（Delete）" aria-label="一覧から消す">×</button>'
       + '</span>';
     // 当てる先: 候補が複数あれば一覧で選ぶ。1 つなら、名前空間・ノードのあるときだけ名前を出す
@@ -301,8 +319,9 @@ export class TakePanel {
       nsHtml = `<select class="take-target" aria-label="当てる先" title="当てる先（名前空間・キャラクターのいちばん上のノード）">`
         + cands.map((c, k) => `<option value="${k}"${k === cur ? ' selected' : ''}>${esc(takeTargetLabel(c))}（${c.count}）</option>`).join('')
         + '</select>';
-    } else if (target && (target.namespace || target.root)) {
-      nsHtml = `<span class="take-ns">${esc(label)}</span>`;
+    } else if (target) {
+      // 候補が 1 つでも、当てている先を出す（名前空間もノードもなければ「シーン全体」）
+      nsHtml = `<span class="take-ns" title="当てる先">${esc(target.namespace || target.root ? label : 'シーン全体')}</span>`;
     }
     // 行のツールチップ: 名前・範囲・フレーム数・当てている相手・警告
     const tip = [name];
