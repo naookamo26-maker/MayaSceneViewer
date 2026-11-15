@@ -273,7 +273,14 @@ summary {
 /* テイクの一覧（takePanel.js）。1 行に名前・範囲・相手（名前空間）・警告の印。行の操作はマウスを載せたとき・選んだときに出す */
 #sec-takes { padding: 8px 10px 12px; }
 .take-tools { display: flex; gap: 6px; margin-bottom: 6px; }
+.take-tools .btn { white-space: nowrap; padding: 0 7px; }
 .take-tools .btn[hidden] { display: none; }
+.take-sort { height: 24px; margin-left: auto; min-width: 0; max-width: 96px; }
+.take-sort[hidden] { display: none; }
+.take-target { flex: none; max-width: 110px; height: 18px; padding: 0 2px; font-size: 11px;
+  background: var(--panel-2); color: var(--text-dim); border: 1px solid var(--line); border-radius: var(--radius); }
+.take-list.reordering { cursor: grabbing; user-select: none; }
+.take-row.dragging { opacity: 0.55; }
 .take-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius); }
 .take-row {
   position: relative; display: flex; align-items: center; gap: 6px;
@@ -290,12 +297,10 @@ summary {
 .take-range { flex: none; font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .take-ns { flex: none; max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 0 5px; border-radius: 8px; background: var(--panel-2); color: var(--text-dim); font-size: 11px; }
-.take-acts {
-  display: none; position: absolute; right: 2px; top: 1px; bottom: 1px; align-items: center; gap: 2px; padding-left: 6px;
-  background: linear-gradient(to right, transparent, var(--panel) 6px);
-}
+/* 行の操作は、マウスを載せたとき・フォーカスがあるときに範囲の表示と入れ替えて出す（当てる先の一覧には重ねない） */
+.take-acts { display: none; flex: none; align-items: center; gap: 2px; }
 .take-row:hover .take-acts, .take-row:focus-within .take-acts { display: inline-flex; }
-.take-row.active .take-acts { background: linear-gradient(to right, transparent, #4a3f2f 6px); }
+.take-row:hover .take-range, .take-row:focus-within .take-range { display: none; }
 .take-acts .icon-btn { width: 20px; height: 18px; font-size: 11px; }
 .take-warn {
   flex: none; height: 16px; padding: 0 5px; border: 1px solid #6b5420; border-radius: 8px; line-height: 14px;

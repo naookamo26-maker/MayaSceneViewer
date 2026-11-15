@@ -34,6 +34,13 @@ export function stripNamespace(path, ns) {
   return String(path || '').split('|').map((c) => (c.startsWith(pre) ? c.slice(pre.length) : c)).join('|');
 }
 
+/** パス path が root の下（root 自身も含む）か。root がなければ常に true */
+export function underRoot(path, root) {
+  if (!root) return true;
+  const p = String(path || '');
+  return p === root || p.startsWith(root + '|');
+}
+
 /** アニメーション側のノード（土台から外して、テイクの nodes で運ぶもの）の型か */
 export function isAnimationNode(g) {
   return g.type === 'animLayer' || String(g.type).startsWith('animBlendNode') || (g.type === 'character' && !!g.trax);
@@ -160,6 +167,7 @@ function candidateNamespaces(scene) {
 export function splitAnimation(scene, ns = '', opts = {}) {
   const anim = scene.animation;
   if (!anim) return { base: emptyAnimation(scene), take: null };
+  const root = opts.root || null;       // 当てる先のノード（名前空間のない同じリグが複数あるとき。その下だけを相手にする）
   const nodes = scene.nodes || [];
   const graph = anim.graph || [];
   const props = anim.props || [];
@@ -177,6 +185,10 @@ export function splitAnimation(scene, ns = '', opts = {}) {
     if ((p.kind === 'node' || p.kind === 'shape') && cams.has(p.index)) return null;
     return namespaceOf(path);
   };
+  // 相手がこのテイクのもの（名前空間が同じで、root があればその下。DG ノードは root で分けられないので、root のときは土台に残す）
+  const nodeHit = (ni) => !cams.has(ni) && nodeNs(ni) === ns && underRoot(nodes[ni] && nodes[ni].path, root);
+  const graphHit = (g) => (g.dag >= 0 ? nodeHit(g.dag) : !root && graphNs(g) === ns);
+  const propHit = (p) => propNs(p) === ns && underRoot(propTargetPath(scene, p.kind, p.index), root);
 
   // --- アニメーション側のノード: 下流（それを読むノード・props）をたどり、当たる相手の名前空間を調べる ---
   const consumers = new Map();          // id → [{ g } | { p }]
@@ -194,7 +206,7 @@ export function splitAnimation(scene, ns = '', opts = {}) {
         if (c.g && candidate.has(c.g.id)) {
           if (!seen.has(c.g.id)) { seen.add(c.g.id); stack.push(c.g.id); }
         } else {
-          out.push(c.g ? (graphCam(c.g) ? null : graphNs(c.g)) : propNs(c.p));
+          out.push(c.g ? graphHit(c.g) : propHit(c.p));
         }
       }
     }
@@ -204,9 +216,9 @@ export function splitAnimation(scene, ns = '', opts = {}) {
   const dropFromBase = new Set();       // 土台から外すもの（下流がすべてこの名前空間のもの）
   for (const id of candidate) {
     const t = terminalsOf(id);
-    if (!t.some((x) => x === ns)) continue;
+    if (!t.some(Boolean)) continue;
     inTake.add(id);
-    if (t.every((x) => x === ns)) dropFromBase.add(id);
+    if (t.every(Boolean)) dropFromBase.add(id);
   }
 
   // --- 結び付け ---------------------------------------------------------------
@@ -237,13 +249,13 @@ export function splitAnimation(scene, ns = '', opts = {}) {
     bindings.push(b);
   };
   (anim.channels || []).forEach((ch, i) => {
-    if (cams.has(ch.node) || nodeNs(ch.node) !== ns || !curveTakes(ch.curve)) return;
+    if (!nodeHit(ch.node) || !curveTakes(ch.curve)) return;
     removeChannel.add(i);
     pushBinding({ target: nodes[ch.node].path, attr: ch.attr, curve: tc(ch.curve) });
   });
   for (const g of graph) {
     if (inTake.has(g.id)) continue;
-    const hit = !graphCam(g) && graphNs(g) === ns;
+    const hit = graphHit(g);
     for (const [attr, src] of Object.entries(g.inputs || {})) {
       if (!hit || !src) continue;
       if (src.curve !== undefined && g.curve === undefined && curveTakes(src.curve)) {
@@ -256,7 +268,7 @@ export function splitAnimation(scene, ns = '', opts = {}) {
     }
   }
   props.forEach((p, pi) => {
-    if (propNs(p) !== ns) return;
+    if (!propHit(p)) return;
     const target = propTargetPath(scene, p.kind, p.index);
     for (const [attr, src] of Object.entries(p.inputs || {})) {
       if (!src) continue;
@@ -401,13 +413,13 @@ export function splitAnimation(scene, ns = '', opts = {}) {
 // ------------------------------------------------------------------ 当てる
 
 /** 当てる先の名前の表（名前空間 tns のノード・graph・メッシュ・カーブ） */
-function targetIndex(scene, base, tns) {
+function targetIndex(scene, base, tns, root = null) {
   const nodes = scene.nodes || [];
   const leafMap = (list, pathOf) => {
     const m = new Map();
     list.forEach((x, i) => {
       const p = pathOf(x);
-      if (!p || namespaceOf(p) !== tns) return;
+      if (!p || namespaceOf(p) !== tns || !underRoot(p, root)) return;
       const comps = stripNamespace(p, tns).split('|').filter(Boolean);
       const leaf = comps[comps.length - 1];
       if (!m.has(leaf)) m.set(leaf, []);
@@ -466,10 +478,10 @@ function resolveTarget(index, target, takeNs, kind = 'node') {
   return list.length === 1 ? { kind: 'dg', index: list[0].id } : { reason: 'ambiguous' };
 }
 
-/** 結び付けのうち、当てる先の名前空間 tns で相手が見つかる数 */
-export function countMatches(scene, take, tns, base = null) {
+/** 結び付けのうち、当てる先の名前空間 tns（root があればその下）で相手が見つかる数 */
+export function countMatches(scene, take, tns, base = null, root = null) {
   const b = base || (scene.animation ? { graph: scene.animation.graph || [] } : { graph: [] });
-  const index = targetIndex(scene, b, tns);
+  const index = targetIndex(scene, b, tns, root);
   let n = 0;
   for (const bd of take.bindings || []) {
     const r = resolveTarget(index, bd.target, take.namespace || '', bd.prop || 'node');
@@ -491,6 +503,92 @@ export function chooseNamespace(scene, take) {
     }
   }
   return best || { namespace: '', count: 0 };
+}
+
+/**
+ * 名前空間 tns の中で、同じ構造のリグが複数あるとき（名前空間を付けずに複製したキャラクターなど）、それぞれのいちばん上の
+ * ノードのパス。結び付けの相手の候補（いちばん下の名前が同じノード）の祖先ごとに、相手のある結び付けの数を数え、
+ * いちばん多い数を持つノードのうち最も深いもの（1 体分の相手をすべて含む最小の部分木）を探し、ほかの候補を含まない
+ * いちばん上の祖先まで上げる。1 体しかなければ空
+ */
+export function targetRoots(scene, take, tns = '') {
+  const nodes = scene.nodes || [];
+  const takeNs = take.namespace || '';
+  const byLeaf = new Map();
+  nodes.forEach((n, i) => {
+    if (namespaceOf(n.path) !== tns) return;
+    const leaf = stripNamespace(n.path, tns).split('|').pop();
+    if (!byLeaf.has(leaf)) byLeaf.set(leaf, []);
+    byLeaf.get(leaf).push(i);
+  });
+  const count = new Map();              // ノード → 相手のある結び付けの数
+  const seenTarget = new Set();
+  for (const b of take.bindings || []) {
+    if (b.prop && b.prop !== 'node' && b.prop !== 'shape') continue;
+    const leaf = stripNamespace(b.target, takeNs).split('|').filter(Boolean).pop();
+    if (seenTarget.has(b.target)) continue;
+    seenTarget.add(b.target);
+    const marked = new Set();
+    for (const ni of byLeaf.get(leaf) || []) {
+      for (let x = ni; x >= 0 && !marked.has(x); x = nodes[x].parent) {
+        marked.add(x);
+        count.set(x, (count.get(x) || 0) + 1);
+      }
+    }
+  }
+  let max = 0;
+  for (const c of count.values()) max = Math.max(max, c);
+  if (!max) return [];
+  const full = [...count.keys()].filter((x) => count.get(x) === max);
+  const fullSet = new Set(full);
+  // 最も深いもの（子に同じ数のものがない）
+  const parentsOfFull = new Set(full.map((x) => nodes[x].parent).filter((p) => fullSet.has(p)));
+  const deepest = full.filter((x) => !parentsOfFull.has(x));
+  if (deepest.length < 2) return [];
+  // ほかの候補を含まない、いちばん上の祖先まで上げる
+  const contains = (a, d) => { for (let x = d; x >= 0; x = nodes[x].parent) if (x === a) return true; return false; };
+  const roots = deepest.map((d) => {
+    let r = d;
+    for (let p = nodes[r].parent; p >= 0; p = nodes[p].parent) {
+      if (deepest.some((o) => o !== d && contains(p, o))) break;
+      r = p;
+    }
+    return r;
+  });
+  return [...new Set(roots)].sort((a, b) => a - b).map((ni) => nodes[ni].path);
+}
+
+/**
+ * テイクを当てる先の候補 [{ namespace, root, count }]（当たる結び付けのあるもの。多い順）。
+ * 名前空間ごとに 1 つ。同じ名前空間に同じ構造のリグが複数あれば、それぞれのいちばん上のノード（root）ごとに 1 つ
+ */
+export function targetCandidates(scene, take) {
+  const out = [];
+  for (const ns of candidateNamespaces(scene)) {
+    // 同じリグが複数あると、名前空間の全体では名前が重なって当たらない（あいまい）ので、先にノードごとの候補を調べる
+    const roots = targetRoots(scene, take, ns);
+    if (roots.length) {
+      for (const root of roots) {
+        const c = countMatches(scene, take, ns, null, root);
+        if (c) out.push({ namespace: ns, root, count: c });
+      }
+      continue;
+    }
+    const n = countMatches(scene, take, ns);
+    if (n) out.push({ namespace: ns, root: null, count: n });
+  }
+  const own = take.namespace || '';
+  return out.sort((a, b) => b.count - a.count || (b.namespace === own) - (a.namespace === own));
+}
+
+/**
+ * テイクを当てる先を決める（当たる結び付けのいちばん多い名前空間。同じリグが複数あれば、その最初のもの）
+ * @returns { namespace, root, count, candidates }
+ */
+export function chooseTarget(scene, take) {
+  const candidates = targetCandidates(scene, take);
+  const best = candidates[0] || { namespace: '', root: null, count: 0 };
+  return { ...best, candidates };
 }
 
 /** ノードのローカル行列の材料（restNodes か、なければ nodes[].attrs から作る）。warn は形がずれうるとき true */
@@ -531,7 +629,8 @@ export function reasonText(reason) { return REASONS[reason] || reason; }
  * 土台にテイクを当てた animation を作る（元の base・テイクは書き換えない）。
  * @param scene 当てる先のシーン（nodes・meshes・curves・restNodes・source）
  * @param base splitAnimation で作った土台
- * @param entries [{ take, namespace: 当てる先の名前空間 }]（範囲とフレームレートは最後のテイクのもの）
+ * @param entries [{ take, namespace: 当てる先の名前空間, root: 当てる先のノードのパス（省略可。その下だけを相手にする）}]
+ *   （範囲とフレームレートは最後のテイクのもの）
  * @returns { animation, report: { applied, missed: [{ target, attr, reason }], staticsMissed, warnings } }
  */
 export function composeAnimation(scene, base, entries) {
@@ -582,12 +681,12 @@ export function composeAnimation(scene, base, entries) {
   };
   const attrName = (g, attr) => (g && g.names && g.names[attr]) || attr;
 
-  for (const { take, namespace } of entries) {
+  for (const { take, namespace, root } of entries) {
     if (!take) continue;
     last = take;
     const tns = namespace ?? '';
     const takeNs = take.namespace || '';
-    const index = targetIndex(scene, { graph }, tns);
+    const index = targetIndex(scene, { graph }, tns, root || null);
     // カーブとキー（長さの単位が違えば、移動のカーブの値と接線を直す）
     const t = keyArrays(take);
     const unitK = (CM_PER_UNIT[take.linearUnit || 'cm'] || 1) / sceneUnit;
@@ -711,6 +810,17 @@ export function composeAnimation(scene, base, entries) {
     }
     for (const w of take.warnings || []) report.warnings.push(w);
   }
+  // スケールが動くノードの子で、親のスケールを打ち消すもの（joint の segmentScaleCompensate など）も動くノードにする
+  // （土台にアニメーションがないとき、材料がないと子の行列が親のスケールに追従しない）
+  const scaled = new Set(channels.filter((c) => c.attr[0] === 's').map((c) => c.node));
+  for (const g of graph) {
+    if (g.dag >= 0 && g.inputs && Object.keys(g.inputs).some((k) => /^s[xyz]?$/.test(k))) scaled.add(g.dag);
+  }
+  if (scaled.size) {
+    for (const e of scene.restNodes || []) {
+      if ((e.isNode ?? -1) >= 0 && scaled.has(e.isNode) && !restOf.has(e.node)) ensureRest(e.node);
+    }
+  }
   if (warnedRest.length) {
     report.warnings.push(`ローカル行列の材料がないノード（${warnedRest.slice(0, 5).join('・')}${warnedRest.length > 5 ? ' など' : ''}）は、`
       + 'ピボット・rotateAxis が合わず形がずれることがあります。');
@@ -775,6 +885,12 @@ export function encodeTake(take) {
   }
   delete t.report;
   return t;
+}
+
+/** テイクの当てる先 { namespace, root } の表示名（ノードならいちばん下の名前、名前空間ならその名前） */
+export function takeTargetLabel(t) {
+  if (t.root) return String(t.root).split('|').pop() + (t.namespace ? `（${t.namespace}）` : '');
+  return t.namespace || '名前空間なし';
 }
 
 /** テイクのフレーム数（範囲の長さ） */

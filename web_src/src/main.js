@@ -16,7 +16,7 @@ import {
 import { base64ToArrayBuffer } from './textures.js';
 import { MapManager, usageFor } from './mapManager.js';
 import { PACKAGE_EXT, TAKES_EXT, openPackage, openTakes } from './package.js';
-import { chooseNamespace, composeAnimation, decodeTake, encodeTake, extractTakes, reasonText, splitAnimation } from './takes.js';
+import { chooseTarget, composeAnimation, decodeTake, encodeTake, extractTakes, reasonText, splitAnimation, takeTargetLabel } from './takes.js';
 import { TakePanel } from './takePanel.js';
 import { buildTakesFile } from './takeFile.js';
 import { buildShareQuery, fetchFailureMessage, isZip, parseShareQuery } from './share.js';
@@ -89,6 +89,11 @@ const _v2 = new Vector3();
 const _q = new Quaternion();
 const _m4 = new Matrix4();
 
+/** 書き出すテイク（当てている先を appliedTo に入れる。読み込み直したときに同じ先へ当てる） */
+function withTarget(e) {
+  return { ...e.take, appliedTo: { namespace: e.namespace || '', root: e.root || null } };
+}
+
 class ViewerApp {
   constructor() {
     this.settings = { ...DEFAULTS };
@@ -126,7 +131,8 @@ class ViewerApp {
     this.loadSeq = 0;           // 読み込みの番号（新しく読み込み始めるたびに増やす。古い読み込みの続きは捨てる）
     this.loadBusy = false;      // 読み込み中（前のシーンの再生・再生キャッシュの作成を止めておく）
     this.pendingAnimation = null;   // シーンの組み立て前に届いたアニメーション
-    // テイク（アニメーションだけ。takes.js）: 一覧 [{ take, namespace: 当てる先の名前空間, report }]・いまのテイク（-1 は
+    // テイク（アニメーションだけ。takes.js）: 一覧 [{ take, namespace: 当てる先の名前空間, root: 当てる先のノード（同じリグが
+    // 複数あるとき）, candidates: 当てる先の候補, report }]・いまのテイク（-1 は
     // シーンのアニメーション）・シーンのアニメーション（setAnimation で受け取ったもの）・名前空間ごとの土台
     this.takes = [];
     this.activeTake = -1;
@@ -1768,12 +1774,13 @@ class ViewerApp {
   /** テイクを土台に当てた animation と report（土台は名前空間ごとに 1 回作る） */
   composeTake(e) {
     const scene = this.takeScene();
-    let base = this.takeBases.get(e.namespace);
+    const key = `${e.namespace}\u0000${e.root || ''}`;
+    let base = this.takeBases.get(key);
     if (!base) {
-      base = splitAnimation(scene, e.namespace).base;
-      this.takeBases.set(e.namespace, base);
+      base = splitAnimation(scene, e.namespace, { root: e.root || null }).base;
+      this.takeBases.set(key, base);
     }
-    return composeAnimation(scene, base, [{ take: e.take, namespace: e.namespace }]);
+    return composeAnimation(scene, base, [{ take: e.take, namespace: e.namespace, root: e.root || null }]);
   }
 
   /** テイクの当たり方（行の警告の印。まだ調べていなければ調べる） */
@@ -1799,9 +1806,14 @@ class ViewerApp {
     for (const raw of list || []) {
       let take;
       try { take = decodeTake(raw); } catch (err) { this.log('warn', `テイクを読めません: ${err && err.message || err}`); continue; }
-      const pick = chooseNamespace(scene, take);
+      const pick = chooseTarget(scene, take);
       if (pick.count === 0 && opts.drop) { skipped.push(take.name); continue; }
-      entries.push({ take, namespace: pick.namespace, report: null });
+      // 書き出したときに当てていた先（appliedTo）が候補にあれば、それにする
+      const was = take.appliedTo;
+      const keep = was && pick.candidates.find((c) => c.namespace === (was.namespace || '') && (c.root || null) === (was.root || null));
+      const target = keep || pick;
+      delete take.appliedTo;
+      entries.push({ take, namespace: target.namespace, root: target.root || null, candidates: pick.candidates, report: null });
     }
     const at = Number.isInteger(opts.at) && opts.at >= 0 ? Math.min(opts.at, this.takes.length) : this.takes.length;
     this.takes.splice(at, 0, ...entries);
@@ -1862,6 +1874,58 @@ class ViewerApp {
     return ok;
   }
 
+  /** テイク i の当てる先を、候補の k 番目にする（選んでいるテイクなら当て直す） */
+  setTakeTarget(i, k) {
+    const e = this.takes[i];
+    const c = e && (e.candidates || [])[k];
+    if (!c) return false;
+    e.namespace = c.namespace;
+    e.root = c.root || null;
+    e.report = null;
+    if (i === this.activeTake) this.setTake(i, { quiet: true });
+    this.takeReport(i);
+    this.takePanel.render();
+    this.ui.setMessage(`テイク ${e.take.name} の当てる先: ${takeTargetLabel(c)}`, 4000);
+    return true;
+  }
+
+  /** テイクを from から to の位置へ動かす（選んでいるテイクは、そのまま選んでおく） */
+  moveTake(from, to) {
+    const n = this.takes.length;
+    if (!(from >= 0 && from < n) || !(to >= 0 && to < n) || from === to) return false;
+    const active = this.takes[this.activeTake] || null;
+    const [e] = this.takes.splice(from, 1);
+    this.takes.splice(to, 0, e);
+    this.activeTake = active ? this.takes.indexOf(active) : -1;
+    this.takePanel.render();
+    return true;
+  }
+
+  /**
+   * テイクを並べ替える。by: 'name'（名前）・'start'（開始フレーム）・'length'（フレーム数）・'target'（当てる先）。
+   * desc で逆順。同じ値のものは、いまの順のまま
+   */
+  sortTakes(by, desc = false) {
+    const active = this.takes[this.activeTake] || null;
+    const coll = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
+    const keyOf = {
+      name: (e) => e.take.name,
+      start: (e) => +e.take.start,
+      length: (e) => (+e.take.end) - (+e.take.start),
+      target: (e) => takeTargetLabel(e),
+    }[by];
+    if (!keyOf) return false;
+    const cmp = (a, b) => {
+      const x = keyOf(a), y = keyOf(b);
+      const c = typeof x === 'string' ? coll.compare(x, y) : x - y;
+      return desc ? -c : c;
+    };
+    this.takes = this.takes.map((e, i) => [e, i]).sort((a, b) => cmp(a[0], b[0]) || a[1] - b[1]).map((x) => x[0]);
+    this.activeTake = active ? this.takes.indexOf(active) : -1;
+    this.takePanel.render();
+    return true;
+  }
+
   /** テイクを一覧から消す（選んでいたものなら、シーンのアニメーションに戻す） */
   removeTake(i) {
     if (!this.takes[i]) return;
@@ -1884,7 +1948,7 @@ class ViewerApp {
   /** テイクを書き出せる形（JSON の文字列。数値の配列は base64）。indices を省くとすべて */
   takesJson(indices = null) {
     const list = indices ? indices.map((i) => this.takes[i]).filter(Boolean) : this.takes;
-    return JSON.stringify(list.map((e) => encodeTake(e.take)));
+    return JSON.stringify(list.map((e) => encodeTake(withTarget(e))));
   }
 
   /** テイクを .msva にしてダウンロードする（ブラウザ。Qt 版は Python が書く）。indices を省くとすべて */
@@ -1892,7 +1956,7 @@ class ViewerApp {
     const list = (indices ? indices.map((i) => this.takes[i]) : this.takes).filter(Boolean);
     if (!list.length) return false;
     try {
-      const bytes = await buildTakesFile(list.map((e) => e.take), { version: VERSION });
+      const bytes = await buildTakesFile(list.map(withTarget), { version: VERSION });
       const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
       const a = document.createElement('a');
       a.href = url;
