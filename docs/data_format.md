@@ -434,6 +434,7 @@ manifest の `version` は 2 のままです（古い版は知らない中身を
 | `bindings` | 結び付け（カーブ → 相手）。`curve`（このテイクの curves の番号）か `from`（このテイクの nodes の番号と出力の属性）のどちらかを持つ。同じ相手・同じ属性は 1 つ |
 | `bindings[].target` | 相手のノードの DAG のフルパス（取り出したシーンのまま。名前空間つき）。DAG でないノードは名前。`prop` のあるものは、メッシュ・カーブのパス |
 | `bindings[].attr` | 相手の属性。移動・回転・スケールは `tx`〜`sz`、ほかは graph の属性の名前 |
+| `bindings[].raw` | true なら、属性はファイルに書かれた名前のまま（参照先を読まずに取り出したため、短い名前がわからない）。当てる先の graph の `names` で短い名前を引く |
 | `bindings[].prop` | 表示などの属性（animation.props）への結び付けなら、その種類（`node`・`mesh`・`curve`・`shape`）。ないものは channels・graph の inputs に当てる |
 | `nodes` | 一緒に運ぶアニメーション側のノード（animLayer・animBlendNode*・Trax のクリップを持つ character）。animation.graph の項目と同じ形で、`id`・`dag` は持たない。`inputs` の `node` は、このテイクの nodes の番号。リグ側のノードの出力を読む入力は `{"target": パス, "attr": 属性}` |
 | `statics` | キーのない値。キーのある相手の、キーのない移動・回転（度）・スケールの成分（`tx` など）と、graph の attrs の独自の属性（表示の属性・優先角度を除く。graph の attrs と同じ単位）。キーのある成分には当てない |

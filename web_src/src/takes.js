@@ -458,7 +458,8 @@ function resolveTarget(index, target, takeNs, kind = 'node') {
   if (isPath || !index.dg.has(leaf)) {
     const r = bestMatch(index.node.get(leaf), comps);
     if (r.hit !== null) return { kind: 'node', index: r.hit };
-    if (isPath || r.reason === 'ambiguous') return { reason: r.reason };
+    // パスで書かれていても、nodes にない DAG ノード（コンストレイントなど。graph では名前で持つ）は名前で探す
+    if (r.reason === 'ambiguous' || (isPath && !index.dg.has(leaf))) return { reason: r.reason };
   }
   const list = index.dg.get(leaf);
   if (!list) return { reason: 'missing' };

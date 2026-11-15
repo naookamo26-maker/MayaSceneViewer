@@ -218,6 +218,22 @@ class TestTakeSources(unittest.TestCase):
             sources, notes, errors = read_sources([p])
         self.assertEqual(errors, [])
         self.assertTrue(any("読み込めなかったリファレンス" in n and "armA" in n for n in notes), notes)
+        # 参照先がなくても、リファレンスの編集（プレースホルダー・setAttr）から取り出す
+        takes = sources[0]["takes"]
+        self.assertEqual([t["namespace"] for t in takes], ["armA"])
+        self.assertEqual(takes[0]["bindings"], [{"target": "|world_grp|armA:rig_grp|armA:hand_ctrl", "attr": "tx", "curve": 0}])
+        self.assertEqual(takes[0]["statics"], [{"target": "|world_grp|armA:rig_grp|armA:hand_ctrl", "values": {"fkik": 1.0}}])
+
+    def test_unresolved_edits_are_kept(self):
+        """参照先を読まないと、当てなかった編集（setAttr・プレースホルダー）を名前空間つきで覚える"""
+        from ma_viewer.ma_scene import parse_ma_file
+        ms = parse_ma_file(self.SHOT, load_references=False)
+        codes = {(e["code"], e.get("node") or e.get("plug")) for e in ms.ref_edits_unresolved}
+        self.assertIn((5, "|world_grp|armA:rig_grp|armA:hand_ctrl.translateX"), codes)
+        self.assertIn((2, "|world_grp|armA:rig_grp|armA:hand_ctrl"), codes)
+        ms2 = parse_ma_file(self.SHOT)                       # 参照先を読めば、ほぼすべて当たる
+        self.assertNotIn((5, "|world_grp|armA:rig_grp|armA:hand_ctrl.translateX"),
+                         {(e["code"], e.get("plug")) for e in ms2.ref_edits_unresolved})
 
 
 class TestTakeCommand(unittest.TestCase):

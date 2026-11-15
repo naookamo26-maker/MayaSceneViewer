@@ -2,7 +2,7 @@
 // 前提: samples/*.json（tools/make_*.py）
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -313,6 +313,83 @@ test('.msva をブラウザの処理（takeFile.js）で書くと、JS と Pytho
     assert.equal(format, 'maya-scene-viewer-takes');
     assert.equal(version, '9.9.9');
     assert.equal(nkeys, take.times.length);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/** Python で .ma を読む: { scene: 共通 JSON, takes: 参照先を読まずに取り出したテイク（takes_from_ma）}。Python がなければ null */
+function maWithDirectTakes(maPath) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'take-'));
+  const out = path.join(dir, 'out.json');
+  const py = 'import json, sys\nfrom ma_viewer.extract_ma import load_ma\nfrom ma_viewer.take import takes_from_ma\n'
+    + 'sc = load_ma(sys.argv[1], animation=True)\nts, _n = takes_from_ma(sys.argv[1])\n'
+    + 'json.dump({"scene": sc, "takes": ts}, open(sys.argv[2], "w"))';
+  try {
+    execFileSync(process.env.PYTHON || 'python3', ['-c', py, maPath, out], { cwd: path.resolve(here, '../..'), stdio: 'ignore' });
+    return JSON.parse(readFileSync(out, 'utf8'));
+  } catch (err) {
+    return null;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+for (const name of ['anim_sample', 'rig6_sample', 'trax_sample', 'ctrl_sample', 'rig_sample', 'hik_sample', 'camaim_sample']) {
+  test(`.ma から直接（参照先を読まない取り出し）: ${name} は、当て直すと元と同じ`, (t) => {
+    const r = maWithDirectTakes(path.join(samples, `${name}.ma`));
+    if (!r) { t.skip('Python で .ma を読めない'); return; }
+    const { scene, takes } = r;
+    assert.ok(takes.length >= 1, 'テイクがある');
+    let cur = scene;
+    for (const raw of takes) {
+      const take = decodeTake(raw);
+      const ns = chooseNamespace(cur, take).namespace;
+      const { base } = splitAnimation(cur, ns);
+      const { animation } = composeAnimation(cur, base, [{ take, namespace: ns }]);
+      cur = { ...cur, animation };
+    }
+    assertSame(evaluateAll(scene, scene.animation), evaluateAll(scene, cur.animation), name);
+  });
+}
+
+test('参照先のファイルがないショット: リファレンスの編集から取り出して arm_rig.ma に当てると、shot.ma と同じ行列になる', (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'take-noref-'));
+  try {
+    copyFileSync(path.join(samples, 'reference_project/scenes/shot.ma'), path.join(dir, 'shot.ma'));
+    const r = maWithDirectTakes(path.join(dir, 'shot.ma'));
+    const shot = exportMa('reference_project/scenes/shot.ma');
+    const rig = exportMa('reference_project/assets/arm_rig.ma');
+    if (!r || !shot || !rig) { t.skip('Python で .ma を読めない'); return; }
+    assert.ok(!r.scene.animation, '参照先がないと、シーンとしてはアニメーションを読めない');
+    assert.deepEqual(r.takes.map((x) => x.namespace), ['armA']);
+    const take = decodeTake(r.takes[0]);
+    // 参照先のある状態で取り出したもの（ビューアの取り出し）と、結び付け・キーが同じ
+    const ref = splitAnimation(shot, 'armA').take;
+    assert.deepEqual(take.bindings.map((b) => [b.target, b.attr]), ref.bindings.map((b) => [b.target, b.attr]));
+    assert.deepEqual(Array.from(take.times), Array.from(ref.times));
+    assert.deepEqual(Array.from(take.values), Array.from(ref.values));
+    assert.ok(take.statics.some((s) => s.values.fkik === 1), 'リファレンスの編集の setAttr（fkik = 1）を運ぶ');
+    const { base } = splitAnimation(rig, '');
+    const { animation, report } = composeAnimation(rig, base, [{ take, namespace: chooseNamespace(rig, take).namespace }]);
+    assert.deepEqual(report.missed, []);
+    const a = evaluateAll(shot, shot.animation);
+    const b = evaluateAll(rig, animation);
+    const leaf = (p) => p.split('|').pop().split(':').pop();
+    const rigIndex = new Map(rig.nodes.map((n, i) => [leaf(n.path), i]));
+    let compared = 0;
+    for (let i = 0; i < a.frames.length; i++) {
+      for (const [ni, m] of a.frames[i].mats) {
+        const o = b.frames[i].mats.get(rigIndex.get(leaf(shot.nodes[ni].path)));
+        assert.ok(o, shot.nodes[ni].path);
+        for (let k = 0; k < 16; k++) assert.ok(Math.abs(m[k] - o[k]) < 1e-5, `${shot.nodes[ni].path} @${a.frames[i].f}`);
+        compared++;
+      }
+      for (const v of a.frames[i].props.values()) {
+        assert.ok([...b.frames[i].props.values()].some((x) => JSON.stringify(x) === JSON.stringify(v)), '表示');
+      }
+    }
+    assert.ok(compared > 0);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

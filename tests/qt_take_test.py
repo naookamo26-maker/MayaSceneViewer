@@ -137,7 +137,19 @@ def main() -> int:
         wait_until(lambda s: s["count"] >= 2, lambda s: (
             check(s["rows"][-1:] == ["shot"] and s["name"] == "arm_rig.ma", ".ma からテイクを読み込む（シーンは開き直さない）: %s" % s["rows"]),
             check(s["takesTab"], "足したらテイクのタブを出す"),
-            js("(window.mayaViewer.debug.app.removeTake(1), 1)", lambda _r: nxt(), 300)), timeout=40)
+            step_load_noref(nxt)), timeout=40)
+
+    def step_load_noref(nxt):
+        # 参照先のファイルがないショットの .ma も、リファレンスの編集から取り出して足す
+        import shutil
+        lone = os.path.join(tmp.name, "lone", "shot.ma")
+        os.makedirs(os.path.dirname(lone), exist_ok=True)
+        shutil.copy(SHOT, lone)
+        win.load_take_files([lone])
+        wait_until(lambda s: s["count"] >= 3, lambda s: (
+            check(s["rows"][-1:] == ["shot"] and s["count"] == 3, "参照先のない .ma からテイクを足す: %s" % s["rows"]),
+            js("(window.mayaViewer.debug.app.removeTake(2), window.mayaViewer.debug.app.removeTake(1), 1)",
+               lambda _r: nxt(), 300)), timeout=40)
 
     def step_switch(nxt):
         js("window.mayaViewer.setTake(0)", lambda _r: state(lambda s: (

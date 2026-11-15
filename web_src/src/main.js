@@ -4009,7 +4009,7 @@ window.mayaViewer = {
     for (const src of JSON.parse(text)) {
       try {
         if (src.kind === 'takes') list.push(...(src.takes || []));
-        else if (src.kind === 'scene') list.push(...app.extractTakes(src.scene, src.name || ''));
+        else if (src.kind === 'scene') list.push(...app.extractTakes(src.scene, src.name || ''), ...(src.takes || []));
       } catch (err) {
         app.ui.showError(`${src.name || ''} からテイクを取り出せませんでした。\n${err && err.message || err}`);
       }

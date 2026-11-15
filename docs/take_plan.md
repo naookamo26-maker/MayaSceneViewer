@@ -349,6 +349,11 @@ Maya で開いているシーンからの取り出し・コマンドライン・
 画面は、テイクを右パネルの右端の縦のタブ（［プロパティ］［テイク］）に置き、行は 1 行（名前・範囲・相手・警告の印）にしました。
 段階 2 のうち、コマンドライン（`take`・`info` の .msva・`pack --take`。取り出しは Node.js で `takes.js` を動かす: `web_src/tools/takes.mjs`）と、
 ブラウザの `.msva` の書き出し（`web_src/src/takeFile.js`。zip は CompressionStream の deflate）を作りました。
+参照先のない .ma からの取り出し（A）は `ma_viewer/take.py` の `takes_from_ma` です。`MaScene.ref_edits_unresolved` に、相手がなくて当てなかった
+リファレンスの編集（2・3・5）を名前空間つきで覚え、プレースホルダーとショット側のカーブ・レイヤー・Trax から結び付けを作ります。.ma の読み込みでは
+リファレンスを読む取り出し（B）を使い、読み込めなかったリファレンスの名前空間だけを A で補います。A だけで取り出した結果は、リファレンスのない
+サンプル（anim・rig6・trax・ctrl・rig・hik・camaim）と参照先のないショットで、B と同じ評価結果になることを確かめています（`takes.test.mjs`）。
+残りは Maya で開いているシーンからの取り出しです。
 段階 1 では、`samples/*.json` は作り直していません（`restNodes` のない古い形のまま。当てる側の代わりの処理を確かめる材料にしている）。
 `bindings[].prop`（props への結び付けの種類）を形式に足しました（[data_format.md](data_format.md) の「テイク」）。
 

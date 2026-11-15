@@ -21,6 +21,8 @@ for (const s of sources) {
     for (const t of s.takes || []) if (!namespaces.length || namespaces.includes(t.namespace || '')) takes.push(decodeTake(t));
   } else if (s.kind === 'scene') {
     takes.push(...extractTakes(s.scene, s.name || '', namespaces.length ? namespaces : null).map(decodeTake));
+    // 参照先を読み込めなかったリファレンスのテイク（Python がリファレンスの編集から取り出したもの）
+    for (const t of s.takes || []) if (!namespaces.length || namespaces.includes(t.namespace || '')) takes.push(decodeTake(t));
   }
 }
 writeFileSync(out, JSON.stringify(takes.map(encodeTake)));
