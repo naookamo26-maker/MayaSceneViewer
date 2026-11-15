@@ -31,7 +31,7 @@ STATE_JS = """JSON.stringify((() => {
   const s = window.mayaViewer.getStats();
   const rows = [...document.querySelectorAll('#take-list .take-row')];
   return { loaded: !!s.loaded, name: window.mayaViewer.debug.app.sceneName || '', animation: s.animation || null,
-           active: window.mayaViewer.activeTake(), count: window.mayaViewer.takeCount(),
+           active: window.mayaViewer.activeTake(), count: window.mayaViewer.takeCount(), pending: window.mayaViewer.pendingTakeCount(),
            rows: rows.map((r) => (r.querySelector('.take-name') || {}).textContent || ''),
            activeRow: rows.findIndex((r) => r.getAttribute('aria-current') === 'true') - 1,
            dropHighlight: document.getElementById('sec-takes').classList.contains('take-drop'),
@@ -49,6 +49,13 @@ def main() -> int:
     shot_json = os.path.join(tmp.name, "shot010.json")
     subprocess.check_call([sys.executable, "-m", "ma_viewer", "export", SHOT, "-o", shot_json], cwd=ROOT,
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # 同じファイルは 2 度足さないので、ドロップの振り分けを試すときは、別のフォルダに写した同じ名前のファイルを使う
+    import shutil
+    shot_copies = []
+    for k in range(2):
+        d = os.path.join(tmp.name, "copy%d" % k)
+        os.makedirs(d)
+        shot_copies.append(shutil.copy(shot_json, os.path.join(d, "shot010.json")))
     win = ViewerWindow(host="standalone")
     win.resize(1400, 860)
     win.show()
@@ -203,7 +210,17 @@ def main() -> int:
                 check(after["name"] == "arm_rig.ma", "シーンは開き直さない")
                 check(not after["dropHighlight"], "落としたら強調を消す")
                 nxt()
-            drop_at([shot_json], (r[0], r[2] - 3), done)
+            drop_at([shot_copies[0]], (r[0], r[2] - 3), done)
+        rect_of("#sec-takes", got_rect)
+
+    def step_no_duplicates(nxt):
+        # 同じファイル（足したばかりのもの）・いま開いているシーンのファイル自身は、もう一度落としても足さない
+        def got_rect(r):
+            def done(before, after):
+                check(after["count"] == before["count"] and after["pending"] == 0,
+                      "同じファイル・開いているシーンのファイルは足さない: %s → %s" % (before["count"], after["count"]))
+                nxt()
+            drop_at([shot_copies[0], RIG], (r[0], r[2] - 3), done)
         rect_of("#sec-takes", got_rect)
 
     def step_drop_tab(nxt):
@@ -213,7 +230,7 @@ def main() -> int:
                 check(before["takesTab"], "ドラッグでタブに載せると、テイクのタブに切り替える")
                 check(after["count"] == 3, "タブに落とした .json はテイクとして足す: %s" % after["rows"])
                 js("(window.mayaViewer.debug.app.removeTake(2), 1)", lambda _r: nxt(), 300)
-            drop_at([shot_json], (r[0], r[1]), done)
+            drop_at([shot_copies[1]], (r[0], r[1]), done)
         js("document.getElementById('tab-props').click()", lambda _r: rect_of("#tab-takes", got_rect), 200)
 
     def step_drop_msva(nxt):
@@ -326,7 +343,7 @@ def main() -> int:
         tmp.cleanup()
         app.quit()
 
-    QtCore.QTimer.singleShot(500, lambda: run([step_open, step_load, step_progress, step_load_ma, step_switch, step_drop_list, step_drop_tab, step_drop_msva,
+    QtCore.QTimer.singleShot(500, lambda: run([step_open, step_load, step_progress, step_load_ma, step_switch, step_drop_list, step_no_duplicates, step_drop_tab, step_drop_msva,
                                                step_export_msva, step_export_msv, step_reopen, step_overwrite, step_drop_scene, step_export_scene, finish]))
     QtCore.QTimer.singleShot(150000, lambda: (check(False, "時間切れ"), finish()))
     app.exec()

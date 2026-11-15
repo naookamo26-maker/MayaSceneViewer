@@ -89,6 +89,11 @@ const _v2 = new Vector3();
 const _q = new Quaternion();
 const _m4 = new Matrix4();
 
+/** ブラウザで選んだ・落としたファイルの印（同じファイルか見分ける。名前・大きさ・更新日時） */
+function browserFileKey(f) {
+  return f ? `file:${f.name}|${f.size}|${f.lastModified}` : '';
+}
+
 /** 書き出すテイク（当てている先を appliedTo に入れる。読み込み直したときに同じ先へ当てる） */
 function withTarget(e) {
   return { ...e.take, appliedTo: { namespace: e.namespace || '', root: e.root || null } };
@@ -615,11 +620,11 @@ class ViewerApp {
     // まずファイルごとに読み込み中の行を足し（ファイル名の順）、1 つずつ読んで、読み終えたものからテイクに置き換える
     const sorted = [...files].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     const seq = (this.takeLoadSeq = (this.takeLoadSeq || 0) + 1);
-    const items = sorted.map((f, k) => ({ id: `b${seq}-${k}`, name: f.name, file: f }));
-    this.beginTakeLoads(items, at);
+    const items = sorted.map((f, k) => ({ id: `b${seq}-${k}`, name: f.name, file: f, key: browserFileKey(f) }));
+    const ok = new Set(this.beginTakeLoads(items, at));
     let added = 0;
     for (const it of items) {
-      if (this.pendingIndex(it.id) < 0) continue;         // 読み込み中に消した
+      if (!ok.has(it.id) || this.pendingIndex(it.id) < 0) continue;   // 足さなかった（同じファイル）・読み込み中に消した
       if (/\.(ma|mb)$/i.test(it.name)) {
         this.failTakeLoad(it.id, 'ブラウザでは .ma・.mb から取り出せません（.msva・.msv・共通 JSON を使ってください）');
         continue;
@@ -661,6 +666,7 @@ class ViewerApp {
       return;
     }
     const seq = this.beginLoad();
+    this.pendingSceneKey = browserFileKey(file);           // いま開いているシーンのファイル（テイクとして足さない）
     this.ui.showLoading(`${file.name} を読み込み中`);
     file.arrayBuffer().then((buf) => {
       if (this.staleLoad(seq)) return false;                // 読み込み中に別のファイルを開いた: 続きは捨てる
@@ -899,6 +905,8 @@ class ViewerApp {
     this.pendingPackage = null;
     this.sourceUrl = this.pendingSourceUrl || null;     // URL から開いたときの URL（［URL をコピー］で使う）
     this.pendingSourceUrl = null;
+    this.sceneFileKey = this.pendingSceneKey || null;  // ブラウザで開いたファイルの印（Qt 版は Python が見分ける）
+    this.pendingSceneKey = null;
     if (!this.renderer) return false;
     const t0 = performance.now();
     this.pause();
@@ -1866,16 +1874,38 @@ class ViewerApp {
 
   // ---- 読み込み中の行（ファイルを落とす・選ぶと、まずファイルごとに行を足し、読み終えたものからテイクに置き換える）----
 
-  /** 読み込み中の行を足す。items: [{ id, name }]（この順に at の位置へ。-1 は末尾） */
+  /**
+   * 読み込み中の行を足す。items: [{ id, name, key: ファイルの印（同じファイルか見分ける。省略可）}]（この順に at の位置へ。
+   * -1 は末尾）。同じファイルの行（読み込み中・読み込み済み）があるもの、いま開いているシーンのファイル自身は足さない。
+   * 戻り値: 足した行の id の一覧
+   */
   beginTakeLoads(items, at = -1) {
-    if (!this.built || !items || !items.length) return 0;
-    const rows = items.map((it) => ({ pending: true, id: String(it.id), name: it.name || '', progress: 0, status: '待っています', error: null }));
+    if (!this.built || !items || !items.length) return [];
+    const have = new Set(this.takes.filter((e) => e.fileKey && !e.error).map((e) => e.fileKey));
+    const skipped = [];
+    const accepted = [];
+    for (const it of items) {
+      const key = it.key ? String(it.key) : '';
+      if (key && (have.has(key) || key === this.sceneFileKey)) {
+        skipped.push(`${it.name}（${key === this.sceneFileKey ? 'いま開いているシーン' : 'すでに一覧にある'}）`);
+        continue;
+      }
+      if (key) have.add(key);
+      accepted.push(it);
+    }
+    if (skipped.length) {
+      this.ui.setMessage(`同じファイルは足しません: ${skipped.join('・')}`, 6000);
+      this.log('info', `テイク: 同じファイルは足しません: ${skipped.join('・')}`);
+    }
+    if (!accepted.length) return [];
+    const rows = accepted.map((it) => ({ pending: true, id: String(it.id), name: it.name || '', fileKey: it.key ? String(it.key) : '',
+      progress: 0, status: '待っています', error: null }));
     const pos = Number.isInteger(at) && at >= 0 ? Math.min(at, this.takes.length) : this.takes.length;
     this.takes.splice(pos, 0, ...rows);
     if (this.activeTake >= pos) this.activeTake += rows.length;
     this.takePanel.render();
     this.takePanel.showTab('tab-takes');
-    return rows.length;
+    return rows.map((r) => r.id);
   }
 
   pendingIndex(id) { return this.takes.findIndex((e) => e.pending && e.id === String(id)); }
@@ -1884,7 +1914,7 @@ class ViewerApp {
   takeLoadProgress(id, frac, text = '') {
     const e = this.takes[this.pendingIndex(id)];
     if (!e || e.error) return false;
-    e.progress = Math.max(0, Math.min(1, +frac || 0));
+    e.progress = Math.max(e.progress || 0, Math.min(1, +frac || 0));   // 後戻りさせない
     if (text) e.status = String(text);
     this.takePanel.updatePending(e);
     return true;
@@ -1898,7 +1928,9 @@ class ViewerApp {
     const i = this.pendingIndex(id);
     if (i < 0) return 0;
     const name = this.takes[i].name;
+    const fileKey = this.takes[i].fileKey || '';
     const { entries, skipped } = this.makeTakeEntries(list, drop);
+    for (const e of entries) if (fileKey) e.fileKey = fileKey;      // 同じファイルをまた足さないための印
     if (!entries.length) {
       this.failTakeLoad(id, skipped.length ? 'いまのシーンに当たるテイクがありません' : 'テイクが見つかりません');
       return 0;
@@ -4210,7 +4242,7 @@ window.mayaViewer = {
     return app.addTakes(list, { at, drop });
   },
   /** 読み込み中の行を足す（items: [{ id, name }] の JSON）。Qt 版がファイルを読み始めるときに呼ぶ */
-  beginTakeLoads(items, at = -1) { return app.beginTakeLoads(JSON.parse(items), at); },
+  beginTakeLoads(items, at = -1) { return JSON.stringify(app.beginTakeLoads(JSON.parse(items), at)); },
   takeLoadProgress(id, frac, text = '') { return app.takeLoadProgress(id, frac, text); },
   /** 読み終えたファイルのテイクの元（JSON の配列）で、読み込み中の行を置き換える */
   endTakeLoad(id, sources, drop = false) {

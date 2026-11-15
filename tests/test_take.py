@@ -196,6 +196,21 @@ class TestTakeSources(unittest.TestCase):
         self.assertTrue(any(n["path"].endswith("armA:hand_ctrl") for n in sc["nodes"]))
         self.assertIn("hand_ctrl_translateX", [c["name"] for c in sc["animation"]["curves"]])
 
+    def test_progress_is_monotonic(self):
+        """.ma の読み込みは 2 段階（シーン → アニメーション）だが、進み具合は 0〜1 を 1 回だけ進む（後戻りしない）"""
+        import shutil
+        from ma_viewer.take import read_source
+        for path in (self.SHOT, None):
+            if path is None:                                 # 参照先のないショット（3 段階目: リファレンスの編集から取り出す）
+                d = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, d, True)
+                path = shutil.copy(self.SHOT, os.path.join(d, "shot.ma"))
+            seen = []
+            read_source(path, fraction=lambda f, _m: seen.append(f))
+            self.assertTrue(seen and seen[0] <= 0.05, seen[:3])
+            self.assertTrue(all(b >= a for a, b in zip(seen, seen[1:])), "進み具合が後戻りした: %s" % seen)
+            self.assertGreaterEqual(seen[-1], 0.89)
+
     def test_order_and_errors(self):
         from ma_viewer import package
         from ma_viewer.take import read_sources
