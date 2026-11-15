@@ -224,6 +224,19 @@ class TestTakeSources(unittest.TestCase):
         self.assertEqual(takes[0]["bindings"], [{"target": "|world_grp|armA:rig_grp|armA:hand_ctrl", "attr": "tx", "curve": 0}])
         self.assertEqual(takes[0]["statics"], [{"target": "|world_grp|armA:rig_grp|armA:hand_ctrl", "values": {"fkik": 1.0}}])
 
+    def test_maya_source(self):
+        """Maya で開いているシーン（collect と同じ形のもの）から、テイクの元を作る"""
+        sys.path.insert(0, os.path.join(ROOT, "tests"))
+        import test_maya_scene as T
+        from ma_viewer.take import read_maya_source
+        st = T.scene_text(os.path.join(ROOT, "samples", "anim_sample.ma"))
+        src, notes = read_maya_source(st)
+        self.assertEqual(notes, [])
+        self.assertEqual((src["kind"], src["name"]), ("scene", "anim_sample.ma"))
+        self.assertEqual(src["scene"]["source"]["kind"], "maya")
+        self.assertTrue(src["scene"]["animation"]["curves"])
+        self.assertTrue(all("positions" not in m for m in src["scene"]["meshes"]))
+
     def test_unresolved_edits_are_kept(self):
         """参照先を読まないと、当てなかった編集（setAttr・プレースホルダー）を名前空間つきで覚える"""
         from ma_viewer.ma_scene import parse_ma_file

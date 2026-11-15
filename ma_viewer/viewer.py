@@ -36,16 +36,21 @@ class _TakeWorker(QtCore.QObject):
     progress = Signal(str)
     finished = Signal(object, object, object)       # テイクの元の一覧, お知らせ, (ファイル名, 誤り) の一覧
 
-    def __init__(self, paths, references: bool):
+    def __init__(self, paths, references: bool, maya_state=None):
         super().__init__()
         self.paths = list(paths)
         self.references = references
+        self.maya_state = maya_state                     # Maya で開いているシーン（maya_scene.collect の結果）
 
     @Slot()
     def run(self):
-        from .take import read_sources
+        from .take import read_maya_source, read_sources
         try:
-            sources, notes, errors = read_sources(self.paths, self.references, self.progress.emit)
+            if self.maya_state is not None:
+                src, notes = read_maya_source(self.maya_state, self.progress.emit)
+                sources, errors = ([src] if src is not None else []), []
+            else:
+                sources, notes, errors = read_sources(self.paths, self.references, self.progress.emit)
         except Exception as exc:  # noqa: BLE001
             sources, notes, errors = [], [], [("", "%s\n%s" % (exc, traceback.format_exc()))]
         self.finished.emit(sources, notes, errors)
@@ -825,11 +830,16 @@ class ViewerWindow(QtWidgets.QMainWindow):
             a_sel = self._act("選択から読み込み", lambda: self.load_from_maya(True),
                               tip="選択したノード以下のメッシュとジョイントだけを表示")
             a_pull = self._act("Maya の選択を反映", self.pull_maya_selection)
+            a_take = self._act("開いているシーンからテイクを取り出す", self.take_from_maya,
+                               tip="Maya で開いているシーン（ショット）のアニメーションを、ビューアで開いているシーン（リグ）の"
+                                   "テイクとして足す")
             self.a_sync = self._act("ビューアの選択を Maya に反映", lambda v: None, checkable=True, checked=True)
             self.a_follow = self._act("Maya の選択に追従", self._toggle_follow, checkable=True, checked=True)
             mm = mb.addMenu("Maya")
             for a in (a_scene, a_sel, a_pull):
                 mm.addAction(a)
+            mm.addSeparator()
+            mm.addAction(a_take)
             mm.addSeparator()
             mm.addAction(self.a_sync)
             mm.addAction(self.a_follow)
@@ -1460,6 +1470,31 @@ class ViewerWindow(QtWidgets.QMainWindow):
         if paths:
             self.load_take_files(paths)
 
+    def take_from_maya(self):
+        """［Maya］→［開いているシーンからテイクを取り出す］: Maya で開いているシーン（ショット）のアニメーションを、
+        いまビューアで開いているシーン（リグ）のテイクとして足す。集めるのは画面のスレッド、変換は読み込みスレッド"""
+        if self.current_scene is None:
+            self.statusBar().showMessage("先にシーンを開いてください（テイクはシーンに当てて使います）", 6000)
+            return
+        if self._thread is not None or self._take_thread is not None:
+            self.statusBar().showMessage("読み込み中です。完了してからテイクを取り出してください。", 5000)
+            return
+        from . import maya_scene
+        QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            self.statusBar().showMessage("テイク: Maya からシーンを取得中")
+            QtWidgets.QApplication.processEvents()
+            st = maya_scene.collect(False, lambda frac, msg, *_a: self.statusBar().showMessage("テイク: " + msg))
+        except Exception as exc:  # noqa: BLE001
+            self.log("error", traceback.format_exc())
+            self._error("Maya からデータを取得できませんでした。\n%s" % exc)
+            return
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+        self.log("info", "Maya で開いているシーンからテイクを取り出します: %s"
+                 % (os.path.basename(st.source_path) or "Maya シーン"))
+        self._start_take_worker(_TakeWorker([], True, maya_state=st), -1, False)
+
     def load_take_files(self, paths, at: int = -1, drop: bool = False):
         """ファイルからテイクを読んで、テイクの一覧の at の位置に足す（ファイル名の順）。.msva はテイクをそのまま、
         .ma・.msv・共通 JSON はメッシュなどを外したシーンを渡して、ビューアがアニメーションから取り出す。
@@ -1473,8 +1508,11 @@ class ViewerWindow(QtWidgets.QMainWindow):
         names = "・".join(os.path.basename(p) for p in paths)
         self.log("info", "テイクを読み込みます: %s" % names)
         self.statusBar().showMessage("テイクを読み込み中: %s" % names)
+        self._start_take_worker(_TakeWorker(paths, self.a_refs.isChecked()), at, drop)
+
+    def _start_take_worker(self, worker: "_TakeWorker", at: int, drop: bool):
         self._take_thread = QtCore.QThread(self)
-        self._take_worker = _TakeWorker(paths, self.a_refs.isChecked())
+        self._take_worker = worker
         self._take_worker.moveToThread(self._take_thread)
         self._take_thread.started.connect(self._take_worker.run)
         # 信号はウィンドウのメソッドで受ける（画面のスレッドで動く。ラムダにつなぐと読み込みスレッドで動いてしまう）

@@ -89,6 +89,30 @@ def read_source(path: str, references: bool = True, progress: ProgressFn = None)
     raise ValueError("テイクを読めない種類のファイルです（.msva・.msv・.json・.ma）")
 
 
+def read_maya_source(st, progress: ProgressFn = None) -> Tuple[Optional[dict], List[str]]:
+    """Maya で開いているシーン（maya_scene.collect が集めた SceneText）から、テイクの元を作る。
+    変換は .ma を開いたときと同じ（maya_scene.load_staged）。Maya の API は使わないので、読み込みスレッドで呼べる"""
+    from .maya_scene import load_staged
+    name = os.path.basename(getattr(st, "source_path", "") or "") or "Maya シーン"
+    notes: List[str] = []
+
+    def prog(frac, msg, *_rest):
+        if progress is not None:
+            progress("%s: %s" % (name, msg))
+    scene, load_animation = load_staged(st, prog)
+    anim = load_animation(prog)
+    if anim is not None:
+        scene["animation"] = anim
+    missing = _missing_references(scene)
+    if missing:
+        notes.append("%s: Maya で読み込んでいないリファレンス（%s）のキーは取り出せません（.ma を保存して読み込むと、"
+                     "リファレンスの編集から取り出せます）" % (name, "・".join(r["namespace"] for r in missing)))
+    if not scene.get("animation"):
+        notes.append("%s: 取り出せるアニメーションがありません" % name)
+        return None, notes
+    return {"kind": "scene", "scene": source_scene(scene), "name": name}, notes
+
+
 def read_sources(paths, references: bool = True, progress: ProgressFn = None):
     """いくつかのファイルからテイクの元を作る（ファイル名の順）。戻り値: (元の一覧, お知らせ, (ファイル名, 誤り) の一覧)"""
     sources, notes, errors = [], [], []

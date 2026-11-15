@@ -104,8 +104,24 @@ def step6():
             return
         check("保存時のフレームの再現チェック" in text and "診断できませんでした" not in text, "リグの診断（Maya のシーン）")
         win.rig_report_dialog.close()
-        step7()
+        step_take()
     opened()
+
+
+def step_take():
+    # ［Maya］→［開いているシーンからテイクを取り出す］: Maya のシーンのアニメーションを、いまのシーンのテイクとして足す
+    win.take_from_maya()
+
+    def done(tries=[0]):
+        def got(n):
+            if (not isinstance(n, (int, float)) or n < 1) and tries[0] < 100:
+                tries[0] += 1
+                QtCore.QTimer.singleShot(100, done)
+                return
+            check(n == 1, "開いているシーンからテイクを取り出す: %s 個" % n)
+            step7()
+        win.viewer.run_js("window.mayaViewer.takeCount()", got)
+    done()
 
 
 def step7():
